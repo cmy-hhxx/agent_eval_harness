@@ -322,54 +322,6 @@ test("planned input bodies are read by record only when a task accesses them", a
   }
 });
 
-test("each answer retains its own full system and developer constraints beyond the context budget", async () => {
-  const rows = ["不能把风险放在第一位", "必须把风险放在第一位"].map((rule) => ({
-    ...raw(), messages: [
-      { type: "message", role: "system", content: "背景。".repeat(9000) + rule },
-      { type: "message", role: "developer", content: "按自己的系统要求组织回答" },
-      ...raw().messages,
-    ],
-  }));
-  const { directory, config } = await fixtureConfig([[rows[0]], [], [rows[1]], []]);
-  config.execution.initialContextChars = 1;
-  try {
-    const plan = await buildPlan(config);
-    for (const task of plan.tasks.filter((task) => ["attribution", "comparison"].includes(task.stage) && !(task.data as TaskData).verificationOf)) {
-      const bound = comparisonWorkflow.bind(task, plan.inputs, dependenciesFor(task, await stateFor(config, plan, false)), { tasks: plan.tasks });
-      type Material = { initial_material: { message_index: number; value: unknown }[]; instruction_sources: {
-        message_index: number; path: string; role: string; content: unknown; evidence: ReturnType<typeof cite>[];
-      }[] };
-      const input = bound.request.input as { answer?: Material; candidates?: Record<string, Material> };
-      const materials = input.answer ? { answer: input.answer } : input.candidates!;
-      type ShownMaterial = { instruction_sources: { content: unknown; evidence: { reference: { evidence_index: number } }[] }[] };
-      const prepared = services.agents.prepare(bound);
-      const shown = parsedMaterial(prepared) as { answer?: ShownMaterial; candidates?: Record<string, ShownMaterial> };
-      const shownMaterials = shown.answer ? { answer: shown.answer } : shown.candidates!;
-      for (const [label, material] of Object.entries(materials)) {
-        const source = plan.inputs[task.inputIds[label]] as RawInput;
-        const constraints = material.instruction_sources.filter((m) => m.message_index < 2);
-        assert.equal(constraints.length, 2);
-        assert.deepEqual(constraints.map((m) => m.role), ["system", "developer"]);
-        assert.deepEqual(constraints.map((m) => m.path), ["/content", "/content"]);
-        assert.deepEqual(constraints.map((m) => m.content), source.messages.slice(0, 2).map((message) => message.content));
-        assert.equal(material.initial_material.filter((m) => m.message_index < 2).length, 0);
-        if (task.stage === "attribution") assert(shownMaterials[label]!.instruction_sources.every(m => !Object.hasOwn(m, "content")),
-          "attribution defers full instruction content while preserving source references");
-        else assert.deepEqual(shownMaterials[label]!.instruction_sources.map((m) => m.content), constraints.map((m) => m.content));
-        constraints.forEach((constraint, index) => {
-          assert.equal(constraint.evidence.length, 1);
-          assert.equal(resolveEvidence(source, constraint.evidence[0]!, label, emptyAudit(), "/evidence", task.inputIds[label]).quote, constraint.content);
-          const selection = shownMaterials[label]!.instruction_sources[index]!.evidence[0]!.reference;
-          assert.deepEqual(Object.keys(selection), ["evidence_index"]);
-          const reference = resolveEvidenceSelection(prepared.evidenceBank, selection, "/instruction_sources/" + index + "/evidence/0");
-          assert.deepEqual(reference, { evidence_id: constraint.evidence[0]!.evidence_id });
-          assert.equal(resolveEvidence(source, reference, label, emptyAudit(), "/evidence", task.inputIds[label]).quote, constraint.content);
-        });
-      }
-    }
-  } finally { await rm(directory, { recursive: true, force: true }); }
-});
-
 for (const entireAnswer of [false, true]) test(`oversized final-answer blocks preserve original text and direct reads (entire answer: ${entireAnswer})`, async () => {
   const chart = JSON.stringify({ data: [{ y: { dtype: "f8", bdata: "A".repeat(1400000) } }], layout: { title: "业绩比较" } });
   const row = raw();

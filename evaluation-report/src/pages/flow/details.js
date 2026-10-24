@@ -118,7 +118,7 @@
           if (finding.assessment.observation !== finding.text) field(fields, '实际观察', finding.assessment.observation, {'data-finding-observation':''});
           if (finding.assessment.impact !== finding.reason) field(fields, '交付影响', finding.assessment.impact, {'data-finding-impact':''});
           if (finding.problem) {
-            field(fields, '责任组件', finding.problem.component.length ? finding.problem.component.join(' / ') : '责任待定位', {'data-problem-components':''});
+            field(fields, '责任组件', finding.problem.component.map(c => `${c.role==='primary'?'主责':'关联'}：${c.technical_domain}/${c.functional_component} · ${c.component}（${c.certainty==='confirmed'?'确证':'推断'}）`).join('；'), {'data-problem-components':''});
             field(fields, '问题名称', finding.problem.label, {'data-problem-label':''});
             field(fields, '责任说明', finding.problem.definition, {'data-problem-definition':''});
           }

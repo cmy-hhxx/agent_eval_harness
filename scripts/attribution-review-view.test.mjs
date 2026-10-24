@@ -12,14 +12,14 @@ function fixture() {
   const labels = ["引用格式失效", "关键步骤遗漏", "alert 参数缺失", "任务边界误判"];
   const samples = [], nodes = [], pending = { label: "待观察池", samples: [], observations: [] };
   const observation = (sample, findingId, summary, libraryStatus = "deferred") => ({ sampleId: sample.id, findingId, summary,
-    components: libraryStatus === "unlocated" ? [] : ["模型自身推理"], evidenceStatus: "established", importance: "high", libraryStatus });
+    components: libraryStatus === "unlocated" ? [] : ["模型推断与生成/事实关系推导"], evidenceStatus: "established", importance: "high", libraryStatus });
   for (const [modelIndex, model] of modelIds.entries()) {
     const own = Array.from({ length: modelIndex < 2 ? 8 : 7 }, (_, index) => {
       const id = "sample-" + (samples.length + index + 1), clean = modelIndex < 2 && index === 7;
       return { id, inputId: "answer-" + id, taskId: "task-" + id, date: "2026-10-0" + (index % 3 + 1), caseId: "case-" + id,
         model, modelName: model, taskSummary: "整理过的任务摘要 " + id, hasStandard: index % 2 === 0,
         problemCount: 0, summary: clean ? "无已确认问题" : "整理过的问题摘要 " + id,
-        components: clean ? [] : ["模型自身推理"], importance: clean ? null : "high", evidenceStatus: clean ? null : "established",
+        components: clean ? [] : ["模型推断与生成/事实关系推导"], importance: clean ? null : "high", evidenceStatus: clean ? null : "established",
         source: { label: "源引用", href: "./source.jsonl#" + id }, resultLink: "./" + model + ".jsonl#" + id, groupIds: [] };
     });
     samples.push(...own);
@@ -236,19 +236,19 @@ test("partial 400-answer targets separate accepted and unfinished pagination, in
 
 test("multi-responsibility observations keep branch responsibility scoped and global and pending counts unique", t => {
   const data = fixture(), tree = data.attributionTree, first = tree.nodes[0], same = first.observations[0];
-  const extra = { ...first, id: groupId("a_fast", 3), category: "工具B", label: "独立工具责任", samples: [same.sampleId], sampleCount: 1, problemCount: 1,
-    observations: [{ ...same, components: ["工具B"], libraryStatus: "classified", findingLibraryStatus: "mixed" }] };
-  first.observations[0] = { ...same, components: ["模型自身推理"], libraryStatus: "classified", findingLibraryStatus: "mixed" };
+  const extra = { ...first, id: groupId("a_fast", 3), category: "工具接入与协议/返回解析", label: "独立工具责任", samples: [same.sampleId], sampleCount: 1, problemCount: 1,
+    observations: [{ ...same, components: ["工具接入与协议/返回解析"], libraryStatus: "classified", findingLibraryStatus: "mixed" }] };
+  first.observations[0] = { ...same, components: ["模型推断与生成/事实关系推导"], libraryStatus: "classified", findingLibraryStatus: "mixed" };
   tree.nodes.push(extra);
   const pending = tree.pending.observations[0];
-  tree.pending.observations.push({ ...pending, components: ["工具B"] });
+  tree.pending.observations.push({ ...pending, components: ["工具接入与协议/返回解析"] });
   const { document, group, select, tableRows, errors } = view(t, data);
   group(extra.id).click();
-  assert.equal(tableRows().length, 1); assert.equal(tableRows()[0].querySelector(".review-responsibility").textContent, "工具B");
+  assert.equal(tableRows().length, 1); assert.equal(tableRows()[0].querySelector(".review-responsibility").textContent, "工具接入与协议/返回解析");
   select("focus", "mixed"); assert.equal(tableRows().length, 1);
   document.getElementById("reset").click(); document.getElementById("all-samples").click();
   assert.equal(tableRows().filter(row => row.dataset.sampleId === same.sampleId).length, 1);
-  assert.equal(tableRows().find(row => row.dataset.sampleId === same.sampleId).querySelector(".review-responsibility").textContent, "模型自身推理、工具B");
+  assert.equal(tableRows().find(row => row.dataset.sampleId === same.sampleId).querySelector(".review-responsibility").textContent, "模型推断与生成/事实关系推导、工具接入与协议/返回解析");
   assert.equal(Number(document.querySelectorAll("#coverage b")[5].textContent), 2);
   document.getElementById("pending-pool").click(); assert.equal(tableRows().length, 2);
   assert.match(document.querySelector(".review-stats").textContent, /2 归因问题/u);
@@ -322,10 +322,10 @@ test("node search excludes other summaries, mixed responsibility stays visible, 
   node.observations.push({ sampleId: sample.id, findingId: "unlocated-extra", summary: "本组责任未定位的缺陷", components: [], evidenceStatus: "established", importance: "high", libraryStatus: "unlocated" });
   sample.problemCount++; node.problemCount++; data.attributionTree.totals.problems++;
   const { document, select, tab, tableRows, group, errors } = view(t, data);
-  assert.equal(tableRows()[0].querySelector(".review-responsibility").textContent, "模型自身推理、责任未定位");
+  assert.equal(tableRows()[0].querySelector(".review-responsibility").textContent, "模型推断与生成/事实关系推导、责任未定位");
   select("problem-search", sample.summary); assert.equal(tableRows().length, 0);
   document.getElementById("all-samples").click(); assert.equal(tableRows().length, 1);
-  assert.equal(tableRows()[0].querySelector(".review-responsibility").textContent, "模型自身推理、责任未定位");
+  assert.equal(tableRows()[0].querySelector(".review-responsibility").textContent, "模型推断与生成/事实关系推导、责任未定位");
   document.getElementById("reset").click(); group(groupId("a_fast")).click();
   select("focus", "no_problem"); assert.equal(document.getElementById("problem-detail").dataset.view, "all");
   assert.deepEqual(tableRows().map(row => row.dataset.sampleId), ["sample-8"]);

@@ -1,3 +1,4 @@
+import { responsibilityLabels } from "@eval/agents/attribution";
 import path from "node:path";
 import { Script } from "node:vm";
 import { mkdir, readFile } from "node:fs/promises";
@@ -114,7 +115,7 @@ for (const clusterRun of clusterRuns) {
         const finding = row.raw.findings.find(item => item.finding_id === ref.finding_id);
         if (ref.attribution.run !== row.attribution.run || ref.attribution.run_id !== row.attribution.run_id ||
           ref.attribution.submission_id !== row.attribution.submission_id || ref.attribution.evaluator_version !== row.attribution.evaluator_version ||
-          !finding || finding.type !== "problem" || !finding.problem.component.includes(item.component))
+          !finding || finding.type !== "problem" || !responsibilityLabels(finding.problem).includes(item.component))
           throw new Error("聚类待观察引用与当前归因不一致：" + row.taskId + "/" + ref.finding_id);
         if (assignment.deferred_reason) row.deferred.push({ findingId: ref.finding_id, component: item.component, reason: assignment.deferred_reason });
       }

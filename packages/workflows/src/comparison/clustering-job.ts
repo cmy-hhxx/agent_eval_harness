@@ -1,3 +1,4 @@
+import { responsibilityLabels } from "@eval/agents/attribution";
 import path from "node:path";
 import { isDeepStrictEqual } from "node:util";
 import { canonical, type PlannedTask, type ProblemObservationRef, type RunRepository, type RunState, type TaskPlan, type WorkflowDefinition } from "@eval/contracts";
@@ -71,7 +72,7 @@ export async function loadClusteringJobInputs(config: ClusteringJobConfig): Prom
   for (const ref of config.clusteringJob.recall ?? []) {
     const finding = (states.get(ref.attribution.run)!.receipts[ref.attribution.task_id].evaluation as AttributionResult)
       .findings.find(item => item.finding_id === ref.finding_id);
-    if (finding?.type !== "problem" || canonical(finding.problem?.component ?? []) !== canonical(ref.components) ||
+    if (finding?.type !== "problem" || canonical(finding.problem ? responsibilityLabels(finding.problem) : []) !== canonical(ref.components) ||
         finding.assessment.evidence_status !== ref.evidence_status)
       throw new Error("待观察引用的原发现已缺失或改变：" + ref.input_id + "/" + ref.finding_id);
   }
@@ -84,7 +85,7 @@ export async function loadClusteringJobInputs(config: ClusteringJobConfig): Prom
         input_id: source.input_id, finding_id: finding.finding_id, batch_id: source.batch_id, case_id: source.case_id,
         source: source.source, attribution: { run: source.run, run_id: source.run_id, task_id: source.task_id,
           submission_id: source.submission_id, evaluator_version: source.evaluator_version },
-        components: finding.problem?.component ?? [], evidence_status: finding.assessment.evidence_status,
+        components: finding.problem ? responsibilityLabels(finding.problem) : [], evidence_status: finding.assessment.evidence_status,
         importance: finding.importance, summary: finding.text });
       return {
       input_id: source.input_id, case_id: source.case_id, batch_id: source.batch_id, source: source.source,

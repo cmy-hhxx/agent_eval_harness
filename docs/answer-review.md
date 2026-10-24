@@ -5,9 +5,11 @@ AIME 使用 `workflow: "answer-review"`。当前日常运行选择 `--stage attr
 ```mermaid
 flowchart LR
   Input[公开原题与候选材料] --> Score[Score]
-  Input --> Attribution[Attribution direct]
+  Input --> Attribution[Attribution]
   Score --> Scores[score.jsonl]
   Attribution --> Attributions[attribution.jsonl]
+  Attribution --> Instructions[独立指令检查]
+  Instructions --> Reviews[instruction_review.jsonl]
   Attribution --> Rewrite[Rewrite]
   Rewrite --> Attributions
 ```
@@ -29,9 +31,13 @@ Score 和 Attribution 都不依赖 Criteria，也不读取彼此的结论。两�
 
 ## Attribution 与 Rewrite
 
-Attribution 的direct配置只让模型提交summary和一层findings。每条finding的component、label、definition与text、reason、evidence_ids同级，不嵌套problem对象；优点的component为空数组、label及definition为null。模型仅引用已取得的证据编号，程序从工具取证账本回填evidence原文及坐标，不要求模型复制证据或手算坐标。
+Attribution 与 comparison 使用同一default入口，Workflow适配来源及业务身份。结果包含summary、findings、criterion_assessments、core_assessment、正确性与数值核验；问题描述位于finding.problem，优点的problem为null。每个问题的component是责任对象数组，恰有一个primary主责，可有contributing关联责任。各责任独立记录技术域、二级功能、实际组件、环节、中文机制、确证或推断、理由及证据；推断必须给出关键缺口和替代解释。缺陷的established/uncertain与责任的confirmed/inferred分别判断，已确认问题不因因果材料不足降级，也不能以空责任结束。目录唯一来源为[技术目录](../packages/prompts/resources/attribution/taxonomy.json)。
 
-summary、text、reason必须以简体中文叙述；problem 的label、definition也必须为非空中文。strength 的label、definition按契约为null，中文检查将其记为not_applicable（不适用），不计入失败或重试。不能将problem的空字段、缺字段或空字符串当作不适用。专有名词、工具名和真实引文保留原语言。正式归因JSONL将batch_id、case_id、summary、findings、evidence放在顶层，不再套case及evaluation对象。源meta仍按原样保留，不能为了减少嵌套改写用户元数据。
+主归因只读取公开原题、交付、验收要求、参考及过程事实。SYS/DEV和已确认加载的Skill规范从模型材料及可读来源同时排除；原始来源保留在Workflow用于后置独立会话。证据仍由账本生成编号、校验原文坐标并回填，模型选择编号，不复制引文或手算坐标。
+
+每条主归因被接受后自动创建instruction-review任务，使用独立会话检查规则适用条件、例外及实际行为，缺证标unverified。结果写入results/instruction_review.jsonl，带source_attribution_task_id与独立instruction_review、证据及核验账本；不改写主归因和Comparison。后置失败保留已接受主归因，续跑只处理未完成任务。主归因与后置任务共用Host总并发。
+
+summary、text、reason以及problem的label、definition采用简体中文，专有名词及真实引文保留原语言。正式归因JSONL在顶层保存完整归因结果与来源元信息，证据位于对应finding或正确性核验中。源meta原样保留，仅用于导出。
 
 结果验收使用同一语言规则，只读检查，不修改结果、不调用模型：
 
@@ -50,16 +56,16 @@ npm run eval -- preflight --stage attribution --config configs/host.json --confi
 npm run eval -- run --stage attribution --run-id answer-review-run --config configs/host.json --config configs/answer-review.json --config /absolute/path/source-and-models.json
 ```
 
-来源配置可以只包含一个模型，也可包含多个分别独立评审的模式。`--stage score`或`--stage attribution`可只跑一个阶段，新运行及续跑都限定实际调度范围；不加时两阶段并发。同run切换阶段或开启Attribution Rewrite时，补建缺失任务，保留已接受收据和已用额度。模型bindings分别提供score、attribution、rewrite；并发是整个运行的并发上限，不是各阶段分别再乘一次。
+来源配置可以只包含一个模型，也可包含多个分别独立评审的模式。`--stage score`或`--stage attribution`可只跑一个阶段，新运行及续跑都限定实际调度范围；不加时两阶段并发。同run切换阶段或开启Attribution Rewrite时，补建缺失任务，保留已接受收据和已用额度。模型bindings分别提供score、attribution、instruction-review、rewrite；并发是整个运行的并发上限，不是各阶段分别再乘一次。
 
 `--input ID=PATH`、`--batch`、`--case`和`--limit-cases`沿用公共CLI筛选。`--test-eval`将输出放在同来源的eval_output/test_eval；`--pilot-cases N`同样进入test_eval，按业务题目选择N题及其各模型、所选阶段，完整计划仍保留。普通续跑保留试跑范围，验收后用`--discover-inputs`释放其余已登记回答。`--worker`指定Worker，`--resume-stage`解除指定阶段的熔断，`--skip-failed`保留失败任务，`--balance-channels`沿用渠道分配。日常输出使用本来源的eval_output/0_daily_eval。
 
 `status`、`report`、`validate`通过`--run`读取保存的workflow，不依赖当前模型配置；分别查看状态、生成报告、校验正式结果与收据。
 
-正式结果为results/score.jsonl和results/attribution.jsonl，另有state.json、stats.json和report.md。两份正式输出的顶层meta原样保留源记录的外层meta（包括嵌套值、null及空对象；原记录没有meta时不新增）。它不混入trace.meta，也不发送给裁判。续跑只为缺少meta的已接受结果补齐源meta，已保存的判词、分数和来源字段保持不变，Rewrite同样保留meta。未完成任务重新定位源记录并使用当前题面、最终回答位置和行号；材料坐标变化时丢弃失效草稿与取证账本，保留已用尝试和内容额度。
+正式结果为results/score.jsonl、results/attribution.jsonl和results/instruction_review.jsonl，另有state.json、stats.json和report.md。正式输出的顶层meta原样保留源记录的外层meta（包括嵌套值、null及空对象；原记录没有meta时不新增）。它不混入trace.meta，也不发送给裁判。续跑只为缺少meta的已接受结果补齐源meta，已保存的判词、分数和来源字段保持不变，Rewrite同样保留meta。未完成任务重新定位源记录并使用当前题面、最终回答位置和行号；材料坐标变化时丢弃失效草稿与取证账本，保留已用尝试和内容额度。
 
 结果同时直接携带实际回答的trace_id、业务日期、输入文件/行号及原归档/成员/行号/数组项坐标；一般手工输入没有归档坐标时为null。AIME增量入口在清洗阶段要求这些来源完整，见[AIME增量归因](aime-incremental.md)。
 
-快速执行时，公开题面、最终回答及短调用/返回前缀一次提供，未显示后缀明确标记next_start。采集状态按当前A/B消息类型识别，包括无role的reasoning、llm_turn与推理span；无名称的工具返回仍记为已采集工具轨迹。裁判只对影响结论的缺口补查，材料工具支持一次批量读取、检索和取证，直接提交JSON，省去逐条工具往返及写稿轮次。缺证保留待核，12单元、24诊断及原分档不删减。并发仍是运行上限，模型生成速度不由Host保证。
+快速执行时，公开题面、最终回答及短调用/返回前缀一次提供，未显示后缀明确标记next_start。采集状态按当前A/B消息类型识别，包括无role的reasoning、llm_turn与推理span；无名称的工具返回仍记为已采集工具轨迹。裁判只对影响结论的缺口补查，材料工具支持一次批量读取、检索和取证，Score直接提交JSON，Attribution通过文件提交当前完整判断。缺证保留待核，12单元、24诊断及原分档不删减。并发仍是运行上限，模型生成速度不由Host保证。
 
 日常可按输入批次日期分别运行，例如本批2026年10月19日至22日使用0_daily_eval/1019至1022，每天各有两份results输出；多个日期同时运行时并发之和为总上限。恢复状态引用正式JSONL，不重复保存已接受正文；新增取证来源随正式结果保存。已接受结果不重新评分，续跑只处理未完成任务。输入契约拒绝的多轮或无效记录保留input issues，不截取或拼接成看似成功的评测。

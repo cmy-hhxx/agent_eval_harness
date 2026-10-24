@@ -6,6 +6,8 @@ import { attributionProfile, type AttributionResult } from "@eval/agents/attribu
 import type { EvalConfig, TaskData } from "./types.js";
 import { bindTask } from "./binding.js";
 import { attributionRewritePlaceholder, planAttributionRewriteGroups } from "./attribution-rewrite-planning.js";
+import { validateOriginalAttributionEvidence } from "./public-trace.js";
+import type { RawInput } from "./types.js";
 
 /** Turning the opt-in off releases unfinished consumers back to their original accepted sources. */
 export function configureStandardReview(state: RunState, enabled: boolean): void {
@@ -84,7 +86,7 @@ const advanceStandardConflict: NonNullable<WorkflowDefinition["advance"]> = (tas
       tasks.push(reviewRewrite(polish, review.id));
   }
   const replace = state.manifest.tasks.flatMap(consumer => {
-    if (state.receipts[consumer.id] || state.manifest.states[consumer.id]?.status === "running" ||
+    if (consumer.stage === "instruction-review" || state.receipts[consumer.id] || state.manifest.states[consumer.id]?.status === "running" ||
       (consumer.data as TaskData).verificationAudit ||
       !Object.values(consumer.dependencies).some(id => reviews.has(id))) return [];
     const consumerData = consumer.data as TaskData;
@@ -145,8 +147,10 @@ const advanceCriteria: NonNullable<WorkflowDefinition["advance"]> = (task, recei
 
 /** Accepted formal comparisons and retrospective verification never reopen source results. */
 export const advanceReview: NonNullable<WorkflowDefinition["advance"]> = (task, receipt, state, inputs) => {
+  if (task.stage === "attribution") validateOriginalAttributionEvidence(receipt.evaluation,
+    Object.fromEntries(Object.values(task.inputIds).filter(id => inputs[id]).map(id => [id, inputs[id] as RawInput])), receipt.audit);
   if (task.stage === "attribution" && state.manifest.tasks.some(item =>
-    (item.data as TaskData).standardConflictReview && (item.data as TaskData).reviewOf?.taskId === task.id)) return { tasks: [] };
+    (item.data as TaskData).standardConflictReview && (item.data as TaskData).reviewOf?.taskId === task.id)) return { tasks: instructionReviewFollowup(task,state) };
   const advance = task.stage === "criteria" ? advanceCriteria(task, receipt, state, inputs)
     : task.stage === "attribution" && (state.manifest.config as EvalConfig).standardAnswerReview === true &&
       (receipt.evaluation as AttributionResult).standard_conflict && !(task.data as TaskData).standardConflictReview
@@ -155,6 +159,7 @@ export const advanceReview: NonNullable<WorkflowDefinition["advance"]> = (task, 
     state.manifest.tasks.some(previous => previous.id === replacement.id && (previous.data as TaskData).rewriteOf?.taskId === task.id) &&
     (replacement.data as TaskData).rewriteOf?.taskId !== task.id);
   const grouped = retargeted ? { tasks: [] } : planAttributionRewriteGroups(task, receipt, state);
-  return { tasks: [...advance.tasks, ...grouped.tasks],
+  return { tasks: [...advance.tasks, ...grouped.tasks, ...instructionReviewFollowup(task, state)],
     ...((advance.replace?.length || grouped.replace?.length) ? { replace: [...advance.replace ?? [], ...grouped.replace ?? []] } : {}) };
 };
+import { instructionReviewFollowup } from "./instruction-review.js";

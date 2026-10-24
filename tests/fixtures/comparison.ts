@@ -1,3 +1,4 @@
+import { responsibilityFixture } from "./responsibility.js";
 import { testSettings, writeTestSettings } from "./settings.js";
 import { mkdtemp, rm } from "node:fs/promises";
 import { randomUUID } from "node:crypto";
@@ -176,7 +177,7 @@ export function attributionResult(correct = true, answer = "2+2=4", available = 
         },
         problem: correct
           ? null
-          : { component: ["模型自身推理"], label: "算术错误", definition: "计算与事实不符。" },
+          : { component: [responsibilityFixture("回答模型", {evidence_ids: ([{ evidence_id: evidenceId(inputId, 1, "text", "/content", 0, answer.length), message_index: 1, quote: answer }]).map(item=>item.evidence_id)})], label: "算术错误", definition: "计算与事实不符。" },
       },
     ],
   };
@@ -186,6 +187,7 @@ export function attributionResult(correct = true, answer = "2+2=4", available = 
 export function taskResult(spec: Pick<AttemptSpec, "evaluation" | "prompt" | "inputs">, revealed?: unknown): unknown {
   const properties =
     (spec.evaluation.outputSchema as { properties?: Record<string, unknown> }).properties || {};
+  if (spec.evaluation.id === "instruction-review") return {summary:"内部指令检查独立完成。",checks:[]};
   if ("rewrites" in properties) {
     const request = parsedMaterial(spec, revealed) as { items: { id: string; text: string; preference?: string }[] };
     return { rewrites: request.items.map(item => ({ id: item.id, text: item.preference ? item.preference + "：核对了结果及具体交付。" : "精简：" + item.text })) };
@@ -261,6 +263,9 @@ export function taskResult(spec: Pick<AttemptSpec, "evaluation" | "prompt" | "in
       ? [canonicalEvidence(spec.inputs.find(input => input.name === "answer")!.id, material.answer!.final_message_index, material.answer!.final_answer)] : [] }));
   result.core_assessment.criterion_ids = material.task_analysis.requirements.filter(criterion => criterion.applicable_candidates.includes("answer")).map(criterion => criterion.id);
   result.findings[0]!.assessment.requirement_index = material.task_analysis.requirements.find(criterion => criterion.applicable_candidates.includes("answer"))!.requirement_index - 1;
+  const delivered=canonicalEvidence(spec.inputs.find(input => input.name === "answer")!.id,material.answer!.final_message_index,material.answer!.final_answer);
+  result.correctness_evidence=[delivered];
+  result.findings[0]!.evidence=[delivered];
   result.has_standard_answer = material.ground_truth.available;
   if (!material.ground_truth.available) {
     result.is_correct = null;
@@ -377,6 +382,17 @@ export function inspectionDraft(spec: { prompt: string }): unknown {
 
 /** Mock backends use the current profile transport; every queued file owns distinct bytes. */
 export async function submitFor(options: Parameters<AgentBackend["createSession"]>[0], value: unknown) {
+  if(options.spec.evaluation.id === "instruction-review") {
+    const material=parsedMaterial(options.spec) as {norm_catalog:{source_id:string}[]};
+    const checks=[];
+    for(const norm of material.norm_catalog.slice(0,1)){
+      const rule=await options.execute("review_material",{action:"read",source_id:norm.source_id});
+      const answer=await options.execute("review_material",{action:"read",source_id:"A"});
+      const quote=async(source_id:string,text:string)=>{const result=await options.execute("review_material",{action:"quote",source_id,text});return (result.details as {evidence_id:string}).evidence_id;};
+      checks.push({rule:"受控测试中的内部规范。",status:"met",reason:"已核对受控测试的规则及实际交付。",rule_evidence_ids:[await quote(norm.source_id,(rule.details as {content:string}).content)],behavior_evidence_ids:[await quote("A",(answer.details as {content:string}).content)]});
+    }
+    value={summary:checks.length?"已独立核查所选规范与交付。":"未采集内部指令，无法核验。",checks};
+  }
   if (!options.spec.evaluation.fileSubmission) return options.execute("submit_evaluation", options.spec.evaluation.jsonStringSubmission ? {json:JSON.stringify(value)} : value);
   const file = `evaluation-${randomUUID()}.json`;
   await writeJson(path.join(options.workdir, file), value);
@@ -482,7 +498,7 @@ export function draftFor(spec: Pick<AttemptSpec, "inputs" | "prompt" | "evidence
       strengths:(result.findings as AttributionResult["findings"]).filter(row=>row.type==="strength").map(observation),
       problems:(result.findings as AttributionResult["findings"]).filter(row=>row.type==="problem").map(row=>{
         const observed=observation(row),problem=structuredClone(row.problem!);
-        return {...observed,impact:row.assessment.impact,...problem};
+        return {...observed,impact:row.assessment.impact,...problem,component:problem.component.map(({evidence_ids,...cause})=>({...cause,evidence_indices:selections(row.evidence.filter(item=>!evidence_ids.length||evidence_ids.includes(item.evidence_id)))}))};
       }),
       image_observations:[...new Map([...images(result.correctness_evidence ?? []),...(result.findings as AttributionResult["findings"]).flatMap(row=>images(row.evidence))].map(item=>[item.image_number,item])).values()],
     };

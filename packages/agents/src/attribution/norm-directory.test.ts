@@ -1,3 +1,4 @@
+import { responsibilityFixture } from "../../../../tests/fixtures/responsibility.js";
 import { attributionJudgment } from "../../../../tests/fixtures/attribution-judgment.js";
 import { resolveJudgment } from "./resolve.js";
 import test from "node:test";
@@ -187,14 +188,14 @@ test("explicit responsibility requires selected own evidence independently of no
   const value = scenario([{ role: "system", content: rule }, { role: "user", content: "计算2+2" },
     { role: "tool", type: "tool_result", name: "Calc", content: "2+2=4" }, { role: "assistant", content: "2+2=4" }]);
   const problem = { ...value.finding, type: "problem" as const, evidence: [value.ref(2), value.ref(3)],
-    problem: { component: ["模型自身推理", "Calc"], label: "执行交付偏差", definition: "模型和工具责任分别核对。" } };
+    problem: { component: [responsibilityFixture("回答模型", {evidence_ids: ([value.ref(2), value.ref(3)]).map(item=>item.evidence_id)}), responsibilityFixture("Calc", {evidence_ids: ([value.ref(2), value.ref(3)]).map(item=>item.evidence_id), role: "contributing"})], label: "执行交付偏差", definition: "模型和工具责任分别核对。" } };
   value.submitted.findings = Array.from({ length: 9 }, () => structuredClone(problem));
   const result = resolve(value);
   assert.equal(result.findings.length, 9); assert.equal(result.findings[8]!.finding_id, "f8");
-  assert.deepEqual(result.findings[8]!.problem!.component, ["模型自身推理", "Calc"]);
+  assert.deepEqual(result.findings[8]!.problem!.component.map(c=>c.component), ["回答模型", "Calc"]);
   assert.deepEqual(result.findings[8]!.evidence.map(item => item.quote), ["2+2=4", "2+2=4"]);
   problem.evidence = [value.ref(3)]; value.submitted.findings = [problem];
-  assert.throws(() => resolve(value), issue("problem_component_evidence_missing"));
+  assert.throws(() => resolve(value), issue("responsibility_evidence"));
 });
 
 test("accepted canonical proof is validated without replaying selectors, rebinding a reordered directory, or appending scopes", () => {

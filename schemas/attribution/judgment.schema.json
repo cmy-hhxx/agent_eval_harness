@@ -180,10 +180,85 @@
                 "type": "array",
                 "uniqueItems": true,
                 "items": {
-                  "type": "string",
-                  "minLength": 1
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": [
+                    "technical_domain",
+                    "functional_component",
+                    "component",
+                    "failure_stage",
+                    "mechanism",
+                    "reason",
+                    "role",
+                    "certainty",
+                    "evidence_gap",
+                    "alternatives",
+                    "evidence_ids"
+                  ],
+                  "properties": {
+                    "technical_domain": {
+                      "type": "string",
+                      "minLength": 1
+                    },
+                    "functional_component": {
+                      "type": "string",
+                      "minLength": 1
+                    },
+                    "component": {
+                      "type": "string",
+                      "minLength": 1
+                    },
+                    "failure_stage": {
+                      "type": "string",
+                      "minLength": 1
+                    },
+                    "mechanism": {
+                      "type": "string",
+                      "minLength": 1
+                    },
+                    "reason": {
+                      "type": "string",
+                      "minLength": 1
+                    },
+                    "role": {
+                      "enum": [
+                        "primary",
+                        "contributing"
+                      ]
+                    },
+                    "certainty": {
+                      "enum": [
+                        "confirmed",
+                        "inferred"
+                      ]
+                    },
+                    "evidence_gap": {
+                      "type": [
+                        "string",
+                        "null"
+                      ],
+                      "minLength": 1
+                    },
+                    "alternatives": {
+                      "type": "array",
+                      "uniqueItems": true,
+                      "items": {
+                        "type": "string",
+                        "minLength": 1
+                      }
+                    },
+                    "evidence_ids": {
+                      "type": "array",
+                      "minItems": 1,
+                      "uniqueItems": true,
+                      "items": {
+                        "type": "string",
+                        "minLength": 1
+                      }
+                    }
+                  }
                 },
-                "description": "选择本方材料支持的实际出错环节或真实工具名。回答呈现与采集、执行环境与权限配置须同时引用本方实际过程及相关最终交付；规范、参考材料或纯最终回答不能代替过程。引用正确来源不等于给来源记责；未定位填 []。"
+                "minItems": 1
               }
             }
           },

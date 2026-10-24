@@ -1,3 +1,4 @@
+import { responsibilityFixture } from "../../../../tests/fixtures/responsibility.js";
 import { canonicalEvidence } from "../../../../tests/fixtures/evidence.js";
 const INPUT_ID = "11111111-1111-4111-8111-111111111111";
 import test from "node:test";
@@ -271,7 +272,8 @@ test("a conflict can be accepted when both original rows support an explicit pro
     evidence: [...[row.evidence, data.tables[0].rows[index].evidence].map(({ evidence_id, message_index, quote }) => ({ evidence_id, message_index, quote })),
       canonicalEvidence(INPUT_ID, 0, requirement.requirements[0]!.text)],
     assessment: { requirement_index: 0, observation: "代码错配", evidence_status: "established", impact: "影响标的识别" },
-    problem: { component: ["模型自身推理"], label: "代码错配", definition: "最终表替换了原始查询中的代码。" },
+    problem: { component: [responsibilityFixture("回答模型", {evidence_ids: ([...[row.evidence, data.tables[0].rows[index].evidence].map(({ evidence_id, message_index, quote }) => ({ evidence_id, message_index, quote })),
+      canonicalEvidence(INPUT_ID, 0, requirement.requirements[0]!.text)]).map(item=>item.evidence_id)})], label: "代码错配", definition: "最终表替换了原始查询中的代码。" },
   }));
   attributionProfile.validate!(data.request, data.result, data.audit);
   assert.deepEqual(attributionTableReview(data.request, data.result).concerns, []);

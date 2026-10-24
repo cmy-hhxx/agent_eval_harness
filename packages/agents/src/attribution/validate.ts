@@ -1,3 +1,4 @@
+import { checkAttributionLanguage } from "./language.js";
 import { Ajv2020 } from "ajv/dist/2020.js";
 import {
   canonical,
@@ -17,7 +18,7 @@ import { submissionEvidenceIssues } from "./submission-evidence.js";
 import { captureMarkerProblemIssues, correctnessEvidenceScopeIssues, foreignActualIssues, referenceMaterialIssues, validateAttributionEvidence } from "./source-evidence.js";
 import { numericLedgerIssues } from "./numeric-ledger.js";
 import { normDirectoryIssues, findingNormSelectionIssues, attributionNormDirectory, submissionFindingEntries } from "./norm-directory.js";
-import { responsibilityChoices, responsibilityIssues } from "./responsibility.js";
+import { responsibilityIssues } from "./responsibility.js";
 
 interface Input {
   candidate_id: string;
@@ -249,7 +250,6 @@ function validateIndependentRules(request: AgentRequest, draft: unknown, represe
       issue("numeric_checks_without_reference", "/numeric_checks", "没有标准答案时数值核对表必须为空");
   }
 
-  const components = new Set(responsibilityChoices(request));
   const findingIds = new Set<string>();
   const findingEntries = representation === "submission" ? submissionFindingEntries(draft)
     : Array.isArray(value.findings) ? value.findings.map((finding, index) => ({ finding, path: `/findings/${index}` })) : [];
@@ -295,11 +295,6 @@ function validateIndependentRules(request: AgentRequest, draft: unknown, represe
       issue("problem_label_empty", `${location}/problem/label`, "问题名称不能为空");
     if (typeof problem.definition === "string" && !problem.definition.trim())
       issue("problem_definition_empty", `${location}/problem/definition`, "问题定义不能为空");
-    if (representation === "submission" || !strings(problem.component)) return;
-    problem.component.forEach((component, componentIndex) => {
-      if (!components.has(component))
-        issue("problem_component_invalid", `${location}/problem/component/${componentIndex}`, "正式 problem.component 必须选择本方工具名或本方材料支持的责任环节", component);
-    });
   });
   return errors;
 }
@@ -308,6 +303,8 @@ export function validateEvaluation(request: AgentRequest, result: unknown, audit
   if (!validator(result)) throw new ValidationError(schemaIssues(validator.errors, result));
   const input = request.input as unknown as Input;
   const value = result as AttributionResult;
+  const language = checkAttributionLanguage(value);
+  if (language.issues.length) throw new ValidationError(language.issues);
   const repairErrors = [...referenceMaterialIssues(request), ...validateIndependentRules(request, result, "result"), ...captureMarkerProblemIssues(request, result)];
   repairErrors.push(...attributionTableReview(request, value).errors);
   repairErrors.push(...instructionEvidenceIssues(request, value), ...foreignActualIssues(request, value));

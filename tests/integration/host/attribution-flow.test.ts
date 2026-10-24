@@ -1,3 +1,4 @@
+import { responsibilityFixture } from "../../fixtures/responsibility.js";
 import test from "node:test";
 import assert from "node:assert/strict";
 import path from "node:path";
@@ -27,7 +28,7 @@ test("Host preserves one attribution per answer and records unresolved compariso
         finding.finding_id = "f-extra"; finding.type = "problem"; finding.dimension = "reasoning"; finding.importance = "medium";
         finding.text = "计算过程缺少展开。"; finding.reason = "直接给出结果，缺少中间计算说明。";
         finding.assessment.requirement_index = null; finding.assessment.impact = "过程的可检查性不足。";
-        finding.problem = { component: ["模型自身推理"], label: "计算过程缺口", definition: "缺少中间计算说明。" };
+        finding.problem = { component: [responsibilityFixture("回答模型", {evidence_ids: []})], label: "计算过程缺口", definition: "缺少中间计算说明。" };
         result.findings.push(finding);
       }
       const submitted = await submitFor(options, draftFor(options.spec, evaluation));

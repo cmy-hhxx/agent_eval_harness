@@ -173,7 +173,7 @@ test("accepted pilot attribution expands its pristine placeholder into bounded s
   assert.equal(advance.replace![0]!.id, placeholder.id);
   assert.equal((advance.replace![0]!.data as TaskData).revision, state.manifest.states[placeholder.id]!.revision ?? 1,
     "advance replacement keeps the pristine task progress revision in sync");
-  const groups = [...advance.replace!, ...advance.tasks].map(task => (task.data as TaskData).rewriteSlotIds!);
+  const groups = [...advance.replace!, ...advance.tasks].filter(task=>task.stage==="rewrite").map(task => (task.data as TaskData).rewriteSlotIds!);
   assert.equal(groups.length, 10, "overview, criteria and eight independent findings");
   assert(groups.every(group => group.length <= 20));
   for (const group of groups) {

@@ -3,10 +3,10 @@ import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
 import { rm } from "node:fs/promises";
 import path from "node:path";
-import { emptyUsage, type RunState, type ReviewCase } from "@eval/contracts";
+import { emptyUsage, type RunState } from "@eval/contracts";
 import { writeJsonl } from "@eval/data";
 import type { Candidate } from "@eval/workflows/comparison";
-import { fixtureConfig, raw, emptyAudit, fakeIdentity, fakeEvaluatorVersion } from "../../../../tests/fixtures/comparison.js";
+import { fixtureConfig, raw, emptyAudit, fakeIdentity, fakeEvaluatorVersion, attributionResult } from "../../../../tests/fixtures/comparison.js";
 import { answerReviewRepository, answerReviewWorkflow, planAnswerReview, type AnswerReviewConfig } from "./index.js";
 
 async function fixture(t: TestContext) {
@@ -23,7 +23,7 @@ async function fixture(t: TestContext) {
   const accepted = plan.tasks.find(task => (task.data as { candidate: Candidate }).candidate.case_id === "accepted")!;
   state.receipts[accepted.id] = { taskId: accepted.id, attemptId: randomUUID(), submissionId: randomUUID(),
     evaluatorVersion: fakeEvaluatorVersion, judge: "fixture", status: "succeeded", acceptedAt: 1,
-    evaluation: { summary: "回答正确完成任务。", findings: [], evidence: [] }, audit: emptyAudit(), usage: emptyUsage() };
+    evaluation: attributionResult(true,"2+2=4",true,accepted.inputIds.answer), audit: emptyAudit(), usage: emptyUsage() };
   state.manifest.states[accepted.id] = { status: "succeeded", attempts: 1 };
   await answerReviewRepository.createResultWriter(run, plan.inputs)(state);
   await answerReviewRepository.writeRun(run, state);
@@ -33,7 +33,7 @@ async function fixture(t: TestContext) {
 test("resume refreshes unfinished source coordinates and material without changing accepted results or refunding attempts", async t => {
   const f = await fixture(t), before = structuredClone(f.state.receipts);
   const pending = f.state.manifest.tasks.find(task => task.id !== f.accepted.id)!;
-  const inputId = pending.inputIds.case;
+  const inputId = pending.inputIds.answer;
   f.state.manifest.states[pending.id] = { status: "failed", attempts: 2, failure: {
     contentSubmissions: 1, fileErrors: 0, repeatedErrors: 0, stopped: false, attemptId: "prior", errors: [],
     draft: { summary: "旧稿" }, review: { quotes: [], sources: [], actions: [], viewed: [], searches: [] },
@@ -44,9 +44,9 @@ test("resume refreshes unfinished source coordinates and material without changi
   updated.messages[2].content = "6";
   await writeJsonl(f.config.inputs.versions[0].sources[0].path, [updated, f.rows[0]]);
   const plan = await answerReviewWorkflow.reconcile!(f.run, f.state, f.config);
-  const material = plan.inputs[inputId] as ReviewCase;
-  assert.equal(material.evidence.A, "6");
-  assert.equal(material.task_question, "计算3+3");
+  const material = answerReviewWorkflow.bind(pending,plan.inputs,{}, {tasks:plan.tasks}).request.input.answer as {final_answer:string;question:string};
+  assert.equal(material.final_answer, "6");
+  assert.equal(material.question, "计算3+3");
   const candidate = (pending.data as { candidate: Candidate }).candidate;
   assert.equal(candidate.final_index, 2);
   assert.equal(candidate.line, 1);

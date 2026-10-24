@@ -1,3 +1,4 @@
+import { responsibilityLabels } from "@eval/agents/attribution";
 import test from "node:test";
 import assert from "node:assert/strict";
 import path from "node:path";
@@ -102,7 +103,7 @@ test("the check-page command selects latest review rows, reuses input titles and
   await mkdir(path.join(deltaRun, "results"), { recursive: true });
   const finding = result.findings[0];
   await writeFile(path.join(deltaRun, "results", "clustering.jsonl"), JSON.stringify({
-    items: [{ id: "delta-item", component: finding.problem.component[0], refs: [{
+    items: [{ id: "delta-item", component: responsibilityLabels(finding.problem)[0], refs: [{
       input_id: sources[1].input_id, finding_id: finding.finding_id, attribution: sources[1],
     }] }], result: { assignments: [{ item_id: "delta-item", deferred_reason: "等待更多同类样本" }] },
   }) + "\n");

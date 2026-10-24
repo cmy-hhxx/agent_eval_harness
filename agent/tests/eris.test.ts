@@ -1,3 +1,4 @@
+import { responsibilityFixture } from "../../tests/fixtures/responsibility.js";
 import test from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync, readdirSync } from "node:fs";
@@ -254,7 +255,7 @@ test("formal and specialist summaries omit evidence while preserving complete co
   const row = { status: "decided", evaluations: { a: { correctness_evidence: evidence,
     findings: [{ finding_id: "f0", type: "problem", text: "把旧数据当作现状", reason: "没有核对数据截止日",
       evidence, assessment: { evidence_status: "established", impact: "结论不可靠" },
-      problem: { component: ["模型自身推理"], label: "时效错误", definition: "用过期数据断言现状" } }],
+      problem: { component: [responsibilityFixture("回答模型", {evidence_ids: []})], label: "时效错误", definition: "用过期数据断言现状" } }],
     criterion_assessments: [{ summary: "完成了回答但结论过强", evidence_status: "uncertain", evidence }],
     table_resolutions: [{ outcome: "conflict", reason: "表格口径不一致", evidence }] } },
     verdicts: { a__vs__b: { result: "win", winner_version: "b", reason: "B保留了必要的不确定性" } },

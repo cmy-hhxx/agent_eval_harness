@@ -94,7 +94,7 @@ async function main(){
         const traceIds=new Set(job.records.map(r=>r.trace_id));
         if(await exists(file)){
           await appendAnswerReviewAttribution(job.output,{...host.evaluation,workflow:'answer-review',reviewStages:['attribution']});
-          const state=await answerReviewRepository.readRun(job.output);launched=state.manifest.tasks.filter(t=>t.stage==='attribution'&&traceIds.has((t.data as any).candidate.trace_id)&&!state.receipts[t.id]).length;
+          const state=await answerReviewRepository.readRun(job.output);launched=new Set(state.manifest.tasks.filter(t=>['attribution','instruction-review'].includes(t.stage)&&traceIds.has((t.data as any).candidate.trace_id)&&!state.receipts[t.id]).map(t=>(t.data as any).candidate.trace_id)).size;
           if(launched&&values.watch){
             const eligible=await prepareAnswerReviewAutomaticResume(job.output,traceIds);
             host.evaluation.inputs.records=host.evaluation.inputs.records!.filter(r=>eligible.has(r.trace_id!));launched=eligible.size;
@@ -104,14 +104,14 @@ async function main(){
           if(plan.tasks.length!==job.records.length||plan.tasks.some(t=>t.stage!=='attribution')||(plan.summary.issues as unknown[]).length)throw Error('新增回答范围校验未通过，拒绝启动部分或额外评测');
         }
         let code=0;
-        if(launched){console.log(`开始 ${job.date}：${launched} 条 Attribution，并发上限 ${concurrency}`);
+        if(launched){console.log(`开始 ${job.date}：${launched} 条回答的归因及后置检查，并发上限 ${concurrency}`);
           const {runAnswerReviewCommand}=await import('./answer-review-command.js');
           try{code=await runAnswerReviewCommand(host,{command:'run',runId:job.id,engine:c.engine,stage:'attribution',signal});}
           catch(error){await logger.error(error,{component:'aime-ingest',event:'attribution_start_failed',run_id:job.id});throw error;}}
-        const state=await answerReviewRepository.readRun(job.output),selected=state.manifest.tasks.filter(t=>t.stage==='attribution'&&traceIds.has((t.data as any).candidate.trace_id)),failures=selected.filter(t=>!state.receipts[t.id]).map(t=>{
+        const state=await answerReviewRepository.readRun(job.output),selected=state.manifest.tasks.filter(t=>['attribution','instruction-review'].includes(t.stage)&&traceIds.has((t.data as any).candidate.trace_id)),failures=selected.filter(t=>!state.receipts[t.id]).map(t=>{
           const p=state.manifest.states[t.id],candidate=(t.data as any).candidate;
-          return {task_id:t.id,trace_id:candidate.trace_id,case_id:candidate.case_id,model:candidate.version,status:p.status,reason:p.reason??p.failure?.errors??null};});
-        return {launched,succeeded:selected.filter(t=>state.receipts[t.id]).length,failures,exit_code:code,output:path.join(job.output,'results/attribution.jsonl')} satisfies AimeEvaluationResult;
+          return {task_id:t.id,stage:t.stage,trace_id:candidate.trace_id,case_id:candidate.case_id,model:candidate.version,status:p.status,reason:p.reason??p.failure?.errors??null};});
+        return {launched,succeeded:selected.filter(t=>t.stage==='attribution'&&state.receipts[t.id]).length,failures,exit_code:code,output:path.join(job.output,'results/attribution.jsonl')} satisfies AimeEvaluationResult;
       },
     });
     await writeJson(path.join(c.stateDirectory,'last-report.json'),summary);

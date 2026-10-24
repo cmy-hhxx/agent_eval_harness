@@ -59,9 +59,10 @@ test("Workflow binding preserves coordinate-shaped business fields in actual ori
     norm_directory: { evidence: { reference: { evidence_index: number } }[] }[] };
   assert.deepEqual((input.ground_truth as { value: unknown }).value, business);
   assert.deepEqual(answer.initial_material, []);
-  assert(!Object.hasOwn(answer.instruction_sources[0]!, "content"));
-  assert.deepEqual((binding.request.input.answer as typeof answer).instruction_sources[0]!.content, business);
-  assert.deepEqual((binding.request.sources.answer!.value as typeof source), original);
+  assert.deepEqual(answer.instruction_sources, []);
+  assert.deepEqual((binding.request.input.answer as typeof answer).instruction_sources, []);
+  assert.deepEqual((binding.request.sources.answer!.value as typeof source).messages[1], original.messages[1]);
+  assert(!JSON.stringify(binding.request.sources.answer!.value).includes('"system"'));
   assert.deepEqual(source, original);
   assert.equal(bank.includes(businessCoordinate), false, "original JSON coordinates are not program-owned references");
   assert(Number.isSafeInteger(answer.final_evidence[0]!.reference.evidence_index));
@@ -138,7 +139,7 @@ test("Attribution presents each complete answer section beside its sources and k
   assert.equal(section.quote, "## 数据解释\n\n本期产量增长7%，因此需求改善[^8]。");
   assert(review[review.indexOf(section) + 1].quote.includes("变动为-7%"), "original source and inference are adjacent");
   assert.equal(prompt.split("本期产量增长7%").length - 1, 1, "the full answer is not repeated elsewhere");
-  assert(focus.rule_sections.some((row: any) => row.title === "## 署名范围" && row.end > row.start),
+  assert(!focus.rule_sections.some((row: any) => row.title === "## 署名范围"),
     "a nested rule remains a distinct investigation scope even when a broader block is in the basis directory");
   const sourceRow = review[review.indexOf(section) + 1];
   assert.equal(resolveEvidence(source, { evidence_id: prepared.evidenceBank![section.reference.evidence_index - 1] },
@@ -155,8 +156,8 @@ test("long instructions do not consume the source-material budget or hide a shor
   const binding = bindMaterial(source, 1000);
   const answer = binding.request.input.answer as { initial_material: InitialMaterial; instruction_sources: { content: unknown }[] };
   assert(answer.initial_material.some(item => canonical(item.value).includes(fact)), "the real return must be visible despite the long norm");
-  assert.equal(answer.instruction_sources[0]!.content, norm);
-  assert.deepEqual(binding.request.sources.answer!.value, source);
+  assert.deepEqual(answer.instruction_sources, []);
+  assert(!JSON.stringify(binding.request.sources.answer!.value).includes(norm));
 });
 
 test("cited tool returns precede recent unrelated material within the same source budget", () => {

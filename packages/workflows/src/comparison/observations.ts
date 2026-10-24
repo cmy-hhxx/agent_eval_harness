@@ -1,3 +1,4 @@
+import { responsibilityLabels } from "@eval/agents/attribution";
 import { canonical } from "@eval/contracts";
 import type { PlannedTask, SubmissionReceipt } from "@eval/contracts";
 import {
@@ -39,7 +40,7 @@ export function groupObservations(sources: ProblemSource[]): ClusteringObservati
   for (const source of sources)
     for (const finding of source.findings) {
       if (finding.type !== "problem" || !finding.problem) continue;
-      for (const component of finding.problem.component) {
+      for (const component of responsibilityLabels(finding.problem)) {
         const key = canonical([normalizeLabel(component), normalizeLabel(finding.problem.label), finding.problem.definition]);
         const group = groups.get(key) ?? {
           component: component,
@@ -72,6 +73,9 @@ export function groupObservations(sources: ProblemSource[]): ClusteringObservati
             importance: finding.importance,
             stage: finding.stage,
             evidence_status: finding.assessment.evidence_status,
+            responsibilities: finding.problem.component.filter(cause =>
+              `${cause.technical_domain}/${cause.functional_component}` === component)
+              .map(({ technical_domain: _domain, functional_component: _function, evidence_ids: _evidence, ...cause }) => cause),
           },
         });
         groups.set(key, group);

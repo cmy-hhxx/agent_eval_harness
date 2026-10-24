@@ -1,7 +1,6 @@
-import { directAttributionProfile } from "./direct.js";
-export { directAttributionProfile, validateDirectAttribution, type DirectAttribution, type DirectFinding } from "./direct.js";
-export {checkDirectAttributionLanguage,type AttributionLanguageField,type AttributionLanguageStatus} from './direct-language.js';
-import { agentPrompt, standardConflictInstructions } from "@eval/prompts";
+import { responsibilityActorNames } from "./responsibility.js";
+export {checkAttributionLanguage,type AttributionLanguageField,type AttributionLanguageStatus} from './language.js';
+import { agentPrompt, attributionTaxonomy, standardConflictInstructions } from "@eval/prompts";
 import { type AgentDefinition, type AgentProfile } from "@eval/contracts";
 import requestSchema from "../../../../schemas/attribution/request.schema.json" with { type: "json" };
 import submissionSchema from "../../../../schemas/attribution/submission.schema.json" with { type: "json" };
@@ -17,6 +16,7 @@ export { attributionFindingBasis } from "./finding-basis.js";
 export { attributionNormDirectory, type AttributionNorm } from "./norm-directory.js";
 export { numericReferenceDirectory } from "./units.js";
 export * from "./types.js";
+export { responsibilityLabels } from "./responsibility.js";
 export { attributionTableChecks, attributionTableReview } from "./table-review.js";
 export type { TableReviewConcern } from "./table-review.js";
 // Attribution resolves evidence IDs into source locations before the result is accepted.
@@ -42,6 +42,8 @@ export const attributionProfile: AgentProfile = {
       requirement_index: Number(item.requirement_index ?? index) + 1 }));
     const { allow_standard_conflict, ...material } = input;
     const shown = { ...material, task_analysis: { ...analysis, requirements },
+      responsibility_taxonomy: attributionTaxonomy,
+      responsibility_choices: responsibilityActorNames(answer.catalog as unknown[]),
       ...(allow_standard_conflict === true ? { standard_answer_review: standardConflictInstructions } : {}),
       criterion_check_count: requirements.length+analysis.scoring_points.length+analysis.red_flags.length,
       criterion_checks: [...requirements,...analysis.scoring_points,...analysis.red_flags].map(item => ({ text:item.text })),
@@ -67,5 +69,5 @@ export const attributionProfile: AgentProfile = {
 };
 export const attributionAgent: AgentDefinition = {
   id: "attribution",
-  profiles: { default: attributionProfile, direct: directAttributionProfile },
+  profiles: { default: attributionProfile },
 };

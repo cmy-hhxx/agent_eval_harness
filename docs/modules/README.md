@@ -14,6 +14,7 @@
 | Host | 通用调度、提交与恢复，不识别具体业务 | [runner.ts](../../packages/host/src/runner.ts)、[store.ts](../../packages/host/src/store.ts) |
 | Criteria | 共同验收基准 | [公开入口](../../packages/agents/src/criteria/index.ts) |
 | Attribution | 单回答事实与责任 | [公开入口](../../packages/agents/src/attribution/index.ts) |
+| Instruction Review | 独立内部指令检查与证据校验 | [公开入口](../../packages/agents/src/instruction-review/index.ts) |
 | Comparison | 确认既有归因与两两判决 | [公开入口](../../packages/agents/src/comparison/index.ts) |
 | Clustering | 归类、建类、合并与纯问题库规则 | [公开入口](../../packages/agents/src/clustering/index.ts) |
 | Rewrite | 文本槽位校验 | [公开入口](../../packages/agents/src/rewrite/index.ts) |

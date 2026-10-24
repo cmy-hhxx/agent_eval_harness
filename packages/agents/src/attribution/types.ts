@@ -50,11 +50,25 @@ export interface CoreAssessment {
  * and decides which class receives this problem; attribution never creates classes.
  */
 export interface ProblemProposal {
-  /** Evidence-backed tool names or supported responsibility roles; empty when responsibility is unresolved. */
-  component: string[];
+  /** Exactly one primary cause, followed by independently supported contributing causes. */
+  component: Responsibility[];
   label: string;
   definition: string;
 }
+export interface Responsibility {
+  role: "primary" | "contributing";
+  technical_domain: string;
+  functional_component: string;
+  component: string;
+  failure_stage: string;
+  mechanism: string;
+  certainty: "confirmed" | "inferred";
+  reason: string;
+  evidence_ids: string[];
+  evidence_gap: string | null;
+  alternatives: string[];
+}
+export type ResponsibilitySubmission = Omit<Responsibility, "evidence_ids"> & { evidence_indices: number[] };
 export interface AttributionFinding extends Finding {
   /** Stable within this answer; used to preserve problem-library occurrence lineage. */
   finding_id: string;
@@ -119,7 +133,7 @@ export interface AttributionSubmission {
     evidence_indices: number[];
   }[];
   strengths: ObservationSubmission[];
-  problems: (ObservationSubmission & ProblemProposal & {impact:string})[];
+  problems: (ObservationSubmission & Omit<ProblemProposal,"component"> & {component:ResponsibilitySubmission[];impact:string})[];
   numeric_checks: {
     label: string; reference_index: number; actual: string | number | null; scale: string;
     mode: "rounded" | "exact"; evidence_index: number;

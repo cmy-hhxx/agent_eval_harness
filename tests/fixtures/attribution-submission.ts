@@ -32,6 +32,9 @@ export function normSelection(directory: NormChoice[], finding: AttributionResul
 
 /** Build the current model payload directly from a known formal fixture and its provided source directory. */
 export function attributionSubmission(request: AgentRequest, result: AttributionResult, audit: ToolAudit): AttributionSubmission {
+  result = structuredClone(result);
+  for(const finding of result.findings)for(const cause of finding.problem?.component??[])
+    if(!cause.evidence_ids.length)cause.evidence_ids=finding.evidence.map(item=>item.evidence_id);
   const bank=audit.evidenceBank??=[],images=new Map<number,string>();
   const refs=(values:AttributionResult["correctness_evidence"])=>values.map(item=>{
     const selected=selectEvidence(bank,{evidence_id:item.evidence_id});
@@ -58,7 +61,8 @@ export function attributionSubmission(request: AgentRequest, result: Attribution
     strengths:result.findings.filter(row=>row.type==="strength").map(observation),
     problems:result.findings.filter(row=>row.type==="problem").map(row=>{
       const observed=observation(row),problem=structuredClone(row.problem!);
-      return {...observed,impact:row.assessment.impact,...problem};
+      return {...observed,impact:row.assessment.impact,...problem,component:problem.component.map(({evidence_ids,...cause})=>({...cause,
+        evidence_indices:refs(row.evidence.filter(item=>evidence_ids.includes(item.evidence_id)))}))};
     }),
     numeric_checks:result.numeric_checks.map(({expected,matches:_matches,...row})=>({...row,
       reference_index:directory.findIndex(item=>item.expected===expected)+1,evidence_index:correctness[row.evidence_index]})),

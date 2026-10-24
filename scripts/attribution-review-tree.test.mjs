@@ -8,7 +8,7 @@ function row(model, taskId, options = {}) {
   const findings = options.clean ? [] : ["f0", ...(options.second ? ["f1"] : [])].map(finding_id => ({
     finding_id, type: "problem", importance: options.low ? "low" : "high",
     assessment: { evidence_status: options.uncertain ? "uncertain" : "established" },
-    problem: { component: options.components ?? ["模型自身推理"], label: "不复制原名称", definition: "不复制原定义" },
+    problem: { component: (options.components ?? ["模型推断与生成/事实关系推导"]).map(label=>({role:"primary",technical_domain:label.split("/")[0],functional_component:label.split("/")[1]})), label: "不复制原名称", definition: "不复制原定义" },
     text: "不复制原点评", evidence: [{ message_index: 1, quote: "不复制证据全文" }] }));
   return { id: `sample-${taskId}`, inputId: `input-${taskId}`, taskId, model, date: "2026-10-14", caseId: taskId,
     question: "不复制完整提问", standard: "不复制标准全文", text: { summary: "不复制改写全文" },
@@ -18,7 +18,7 @@ function row(model, taskId, options = {}) {
     source: { label: "source.jsonl:2", href: "./source.jsonl", extra: "不复制来源额外字段" }, resultLink: "./result.jsonl" };
 }
 const member = (row, findingId = "f0") => ({ taskId: row.taskId, findingId, summary: `问题摘要-${row.taskId}-${findingId}` });
-const candidate = (model, members, index = 0) => ({ id: nodeIds[index], model, category: "模型自身推理", label: "代表问题", definition: "代表问题的适用范围", members });
+const candidate = (model, members, index = 0) => ({ id: nodeIds[index], model, category: "模型推断与生成/事实关系推导", label: "代表问题", definition: "代表问题的适用范围", members });
 function snapshot(rows) {
   const nodes = [], pending = [];
   for (const model of new Set(rows.map(row => row.model))) {
@@ -69,12 +69,12 @@ test("sample rows expose curated prose and references and derive judgments from 
 });
 
 test("multi-component problems retain responsibility arrays without duplicating support or transferring class ownership", () => {
-  const rows = [row("a_fast", "multi", { components: ["工具A", "工具B"], classes: [{ findingId: "f0", component: "工具A" }], deferred: [{ findingId: "f0", component: "工具B" }] }), row("a_fast", "other", { components: [] })];
+  const rows = [row("a_fast", "multi", { components: ["工具业务实现/结果完整性", "工具接入与协议/返回解析"], classes: [{ findingId: "f0", component: "工具业务实现/结果完整性" }], deferred: [{ findingId: "f0", component: "工具接入与协议/返回解析" }] }), row("a_fast", "other", { components: [] })];
   const grouping = snapshot(rows);
-  grouping.nodes = [{ ...candidate("a_fast", [{ ...member(rows[0]), components: ["工具A"] }]), category: "工具A" }];
-  grouping.pending = [{ ...member(rows[0]), components: ["工具B"] }, member(rows[1])];
+  grouping.nodes = [{ ...candidate("a_fast", [{ ...member(rows[0]), components: ["工具业务实现/结果完整性"] }]), category: "工具业务实现/结果完整性" }];
+  grouping.pending = [{ ...member(rows[0]), components: ["工具接入与协议/返回解析"] }, member(rows[1])];
   const tree = projectAttributionTree(rows, grouping), observations = tree.nodes[0].observations;
-  assert.deepEqual(observations[0].components, ["工具A"]);
+  assert.deepEqual(observations[0].components, ["工具业务实现/结果完整性"]);
   assert.equal(observations[0].libraryStatus, "classified");
   assert.equal(observations[0].findingLibraryStatus, "mixed");
   assert.equal(tree.pending.observations[0].libraryStatus, "deferred");
@@ -83,7 +83,7 @@ test("multi-component problems retain responsibility arrays without duplicating 
   assert.equal(tree.nodes[0].sampleCount, 1);
   assert.equal(tree.totals.problems, 2);
   assert.equal(tree.samples[0].problemCount, 1);
-  assert.deepEqual(tree.samples[0].components, ["工具A", "工具B"]);
+  assert.deepEqual(tree.samples[0].components, ["工具业务实现/结果完整性", "工具接入与协议/返回解析"]);
   assert.equal(tree.totals.classified, 1);
   assert.equal(tree.totals.deferred, 1);
   assert.equal(tree.totals.unlocated, 1);
@@ -200,7 +200,7 @@ test("frozen inputs use the latest in-scope accepted review and preserve its exa
   assert.throws(() => selectedAttributionEntries(wrong.state, wrong.entries), /冻结回答重复/);
 });
 
-function libraryFixture(components = ["模型自身推理"]) {
+function libraryFixture(components = ["模型推断与生成/事实关系推导"]) {
   const rows = [row("a_fast", "one", { components }), row("a_fast", "two", { components }), row("a_fast", "unknown", { components: [] }), row("b_fast", "clean", { clean: true })];
   for (const item of rows) {
     item.taskSummary = "高层任务摘要-" + item.taskId;
@@ -231,7 +231,7 @@ test("formal libraries form responsibility-first nodes with polished class text 
   library.occurrences.push({ ...library.occurrences[0], id: "historical", attribution: { ...rows[0].attribution, task_id: "old-task" } });
   const tree = projectProblemLibraryTree(rows, [library, empty], classTexts);
   assert.equal(tree.nodes.length, 1); assert.equal(tree.nodes[0].id, nodeIds[0]);
-  assert.equal(tree.nodes[0].category, "模型自身推理"); assert.equal(tree.nodes[0].label, "通俗类名称-0"); assert.equal(tree.nodes[0].definition, "通俗类定义-0");
+  assert.equal(tree.nodes[0].category, "模型推断与生成/事实关系推导"); assert.equal(tree.nodes[0].label, "通俗类名称-0"); assert.equal(tree.nodes[0].definition, "通俗类定义-0");
   assert.equal(tree.nodes[0].problemCount, 2); assert.equal(tree.nodes[0].sampleCount, 2);
   assert.deepEqual(tree.nodes[0].observations.map(item => item.libraryStatus), ["classified", "classified"]);
   assert.equal(tree.pending.problemCount, 1); assert.equal(tree.pending.observations[0].libraryStatus, "unlocated");
@@ -241,15 +241,15 @@ test("formal libraries form responsibility-first nodes with polished class text 
 });
 
 test("independent multi-component class membership counts each problem and answer once globally", () => {
-  const { rows, library, classTexts } = libraryFixture(["模型自身推理", "工具B"]);
+  const { rows, library, classTexts } = libraryFixture(["模型推断与生成/事实关系推导", "工具接入与协议/返回解析"]);
   library.occurrences.push({ ...library.occurrences[0], id: "same-class-duplicate" });
   const tree = projectProblemLibraryTree(rows, [library], classTexts);
   assert.equal(tree.nodes.length, 2); assert.deepEqual(tree.nodes.map(node => node.problemCount), [2, 2]);
   assert.deepEqual(tree.nodes.map(node => node.sampleCount), [2, 2]);
-  assert.deepEqual(tree.nodes.map(node => node.observations[0].components), [["模型自身推理"], ["工具B"]]);
+  assert.deepEqual(tree.nodes.map(node => node.observations[0].components), [["模型推断与生成/事实关系推导"], ["工具接入与协议/返回解析"]]);
   assert.equal(tree.totals.problems, 3); assert.equal(tree.totals.groupedProblems, 2); assert.equal(tree.totals.pendingProblems, 1);
   assert.equal(tree.models[0].problemCount, 3); assert.equal(tree.samples[0].problemCount, 1);
-  assert.equal(tree.samples[0].summary, "通俗问题摘要-one"); assert.deepEqual(tree.samples[0].components, ["模型自身推理", "工具B"]);
+  assert.equal(tree.samples[0].summary, "通俗问题摘要-one"); assert.deepEqual(tree.samples[0].components, ["模型推断与生成/事实关系推导", "工具接入与协议/返回解析"]);
   assert.equal(tree.samples[3].problemCount, 0);
   library.occurrences = library.occurrences.filter(item => item.class_id === nodeIds[0]);
   const partial = projectProblemLibraryTree(rows, [library], classTexts);

@@ -336,6 +336,34 @@
     },
     "allow_standard_conflict": {
       "type": "boolean"
+    },
+    "material_availability": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "public_task",
+        "final_delivery",
+        "process_records",
+        "actual_model_inputs",
+        "call_links"
+      ],
+      "properties": {
+        "public_task": {
+          "type": "boolean"
+        },
+        "final_delivery": {
+          "type": "boolean"
+        },
+        "process_records": {
+          "type": "boolean"
+        },
+        "actual_model_inputs": {
+          "type": "boolean"
+        },
+        "call_links": {
+          "type": "boolean"
+        }
+      }
     }
   },
   "$defs": {

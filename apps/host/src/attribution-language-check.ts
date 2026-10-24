@@ -1,7 +1,7 @@
 import path from 'node:path';
 import {parseArgs} from 'node:util';
 import {fileSourceReader} from '@eval/data';
-import {checkDirectAttributionLanguage,type AttributionLanguageField,type AttributionLanguageStatus} from '@eval/agents/attribution';
+import {checkAttributionLanguage,type AttributionLanguageField,type AttributionLanguageStatus} from '@eval/agents/attribution';
 
 async function main(){
   const {values}=parseArgs({options:{input:{type:'string'},limit:{type:'string'},help:{type:'boolean'}}});
@@ -13,14 +13,14 @@ async function main(){
   for(let attempt=0;attempt<3;attempt++){
     const revision=await fileSourceReader.revision(file);
     const fields=Object.fromEntries(['summary','text','reason','label','definition'].map(field=>[field,{passed:0,failed:0,not_applicable:0}])) as Record<AttributionLanguageField,Record<AttributionLanguageStatus,number>>;
-    const failures:{line:number;trace_id:unknown;task_id:unknown;issues:ReturnType<typeof checkDirectAttributionLanguage>['issues']}[]=[];
+    const failures:{line:number;trace_id:unknown;task_id:unknown;issues:ReturnType<typeof checkAttributionLanguage>['issues']}[]=[];
     let checked=0;
     try{
       for await(const {line,index}of fileSourceReader.lines(file,revision)){
         if(limit!==undefined&&index>limit)break;
         if(!line.trim())continue;
         let row:unknown;try{row=JSON.parse(line);}catch{throw Error('Invalid JSON at line '+index);}
-        const result=checkDirectAttributionLanguage(row);checked++;
+        const result=checkAttributionLanguage(row);checked++;
         for(const check of result.checks)fields[check.field][check.status]++;
         if(result.issues.length){const record=row&&typeof row==='object'?row as Record<string,unknown>:{};
           failures.push({line:index,trace_id:record.trace_id??null,task_id:record.task_id??null,issues:result.issues});}

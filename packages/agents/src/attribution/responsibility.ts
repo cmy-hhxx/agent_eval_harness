@@ -1,91 +1,109 @@
 import { ValidationError, type AgentRequest, type ValidationIssue } from "@eval/contracts";
+import { attributionTaxonomy } from "@eval/prompts";
 import { answerTurnContexts, evidenceSources, parseEvidenceCoordinates, selectEvidenceSource } from "@eval/tools";
-import { ownEvidence } from "./source-evidence.js";
 import type { Evidence, ProblemProposal } from "./types.js";
+import { isChineseAttributionText } from "./language.js";
 
 const object = (value: unknown): Record<string, unknown> | undefined =>
   value !== null && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : undefined;
-const toolTypes = new Set(["function_call", "function_call_output", "tool_call", "tool_result"]);
-const presentation = "回答呈现与采集", environment = "执行环境与权限配置";
-const processRoles = [presentation, environment];
-function processPaths(message: unknown, component: string): string[] {
-  const value = object(message);
-  if (!value) return [];
-  const type = String(value.type);
-  if (["function_call_output", "tool_result"].includes(type) || value.role === "tool")
-    return ["/output", "/content"].filter(path => value[path.slice(1)] != null);
-  if (component === presentation && type === "llm_turn" && Array.isArray(value.output)) return ["/output"];
-  if (component === environment && ["function_call", "tool_call"].includes(type))
-    return ["/input", "/arguments"].filter(path => value[path.slice(1)] != null);
-  return [];
-}
-function processEvidence(request: AgentRequest, evidence: Evidence | undefined, component: string): boolean {
-  if (!evidence || !ownEvidence(evidence)) return false;
-  const coordinate = parseEvidenceCoordinates(evidence.evidence_id);
-  const finalIndex = (request.input.answer as { final_message_index: number }).final_message_index;
-  if (!coordinate || coordinate.input_id !== request.sources.answer.id || coordinate.message_index !== evidence.message_index ||
-    coordinate.message_index >= finalIndex || coordinate.kind === "image") return false;
-  const raw = request.sources.answer.value as { messages: unknown[] }, message = raw.messages[evidence.message_index];
-  if (object(message)?.type === "llm_turn" && !answerTurnContexts(raw, finalIndex).some(context => context.message_index === evidence.message_index)) return false;
-  return processPaths(message, component).some(path => {
-    if (coordinate.kind === "text" && (coordinate.path === path || coordinate.path.startsWith(`${path}/`))) return true;
-    const range = selectEvidenceSource(evidenceSources(message), path);
-    return !!range && coordinate.kind === range.source.kind && coordinate.path === range.source.path &&
-      ((coordinate.start >= range.start && coordinate.end <= range.end) ||
-       (coordinate.start <= range.start && coordinate.end >= range.end));
-  });
-}
-function finalEvidence(request: AgentRequest, evidence: Evidence | undefined): boolean {
-  if (!evidence || !ownEvidence(evidence)) return false;
-  const coordinate = parseEvidenceCoordinates(evidence.evidence_id);
-  const finalIndex = (request.input.answer as { final_message_index: number }).final_message_index;
-  return !!coordinate && coordinate.input_id === request.sources.answer.id && coordinate.message_index === finalIndex &&
-    evidence.message_index === finalIndex;
-}
+const toolRecord = (value: Record<string, unknown>) => value.role === "tool" ||
+  ["function_call", "function_call_output", "tool_call", "tool_result"].includes(String(value.type)) ||
+  value.type === "span" && String(value.name).startsWith("tool-");
+const functionalComponents = ["回答模型", "控制器", "工具接入层", "知识数据源", "检索服务", "上下文组装与传递", "记忆与状态管理", "协同调度器", "运行环境", "交付与呈现"];
+
+/** Names identify actors; taxonomy identifies the failed technical function. */
 export function responsibilityChoices(request: AgentRequest): string[] {
-  const answer = request.input.answer as { catalog: { name?: string; type: string; role?: string }[]; final_message_index: number };
-  const contexts = answerTurnContexts(request.sources.answer.value as { messages: unknown[] }, answer.final_message_index);
-  const messages = (request.sources.answer.value as { messages: unknown[] }).messages;
-  return [...new Set(["模型自身推理", ...(contexts.length ? ["上下文组装与传递"] : []),
-    ...answer.catalog.flatMap(message => message.name && (toolTypes.has(message.type) || message.role === "tool") ? [message.name] : []),
-    ...processRoles.filter(component => messages.slice(0, answer.final_message_index).some((message, index) =>
-      (object(message)?.type !== "llm_turn" || contexts.some(context => context.message_index === index)) &&
-      processPaths(message, component).some(path => !!selectEvidenceSource(evidenceSources(message), path))))])];
-}
-export function responsibilityComponent(request: AgentRequest, evidence: Evidence | undefined): string | undefined {
-  if (!evidence || !ownEvidence(evidence)) return;
-  const catalog = (request.input.answer as { catalog: { message_index: number; name?: string; type: string; role?: string }[] }).catalog;
-  const message = catalog.find(item => item.message_index === evidence.message_index);
-  if (message?.name && (toolTypes.has(message.type) || message.role === "tool")) return message.name;
-  const coordinate = parseEvidenceCoordinates(evidence.evidence_id);
-  if (!coordinate || coordinate.input_id !== request.sources.answer.id || coordinate.kind === "image") return;
-  const raw = request.sources.answer.value as { messages: unknown[] };
-  const finalIndex = (request.input.answer as { final_message_index: number }).final_message_index;
-  for (const context of answerTurnContexts(raw, finalIndex)) {
-    if (context.message_index !== coordinate.message_index) continue;
-    if (coordinate.kind === "text" && coordinate.path.startsWith(`${context.path}/`)) return "上下文组装与传递";
-    const range = selectEvidenceSource(evidenceSources(raw.messages[context.message_index]), context.path);
-    if (range && coordinate.kind === range.source.kind && coordinate.path === range.source.path &&
-      coordinate.start >= range.start && coordinate.end <= range.end) return "上下文组装与传递";
-  }
+  const raw = request.sources.answer?.value as { messages?: unknown[] } | undefined;
+  return responsibilityActorNames(raw?.messages ?? []);
 }
 
-/** Evidence establishes provenance; the agent explicitly chooses which component was at fault. */
+export function responsibilityActorNames(messages: unknown[]): string[] {
+  return [...new Set([...functionalComponents, ...messages.flatMap(value => {
+    const row = object(value);
+    return row && typeof row.name === "string" && (toolRecord(row) || row.type === "llm_turn") ? [row.name] : [];
+  })])];
+}
+
+/** Library categories describe technical functions, independently of trace-local actor names. */
+export function responsibilityLabels(problem: Pick<ProblemProposal, "component">): string[] {
+  return [...new Set(problem.component.map(row => `${row.technical_domain}/${row.functional_component}`))];
+}
+
+export function responsibilitySchema(evidenceField: "evidence_ids" | "evidence_indices") {
+  const text = { type: "string", minLength: 1 };
+  return {
+    type: "object", additionalProperties: false,
+    required: ["role", "technical_domain", "functional_component", "component", "failure_stage", "mechanism", "certainty", "reason", evidenceField, "evidence_gap", "alternatives"],
+    properties: {
+      role: { enum: ["primary", "contributing"] }, technical_domain: text, functional_component: text, component: { ...text },
+      failure_stage: { enum: attributionTaxonomy.stages }, mechanism: text,
+      certainty: { enum: ["confirmed", "inferred"] }, reason: text,
+      [evidenceField]: { type: "array", minItems: 1, uniqueItems: true,
+        items: evidenceField === "evidence_ids" ? text : { type: "integer", minimum: 1 } },
+      evidence_gap: { type: ["string", "null"], minLength: 1 },
+      alternatives: { type: "array", uniqueItems: true, items: text },
+    },
+    allOf: [{ oneOf: Object.entries(attributionTaxonomy.domains).map(([domain, components]) => ({
+      properties: { technical_domain: { const: domain }, functional_component: { enum: components } },
+    })) }],
+  };
+}
+
+/** Confirmed causes need their own process evidence; inference never means an empty responsibility. */
 export function responsibilityIssues(request: AgentRequest, problem: unknown, selected: readonly (Evidence | undefined)[], path: string): ValidationIssue[] {
-  const components = object(problem)?.component;
-  if (!Array.isArray(components)) return [];
-  return components.flatMap((component, position): ValidationIssue[] => {
-    if (processRoles.includes(component)) {
-      if (selected.some(evidence => processEvidence(request, evidence, component)) && selected.some(evidence => finalEvidence(request, evidence))) return [];
-      return [{ category: "evidence", code: "problem_component_evidence_missing", path: `${path}/component/${position}`,
-        message: "呈现采集或执行环境责任须分别引用本方实际过程及相关最终交付；规范、参考材料和纯最终回答不能代替过程证据。证据范围不自动证明该环节存在故障。",
-        actual: component }];
+  const rows = object(problem)?.component;
+  if (!Array.isArray(rows)) return [];
+  const issues: ValidationIssue[] = [], allowed = new Set(responsibilityChoices(request));
+  const raw = request.sources.answer?.value as { messages: unknown[] };
+  const selectedIds = new Set(selected.flatMap(item => item ? [item.evidence_id] : []));
+  const add = (code: string, location: string, message: string, actual?: unknown) =>
+    issues.push({ category: "evidence", code, path: location, message, actual });
+  if (rows.filter(row => object(row)?.role === "primary").length !== 1)
+    add("responsibility_primary", `${path}/component`, "每条问题必须且只能有一个主责；其他有独立作用的原因标 contributing，不得留空。");
+  const seen = new Set<string>();
+  rows.forEach((entry, index) => {
+    const row = object(entry); if (!row) return;
+    const location = `${path}/component/${index}`;
+    if (!allowed.has(String(row.component))) add("responsibility_actor", `${location}/component`, "责任组件须选择本题真实工具、模型节点或已登记的功能组件。", row.component);
+    const modelActor = row.component === "回答模型" || raw.messages.some(value => {
+      const message = object(value); return message?.type === "llm_turn" && message.name === row.component;
+    });
+    if (modelActor && ["工具业务实现", "工具接入与协议"].includes(String(row.technical_domain)))
+      add("responsibility_actor_domain", location, "llm_turn是模型节点，不能因有name而认作工具；定位其推断、控制或实际相关技术功能。", row.component);
+    if (!attributionTaxonomy.domains[String(row.technical_domain)]?.includes(String(row.functional_component)) ||
+      !attributionTaxonomy.stages.includes(String(row.failure_stage)))
+      add("responsibility_taxonomy", location, "技术域、二级功能组件与出错环节须选择固定目录，具体失误写 mechanism。", entry);
+    const refs = Array.isArray(row.evidence_ids) ? row.evidence_ids : [];
+    if (typeof row.mechanism === "string" && !isChineseAttributionText(row.mechanism))
+      add("responsibility_mechanism_language", `${location}/mechanism`, "具体失误机制须用中文短文说明本次错误动作，保留必要的专有名词。");
+    if (!refs.length || refs.some(id => !selectedIds.has(String(id))))
+      add("responsibility_evidence", `${location}/evidence_ids`, "每个责任分别引用本条 finding 已选择的真实证据，不能编造编号。");
+    if (row.certainty === "inferred" && (typeof row.evidence_gap !== "string" || !row.evidence_gap.trim() || !Array.isArray(row.alternatives) || !row.alternatives.length))
+      add("responsibility_inference", location, "推断责任必须说明关键证据缺口，并给出已考虑的其他可能解释；仍须选出最可能主责。");
+    if (row.certainty === "confirmed") {
+      if (row.evidence_gap !== null) add("responsibility_certainty", `${location}/evidence_gap`, "确证责任的 evidence_gap 为 null；因果关键材料仍缺失时改为 inferred，不改变缺陷确定性。");
+      const own = selected.filter((item): item is Evidence => !!item && !item.source && refs.includes(item.evidence_id));
+      const messages = own.map(item => ({ item, message: object(raw.messages[item.message_index]), point: parseEvidenceCoordinates(item.evidence_id) }));
+      const actualTool = messages.some(({ message }) => message && toolRecord(message) && message.name === row.component);
+      if (["工具业务实现", "工具接入与协议"].includes(String(row.technical_domain)) && !actualTool)
+        add("responsibility_process_missing", location, "确证工具责任须引用该工具的实际请求、返回或接入过程；只有最终错误时须标推断。");
+      const contexts = answerTurnContexts(raw, (request.input.answer as {final_message_index:number}).final_message_index);
+      const actualInput = messages.some(({ item, point }) => point && point.kind !== "image" && contexts.some(context => {
+        if (context.message_index !== item.message_index) return false;
+        if (point.kind === "text") return point.path.startsWith(context.path + "/");
+        const range = selectEvidenceSource(evidenceSources(raw.messages[item.message_index]), context.path);
+        return range && point.path === range.source.path && point.start >= range.start && point.end <= range.end;
+      }));
+      if (row.technical_domain === "上下文工程" && !actualInput)
+        add("responsibility_process_missing", location, "确证上下文传递责任须引用实际模型输入快照，不能把原始工具返回当作模型已收到的内容。");
+      if (["运行环境与资源", "交付与呈现"].includes(String(row.technical_domain)) && !messages.some(({ message }) => message && (toolRecord(message) || message.type === "llm_turn")))
+        add("responsibility_process_missing", location, "确证环境或呈现责任须有本方真实过程证据；纯最终回答及采集缺口不能证明故障。");
     }
-    if (component === "模型自身推理" || selected.some(evidence => responsibilityComponent(request, evidence) === component)) return [];
-    return [{ category: "evidence", code: "problem_component_evidence_missing", path: `${path}/component/${position}`,
-      message: "所选责任方必须引用本方对应工具或实际模型输入证据；正确来源可以作为反证，但不因此成为责任方。",
-      actual: component }];
+    const key = JSON.stringify([row.technical_domain, row.functional_component, row.component, row.failure_stage, row.mechanism]);
+    if (seen.has(key)) add("responsibility_duplicate", location, "同一失误机制只记一次，不能重复列为主责和关联责任。");
+    seen.add(key);
   });
+  return issues;
 }
 
 export function resolveProblemSubmission(request: AgentRequest, problem: ProblemProposal, selected: readonly (Evidence | undefined)[], path: string): ProblemProposal {

@@ -20,6 +20,16 @@ export interface ClusteringExample {
   importance: string;
   stage: string;
   evidence_status: "established" | "uncertain";
+  responsibilities?: {
+    role: "primary" | "contributing";
+    component: string;
+    failure_stage: string;
+    mechanism: string;
+    certainty: "confirmed" | "inferred";
+    reason: string;
+    evidence_gap: string | null;
+    alternatives: string[];
+  }[];
 }
 /** One deduplicated problem observation: identical proposals collapsed before clustering. */
 export interface ClusteringItem {

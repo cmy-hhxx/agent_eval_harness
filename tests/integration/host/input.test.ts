@@ -1,3 +1,4 @@
+import { responsibilityFixture } from "../../fixtures/responsibility.js";
 import { testSettings } from "../../fixtures/settings.js";
 import { canonicalEvidence } from "../../fixtures/evidence.js";
 import { services as appServices } from "@eval/host-app/composition";
@@ -781,7 +782,7 @@ test("subjective inputs still run attribution and direct evidence needs no force
     forged.findings[0] = {
       ...forged.findings[0],
       type: "problem",
-      problem: { component: ["组件"], label: "问题", definition: "描述" },
+      problem: { component: [responsibilityFixture("组件", {evidence_ids: []})], label: "问题", definition: "描述" },
     } as (typeof forged.findings)[number];
     assert.throws(
       () => validateEvaluation(task, plan.inputs, forged, emptyAudit(), {}),

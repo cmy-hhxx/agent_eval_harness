@@ -1,3 +1,4 @@
+import { taskResult, draftFor, submitFor } from "../../fixtures/comparison.js";
 import test, { type TestContext } from "node:test";
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
@@ -66,7 +67,7 @@ test("answer-review CLI keeps pilot output and scope, then explicitly releases t
   const worker = await startWorker({ identity: await loadIdentity("pi", ROOT), async createSession(options) {
     return { async run() {
       calls.push(options.spec.taskId);
-      const result = await options.execute("submit_evaluation", { summary: "回答正确完成任务。", findings: [] });
+      const result = await submitFor(options,draftFor(options.spec,taskResult(options.spec)));
       assert.notEqual(result.isError, true, JSON.stringify(result));
     }, async abort() {}, async dispose() {} };
   } }, path.join(f.directory, "worker"));
@@ -75,19 +76,19 @@ test("answer-review CLI keeps pilot output and scope, then explicitly releases t
   await f.cli("run", ...args, "--pilot-cases", "1");
   const run = path.join(f.directory, "eval_output/test_eval/pilot");
   let state = await answerReviewRepository.readRun(run);
-  assert.equal(state.manifest.tasks.length, 3);
-  assert.equal(Object.keys(state.receipts).length, 1);
+  assert.equal(state.manifest.tasks.length, 4);
+  assert.equal(Object.keys(state.receipts).length, 2);
   assert.equal(await exists(path.join(f.config.output.path, "pilot")), false);
   const accepted = structuredClone(state.receipts);
   await f.cli("run", ...args, "--test-eval");
-  assert.equal(calls.length, 1, "ordinary resume keeps the pilot scope");
+  assert.equal(calls.length, 2, "ordinary resume keeps the pilot scope");
   state = await answerReviewRepository.readRun(run);
   state.manifest.pausedStages = [{ stage: "attribution", category: "transport", code: "fixture", path: "/", taskIds: [], at: 1 }];
   await answerReviewRepository.writeRun(run, state);
   await f.cli("run", ...args, "--test-eval", "--discover-inputs", "--resume-stage", "attribution");
   state = await answerReviewRepository.readRun(run);
-  assert.equal(calls.length, 3);
-  assert.equal(Object.keys(state.receipts).length, 3);
+  assert.equal(calls.length, 6);
+  assert.equal(Object.keys(state.receipts).length, 6);
   assert.deepEqual(state.manifest.pausedStages, []);
   for (const [id, receipt] of Object.entries(accepted)) assert.deepEqual(state.receipts[id], receipt);
 });

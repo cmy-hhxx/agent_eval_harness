@@ -45,7 +45,7 @@ export function analysisProgress(saved: AnalysisCheckpoint) {
   }
   const total = counts();
   const byPurpose: Record<AnalysisTaskPurpose, AnalysisTaskCounts> = {
-    criteria: counts(), attribution: counts(), comparison_verification: counts(),
+    "instruction-review": counts(), criteria: counts(), attribution: counts(), comparison_verification: counts(),
     comparison_formal: counts(), rewrite: counts(), clustering: counts(),
   };
   const formalComparisonReferences: { runId: string; taskId: string }[] = [];

@@ -275,13 +275,87 @@
             "properties": {
               "component": {
                 "type": "array",
-                "minItems": 0,
+                "minItems": 1,
                 "uniqueItems": true,
                 "items": {
-                  "type": "string",
-                  "minLength": 1
-                },
-                "description": "有证据支持的责任组件；选择本方真实工具名、模型自身推理、上下文组装与传递，或由实际过程启用的回答呈现与采集、执行环境与权限配置；逐个说明失误及传播，新角色须引用本方实际过程和相关最终交付。未定位填空数组。"
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": [
+                    "technical_domain",
+                    "functional_component",
+                    "component",
+                    "failure_stage",
+                    "mechanism",
+                    "reason",
+                    "role",
+                    "certainty",
+                    "evidence_gap",
+                    "alternatives",
+                    "evidence_ids"
+                  ],
+                  "properties": {
+                    "technical_domain": {
+                      "type": "string",
+                      "minLength": 1
+                    },
+                    "functional_component": {
+                      "type": "string",
+                      "minLength": 1
+                    },
+                    "component": {
+                      "type": "string",
+                      "minLength": 1
+                    },
+                    "failure_stage": {
+                      "type": "string",
+                      "minLength": 1
+                    },
+                    "mechanism": {
+                      "type": "string",
+                      "minLength": 1
+                    },
+                    "reason": {
+                      "type": "string",
+                      "minLength": 1
+                    },
+                    "role": {
+                      "enum": [
+                        "primary",
+                        "contributing"
+                      ]
+                    },
+                    "certainty": {
+                      "enum": [
+                        "confirmed",
+                        "inferred"
+                      ]
+                    },
+                    "evidence_gap": {
+                      "type": [
+                        "string",
+                        "null"
+                      ],
+                      "minLength": 1
+                    },
+                    "alternatives": {
+                      "type": "array",
+                      "uniqueItems": true,
+                      "items": {
+                        "type": "string",
+                        "minLength": 1
+                      }
+                    },
+                    "evidence_ids": {
+                      "type": "array",
+                      "minItems": 1,
+                      "uniqueItems": true,
+                      "items": {
+                        "type": "string",
+                        "minLength": 1
+                      }
+                    }
+                  }
+                }
               },
               "label": {
                 "type": "string",

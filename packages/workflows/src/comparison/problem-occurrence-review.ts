@@ -1,3 +1,4 @@
+import { responsibilityLabels } from "@eval/agents/attribution";
 import path from "node:path";
 import { canonical, safeId, type ProblemLibrary, type RunState } from "@eval/contracts";
 import { fileSourceReader, problemLibraryFile, readProblemLibrary, withProblemLibraryLock, writeProblemLibrary } from "@eval/data";
@@ -165,7 +166,7 @@ export async function reviewProblemOccurrences(
     const association = problemAssociation(initial, occurrence);
     const component = initial.components[association.component_id]!;
     if (!finding || finding.type !== "problem" || !finding.problem ||
-      !finding.problem.component.some(label => [component.label, ...component.aliases]
+      !responsibilityLabels(finding.problem).some(label => [component.label, ...component.aliases]
         .some(name => normalizeLabel(name) === normalizeLabel(label))))
       fail("问题样本原 finding 或责任组件不存在：" + item.occurrence_id);
 

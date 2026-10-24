@@ -98,6 +98,9 @@
       ],
       "@eval/workflows/answer-review": [
         "./packages/workflows/src/answer-review/index.ts"
+      ],
+      "@eval/agents/instruction-review": [
+        "./packages/agents/src/instruction-review/index.ts"
       ]
     }
   },
