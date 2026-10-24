@@ -26,8 +26,8 @@ const follow = async sessionId => {
   client = new RemoteStreamMuxClient(`${base.replace(/^http/, "ws")}/u/${user.id}/api/remote.mux`, url => new WebSocket(url, { origin, headers: { cookie } }));
   client.start();
   const controller = new AbortController(), stream = client.open("session/follow", { args: { request: { address: { kind: "session", sessionId }, assistantStream: true } } }, controller.signal)[Symbol.asyncIterator]();
-  const first = await Promise.race([stream.next(), delay(15000).then(() => { throw new Error("stream timeout"); })]);
-  assert.equal(first.value.type, "snapshot"); return { stream, controller };
+  const first = await Promise.race([stream.next(), delay(15000, undefined, { ref: false }).then(() => { throw new Error("stream timeout"); })]);
+  assert.equal(first.value.type, "snapshot"); return { stream, controller, snapshot: first.value };
 };
 try {
   const catalog = await rpc("session/modelCatalog");
@@ -36,19 +36,25 @@ try {
   const first = await follow(sessionId);
   await rpc("session/prompt", { sessionId, requestId, mode: "queue", content: [{ type: "text", text: "请调用 list_data，参数仅为 {limit:30}，不传 view。列出已有正式运行的 collectionId、runId、workflow；不要读取个案，不要搜索外网。" }] });
   first.controller.abort(); await first.stream.return?.(); await client.close();
-  const second = await follow(sessionId); second.controller.abort(); await second.stream.return?.();
-  let records = [];
-  const deadline = Date.now() + 240000;
-  while (Date.now() < deadline) {
-    records = (await rpc("session/page", { sessionId, maxMessages: 1000 })).records;
-    const state = records.filter(record => record.event?.type === "assistant/request" && record.event.data.requestId === requestId).at(-1)?.event.data.status;
-    if (state === "completed") break;
+  const second = await follow(sessionId);
+  let state = second.snapshot.records.filter(record => record.event?.type === "assistant/request" && record.event.data.requestId === requestId).at(-1)?.event.data.status;
+  let streamFrames = 0;
+  const timeout = delay(240000, undefined, { ref: false }).then(() => { throw new Error("model stream timeout"); });
+  while (state !== "completed") {
     if (state === "interrupted") throw new Error("conversation interrupted");
-    await delay(1000);
+    const next = await Promise.race([second.stream.next(), timeout]);
+    assert(!next.done, "live stream remains connected");
+    if (next.value.type === "assistant-stream") streamFrames++;
+    const event = next.value.event;
+    if (event?.type === "assistant/request" && event.data.requestId === requestId) state = event.data.status;
   }
+  second.controller.abort(); await second.stream.return?.();
+  assert(streamFrames > 0, "real streaming frames arrive after reconnect");
+  const records = (await rpc("session/page", { sessionId, maxMessages: 1000 })).records;
   const requests = records.filter(record => record.event?.type === "assistant/request" && record.event.data.requestId === requestId);
   assert.equal(requests.at(-1)?.event.data.status, "completed", "model completion");
-  assert.equal(records.filter(record => record.kind === "command" && record.prompt.requestId === requestId).length, 1, "reconnect does not resubmit");
+  assert.equal(requests.filter(record => record.event.data.status === "running").length, 1, "reconnect does not restart the request");
+  assert.equal(records.filter(record => record.event?.type === "user/message").length, 1, "reconnect does not resubmit the prompt");
   const toolResults = records.filter(record => record.event?.type === "tool/result");
   assert(toolResults.length > 0, "real model used read-only data tools");
   const pages = toolResults.flatMap(record => record.event.data.message.content ?? []).filter(block => block.type === "text").flatMap(block => { try { return [JSON.parse(block.text)]; } catch { return []; } });
@@ -57,7 +63,7 @@ try {
   assert(runs.some(run => run.workflow === "comparison"), "current Comparison runs are visible");
   await rpc("session/rename", { sessionId, title: "部署验收" });
   await rpc("workspace/archiveSession", { sessionId });
-  console.log(JSON.stringify({ health: true, login: true, model: "deepseek-v4.1-flash", reconnect: true, requestCount: 1, readOnlyToolResults: toolResults.length, workflowTypes: [...new Set(runs.map(run => run.workflow))] }));
+  console.log(JSON.stringify({ health: true, login: true, model: "deepseek-v4.1-flash", reconnect: true, streamFrames, requestCount: 1, readOnlyToolResults: toolResults.length, workflowTypes: [...new Set(runs.map(run => run.workflow))] }));
 } finally {
   await client?.close();
   await fetch(base + "/auth/logout", { method: "POST", headers: { origin, cookie, "content-type": "application/json" }, body: "{}" });
