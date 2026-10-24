@@ -224,3 +224,42 @@ test("prose calculations can clear invented field names without allowing entity 
   assert.equal(investigationIssues(f.binding.request, f.problem, f.evidence, f.audit, "/problem")
     .find(issue => issue.code === "responsibility_fields")!.expected, undefined);
 });
+
+test("incomplete investigation feedback exposes the nested submission contract and durable evidence choices", () => {
+  const f = businessChainFixture(), registry = new AgentRegistry([attributionAgent]);
+  f.problem.investigation = [];
+  const draft = attributionSubmission(f.binding.request, f.result, f.audit);
+  assert.throws(() => registry.resolve(f.binding, draft, f.audit), error => {
+    assert(error instanceof ValidationError);
+    const expected = error.issues!.find(issue => issue.code === "investigation_incomplete")!.expected as any;
+    assert.equal(expected.submission_shape.type, "array");
+    assert.deepEqual(expected.submission_shape.items.required, ["chain_index", "steps"]);
+    assert.equal(expected.required_chain_index, 1);
+    assert.equal(expected.checkpoints.length, 8);
+    assert(expected.checkpoints.flatMap((point: any) => point.sources).every((source: any) => Number.isInteger(source.reference.evidence_index)));
+    assert(!Object.hasOwn(expected, "value"));
+    assert(!JSON.stringify(expected).includes(`ev_${f.candidate.input_id}_`));
+    return true;
+  });
+});
+
+test("stage repair feedback provides selectable source indices that repair the actual model submission", () => {
+  const f = businessChainFixture(), registry = new AgentRegistry([attributionAgent]);
+  f.problem.investigation[0].steps.find(step => step.step === "返回整理与上下文传递")!.evidence_ids =
+    f.chain.checkpoints.find(point => point.step === "模型实际输入")!.evidence.map(item => item.evidence_id);
+  const draft = attributionSubmission(f.binding.request, f.result, f.audit);
+  assert.throws(() => registry.resolve(f.binding, draft, f.audit), error => {
+    assert(error instanceof ValidationError);
+    const expected = error.issues!.find(issue => issue.code === "investigation_stage_evidence")!.expected as any;
+    assert.equal(expected.chain_index, 1);
+    assert.equal(expected.step, "返回整理与上下文传递");
+    const indices = expected.required_sources.map((source: any) => source.reference.evidence_index);
+    assert(indices.every((index: number) => Number.isInteger(index) && index > 0));
+    assert(!JSON.stringify(expected).includes(`ev_${f.candidate.input_id}_`));
+    const step = draft.problems[0].investigation[0].steps.find(step => step.step === expected.step)!;
+    step.evidence_indices = [...new Set([...step.evidence_indices, ...indices])] as number[];
+    return true;
+  });
+  const accepted = registry.resolve(f.binding, draft, f.audit) as AttributionResult;
+  registry.validate(f.binding, accepted, f.audit);
+});

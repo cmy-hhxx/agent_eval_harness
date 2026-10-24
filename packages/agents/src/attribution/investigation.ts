@@ -74,7 +74,11 @@ export function investigationIssues(request: AgentRequest, problem: ProblemPropo
     const entries = problem.investigation.filter(entry => entry.chain_index === chain.chain_index);
     const where = `${path}/investigation`;
     if (entries.length !== 1 || canonical(entries[0].steps.map(row => row.step).sort()) !== canonical([...attributionTaxonomy.investigation_steps].sort())) {
-      add("investigation_incomplete", where, `相关链路 ${chain.chain_index} 必须沿八个环节追查，每步填写观察、证据或明确未采集的材料；不能在最终生成节点结束。`, chain.checkpoints.map(point => ({ step: point.step, availability: point.availability })));
+      add("investigation_incomplete", where, `相关链路 ${chain.chain_index} 必须沿八个环节追查。investigation 是 [{chain_index,steps:[...]}]，不是扁平步骤数组；每步填写观察、证据或明确未采集的材料，不能在最终生成节点结束。`, {
+        required_chain_index: chain.chain_index,
+        checkpoints: chain.checkpoints.map(point => ({ step: point.step, availability: point.availability,
+          sources: point.evidence.map(item => ({ message_index: item.message_index, reference: { evidence_id: item.evidence_id } })) })),
+      });
       continue;
     }
     const returned = chain.checkpoints.find(point => point.step === "原始返回及字段含义")!.evidence;
@@ -99,8 +103,10 @@ export function investigationIssues(request: AgentRequest, problem: ProblemPropo
         : checkpoint.step === "模型实际输入" ? [actualInput] : [checkpoint.evidence];
       if (step.status === "checked") for (const group of groups.filter(group => group.length)) {
         if (!group.some(point => selected.some(item => !item.source && step.evidence_ids.includes(item.evidence_id) && overlaps(item, point, raw))))
-          add("investigation_stage_evidence", where, `${checkpoint.step} 必须引用该环节的真实来源；传递、解释和交付分别对照前后边界，不能用后续输入代替原始返回，或用最终交付代替生成过程。`,
-            group.map(({evidence_id,message_index}) => ({evidence_id,message_index})));
+          add("investigation_stage_evidence", where, `${checkpoint.step} 必须引用该环节的真实来源；传递、解释和交付分别对照前后边界，不能用后续输入代替原始返回，或用最终交付代替生成过程。`, {
+            chain_index: chain.chain_index, step: checkpoint.step,
+            required_sources: group.map(item => ({ message_index: item.message_index, reference: { evidence_id: item.evidence_id } })),
+          });
       }
       if (critical.has(checkpoint.step)) for (const item of checkpoint.evidence) {
         const read = target(item);
@@ -112,7 +118,8 @@ export function investigationIssues(request: AgentRequest, problem: ProblemPropo
   for (const [index, cause] of problem.component.entries()) {
     const location = `${path}/component/${index}`, chain = chains.find(chain => chain.chain_index === cause.chain_index);
     if (cause.chain_index !== null && !chain) add("responsibility_chain", location, "责任须关联实际登记的业务调用链路。特定调用不能填写空关联。");
-    if (related.length && !chain) add("responsibility_chain", location, "本问题已有相关业务链路，责任不能只落在通用最终节点；选择故障形成、传播或恢复所在的调用和业务步骤。");
+    if (related.length && !chain) add("responsibility_chain", location, "本问题已有相关业务链路，责任不能只落在通用最终节点；选择故障形成、传播或恢复所在的调用和业务步骤。",
+      { chain_index_choices: related.map(chain => chain.chain_index) });
     if (isComponentLocator(cause.business_component) || [cause.component, ...Object.keys(attributionTaxonomy.domains),
       ...Object.values(attributionTaxonomy.domains).flat(), ...attributionTaxonomy.stages, ...attributionTaxonomy.investigation_steps,
       "模型推理错误", "最终作答节点", "回答模型"].includes(cause.business_component))
