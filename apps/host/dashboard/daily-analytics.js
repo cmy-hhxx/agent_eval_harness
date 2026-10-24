@@ -29,6 +29,7 @@ export function analyticsView(value,range='30') {
   let selected=[];
   if(dates.length) {
     const end=new Date(`${dates.at(-1)}T00:00:00Z`),start=range==='all'?new Date(`${dates[0]}T00:00:00Z`):new Date(end);if(range!=='all')start.setUTCDate(start.getUTCDate()-Number(range)+1);
+    start.setTime(Math.max(start.getTime(),new Date(`${dates[0]}T00:00:00Z`).getTime()));
     selected=[];for(const date=new Date(start);date<=end;date.setUTCDate(date.getUTCDate()+1))selected.push(date.toISOString().slice(0,10));
   }
   const trendRows=selected.map(date=>[date,intakeDates.get(date)?.answers??0,evaluationDates.get(date)?.completed??0]);

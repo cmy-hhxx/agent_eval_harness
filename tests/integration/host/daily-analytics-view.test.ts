@@ -8,7 +8,7 @@ import {ROOT} from '../../fixtures/services.js';
 const {JSDOM}=createRequire(import.meta.url)('jsdom');
 const directory=path.join(ROOT,'apps/host/dashboard');
 const fixture=(source='aime')=>({source,intake:{totals:{answers:12,questions:7,excluded:3},reportsComplete:true,
-  dates:[{date:'2026-10-20',answers:4,questions:2},{date:'2026-10-24',answers:8,questions:5}],
+  dates:[{date:'2026-10-10',answers:4,questions:2},{date:'2026-10-24',answers:8,questions:5}],
   models:[{model:'aime_fast',answers:8},{model:'aime_expert',answers:4}],exclusions:[{reason:'duplicate_trace',count:2},{reason:'single_trace_required',count:1}]},
   evaluation:{unit:source==='aime'?'answers':'comparisons',totals:{total:4,completed:1,partial:2,pending:1,failed:0,running:0},
     dates:[{date:'2026-10-24',total:3,completed:1},{date:null,total:1,completed:0}],models:[],stages:[]}});
@@ -25,11 +25,12 @@ test('analytics counts full scope, preserves answer and comparison units and use
     const value=fixture(),view=dom.window.Analytics.analyticsView(value,'all');
     assert.equal(view.metrics[0].value,'12');assert.equal(view.metrics[1].value,'1');assert.equal(view.metrics[1].unit,'条 · 纳入 4 回答');assert.equal(view.metrics[2].label,'已纳入评测完成率');assert.equal(view.metrics[2].value,'25.0%');
     assert.equal(view.charts[2].scope,'已纳入评测 · 4 回答');
-    assert.equal(view.charts[0].rows.length,5);assert.deepEqual(Array.from(view.charts[0].rows[1]),['2026-10-21',0,0]);
+    assert.equal(view.charts[0].rows.length,15);assert.deepEqual(Array.from(view.charts[0].rows[1]),['2026-10-11',0,0]);
     assert.match(view.charts[0].scope,/按数据日期 · 当前完成覆盖.*未知日期 1 回答/);
     assert.deepEqual(Array.from(view.charts[1].rows,(row:any)=>Array.from(row)),[['Fast',8],['Expert',4]]);
     assert.deepEqual(Array.from(view.charts[3].rows,(row:any)=>Array.from(row)),[['重复 Trace',2],['单轮 Trace 数量无效',1]]);
     const week=dom.window.Analytics.analyticsView(value,'7');assert.equal(week.charts[0].rows.length,7);assert.equal(week.charts[0].rows[0][0],'2026-10-18');
+    const short=fixture();short.intake.dates[0].date='2026-10-20';const available=dom.window.Analytics.analyticsView(short,'30');assert.equal(available.charts[0].rows.length,5);assert.equal(available.charts[0].rows[0][0],'2026-10-20','do not fill empty dates before the source first appeared');
     assert.equal(week.charts[0].option.yAxis.length,1);
     const pairs=dom.window.Analytics.analyticsView(fixture('wencai'),'7');assert.equal(pairs.charts[0].option.yAxis.length,2);assert.equal(pairs.charts[0].option.yAxis[1].name,'对局');
     assert.equal(pairs.charts[0].option.series[1].yAxisIndex,1);assert.equal(pairs.metrics[1].label,'完整完成对局');assert.equal(pairs.metrics[1].unit,'场 · 纳入 4 对局');assert.equal(pairs.charts[2].scope,'已纳入评测 · 4 对局');
