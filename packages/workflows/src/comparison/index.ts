@@ -44,3 +44,5 @@ export * from "./stability-statistics.js";
 export * from "./stability-report.js";
 export * from "./run-errors.js";
 export * from "./analysis-scope.js";
+
+export { businessChains } from "./business-chains.js";

@@ -908,6 +908,7 @@ export * from "./evidence.js";
 export * from "./evidence-coverage.js";
 export * from "./instructions.js";
 export * from "./component-identity.js";
+export * from "./trace-exchanges.js";
 export * from "./validation.js";
 export * from "./trace-audit.js";
 export * from "./table-correspondence.js";

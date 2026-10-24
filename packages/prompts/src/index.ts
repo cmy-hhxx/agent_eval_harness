@@ -30,6 +30,7 @@ export const attributionNotApplicableText = resource("attribution/default/not_ap
 export const attributionTaxonomy = JSON.parse(resource("attribution/taxonomy.json")) as {
   domains: Record<string, string[]>;
   stages: string[];
+  investigation_steps: string[];
 };
 const descriptions = new Map<string, string>(
   builtinToolNames.map((name) => [name, resource(`tools/${name}.md`)]),

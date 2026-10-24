@@ -26,7 +26,7 @@ const problem = (
     evidence_status: "established",
     impact: "i",
   },
-  problem: { component: [responsibilityFixture(component, {evidence_ids: ([canonicalEvidence("11111111-1111-4111-8111-111111111111", 3, `q-${finding_id}`)]).map(item=>item.evidence_id)})], label, definition: "d" },
+  problem: { diagnosis: "other" as const, investigation: [], component: [responsibilityFixture(component, {evidence_ids: ([canonicalEvidence("11111111-1111-4111-8111-111111111111", 3, `q-${finding_id}`)]).map(item=>item.evidence_id)})], label, definition: "d" },
 });
 const strength = (finding_id: string): AttributionFinding => ({
   ...problem(finding_id, "最终作答节点（原始名称未提供）", "无", "无"),

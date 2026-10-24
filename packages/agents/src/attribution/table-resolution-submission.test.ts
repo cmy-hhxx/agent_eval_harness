@@ -119,7 +119,7 @@ function conflictFixture() {
   f.draft.problems.push({ dimension: "correctness", stage: "final_answer", importance: "high", text: "基金代码与原查询不同",
     reason: "相同基金全称，原查询为588001.SH，回答为588000.SH。", impact: "核心标的代码不可用。",
     evidence_status: "established", basis_index: 1, evidence_indices: indices,
-    component: [responsibilitySubmissionFixture("最终作答节点（原始名称未提供）", indices)], label: "基金代码错误", definition: "最终基金代码与同一名称的原查询代码不一致。" });
+    diagnosis: "other", investigation: [], component: [responsibilitySubmissionFixture("最终作答节点（原始名称未提供）", indices)], label: "基金代码错误", definition: "最终基金代码与同一名称的原查询代码不一致。" });
   f.draft.table_resolutions![0].outcome = "conflict";
   f.draft.table_resolutions![0].reason = "完整行与聚焦代码、名称证据均确认同一基金的代码冲突。";
   return f;

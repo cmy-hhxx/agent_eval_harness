@@ -177,7 +177,7 @@ export function attributionResult(correct = true, answer = "2+2=4", available = 
         },
         problem: correct
           ? null
-          : { component: [responsibilityFixture("最终作答节点（原始名称未提供）", {evidence_ids: ([{ evidence_id: evidenceId(inputId, 1, "text", "/content", 0, answer.length), message_index: 1, quote: answer }]).map(item=>item.evidence_id)})], label: "算术错误", definition: "计算与事实不符。" },
+          : { diagnosis: "other" as const, investigation: [], component: [responsibilityFixture("最终作答节点（原始名称未提供）", {evidence_ids: ([{ evidence_id: evidenceId(inputId, 1, "text", "/content", 0, answer.length), message_index: 1, quote: answer }]).map(item=>item.evidence_id)})], label: "算术错误", definition: "计算与事实不符。" },
       },
     ],
   };

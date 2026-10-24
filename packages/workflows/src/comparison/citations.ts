@@ -11,6 +11,7 @@ export interface CitationSource extends CitationContext {
   origin: "tool_return" | "model_visible";
   /** Exact declared source address; absence does not establish that a document is missing. */
   document_url?: string;
+  request_query?: string;
 }
 export interface CitationOccurrence extends Evidence {
   context: CitationContext;
@@ -181,7 +182,7 @@ export function citationInventory(raw: { messages: unknown[] }, inputId: string,
   const directory = new Map<string, CitationSource[]>();
   const protocols = new Set<CitationFormat>();
   const add = (format: CitationFormat, reference: string, evidence: Evidence, origin: CitationSource["origin"],
-    attribute: "ref" | "anchor" = "ref", declaredUrl?: string) => {
+    attribute: "ref" | "anchor" = "ref", declaredUrl?: string, requestQuery?: string) => {
     const key = referenceKey(format, reference, attribute);
     protocols.add(format);
     const sources = directory.get(key) ?? [];
@@ -190,7 +191,7 @@ export function citationInventory(raw: { messages: unknown[] }, inputId: string,
       if (!coordinate || coordinate.kind === "image") throw new Error("引用目录证据不是文本坐标");
       const { start, end, path } = coordinate;
       const url = format === "footnote" ? footnoteDocumentUrl(evidence.quote) : documentUrl(declaredUrl);
-      sources.push({ ...evidence, origin, ...(url ? { document_url: url } : {}), read_request: { message_index: evidence.message_index,
+      sources.push({ ...evidence, origin, ...(url ? { document_url: url } : {}), ...(requestQuery ? { request_query: requestQuery } : {}), read_request: { message_index: evidence.message_index,
         path, offset: start, max_chars: Math.min(16000, end - start) }, end_offset: end });
     }
     directory.set(key, sources);
@@ -206,7 +207,7 @@ export function citationInventory(raw: { messages: unknown[] }, inputId: string,
       add("vis-html", reference, cite(inputId, messageIndex, source, from + document.start, from + document.end), origin);
     for (const block of jsonObjects(text)) for (const ref of traceSources(block.value))
       add("trace", ref.reference, cite(inputId, messageIndex, source, from + block.start, from + block.end), origin,
-        ref.attribute, typeof block.value.url === "string" ? block.value.url : undefined);
+        ref.attribute, typeof block.value.url === "string" ? block.value.url : undefined, typeof block.value.query === "string" ? block.value.query : undefined);
     // The renderer's current financial projection has a literal field block rather than JSON.
     const blocks = [...text.matchAll(/^finquery_result:\s*\r?\nserial_number:\s*([A-Za-z0-9]{7})\s*\r?\nquery:[^\n]+\r?\nrow_count:\s*\d+\s*\r?\n/gmu)];
     for (const [index, match] of blocks.entries()) {
@@ -256,7 +257,7 @@ export function citationInventory(raw: { messages: unknown[] }, inputId: string,
       const node = record(child);
       if (node) {
         const refs = traceSources(node), evidence = refs.length ? sourceEvidence(message, messageIndex, path) : undefined;
-        if (evidence) for (const ref of refs) add("trace", ref.reference, evidence, "tool_return", ref.attribute, typeof node.url === "string" ? node.url : undefined);
+        if (evidence) for (const ref of refs) add("trace", ref.reference, evidence, "tool_return", ref.attribute, typeof node.url === "string" ? node.url : undefined, typeof node.query === "string" ? node.query : undefined);
       }
       if (child && typeof child === "object") for (const [key, item] of Object.entries(child))
         walk(item, `${path}/${pointer(key)}`);
@@ -297,9 +298,9 @@ export function citationInventory(raw: { messages: unknown[] }, inputId: string,
         else {
           // Fast's final user message wraps current results, history and instructions together.
           // Only the current named search/financial sections are source directories.
-          const start = source.text.search(/^你(?:通过网络搜索查到的内容|取到的金融数据)[:：]/mu);
+          const start = source.text.search(/^(?:你(?:通过网络搜索查到的内容|取到的金融数据)[:：]|What you found from web search:|Financial data you fetched:)/mu);
           if (start < 0) continue;
-          const metadata = source.text.slice(start).search(/^(?:你调用客服工具拿到的内容[:：]|以下是仅供你知悉的背景元数据|当前时间[:：]|用户 KYC\s*\/\s*记忆信息[:：]|NER 抽取结果)/mu);
+          const metadata = source.text.slice(start).search(/^(?:你调用客服工具拿到的内容[:：]|以下是仅供你知悉的背景元数据|当前时间[:：]|用户 KYC\s*\/\s*记忆信息[:：]|NER 抽取结果|What you obtained from calling the customer-service tool:|The following is background metadata|Current time \(|Current account and position context|NER extraction)/mu);
           const end = metadata < 0 ? source.text.length : start + metadata;
           indexText(source, turnIndex, "model_visible", start, end, false);
         }

@@ -270,7 +270,9 @@
             "required": [
               "component",
               "label",
-              "definition"
+              "definition",
+              "diagnosis",
+              "investigation"
             ],
             "properties": {
               "component": {
@@ -291,7 +293,12 @@
                     "certainty",
                     "evidence_gap",
                     "alternatives",
-                    "evidence_ids"
+                    "evidence_ids",
+                    "business_component",
+                    "chain_index",
+                    "chain_step",
+                    "field_names",
+                    "mechanism_source"
                   ],
                   "properties": {
                     "technical_domain": {
@@ -353,6 +360,43 @@
                         "type": "string",
                         "minLength": 1
                       }
+                    },
+                    "business_component": {
+                      "type": "string",
+                      "minLength": 1
+                    },
+                    "chain_index": {
+                      "type": [
+                        "integer",
+                        "null"
+                      ],
+                      "minimum": 1
+                    },
+                    "chain_step": {
+                      "enum": [
+                        "用户目标",
+                        "查询规划与标的选择",
+                        "工具请求参数",
+                        "原始返回及字段含义",
+                        "返回整理与上下文传递",
+                        "模型实际输入",
+                        "数据解释与计算",
+                        "核验与最终交付"
+                      ]
+                    },
+                    "field_names": {
+                      "type": "array",
+                      "uniqueItems": true,
+                      "items": {
+                        "type": "string",
+                        "minLength": 1
+                      }
+                    },
+                    "mechanism_source": {
+                      "enum": [
+                        "explicit_process",
+                        "boundary_comparison"
+                      ]
                     }
                   }
                 }
@@ -364,6 +408,78 @@
               "definition": {
                 "type": "string",
                 "minLength": 1
+              },
+              "diagnosis": {
+                "enum": [
+                  "entity_or_unit",
+                  "source_absence",
+                  "context_loss",
+                  "other"
+                ]
+              },
+              "investigation": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": [
+                    "chain_index",
+                    "steps"
+                  ],
+                  "properties": {
+                    "chain_index": {
+                      "type": "integer",
+                      "minimum": 1
+                    },
+                    "steps": {
+                      "type": "array",
+                      "minItems": 8,
+                      "maxItems": 8,
+                      "items": {
+                        "type": "object",
+                        "additionalProperties": false,
+                        "required": [
+                          "step",
+                          "status",
+                          "observation",
+                          "evidence_ids"
+                        ],
+                        "properties": {
+                          "step": {
+                            "enum": [
+                              "用户目标",
+                              "查询规划与标的选择",
+                              "工具请求参数",
+                              "原始返回及字段含义",
+                              "返回整理与上下文传递",
+                              "模型实际输入",
+                              "数据解释与计算",
+                              "核验与最终交付"
+                            ]
+                          },
+                          "status": {
+                            "enum": [
+                              "checked",
+                              "not_collected"
+                            ]
+                          },
+                          "observation": {
+                            "type": "string",
+                            "minLength": 1
+                          },
+                          "evidence_ids": {
+                            "type": "array",
+                            "uniqueItems": true,
+                            "items": {
+                              "type": "string",
+                              "minLength": 1
+                            }
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
               }
             }
           },

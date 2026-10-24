@@ -32,9 +32,12 @@ export function responsibilitySchema(evidenceField: "evidence_ids" | "evidence_i
   const text = { type: "string", minLength: 1 };
   return {
     type: "object", additionalProperties: false,
-    required: ["role", "technical_domain", "functional_component", "component", "failure_stage", "mechanism", "certainty", "reason", evidenceField, "evidence_gap", "alternatives"],
+    required: ["role", "technical_domain", "functional_component", "component", "business_component", "chain_index", "chain_step", "field_names", "mechanism_source", "failure_stage", "mechanism", "certainty", "reason", evidenceField, "evidence_gap", "alternatives"],
     properties: {
       role: { enum: ["primary", "contributing"] }, technical_domain: text, functional_component: text, component: { ...text },
+      business_component: text, chain_index: { type: ["integer", "null"], minimum: 1 },
+      chain_step: { enum: attributionTaxonomy.investigation_steps }, field_names: { type: "array", uniqueItems: true, items: text },
+      mechanism_source: { enum: ["explicit_process", "boundary_comparison"] },
       failure_stage: { enum: attributionTaxonomy.stages }, mechanism: text,
       certainty: { enum: ["confirmed", "inferred"] }, reason: text,
       [evidenceField]: { type: "array", minItems: 1, uniqueItems: true,

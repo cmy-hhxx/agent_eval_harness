@@ -81,7 +81,7 @@ test("comparison removes source identity from prompt text, trace, and attributio
     finding_id: "f1", type: "problem", dimension: "correctness", stage: "execution", importance: "medium",
     text: "A组Fast 的 Search 可能异常", reason: "secret-model 尚待核实", evidence: [canonicalEvidence(evidenceInputId, 2, "A组Fast", "/content/value")],
     assessment: { requirement_index: null, observation: "疑似异常", evidence_status: "uncertain", impact: "若属实会影响结果" },
-    problem: { component: [responsibilityFixture("Search", {evidence_ids: ([canonicalEvidence(evidenceInputId, 2, "A组Fast", "/content/value")]).map(item=>item.evidence_id)})], label: "调用结果异常", definition: "结果不完整" },
+    problem: { diagnosis: "other" as const, investigation: [], component: [responsibilityFixture("Search", {evidence_ids: ([canonicalEvidence(evidenceInputId, 2, "A组Fast", "/content/value")]).map(item=>item.evidence_id)})], label: "调用结果异常", definition: "结果不完整" },
   } as AttributionResult["findings"][number];
   const attribution: AttributionResult = {
     criterion_assessments: [], core_assessment: { meets_core: true, reason: "已完成。", criterion_ids: ["r1"] },

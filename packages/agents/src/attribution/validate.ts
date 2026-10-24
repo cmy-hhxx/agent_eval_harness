@@ -18,6 +18,7 @@ import { submissionEvidenceIssues } from "./submission-evidence.js";
 import { captureMarkerProblemIssues, correctnessEvidenceScopeIssues, foreignActualIssues, referenceMaterialIssues, validateAttributionEvidence } from "./source-evidence.js";
 import { numericLedgerIssues } from "./numeric-ledger.js";
 import { normDirectoryIssues, findingNormSelectionIssues, attributionNormDirectory, submissionFindingEntries } from "./norm-directory.js";
+import { investigationIssues } from "./investigation.js";
 import { componentCatalogIssues, responsibilityIssues } from "./responsibility.js";
 
 interface Input {
@@ -320,6 +321,7 @@ export function validateEvaluation(request: AgentRequest, result: unknown, audit
   repairErrors.push(...numericLedgerIssues(request, value, "result"));
   value.findings.forEach((finding, index) => {
     repairErrors.push(...responsibilityIssues(request, finding.problem, finding.evidence, `/findings/${index}/problem`));
+    if (finding.problem) repairErrors.push(...investigationIssues(request, finding.problem, finding.evidence, audit, `/findings/${index}/problem`));
   });
 
   input.answer.deferred_final_material.forEach((material, index) => {

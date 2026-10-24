@@ -261,7 +261,12 @@
                                 "certainty",
                                 "reason",
                                 "evidence_gap",
-                                "alternatives"
+                                "alternatives",
+                                "business_component",
+                                "chain_index",
+                                "chain_step",
+                                "field_names",
+                                "mechanism_source"
                               ],
                               "properties": {
                                 "role": {
@@ -299,6 +304,43 @@
                                   "items": {
                                     "type": "string"
                                   }
+                                },
+                                "business_component": {
+                                  "type": "string",
+                                  "minLength": 1
+                                },
+                                "chain_index": {
+                                  "type": [
+                                    "integer",
+                                    "null"
+                                  ],
+                                  "minimum": 1
+                                },
+                                "chain_step": {
+                                  "enum": [
+                                    "用户目标",
+                                    "查询规划与标的选择",
+                                    "工具请求参数",
+                                    "原始返回及字段含义",
+                                    "返回整理与上下文传递",
+                                    "模型实际输入",
+                                    "数据解释与计算",
+                                    "核验与最终交付"
+                                  ]
+                                },
+                                "field_names": {
+                                  "type": "array",
+                                  "uniqueItems": true,
+                                  "items": {
+                                    "type": "string",
+                                    "minLength": 1
+                                  }
+                                },
+                                "mechanism_source": {
+                                  "enum": [
+                                    "explicit_process",
+                                    "boundary_comparison"
+                                  ]
                                 }
                               }
                             }
@@ -408,7 +450,12 @@
                       "certainty",
                       "reason",
                       "evidence_gap",
-                      "alternatives"
+                      "alternatives",
+                      "business_component",
+                      "chain_index",
+                      "chain_step",
+                      "field_names",
+                      "mechanism_source"
                     ],
                     "properties": {
                       "role": {
@@ -446,6 +493,43 @@
                         "items": {
                           "type": "string"
                         }
+                      },
+                      "business_component": {
+                        "type": "string",
+                        "minLength": 1
+                      },
+                      "chain_index": {
+                        "type": [
+                          "integer",
+                          "null"
+                        ],
+                        "minimum": 1
+                      },
+                      "chain_step": {
+                        "enum": [
+                          "用户目标",
+                          "查询规划与标的选择",
+                          "工具请求参数",
+                          "原始返回及字段含义",
+                          "返回整理与上下文传递",
+                          "模型实际输入",
+                          "数据解释与计算",
+                          "核验与最终交付"
+                        ]
+                      },
+                      "field_names": {
+                        "type": "array",
+                        "uniqueItems": true,
+                        "items": {
+                          "type": "string",
+                          "minLength": 1
+                        }
+                      },
+                      "mechanism_source": {
+                        "enum": [
+                          "explicit_process",
+                          "boundary_comparison"
+                        ]
                       }
                     }
                   }

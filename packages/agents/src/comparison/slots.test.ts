@@ -22,7 +22,7 @@ test("independent strengths preserve confirmed cells without blocking a comparis
  assert(!result.decision_basis.decisive_findings.some(item=>item.candidate==='A'&&item.finding_index===0));
  assert(input.attributions.A.findings[0],"the source observation remains intact");
  const finding=input.attributions.A.findings[0];finding.type='problem';finding.importance='high';
- Object.assign(finding,{problem:{component:[responsibilityFixture("最终作答节点（原始名称未提供）", {evidence_ids: []})],label:'推导错误',definition:'关键中间计算与交付不一致。'}});
+ Object.assign(finding,{problem:{diagnosis: "other" as const, investigation: [], component:[responsibilityFixture("最终作答节点（原始名称未提供）", {evidence_ids: []})],label:'推导错误',definition:'关键中间计算与交付不一致。'}});
  const pending=f.registry.resolve(f.binding,requestComparisonSubmission(f.request,example.result as ComparisonResult),audit) as ComparisonResult;
  assert.equal(pending.status,'needs_review');
  assert(pending.review_requests.some(item=>item.candidate==='A'&&item.finding_indices.includes(0)));
@@ -49,7 +49,7 @@ test("an additional unmapped error cannot erase already established failures on 
  }
  const finding=input.attributions.A.findings[0];
  Object.assign(finding,{type:'problem',importance:'medium',text:'附加交集表的并集计算错误。',
-  problem:{component:[responsibilityFixture("最终作答节点（原始名称未提供）", {evidence_ids: []})],label:'附加计算错误',definition:'容斥计算与所列并集不符。'}});
+  problem:{diagnosis: "other" as const, investigation: [], component:[responsibilityFixture("最终作答节点（原始名称未提供）", {evidence_ids: []})],label:'附加计算错误',definition:'容斥计算与所列并集不符。'}});
  finding.assessment.requirement_index=null;
  const result=f.registry.resolve(f.binding,requestComparisonSubmission(f.request,example.result as ComparisonResult),audit) as ComparisonResult;
  f.registry.validate(f.binding,result,audit);

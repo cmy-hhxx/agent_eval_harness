@@ -23,6 +23,11 @@ export interface ClusteringExample {
   responsibilities?: {
     role: "primary" | "contributing";
     component: string;
+    business_component: string;
+    chain_index: number | null;
+    chain_step: string;
+    field_names: string[];
+    mechanism_source: "explicit_process" | "boundary_comparison";
     failure_stage: string;
     mechanism: string;
     certainty: "confirmed" | "inferred";

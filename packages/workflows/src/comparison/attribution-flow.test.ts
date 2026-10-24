@@ -28,7 +28,7 @@ for(const [modelCount,findingType] of [[2,"strength"],[2,"problem"],[3,"problem"
   for(const task of attributes){
    const value=attributionResult(true,"2+2=4",true,task.inputIds.answer);value.findings[0].assessment.requirement_index=null;
    value.findings[0].type=findingType;
-   if(findingType==="problem")value.findings[0].problem={component:[responsibilityFixture("最终作答节点（原始名称未提供）", {evidence_ids: []})],label:"计算过程缺口",definition:"中间计算与最终结果的关系缺少说明。"};
+   if(findingType==="problem")value.findings[0].problem={diagnosis: "other" as const, investigation: [], component:[responsibilityFixture("最终作答节点（原始名称未提供）", {evidence_ids: []})],label:"计算过程缺口",definition:"中间计算与最终结果的关系缺少说明。"};
    receipts[task.id]=receipt(task.id,value);state.manifest.states[task.id].status="succeeded";
    apply(comparisonWorkflow.advance!(task,receipts[task.id],state,plan.inputs));
   }

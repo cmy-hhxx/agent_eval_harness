@@ -10,6 +10,7 @@ import { numericReferenceDirectory } from "./units.js";
 import { findingIssueContext } from "./finding-feedback.js";
 import { attributionSubmissionSchema } from "./submission-schema.js";
 import { attributionFindingBasis } from "./finding-basis.js";
+import { businessChainReads } from "./investigation.js";
 import { investigationMaterial } from "./investigation-material.js";
 export { attributionFindingBasis } from "./finding-basis.js";
 export { attributionNormDirectory, type AttributionNorm } from "./norm-directory.js";
@@ -56,10 +57,10 @@ export const attributionProfile: AgentProfile = {
     }), policy, failure);
   },
   toolNames,
-  requiredReads: (request) => (request.input.answer as { deferred_final_material: { message_index: number; path: string; total_chars: number }[] }).deferred_final_material.map((material) => ({
+  requiredReads: (request) => [...businessChainReads(request), ...(request.input.answer as { deferred_final_material: { message_index: number; path: string; total_chars: number }[] }).deferred_final_material.map((material) => ({
     candidate: "answer", message_index: material.message_index, kind: "text" as const,
     path: material.path, start: 0, end: material.total_chars,
-  })),
+  }))],
   validate: validateEvaluation,
   validateSubmission: validateModelSubmission,
   validationIssueContext: findingIssueContext,

@@ -1,3 +1,4 @@
+import { businessChains, businessChainNavigation } from "./business-chains.js";
 import { isToolSpan } from "./adapters.js";
 import { isDeepStrictEqual } from "node:util";
 import { workflowText } from "@eval/prompts";
@@ -113,6 +114,7 @@ function modelMaterial(material: Record<string, unknown>, candidate: string, raw
     ...(material.component_catalog ? { component_catalog: (material.component_catalog as TraceComponentIdentity[]).map(actor => ({ ...actor,
       identity_evidence: actor.identity_evidence.map(shown),
     })) } : {}),
+    ...(material.business_chains ? { business_chains: businessChainNavigation(material.business_chains as import("@eval/agents/attribution").BusinessChain[], candidate) } : {}),
     ...(captureGaps.length ? { capture_gaps: captureGaps } : {}),
     ...(imageCount ? { final_images: { image_count: imageCount,
       view_request: { candidate, message_index: finalIndex } } } : {}),
@@ -246,6 +248,7 @@ export function bindAttributionMaterial(candidate: Candidate, original: RawInput
     final_evidence: finalSources.filter(source => source.text.length <= limit).map(source => cite(candidate.input_id, candidate.final_index, source, 0, source.text.length)),
     deferred_final_material: deferred.map(source => ({ message_index: candidate.final_index, path: source.path, total_chars: source.text.length })),
     initial_material: initial, instruction_sources: [], citation_inventory: citationInventory(raw, candidate.input_id, candidate.final_index),
+    business_chains: businessChains(raw, candidate.input_id, candidate.final_index),
     catalog: traceCatalog(raw), component_catalog: traceComponentIdentities(raw, candidate.input_id, candidate.final_index),
     input_file: "inputs/answer.json", original_answer_timing: { finish_seconds: candidate.answer_timing.finish_seconds },
     answer_generation: getAnswerGeneration(raw, candidate.input_id, candidate.final_index),
@@ -424,9 +427,11 @@ function bindSourceTask(
         const peer = bindAttributionMaterial(candidate, inputs[candidate.input_id] as RawInput, task_analysis as TaskAnalysis, { reference });
         const raw = peer.request.sources.answer.value as RawInput;
         binding.request.sources[key] = peer.request.sources.answer;
-        registered[key] = { ...peer.request.input.answer as object, grader_only: true, source_input_id: candidate.input_id,
+        const { component_catalog: _actors, norm_directory: _norms, ...peerAnswer } = peer.request.input.answer as Record<string, unknown>;
+        const { component_catalog: _shownActors, norm_directory: _shownNorms, ...peerShown } = peer.modelInput!.answer as Record<string, unknown>;
+        registered[key] = { ...peerAnswer, grader_only: true, source_input_id: candidate.input_id,
           original_user_timestamp: originalUserTimestamp(raw) };
-        shown[key] = { ...peer.modelInput!.answer as object, grader_only: true, source_input_id: candidate.input_id,
+        shown[key] = { ...peerShown, grader_only: true, source_input_id: candidate.input_id,
           original_user_timestamp: originalUserTimestamp(raw) };
       }
       binding.request.input.reference_materials = registered;

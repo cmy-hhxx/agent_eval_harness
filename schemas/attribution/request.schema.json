@@ -40,7 +40,8 @@
         "table_check_results",
         "note",
         "norm_directory",
-        "component_catalog"
+        "component_catalog",
+        "business_chains"
       ],
       "properties": {
         "identity": {
@@ -335,6 +336,9 @@
               }
             }
           }
+        },
+        "business_chains": {
+          "$ref": "#/$defs/businessChains"
         }
       }
     },
@@ -893,6 +897,10 @@
         "document_url": {
           "type": "string",
           "minLength": 1
+        },
+        "request_query": {
+          "type": "string",
+          "minLength": 1
         }
       }
     },
@@ -913,7 +921,8 @@
         "note",
         "source_input_id",
         "original_user_timestamp",
-        "grader_only"
+        "grader_only",
+        "business_chains"
       ],
       "properties": {
         "identity": {
@@ -1108,6 +1117,9 @@
         },
         "answer_generation": {
           "$ref": "#/$defs/answer_generation"
+        },
+        "business_chains": {
+          "$ref": "#/$defs/businessChains"
         }
       }
     },
@@ -1313,6 +1325,132 @@
           "minItems": 1,
           "items": {
             "$ref": "#/$defs/evidence"
+          }
+        }
+      }
+    },
+    "businessChains": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "chain_index",
+          "tool_component",
+          "request_index",
+          "return_indices",
+          "planner_index",
+          "context_indices",
+          "link_basis",
+          "references",
+          "delivery_changed",
+          "checkpoints",
+          "final_evidence"
+        ],
+        "properties": {
+          "chain_index": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "tool_component": {
+            "type": "string",
+            "minLength": 1
+          },
+          "request_index": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "return_indices": {
+            "type": "array",
+            "minItems": 1,
+            "items": {
+              "type": "integer",
+              "minimum": 0
+            }
+          },
+          "planner_index": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "minimum": 0
+          },
+          "context_indices": {
+            "type": "array",
+            "items": {
+              "type": "integer",
+              "minimum": 0
+            }
+          },
+          "link_basis": {
+            "enum": [
+              "call_id",
+              "returned_query"
+            ]
+          },
+          "references": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "delivery_changed": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "checkpoints": {
+            "type": "array",
+            "minItems": 8,
+            "maxItems": 8,
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "step",
+                "availability",
+                "evidence",
+                "note"
+              ],
+              "properties": {
+                "step": {
+                  "enum": [
+                    "用户目标",
+                    "查询规划与标的选择",
+                    "工具请求参数",
+                    "原始返回及字段含义",
+                    "返回整理与上下文传递",
+                    "模型实际输入",
+                    "数据解释与计算",
+                    "核验与最终交付"
+                  ]
+                },
+                "availability": {
+                  "enum": [
+                    "available",
+                    "not_collected"
+                  ]
+                },
+                "evidence": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/$defs/evidence"
+                  }
+                },
+                "note": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              }
+            }
+          },
+          "final_evidence": {
+            "type": "array",
+            "items": {
+              "$ref": "#/$defs/evidence"
+            }
           }
         }
       }

@@ -43,7 +43,7 @@ test('confirmed context loss needs the actual model input, not just an original 
 });
 test('selected actor names retain their source coordinates and forged identities or node links are rejected',()=>{
  const f=fixture(),cause=responsibilityFixture(undefined,{evidence_ids:[f.final.evidence_id]});
- const problem=resolveProblemSubmission(f.request,{component:[cause],label:'价格口径错误',definition:'ETF份额价混作现货价。'},[f.final],'/problem');
+ const problem=resolveProblemSubmission(f.request,{diagnosis:"other",investigation:[],component:[cause],label:'价格口径错误',definition:'ETF份额价混作现货价。'},[f.final],'/problem');
  const actor=responsibilityIdentities(f.request).find(actor=>actor.component===problem.component[0].component)!;
  assert.deepEqual(actor.message_indices,[2,3]);
  assert.deepEqual(responsibilityIssues(f.request,problem,[f.final],'/problem'),[]);
