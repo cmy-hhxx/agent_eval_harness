@@ -6,11 +6,11 @@ import evidenceSchema from '../../../../schemas/score/evidence-submission.schema
 import evidenceResultSchema from '../../../../schemas/score/evidence-result.schema.json' with {type:'json'};
 import axisResultSchema from '../../../../schemas/score/axis-result.schema.json' with {type:'json'};
 import finalSchema from '../../../../schemas/score/final-submission.schema.json' with {type:'json'};
-import {validateScore,validateScoreAxis} from './validate.js';
+import {validateScore,validateScoreAxis,validateScoreJudgments} from './validate.js';
 import {scoreAxes,type ScoreAxis,type ScoreAxisResult,type ScoreEvidence,type ScoreException,type ScoreFinding,type ScoreRepair,type ScoreResult,type Rating} from './types.js';
 export * from './types.js';
 export {validateScore} from './validate.js';
-export interface ScoreContext {axis?:ScoreAxis;axes?:ScoreAxisResult[];repair_used?:boolean;evidence_used?:boolean;previous_evidence?:ScoreEvidence}
+export interface ScoreContext {axis_ids?:ScoreAxis[];axes?:ScoreAxisResult[];repair_used?:boolean;evidence_used?:boolean;previous_evidence?:ScoreEvidence}
 function fail(path:string,message:string):never{throw new ValidationError([{category:'decision',code:'score_contract',path,message}]);}
 const material=(request:AgentRequest)=>request.sources.case.value as unknown as ReviewCase;
 export function scoreAudit(request:AgentRequest,audit:ToolAudit):ReviewAudit{
@@ -46,12 +46,26 @@ export function scoreFinalMaterial(parts:ScoreAxisResult[]){
     evaluations:evaluations.map(({score:_score,score_range:_range,grade:_grade,item_name:_name,...row})=>row),
     diagnostics:diagnostics.map(({diagnostic_name:_name,...row})=>row)}));
 }
+/** Project a joint receipt without changing any judgment, attribution or diagnostic. */
+export function scoreAxisPart(value:ScoreAxisResult,axis:ScoreAxis):ScoreAxisResult{
+  const evaluations=value.evaluations.filter(row=>row.item_id.startsWith(axis)),diagnostics=value.diagnostics.filter(row=>row.diagnostic_id.startsWith(axis));
+  const first=scoreAxes.find(a=>value.evaluations.some(row=>row.item_id.startsWith(a)));
+  const firstAffected=(ids:string[])=>scoreAxes.find(a=>ids.some(id=>id.startsWith(a)))??first;
+  const findings=value.findings.filter(row=>{
+    const owner=row.primary_diagnostic_id==='unmapped'?firstAffected(row.affected_item_ids):row.primary_diagnostic_id[0];
+    return owner===axis;
+  });
+  const used=new Set([...evaluations,...diagnostics,...findings].flatMap(row=>row.evidence_ids));
+  return {...value,evaluations,diagnostics,findings,evidence:value.evidence.filter(row=>used.has(row.evidence_id)),
+    verification_requests:value.verification_requests.filter(row=>firstAffected(row.affected_item_ids)===axis)};
+}
 function profile(id:string,promptName:string,submissionSchema:AgentProfile['submissionSchema'],toolNames:string[],resolve:NonNullable<AgentProfile['resolve']>,validate?:AgentProfile['validate']):AgentProfile{
   const prompt=agentPrompt('score',toolNames,promptName);
   return {id,...prompt,requestSchema:{type:'object',required:['case_id','task_question','availability'],additionalProperties:true},submissionSchema,
     toolNames,renderPrompt:(input,policy,failure)=>{
       const axis=id.startsWith('axis-')?id.at(-1)!.toUpperCase():undefined;
-      const select=(values:Record<string,string>)=>Object.fromEntries(Object.entries(values).filter(([key])=>!axis||key.startsWith(axis)));
+      const axes=axis?[axis]:id==='dimensions'?input.score_axes as unknown as string[]:undefined;
+      const select=(values:Record<string,string>)=>Object.fromEntries(Object.entries(values).filter(([key])=>!axes||axes.includes(key[0])));
       const directory={units:select(scoreDirectory.units),...(id==='evidence'?{}:{diagnostics:select(scoreDirectory.diagnostics)})};
       return prompt.renderPrompt({...input,score_directory:directory},policy,failure);
     },resolve,validate};
@@ -69,21 +83,46 @@ const evidenceProfile=profile('evidence','evidence',evidenceSchema,['score_mater
   const facts=[...new Map([...(previous?.facts??[]),...value.facts].map(row=>[canonical([[...row.affected_item_ids].sort(),[...row.evidence_ids].sort()]),row])).values()];
   return {...value,facts,changed_item_ids:value.full_rescore_reason?Object.keys(scoreDirectory.units):changed};
 });
-const axisProfiles=Object.fromEntries(scoreAxes.map(axis=>[`axis-${axis.toLowerCase()}`,profile(`axis-${axis.toLowerCase()}`,`axis-${axis.toLowerCase()}`,axisSchema,['score_material','read_artifact'],(request,draft,audit)=>{
+function resolveJudgments(request:AgentRequest,draft:unknown,audit:ToolAudit):ScoreAxisResult{
   const value=draft as ScoreAxisResult;
-  const result:ScoreAxisResult={...value,case_id:material(request).case_id,evaluations:value.evaluations.map(row=>({...rating(row),item_name:scoreDirectory.units[row.item_id]})),
+  return {...value,case_id:material(request).case_id,evaluations:value.evaluations.map(row=>({...rating(row),item_name:scoreDirectory.units[row.item_id]})),
     diagnostics:value.diagnostics.map(row=>({...row,diagnostic_name:scoreDirectory.diagnostics[row.diagnostic_id]})),
     evidence:quotes(request,audit,[...value.evaluations,...value.diagnostics,...value.findings])};
+}
+const axisProfiles=Object.fromEntries(scoreAxes.map(axis=>[`axis-${axis.toLowerCase()}`,profile(`axis-${axis.toLowerCase()}`,`axis-${axis.toLowerCase()}`,axisSchema,['score_material','read_artifact'],(request,draft,audit)=>{
+  const result=resolveJudgments(request,draft,audit);
   validateScoreAxis(request,result,audit,axis);
-  for(const row of value.verification_requests)if(row.affected_item_ids.some(id=>!id.startsWith(axis)))fail('/verification_requests','只提请本轴的关键缺口。');
+  for(const row of result.verification_requests)if(row.affected_item_ids.some(id=>!id.startsWith(axis)))fail('/verification_requests','只提请本轴的关键缺口。');
   return result;
 },(request,value,audit)=>validateScoreAxis(request,value as ScoreAxisResult,audit,axis))]));
+function dimensionAxes(request:AgentRequest):ScoreAxis[]{
+  const axes=(request.sources.score.value as unknown as ScoreContext).axis_ids;
+  if(!axes?.length||new Set(axes).size!==axes.length||axes.some(axis=>!scoreAxes.includes(axis)))fail('/score_axes','评分阶段必须指定不重复的实际评审轴。');
+  return axes;
+}
+function validateDimensions(request:AgentRequest,value:ScoreAxisResult,audit:ToolAudit){
+  const axes=dimensionAxes(request),units=new Set(axes.flatMap(axis=>[axis+'1',axis+'2']));
+  if(value.evaluations.length!==axes.length*2||value.diagnostics.length!==axes.length*4||
+    value.evaluations.some(row=>!units.has(row.item_id))||value.diagnostics.some(row=>!axes.includes(row.diagnostic_id[0] as ScoreAxis))||
+    [...value.findings,...value.verification_requests].some(row=>row.affected_item_ids.some(id=>!units.has(id))))fail('/evaluations','只提交指定轴的全部核心项、诊断与问题。');
+  validateScoreJudgments(request,value,audit,axes);
+}
+const dimensionsProfile=profile('dimensions','dimensions',axisSchema,['score_material','read_artifact'],(request,draft,audit)=>{
+  const value=resolveJudgments(request,draft,audit);validateDimensions(request,value,audit);return value;
+},(request,value,audit)=>validateDimensions(request,value as ScoreAxisResult,audit));
+dimensionsProfile.resultSchema=axisResultSchema;
 evidenceProfile.resultSchema=evidenceResultSchema;
-for(const axis of scoreAxes){const p=axisProfiles['axis-'+axis.toLowerCase()];p.resultSchema=axisResultSchema;
-  p.modelSubmissionSchema=()=>{const schema=structuredClone(axisSchema);const units=[axis+'1',axis+'2'],diagnostics=Object.keys(scoreDirectory.diagnostics).filter(id=>id.startsWith(axis));
+function scopedJudgments(axes:ScoreAxis[]){
+    const schema=structuredClone(axisSchema),units=axes.flatMap(axis=>[axis+'1',axis+'2']),diagnostics=Object.keys(scoreDirectory.diagnostics).filter(id=>axes.includes(id[0] as ScoreAxis));
+    Object.assign(schema.properties.evaluations,{minItems:units.length,maxItems:units.length});Object.assign(schema.properties.diagnostics,{minItems:diagnostics.length,maxItems:diagnostics.length});
     schema.$defs.evaluation.properties.item_id.enum=units;schema.$defs.diagnostic.properties.diagnostic_id.enum=diagnostics;
     schema.$defs.finding.properties.affected_item_ids.items.enum=units;schema.$defs.finding.properties.diagnostic_ids.items.enum=diagnostics;
-    schema.$defs.finding.properties.primary_diagnostic_id.enum=[...diagnostics,'unmapped'];return schema;};
+    schema.$defs.finding.properties.primary_diagnostic_id.enum=[...diagnostics,'unmapped'];
+    schema.properties.verification_requests.items.properties.affected_item_ids.items.enum=units;return schema;
+}
+dimensionsProfile.modelSubmissionSchema=request=>scopedJudgments(dimensionAxes(request));
+for(const axis of scoreAxes){const p=axisProfiles['axis-'+axis.toLowerCase()];p.resultSchema=axisResultSchema;
+  p.modelSubmissionSchema=()=>scopedJudgments([axis]);
 }
 export const scoreProfile=profile('default','default',finalSchema,['score_material','read_artifact'],(request,draft,audit)=>{
   const context=request.sources.score.value as unknown as ScoreContext,value=draft as ScoreRepair|{final_answer_score:ScoreResult['final_answer_score'];finding_groups:string[][];explicit_probability:number|null;probability_evidence_ids:string[]};
@@ -116,4 +155,4 @@ scoreProfile.modelSubmissionSchema=request=>{
   return schema;
 };
 scoreProfile.resultSchema={...resultSchema,oneOf:[...resultSchema.oneOf,finalSchema.oneOf[1]]} as AgentProfile['resultSchema'];
-export const scoreAgent:AgentDefinition={id:'score',profiles:{default:scoreProfile,evidence:evidenceProfile,...axisProfiles}};
+export const scoreAgent:AgentDefinition={id:'score',profiles:{default:scoreProfile,evidence:evidenceProfile,dimensions:dimensionsProfile,...axisProfiles}};

@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {Ajv2020} from 'ajv/dist/2020.js';
 import type {AgentRequest,ToolAudit,ReviewQuote} from '@eval/contracts';
-import {scoreAgent,scoreProfile,scoreAxes,combineScoreAxes,scoreFinalMaterial,type ScoreAxisResult,type ScoreResult} from './index.js';
+import {scoreAgent,scoreProfile,scoreAxes,scoreAxisPart,combineScoreAxes,scoreFinalMaterial,type ScoreAxisResult,type ScoreResult} from './index.js';
 import originalCase from './fixtures/example-case.json' with {type:'json'};
 import originalResult from './fixtures/example-output.json' with {type:'json'};
 const audit=():ToolAudit=>({calls:0,requiredReadCalls:0,viewedImages:[],traceReads:[],calculations:[],artifacts:[]});
@@ -19,6 +19,33 @@ function parts(){return scoreAxes.map(axis=>{
   const result=p.resolve!(request(originalResult.evidence),value,audit()) as ScoreAxisResult;
   p.validate!(request(originalResult.evidence),result,audit());return result;
 });}
+test('joint scoring preserves all 36 judgments and scopes directed reassessment to requested axes',()=>{
+  const old=parts(),profile=scoreAgent.profiles.dimensions,context=request(originalResult.evidence);
+  (context.sources.score.value as any).axis_ids=[...scoreAxes];
+  const draft={evaluations:old.flatMap(p=>p.evaluations.map(({item_name:_n,grade:_g,...row})=>row)),
+    diagnostics:old.flatMap(p=>p.diagnostics.map(({diagnostic_name:_n,...row})=>row)),
+    findings:structuredClone(originalResult.findings),verification_requests:[]};
+  assert(new Ajv2020({strict:false}).compile(profile.modelSubmissionSchema!(context))(draft));
+  const value=profile.resolve!(context,draft,audit()) as ScoreAxisResult;
+  assert.equal(value.evaluations.length,12);assert.equal(value.diagnostics.length,24);
+  for(const [i,axis] of scoreAxes.entries()){
+    const part=scoreAxisPart(value,axis);assert.deepEqual(part.evaluations,old[i].evaluations);assert.deepEqual(part.diagnostics,old[i].diagnostics);
+  }
+  const missing=structuredClone(draft);missing.diagnostics.pop();assert.throws(()=>profile.resolve!(context,missing,audit()));
+  assert.equal(scoreAxes.flatMap(axis=>scoreAxisPart(value,axis).findings).length,originalResult.findings.length);
+  assert.equal(scoreAxisPart(value,'T').findings[0].primary_diagnostic_id,originalResult.findings[0].primary_diagnostic_id);
+  const projected=combineScoreAxes(scoreAxes.map(axis=>scoreAxisPart(value,axis)),originalResult.evidence);
+  const {grade:_grade,...rating}=originalResult.final_answer_score;
+  const finalDraft={final_answer_score:{...rating,finding_ids:['T:F1']},finding_groups:[['T:F1']],explicit_probability:null,probability_evidence_ids:[]};
+  const final=scoreProfile.resolve!(request(originalResult.evidence,projected),finalDraft,audit()) as ScoreResult;
+  assert.equal(final.final_answer_score.score,9);assert.deepEqual(final.findings[0].affected_item_ids,originalResult.findings[0].affected_item_ids);
+  assert.equal(final.findings[0].primary_diagnostic_id,originalResult.findings[0].primary_diagnostic_id);
+  (context.sources.score.value as any).axis_ids=['E','U'];
+  assert.equal(new Ajv2020({strict:false}).compile(profile.modelSubmissionSchema!(context))(draft),false);
+  assert.throws(()=>profile.resolve!(context,draft,audit()),/指定轴/);
+  const selected={...draft,evaluations:draft.evaluations.filter(row=>['E','U'].includes(row.item_id[0])),diagnostics:draft.diagnostics.filter(row=>['E','U'].includes(row.diagnostic_id[0])),findings:[]};
+  assert.equal((profile.resolve!(context,selected,audit()) as ScoreAxisResult).evaluations.length,4);
+});
 test('six independently resolved axes preserve judgments; final grouping merges one cross-axis issue without averaging',()=>{
   const axes=combineScoreAxes(parts(),originalResult.evidence),evidence=[...new Map(axes.flatMap(p=>p.evidence).map(q=>[q.evidence_id,q])).values()];
   const remap=(ids:string[])=>ids.map(id=>{const old=originalResult.evidence.find(q=>q.evidence_id===id)!;return evidence.find(q=>q.source_id===old.source_id&&q.start===old.start&&q.end===old.end)!.evidence_id;});

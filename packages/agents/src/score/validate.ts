@@ -14,6 +14,9 @@ export function validateScore(request: AgentRequest, result: unknown, audit: Too
 export function validateScoreAxis(request:AgentRequest,result:ScoreAxisResult,audit:ToolAudit,axis:ScoreAxis){
   validateScoreBody(request,result,audit,[axis+'1',axis+'2']);
 }
+export function validateScoreJudgments(request:AgentRequest,result:ScoreAxisResult,audit:ToolAudit,axes:ScoreAxis[]){
+  validateScoreBody(request,result,audit,axes.flatMap(axis=>[axis+'1',axis+'2']));
+}
 function validateScoreBody(request:AgentRequest,value:ScoreResult|ScoreException|ScoreAxisResult,audit:ToolAudit,expectedUnits=Object.keys(directory.units)){
   const material=request.sources.case.value as unknown as ReviewCase, issues:ValidationIssue[]=[];
   const bad=(path:string,message:string)=>issues.push({category:"decision",code:"score_contract",path,message});

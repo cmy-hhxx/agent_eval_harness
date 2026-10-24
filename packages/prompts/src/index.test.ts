@@ -36,7 +36,7 @@ function pathName(source: string): string { return source.slice(source.lastIndex
 
 test('all Score phases share the public-material boundary without changing other agents',()=>{
   const boundary=readFileSync(new URL('../resources/score/material-boundary.md',import.meta.url),'utf8').trim();
-  for(const profile of ['evidence','axis-t','axis-e','axis-l','axis-a','axis-u','axis-d','default']){
+  for(const profile of ['evidence','dimensions','axis-t','axis-e','axis-l','axis-a','axis-u','axis-d','default']){
     const prompt=agentPrompt('score',['score_material'],profile);
     assert(prompt.instructions.includes(boundary));assert(prompt.systemPrompt.includes(boundary));
   }
