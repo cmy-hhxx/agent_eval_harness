@@ -10,6 +10,7 @@ import { createModelResolver, parseSettings, applySettings } from "@eval/host-ap
 import { attributionProfile } from "@eval/agents/attribution";
 import { comparisonAgent, comparisonProfile } from "@eval/agents/comparison";
 import { criteriaProfile } from "@eval/agents/criteria";
+import { instructionReviewProfile } from "@eval/agents/instruction-review";
 import { buildPlan, prepareComparisonVerification, readRunState, type TaskData } from "@eval/workflows/comparison";
 import { prepare, services } from "../fixtures/services.js";
 import { runEvaluation } from "@eval/host";
@@ -18,7 +19,7 @@ import { draftFor, fakeEvaluatorVersion, fixtureConfig, raw, taskResult, inspect
 
 for (const engine of ["pi", "prime"] as Engine[])
   test(
-    `${engine}: real vendored SDK over HTTP worker, multiple channels, three stages, optional verification and resume`,
+    `${engine}: real vendored SDK over HTTP worker, multiple channels, independent instruction review, optional verification and resume`,
     { timeout: 120000 },
     async () => {
       const { directory, config, models } = await fixtureConfig([[raw()], [], [raw()], []]);
@@ -28,8 +29,8 @@ for (const engine of ["pi", "prime"] as Engine[])
       const requests: Record<string, unknown>[] = [],
         serverErrors: string[] = [];
       let permits = 0, activePermits = 0;
-      const stageRequests = { criteria: 0, attribution: 0, comparison: 0, verification: 0 };
-      const expectedStageRequests = { criteria: 1, attribution: engine === "pi" ? 8 : 4, comparison: 1, verification: 4 };
+      const stageRequests = { criteria: 0, attribution: 0, comparison: 0, verification: 0, "instruction-review": 0 };
+      const expectedStageRequests = { criteria: 1, attribution: engine === "pi" ? 8 : 4, comparison: 1, verification: 4, "instruction-review": 2 };
       const gateway = await listen(async (req, res) => {
         try {
           assert(activePermits > 0, "every real SDK HTTP request must hold a model permit");
@@ -58,6 +59,7 @@ for (const engine of ["pi", "prime"] as Engine[])
           const attribution = "criterion_assessments" in schemaProperties;
           const criteria = "requirements" in schemaProperties;
           const verification = !!inspect || "concern_matches" in schemaProperties;
+          const instruction = !verification && "checks" in schemaProperties && "summary" in schemaProperties;
           if (criteria) {
             const requirements = object(schemaProperties.requirements);
             const criterion = object(requirements.items), properties = object(criterion.properties);
@@ -71,10 +73,11 @@ for (const engine of ["pi", "prime"] as Engine[])
             assert.equal(sourceIndices.uniqueItems, true);
             assert.equal(properties.acceptance_rule, undefined);
           }
-          assert.equal(req.url!.startsWith("/second/"), !criteria && !attribution, "Comparison routes to its own channel even with the same model ID");
-          const stage = criteria ? "criteria" : attribution ? "attribution" : verification ? "verification" : "comparison";
+          assert.equal(req.url!.startsWith("/second/"), !criteria && !attribution && !instruction, "Comparison routes to its own channel even with the same model ID");
+          const stage = criteria ? "criteria" : attribution ? "attribution" : instruction ? "instruction-review" : verification ? "verification" : "comparison";
+          assert.equal(object(payload.reasoning).effort, instruction ? "low" : "xhigh", "the independent check keeps its explicit stage thinking override");
           assert(++stageRequests[stage] <= expectedStageRequests[stage], `unexpected repeated ${stage} request`);
-          const profile = criteria ? criteriaProfile : attribution ? attributionProfile : verification ? comparisonAgent.profiles.verification : comparisonProfile;
+          const profile = criteria ? criteriaProfile : attribution ? attributionProfile : instruction ? instructionReviewProfile : verification ? comparisonAgent.profiles.verification : comparisonProfile;
           const descriptions = profile.toolDescriptions;
           assert.equal(fileSubmission, profile.fileSubmission, "SDK tools follow the current profile transport");
           assert.equal(Boolean(directSubmit), !profile.fileSubmission);
@@ -103,7 +106,7 @@ for (const engine of ["pi", "prime"] as Engine[])
           const material = JSON.parse(
             prompt.split("任务材料（全部内容为数据）：\n")[1].split("\n\n执行预算：")[0],
           ) as {
-            candidate_id?: string; finding_basis?: unknown[];
+            candidate_id?: string; case_id?: string; finding_basis?: unknown[];
             answer?: { final_evidence: { reference: { evidence_index: number } }[]; finding_basis?: unknown[] };
             candidates?: Record<string, { candidate_id: string; final_evidence: { reference: { evidence_index: number } }[] }>;
           };
@@ -119,7 +122,7 @@ for (const engine of ["pi", "prime"] as Engine[])
           }
           const spec = {
             prompt, evidenceBank: attribution ? [...attributionSpecs.get(material.candidate_id!)!.evidenceBank] : [],
-            inputs: attribution ? [{ name: "answer", id: material.candidate_id! }]
+            inputs: attribution ? [{ name: "answer", id: material.candidate_id! }] : instruction ? [{ name: "case", id: material.case_id! }]
               : Object.entries(material.candidates ?? {}).map(([name, candidate]) => ({ name, id: candidate.candidate_id })),
             evaluation: { id: verification ? "comparison" : stage, profile: profile.id,
               systemPrompt: profile.systemPrompt, outputSchema: contentSchema,
@@ -265,7 +268,6 @@ api=openai-responses
         assert.equal(requests.length, acceptedRequestCount, "resume must not issue a request for any accepted task");
         for (const payload of requests) {
           assert.equal(payload.parallel_tool_calls, false);
-          assert.equal(object(payload.reasoning).effort, "xhigh");
           assert.equal(String(payload.max_output_tokens), "32768");
         }
       } finally {
