@@ -812,6 +812,12 @@ export class ToolRuntime {
     const valid = validate(args);
     const mandatory = args !== undefined && valid && name === "read_trace" && this.required.isRequired(args, this.context.audit);
     const budget = this.budget(maxCalls), exhausted = budget.exploration.remaining === 0;
+    if (exhausted && budget.draft_writes.remaining > 0 && name === "execute_code" && args !== undefined && valid) {
+      const outputs = (args as { outputs?: string[] }).outputs;
+      if (!outputs?.some(file => /\.json$/iu.test(file)))
+        throw new ValidationError([{ category: "structure", code: "draft_output_required", path: "/outputs",
+          message: "探索额度已耗尽，execute_code 仅可用于写稿，须在 outputs 声明待提交的 JSON 文件；只读提取或计算不能使用预留写稿额度。也可用 edit_json 保存草稿。" }]);
+    }
     const draftWrite = exhausted && !mandatory && tool.fileWriter === true && budget.draft_writes.remaining > 0;
     if (exhausted && !mandatory && !draftWrite)
       throw new Error(this.required.covered(this.context.audit)

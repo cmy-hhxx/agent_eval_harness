@@ -30,10 +30,11 @@ for (const engine of ["pi", "prime"] as const)
       const calculate = { name: "calculate", args: { operation: "add", operands: ["2", "2"] } };
       const read = { name: "read_trace", args: { candidate: "answer", message_index: 0, path: "/content" } };
       const writeScore = (score: string | number) => ({ name: "execute_code", args: { language: "python",
-        code: `from pathlib import Path\nPath('evaluation.json').write_text(${JSON.stringify(JSON.stringify({ score }))}, encoding='utf-8')` } });
+        code: `from pathlib import Path\nPath('evaluation.json').write_text(${JSON.stringify(JSON.stringify({ score }))}, encoding='utf-8')`, outputs: ["evaluation.json"] } });
       const steps = [
         { ...calculate, tools: allNames },
         ...(mandatory ? [{ ...read, tools: ["read_trace", "execute_code", ...submissionNames] }] : []),
+        { name: "execute_code", args: { language: "python", code: "raise AssertionError('read-only code must not execute in the reserved draft slot')" }, tools: ["execute_code", ...submissionNames] },
         { name: "execute_code", args: { language: "python", code: `from pathlib import Path\nPath(${JSON.stringify(path.join(directory, "wrong-run/evaluation.json"))}).write_text('unused')`,
           outputs: ["evaluation.json"] }, tools: ["execute_code", ...submissionNames] },
         { name: "submit_evaluation_file", args: { path: "missing.json" }, tools: ["execute_code", ...submissionNames] },
@@ -63,10 +64,14 @@ for (const engine of ["pi", "prime"] as const)
           const tools = payload.tools as Record<string, unknown>[];
           assert.deepEqual(tools.map((tool) => tool.name), step.tools,
             `request ${requests}: actual budget and mandatory coverage determine the available tools`);
-          if (requests === 3 + Number(mandatory))
+          if (requests === 3 + Number(mandatory)) {
+            assert.match(JSON.stringify(payload.input), /draft_output_required/);
+            assert(!JSON.stringify(payload.input).includes("AssertionError: read-only code"));
+          }
+          if (requests === 4 + Number(mandatory))
             assert.match(JSON.stringify(payload.input), /FileNotFoundError/,
               "the actual failed writer returns its script error before the same SDK gets one correction credit");
-          if (requests === 7 + Number(mandatory)) {
+          if (requests === 8 + Number(mandatory)) {
             const last = (payload.input as Record<string, unknown>[]).findLast(item => item.type === "function_call_output");
             assert(String(last?.output).includes('"new_source_chars":0'), "initial display ranges reach both SDK tool loops");
           }

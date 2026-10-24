@@ -122,6 +122,8 @@ Rewrite 当前提交 `rewrites: [{id,text}]`，数量、顺序与 ID 由请求�
 
 结构与业务校验保留原稿，错误反馈提供 code/path/message 和适用的 expected/actual，指向模型实际可写字段。必读材料不足先返回真实补页，不消耗内容修正；加载错误与内容修正分别计数，累计规则见[运行与恢复](usage.md#运行与恢复)。只有 Host 保存有效收据才算成功。
 
+探索耗尽后的预留写稿额度只用于提交 JSON：execute_code 必须在 outputs 声明 JSON 产物，未声明时不执行，也不消耗该写稿槽位；edit_json 可直接保存草稿。探索期的只读提取和复算仍按原额度计数，提交文件名与实际写入文件须一致。
+
 Comparison 字符串解析只允许确定性转义特定内部引号、移除完整对象后的多余闭括号；修复计入 jsonRepairs，仍须通过全部校验，不补字段或改判词。实现与边界测试见 [Runtime](modules/README.md)。
 
 ### 两两判决
