@@ -59,6 +59,8 @@
 
 开发时也可对一个登记来源显式导入，不启动 HTTP 或模型：
 
+AIME 的“扫描→清洗→增量归因”入口见[AIME 增量归因](../docs/aime-incremental.md)。它调用本模块已有规范化、锁和事务发布机制；默认单次运行，加 `--watch` 后由评测脚本持续扫描，不启动本服务的监听循环。
+
 ```bash
 DATA_ROOT=/mnt/fin_bench/eval_data \
 STATE_ROOT=/mnt/aigc_team/user_workspace/chenmingyang/eval_harness/runtime/state/data-service \

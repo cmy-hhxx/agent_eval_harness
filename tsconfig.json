@@ -15,7 +15,9 @@
     "sourceMap": true,
     "resolveJsonModule": true,
     "paths": {
-      "@eval/automations": ["./packages/automations/src/index.ts"],
+      "@eval/automations": [
+        "./packages/automations/src/index.ts"
+      ],
       "#pi-sdk": [
         "./vendor/pi/packages/coding-agent/dist/index.d.ts"
       ],
@@ -90,6 +92,12 @@
       ],
       "@eval/host-app/settings": [
         "./apps/host/src/settings.ts"
+      ],
+      "@eval/agents/score": [
+        "./packages/agents/src/score/index.ts"
+      ],
+      "@eval/workflows/answer-review": [
+        "./packages/workflows/src/answer-review/index.ts"
       ]
     }
   },

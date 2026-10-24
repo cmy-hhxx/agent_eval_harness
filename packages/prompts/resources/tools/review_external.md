@@ -1,0 +1,1 @@
+按原skill取证政策补证。search执行一条query，read读取url（可指定start_line/page），admit_search把实际search_id/result_index返回片段登记为来源；后者不额外联网。每次声明claim、affected_item_ids和verification_role（as_of_information/retrospective_fact_check/normative_reference）。每题最多6个底层外部动作（包含失败、重试、重定向），最多登记3个完整URL；超限或工具不可用就保留unverified。补查只核验原题和实际主张，不能增加候选当时义务。只能引用真实返回，不重放候选业务写操作。

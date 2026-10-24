@@ -6,7 +6,7 @@ TypeScript Host 编排评测任务，Pi / Prime Worker 执行模型与工具调�
 
 ## 远程工作台
 
-生产入口只有 `workbench.sh`。服务器代码与运行数据分离：
+工作台入口为 `workbench.sh`；AIME 独立增量归因使用下方的专用脚本。服务器代码与运行数据分离：
 
 - checkout：`/mnt/aigc_team/user_workspace/chenmingyang/eval_harness/code`
 - 持久目录：`/mnt/aigc_team/user_workspace/chenmingyang/eval_harness/runtime`
@@ -76,6 +76,8 @@ npm run automations -- run --once
 | 输入、阶段结果、判决与证据 | [数据契约](docs/contract.md) · [Schema](schemas/README.md) · [字段用途](docs/schema-fields.md) |
 | 模块、生命周期与扩展 | [架构](docs/architecture.md) · [模块地图](docs/modules/README.md) |
 | 修改、测试与文档维护 | [开发指南](docs/development.md) |
+| 独立Score、归因与AIME单模型评测 | [独立回答评测](docs/answer-review.md) |
+| AIME 新包自动清洗与增量归因、启动和停止 | [AIME 增量归因](docs/aime-incremental.md) |
 | 人工复核与评测实验 | [评测质量](docs/quality.md) |
 | 提示词与工具描述 | [Prompts](packages/prompts/README.md) |
 | 界面规则 | [PRODUCT.md](PRODUCT.md) |

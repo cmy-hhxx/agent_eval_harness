@@ -1,11 +1,11 @@
 import { readFileSync } from "node:fs";
 import { canonical, submissionToolNames, type FailureContext, type JsonObject, type Policy } from "@eval/contracts";
 
-export type PromptStage = "criteria" | "attribution" | "comparison" | "rewrite" | "clustering";
+export type PromptStage = "criteria" | "attribution" | "comparison" | "rewrite" | "clustering" | "score";
 
 const builtinToolNames = [
   "read_trace", "search_trace", "view_image", "calculate", "calculate_pair", "execute_code",
-  "read_artifact", "check_table", "inspect_material", "edit_json", ...submissionToolNames(false), ...submissionToolNames(true),
+  "read_artifact", "check_table", "inspect_material", "edit_json", "review_material", "review_calculate", "review_external", ...submissionToolNames(false), ...submissionToolNames(true),
 ] as const;
 
 function resource(path: string): string {
@@ -43,12 +43,12 @@ export function sharedPromptResources() {
 /** The only source of model-facing text for the built-in evaluation profiles. */
 export function agentPrompt(stage: PromptStage, toolNames: string[], profile = "default") {
   if (!/^[a-z][a-z0-9_-]*$/.test(profile)) throw new Error(`Invalid prompt profile: ${profile}`);
-  const instructions = resource(`${stage}/${profile}/instructions.md`);
+  const instructions = resource(`${stage}/${profile}/instructions.md`) + (stage === "score" ? ["rubric", "scoring", "calibration", "source-policy", "question-issue-policy"].map(name => "\n\n" + resource(`score/skill/${name}.md`)).join("") : "");
   const evidenceGuide = toolNames.some(name => ["read_trace", "search_trace", "view_image", "check_table"].includes(name))
     ? `\n${evidence}\n` : "";
-  const systemPrompt = resource(`${stage}/${profile}/system.md`) + "\n\n" + commentary + "\n\n" + instructions + evidenceGuide;
-  const fileSubmission = stage === "attribution" || stage === "comparison" && profile === "verification";
-  const draftWriteInCallLimit = stage === "attribution";
+  const systemPrompt = resource(`${stage}/${profile}/system.md`) + "\n\n" + (stage === "score" ? "" : commentary + "\n\n") + instructions + evidenceGuide;
+  const fileSubmission = stage === "attribution" && profile !== "direct" || stage === "comparison" && profile === "verification";
+  const draftWriteInCallLimit = stage === "attribution" && profile !== "direct";
   const names = [...toolNames, ...submissionToolNames(fileSubmission)];
   if (new Set(names).size !== names.length) throw new Error(`Duplicate prompt tool in ${stage}`);
   const toolDescriptions = Object.fromEntries(names.map((name) => {
@@ -115,3 +115,5 @@ export function erisPrompt(toolNames: string[]) {
     failureSummaryMessage: resource("eris/tool-failure.md"), toolDescriptions };
 }
 export { modelProbeText } from "./model-probe.js";
+
+export const scoreDirectory=JSON.parse(resource('score/skill/directory.json')) as {units:Record<string,string>;diagnostics:Record<string,string>;parents:Record<string,string>;core_grades:Record<string,string>;final_grades:Record<string,string>;always_units:string[];always_diagnostics:string[]};

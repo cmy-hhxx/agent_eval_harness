@@ -30,7 +30,7 @@ score = 50 × [1/(1+exp(1.3944910557482442−eta))
 | Token | 统一为 `usage.input_tokens`、`output_tokens`、`total_tokens`、`input_tokens_details.cached_tokens`。输入/输出缺项可由 meta 扁平字段补齐；usage 直接值优先，冲突报告。移除扁平 Token 字段和 `usage.cached_read_tokens`；usage 其他内容保留 |
 | 总量 | 字段未提供且输入/输出均已知时求和；显式 null 保持未知；已报总量与两者之和不一致则记 null 并报告 |
 | 缓存 | 优先取 input_tokens_details，其次 usage.cached_read_tokens、meta.cached_read_tokens；AA 未知缓存保持 null，不补 0。缓存超过输入量则记 null 并报告 |
-| 指标校验 | 耗时、Token、answer_len、visual_count 接受非负安全整数；非法值记 null，真实 0 保留。has_visual 必须为布尔值 |
+| 指标校验 | 耗时、Token、answer_len、visual_count 接受非负安全整数；耗时额外接受有限、非负、安全范围内且没有小数部分的浮点表示（如 593.0 → 593），不四舍五入。has_visual 接受布尔值和整数 0/1（转为 false/true），不接受字符串或其他数值。非法值记 null，真实 0 保留 |
 
 可选指标异常不排除有效回答。没有效率信息则保持缺失，不从答案长度估算 Token，不汇总 trace 快照作为总量。
 
@@ -38,4 +38,4 @@ score = 50 × [1/(1+exp(1.3944910557482442−eta))
 
 报告的 `metadata_issue_count` 单独计异常项数（同一回答可有多项），`metadata_issues` 提供模型、case_id、原包/成员文件/行号/项号、field、reason、error。工作台“标签与效率异常”分页展示明细，摘要不复制全部异常。排除计数仅统计被排除的记录。
 
-此改动不修改统计上传日志 Schema，不重写已经发布的历史输入；对之后执行清洗的新输入生效。
+清洗不修改统计上传日志 Schema。已发布输入仅在显式要求修复时按原包重新规整元数据，保留业务身份、正文、来源坐标和排除范围，并同步更新偏移索引、ready 与清洗报告。

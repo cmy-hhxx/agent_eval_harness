@@ -30,10 +30,14 @@ export function normalizeInput(value: unknown): RawInput {
     if (Object.hasOwn(session, key)) meta[key] = session[key];
   }
   // These describe the selected answer, not session totals or the fetching agent.
-  for (const key of ["trace_id", "model", "usage", "first_token_time_cost", "first_answer_time_cost", "finish_answer_time_cost"]) {
+  for (const key of ["trace_id", "model", "usage"]) {
     delete meta[key];
     if (Object.hasOwn(metadata, key)) meta[key] = metadata[key];
   }
+  // Exactly one trace: missing timing can use the same session's explicit costs.
+  // A trace's explicit null still means unknown and must not be filled.
+  for (const key of ["first_token_time_cost", "first_answer_time_cost", "finish_answer_time_cost"])
+    if (Object.hasOwn(metadata, key)) meta[key] = metadata[key];
   if (metadata.ok === false) meta.ok = false;
   const { traces: _traces, ...record } = source;
   return { ...record, meta, trace_id: metadata.trace_id ?? null, messages: trace.messages } as RawInput;

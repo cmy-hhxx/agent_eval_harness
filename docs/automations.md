@@ -2,7 +2,9 @@
 
 [返回首页](../README.md) · [部署](deployment.md) · [远程接口](handoff.md) · [运行与恢复](usage.md#运行与恢复)
 
-生产自动化服务只由 `workbench.sh` 启动，默认等待手动运行，不启动任何来源流水线。在运行监控选中来源并点击「运行」后，该来源才轮询同机数据服务，下载并校验输入快照，调用 Host 完成 Criteria、Attribution、Comparison 和 Rewrite，再增量交付 MongoDB 并生成统计快照。自动化不运行聚类。
+工作台自动化服务由 `workbench.sh` 启动，默认等待手动运行，不启动任何来源流水线。在运行监控选中来源并点击「运行」后，该来源才轮询同机数据服务，下载并校验输入快照，调用 Host 完成 Criteria、Attribution、Comparison 和 Rewrite，再增量交付 MongoDB 并生成统计快照。自动化不运行聚类。
+
+AIME 单模型归因使用独立的 [增量脚本](aime-incremental.md)：`npm run aime:ingest-and-attribute -- --config <配置文件> --watch`，并发 64，每轮完成后自动扫描新包，主动停止后保留进度。该入口不经过工作台的对比、MongoDB 和统计上传流程。
 
 ## 来源清单
 

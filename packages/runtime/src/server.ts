@@ -182,6 +182,7 @@ export async function startWorker(
           };
       validateEvidenceBank(audit.evidenceBank, spec.recovery?.evidenceBank ?? []);
       failure.evidenceBank = [...audit.evidenceBank!];
+      if (failure.review) audit.review = structuredClone(failure.review);
       runtime.context.persistEvidenceBank = async bank => {
         // The tool's reference-bearing operations share one queue. Save a directory before exposing any new choice.
         validateEvidenceBank(bank, failure.evidenceBank ?? []);
@@ -225,6 +226,7 @@ export async function startWorker(
         failure = {
           evidenceBank: [...audit.evidenceBank!],
           ...(failure.inspection ? { inspection: failure.inspection } : {}),
+          ...(audit.review ? { review: audit.review } : {}),
           draft: structuredClone(draft),
           errors,
           contentSubmissions: (spec.recovery?.contentSubmissions || 0) + submissions,
@@ -236,6 +238,7 @@ export async function startWorker(
           stopped: loadingError && (spec.recovery?.fileErrors || 0) + fileErrors >= 3,
           attemptId: spec.attemptId,
         };
+        if (audit.review) failure.review = audit.review;
         record.failure = failure;
         await saveRecord();
         await request(
@@ -451,7 +454,8 @@ export async function startWorker(
             audit.inspection = structuredClone(result.inspection);
             failure = { evidenceBank: [...audit.evidenceBank!], errors: [], contentSubmissions: payload.contentSubmissions, fileErrors: (spec.recovery?.fileErrors ?? 0) + fileErrors,
               repeatedErrors: 0, stopped: false, attemptId: spec.attemptId, inspection: audit.inspection };
-            record.failure = failure;
+            if (audit.review) failure.review = audit.review;
+        record.failure = failure;
             await saveRecord();
             reserveFileDraft();
             // This is Host-prepared task context, so the model must receive the complete revealed material.
@@ -809,6 +813,7 @@ export async function startWorker(
         };
         // A later complete submission may fail in transport without creating a new
         // validation failure; its cost still belongs in the cumulative ledger.
+        if (audit.review) record.failure.review = structuredClone(audit.review);
         record.failure.evidenceBank = [...audit.evidenceBank!];
         record.failure.contentSubmissions = (spec.recovery?.contentSubmissions || 0) + submissions;
         attempt.status.failure = record.failure;

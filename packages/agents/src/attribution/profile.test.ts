@@ -251,7 +251,7 @@ test("final-answer images must be inspected before claiming a missing deliverabl
   attributionProfile.validate!(request, result, { ...audit, viewedImages: ["answer:1"] });
 });
 test("Attribution judges one answer, conditionally on the standard answer", () => {
-  assert.deepEqual(Object.keys(attributionAgent.profiles), ["default"]);
+  assert.deepEqual(Object.keys(attributionAgent.profiles), ["default", "direct"]);
   attributionProfile.validate!(example.request, example.result, audit);
   const draft = judgmentFixture();
   assert.deepEqual(resolveJudgment(example.request, draft, audit), example.result);

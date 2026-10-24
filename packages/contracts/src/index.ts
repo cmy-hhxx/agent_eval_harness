@@ -124,6 +124,7 @@ export interface TableCheckSpec {
   }[];
 }
 export interface ToolAudit {
+  review?: import("./review.js").ReviewAudit;
   /** Task-local coordinate directory; non-evidence profiles may leave it absent. */
   evidenceBank?: import("./evidence-selection.js").EvidenceBank;
   calls: number;
@@ -136,6 +137,7 @@ export interface ToolAudit {
   tableChecks?: TableCheckSpec[];
   inspection?: InspectionCheckpoint;
 }
+export type { ReviewCase, ReviewQuote, ReviewAudit } from "./review.js";
 export interface Submission {
   submissionId: string;
   attemptId: string;
@@ -602,6 +604,7 @@ export interface RunState {
   recordedAttempts: number;
 }
 export interface FailureContext {
+  review?: import("./review.js").ReviewAudit;
   /** Keep prior choices stable even when the last draft or inspection failed. */
   evidenceBank?: import("./evidence-selection.js").EvidenceBank;
   draft?: unknown;

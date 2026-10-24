@@ -22,6 +22,8 @@ export interface VersionConfig {
 }
 export interface EvalConfig {
   inputs: {
+    /** Exact published input coordinates selected by a finite ingestion operation. */
+    records?: {model:string;batch_id:string;case_id:string;trace_id?:string;input_file:string;input_index:number}[];
     /** Explicit dataset selection persisted for run reconciliation. */
     dataset_id?: string;
     /** Frozen cleaning coordinates; no input bodies are copied into run configuration. */

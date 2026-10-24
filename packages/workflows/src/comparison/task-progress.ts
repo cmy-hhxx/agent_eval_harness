@@ -7,7 +7,7 @@ export function pendingTaskProgress(previous?: TaskState, materialChanged = fals
   delete next.reason;
   delete next.nextRetryAt;
   if (materialChanged && next.failure) {
-    const { draft: _draft, evidenceBank: _bank, inspection: _inspection, ...paid } = next.failure;
+    const { draft: _draft, evidenceBank: _bank, inspection: _inspection, review: _review, ...paid } = next.failure;
     next.failure = { ...paid,
       errors: paid.errors.filter(issue => issue.code === "submission_ledger_unavailable"),
       repeatedErrors: 0, stopped: false };

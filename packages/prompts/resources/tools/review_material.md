@@ -1,0 +1,3 @@
+读取本题评审材料。优先用action=batch、operations数组，一次完成最多32个独立的read/search/quote操作，每项返回ok及实际结果；某项失败不丢失其他项。无需将已知操作拆成逐条工具轮次。
+
+inspect列来源编号、码点长度及采集状态；read按source_id/start/length（最多12000码点）读取；search用text定位，可指定source_id；quote用source_id与唯一连续原文text生成共享证据行。复制返回的evidence_id/source_id/start/end/quote，不手算坐标。输入里已经展示完整题面、回答及initial_sources；next_start=null的来源已完整展示，无需重复读。未展示后缀可定点读取，不能当作已读。材料不含候选SYS/DEV。

@@ -6,7 +6,9 @@ import { promisify } from "node:util";
 import { readFile, rename, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { emptyUsage, evidenceId, type AgentBackend, type ProblemLibrary, type ProblemProjection, type RunState, type SubmissionReceipt } from "@eval/contracts";
-import { exists, fileSourceReader, readJson, problemLibraryFile, writeJson } from "@eval/data";
+import { applyClustering, effectiveProblemOccurrences, emptyLibrary, type ClusteringRequest, type ClusteringResult } from "@eval/agents/clustering";
+import type { ClusteringJobMaterial } from "../../../packages/workflows/src/comparison/clustering-job-types.js";
+import { exists, fileSourceReader, readJson, problemLibraryFile, writeJson, writeProblemLibrary } from "@eval/data";
 import { runEvaluation } from "@eval/host";
 import { startWorker } from "@eval/runtime/worker";
 import { buildPlan, createResultWriter, prepareClusteringJob, readRunState, writeRunState,
@@ -17,7 +19,7 @@ import { ROOT, services } from "../../fixtures/services.js";
 import { attributionResult, criteriaResultForTask, emptyAudit, draftFor, fakeEvaluatorVersion, fakeIdentity,
   fixtureConfig, parsedMaterial, raw, submitFor, taskResult } from "../../fixtures/comparison.js";
 
-async function fixture(caseCount = 2, components?: string[]) {
+async function fixture(caseCount = 2, components?: string[], uniqueProblems = false) {
   const days = ["2026-10-08", "2026-10-09"];
   const records = days.flatMap(batch_id => Array.from({ length: caseCount }, (_, index) => `q${index + 1}`)
     .map(id => ({ ...raw(id, "4", "2+2=5"), batch_id })));
@@ -36,6 +38,7 @@ async function fixture(caseCount = 2, components?: string[]) {
       if (task.stage === "attribution") {
         const result = evaluation as ReturnType<typeof attributionResult>;
         result.task_analysis = criteriaResultForTask(task, plan.inputs);
+        if (uniqueProblems) result.findings[0].problem!.label += " " + candidate.batch_id + " " + candidate.case_id;
         if (components) result.findings = components.map((component, index) => ({ ...structuredClone(result.findings[0]),
           finding_id: "f" + index, problem: { ...result.findings[0].problem!, component: [component] } }));
         result.findings.forEach(finding => { finding.problem!.definition += candidate.case_id; });
@@ -458,4 +461,68 @@ test("a frozen attribution plan clusters only its 30 selected answers", async ()
     await writeRunState(run, state);
     await assert.rejects(prepareClusteringJob([run], f.config), /归因尚未全部结束/);
   } finally { await rm(f.directory, { recursive: true, force: true }); }
+});
+
+test("eight workers classify one component concurrently before serial novelty discovery and replay", async t => {
+  const f = await fixture(4, undefined, true); t.after(() => rm(f.directory, { recursive: true, force: true }));
+  f.config.rewrite.clustering = false;
+  const seed = await prepareClusteringJob(f.runs, f.config);
+  const sourceIds = seed.config.clusteringJob.sources.filter(source => source.model === "a_fast").map(source => source.input_id);
+  const material = seed.plan.inputs.a_fast as ClusteringJobMaterial, observation = material.observations[0];
+  assert.equal(material.observations.length, 8);
+  const library = applyClustering(emptyLibrary("a_fast"), { run_id: "seed", run_path: f.directory,
+    evaluator_version: fakeEvaluatorVersion, task_id: randomUUID(), submission_id: randomUUID(), version: "a_fast", batch_id: "",
+    observations: [observation], result: { assignments: [{ item_id: observation.id, new_class_key: "known" }], merges: [],
+      new_classes: [{ key: "known", component: "模型自身推理", label: "已知算术错误", definition: "算术计算出错。",
+        closest_existing: null, novelty: "首次建立。", category_paths: [["数值可靠性"]] }] } });
+  await writeProblemLibrary(problemLibraryFile(f.config.problemLibrary, "a_fast"), library);
+  const output = { kind: "directory" as const, path: path.join(f.directory, "parallel") };
+  const { config, plan } = await prepareClusteringJob(f.runs, { ...f.config, output }, { inputIds: sourceIds });
+  let active = 0, peak = 0, readers = 0, discoveries = 0, release!: () => void;
+  const gate = new Promise<void>(resolve => { release = resolve; });
+  const backend: AgentBackend = { identity: fakeIdentity, async createSession(options) {
+    return { async run() {
+      const request = parsedMaterial(options.spec) as unknown as ClusteringRequest;
+      assert.equal(options.spec.evaluation.id, "clustering");
+      let result = taskResult(options.spec) as ClusteringResult;
+      if (request.budget.assignment_only && request.items.length) {
+        const index = readers++; active++; peak = Math.max(peak, active);
+        if (readers === 8) release();
+        await gate;
+        assert.equal(request.budget.max_new_classes, 0);
+        if (index < 2) result = { assignments: request.items.map(item => ({ item_id: item.id, deferred_reason: "尚无适用类，保留后续发现。" })), new_classes: [], merges: [] };
+        active--;
+      } else if (request.items.length) {
+        assert.equal(readers, 8, "no directory writer before all parallel readers started");
+        discoveries++;
+        const classes = request.library.components.flatMap(component => component.classes);
+        const found = classes.find(problem => problem.label === "新的计算错误");
+        if (found) result = { assignments: request.items.map(item => ({ item_id: item.id, class_id: found.id })), new_classes: [], merges: [] };
+        else result = { assignments: request.items.map(item => ({ item_id: item.id, new_class_key: "novel" })), merges: [],
+          new_classes: [{ key: "novel", component: "模型自身推理", label: "新的计算错误", definition: "与已有边界不同的计算错误。",
+            closest_existing: classes[0].id, novelty: "不同计算边界。", category_paths: [["数值可靠性"]] }] };
+      }
+      const submitted = await submitFor(options, draftFor(options.spec, result));
+      assert.equal(submitted.isError, undefined, JSON.stringify(submitted));
+    }, async abort() { release(); }, async dispose() {} };
+  } };
+  const workers = await Promise.all(Array.from({ length: 8 }, (_, index) => startWorker(backend, path.join(f.directory, `worker-${index}`))));
+  t.after(() => Promise.all(workers.map(worker => worker.close())));
+  const options = { ...services, taskSource: clusteringJobWorkflow, repository: clusteringJobRepository, report: reportClusteringJob,
+    runId: "parallel", output, engine: "pi" as const, identity: fakeIdentity, evaluatorVersion: fakeEvaluatorVersion,
+    config, plan, policy: { ...config.execution, timeoutSeconds: 10 }, modelForStage: f.modelForStage,
+    concurrency: 8, retries: 0, retryDelaySeconds: 0, workerUrls: workers.map(worker => worker.url) };
+  await runEvaluation(options);
+  assert.equal(peak, 8, "the actual Host must dispatch eight same-component tasks simultaneously");
+  assert.equal(readers, 8); assert.equal(discoveries, 2, "unmatched observations retain the full serial discovery path");
+  const run = path.join(output.path, "parallel"), before = await clusteringJobRepository.readRun(run);
+  assert(Object.values(before.manifest.states).every(state => state.status === "succeeded"));
+  const bank = await readJson<ProblemLibrary>(problemLibraryFile(config.problemLibrary, "a_fast"));
+  assert.equal(Object.values(bank.classes).filter(item => item.status === "active").length, 2);
+  assert.equal(effectiveProblemOccurrences(bank).length, 8, "no duplicate, missing or overwritten active assignments");
+  assert(bank.occurrences.length >= 8, "prior assignment history remains available");
+  await runEvaluation({ ...options, plan: { tasks: [], inputs: {}, summary: {} } });
+  const after = await clusteringJobRepository.readRun(run);
+  assert.deepEqual(after.receipts, before.receipts, "resuming preserves every accepted submission");
+  assert.equal(readers, 8); assert.equal(discoveries, 2);
 });

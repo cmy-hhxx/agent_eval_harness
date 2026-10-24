@@ -8,6 +8,8 @@
 
 | 位置 | 内容 |
 |---|---|
+| `resources/score/skill/` | 原skill评分规则、分档、校准与固定目录 |
+| `resources/attribution/direct/` | 不依赖Criteria或Score的独立归因 |
 | `resources/<stage>/default/` | Criteria、Attribution、Comparison、Rewrite、Clustering 规则 |
 | `resources/comparison/verification/` | 独立首查与揭示后核验 |
 | `resources/attribution/standard-*.md` | 显式开启标准答案复核时的规则 |

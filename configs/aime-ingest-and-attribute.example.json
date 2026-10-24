@@ -1,0 +1,19 @@
+{
+  "archiveDirectory":"/mnt/fin_bench/eval_data/1_aime/1_7z_data/online_data",
+  "inputDirectory":"/mnt/fin_bench/eval_data/1_aime/2_daily_eval_input",
+  "outputDirectory":"/mnt/fin_bench/eval_data/1_aime/eval_output/0_daily_eval",
+  "dataStateDirectory":"/mnt/aigc_team/user_workspace/chenmingyang/eval_harness/runtime/state/data-service/aime",
+  "stateDirectory":"/mnt/aigc_team/user_workspace/chenmingyang/eval_harness/runtime/state/aime-ingest-and-attribute",
+  "settingsFile":"/mnt/aigc_team/user_workspace/chenmingyang/eval_harness/runtime/config/post-training.ini",
+  "hostConfigs":["host.json","answer-review.json","/mnt/aigc_team/user_workspace/chenmingyang/eval_harness/runtime/config/aime-attribution-current.json"],
+  "logDirectory":"/mnt/aigc_team/user_workspace/chenmingyang/eval_harness/runtime/log",
+  "logLockDirectory":"/mnt/aigc_team/user_workspace/chenmingyang/eval_harness/runtime/state/log-writer",
+  "python":"python3",
+  "pythonPath":"/mnt/aigc_team/user_workspace/chenmingyang/eval_harness/runtime/python-packages",
+  "sevenZip":"7z",
+  "engine":"pi",
+  "stableSeconds":3,
+  "stableTimeoutSeconds":30,
+  "pollSeconds":60,
+  "concurrency":64
+}

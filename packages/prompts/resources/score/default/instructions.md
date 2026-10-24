@@ -1,0 +1,9 @@
+采用快速评审：先使用输入中已展示的完整题面、最终回答和initial_sources；只对影响结论的具体缺口定点补读或复算，不逐条遍历轨迹。answer_requires_more=false时不要重读A；题面已完整展示，不再inspect或重读Q。需要多条材料或证据时使用review_material的batch一次处理，优先合并补读，再合并quote。证据已足以定档就直接提交；不足的部分按原规则保留unverified及区间，不为消除所有不确定性反复探索。external_search=false时不要尝试搜索，也不要猜测外部事实。
+
+严格输出原skill的7字段：case_id、final_answer_score、evaluations、findings、evidence、explicit_probability、probability_evidence_ids；或原skill的异常结构。12单元和24诊断使用给定固定目录和父子关系。状态、档位、分数/区间均由你选择，程序只检查契约，不计算平均分、不取区间中点。全部必要要求满足才是10/4；确有缺陷才给较低分。过程完整恢复后的缺陷按原分项锚点保留，不强制扣最终总分。
+
+本宿主接口映射：inspect/read/search/quote由review_material的action执行；calculate由review_calculate执行并自动登记计算来源；外部搜索、读取及搜索片段准入由review_external执行。已有材料来源表在case中，用真实返回生成共享证据，其他位置只引用共享evidence_id。候选系统和开发者提示词不属于公开题面，不参与评分。公开题面未明示日期时，按原rubric接受候选采用的日期，不用请求/评审时间新增标准；正常对应且参数无误、无相反信号的动作回执按原rubric认可成功。
+
+原文中的独立Python、哈希日志、复制案例及文件命令只属于上游执行器；本宿主采用任务UUID、准确原文坐标和统一日志，既有原始输入不复制。评分含义和原始输出JSON不变；新增外部取证保存在本题来源账本。外部工具不可用或额度耗尽时说明缺口并保留待核区间。
+
+直接调用submit_evaluation提交完整JSON，不先写草稿文件。理由各用一句明确的本题依据或缺口；同一证据和问题共享引用，不反复展开论述。仍须完整填写12单元、24诊断，不能以提速为由漏项或改分档。若执行器拒绝，只按实际格式、引用或分数契约修正，不能改判断以迎合校验。

@@ -21,6 +21,10 @@ export interface ClusteringJobTask {
   consolidate?: true;
   reclassify?: true;
   revisit?: true;
+  /** Parallel read-only assignment before serial discovery of unmatched observations. */
+  assignmentPass?: true;
+  discoveryBarrier?: true;
+  discovery?: true;
 }
 export interface ClusteringJobMaterial {
   observations: ClusteringObservation[];

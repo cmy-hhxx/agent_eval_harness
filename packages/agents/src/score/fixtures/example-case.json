@@ -1,0 +1,21 @@
+{
+  "case_id": "example-one-sentence",
+  "candidate_output_id": "A",
+  "evidence": {
+    "Q": "用一句话计算收入从100增至120的增长率。",
+    "A": "收入增长率为(120-100)/100=20%。这是一次增长。"
+  },
+  "public_requirements": [
+    "用一句话交付收入增长率"
+  ],
+  "availability": {
+    "candidate_output": "available",
+    "tool_trace": "not_required"
+  },
+  "manifest": {
+    "evidence_sha256": {
+      "Q": "9de67a2a58873689583e50f3920ecd3cc759e4bd4e704098c5a5f57bd6ed5865",
+      "A": "819d62f1bea7e363810cd6c1f35989cfdd791fa3ff575324b9447761d5003634"
+    }
+  }
+}

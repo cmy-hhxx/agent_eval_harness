@@ -1,0 +1,22 @@
+{
+  "workflow": "answer-review",
+  "comparisons": [],
+  "rewrite": {
+    "attribution": false,
+    "comparison": false,
+    "comparisonItems": false,
+    "clustering": false
+  },
+  "clustering": {
+    "enabled": false
+  },
+  "bindings": {
+    "score": {
+      "profile": "judge"
+    }
+  },
+  "execution": {
+    "concurrency": 256,
+    "maxToolCalls": 8
+  }
+}

@@ -26,6 +26,7 @@ export async function loadRunInputs(
   issues?: ValidationIssue[],
   taskIds?: ReadonlySet<string>,
   records?: Map<string, Candidate>,
+  projectInput: (source: unknown) => unknown = normalizeInput,
 ): Promise<Record<string, unknown>> {
   const inputs: Record<string, unknown> = {},
     errors: ValidationIssue[] = [];
@@ -40,7 +41,7 @@ export async function loadRunInputs(
       Object.defineProperty(found, candidate.input_id, {
         enumerable: true,
         configurable: true,
-        get: () => normalizeInput(JSON.parse(fileSourceReader.record(source, byteOffset, byteLength, revision))),
+        get: () => projectInput(JSON.parse(fileSourceReader.record(source, byteOffset, byteLength, revision))),
       });
     };
     try {

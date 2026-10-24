@@ -10,6 +10,7 @@ import { clusteringSlots } from "./commentary.js";
 import { bindRewriteItems } from "./rewrite-presentation.js";
 import { clusteringJobStorage } from "./clustering-job-codec.js";
 import { allClusteringJobSources, clusteringJobItems, jobBatchIds, jobMaterial, jobObservations, type ClusteringJobConfig, type ClusteringJobMaterial, type ClusteringJobSource, type ClusteringJobTask } from "./clustering-job-types.js";
+import { acceptedClusteringOrder, discoverAfterAssignments, parallelClusteringAssignments } from "./clustering-job-parallel.js";
 import { planClusteringTasks, planDeferredRecall } from "./clustering-job-plan.js";
 import type { AttributionResult, EvalConfig, TaskData } from "./types.js";
 import { recallProblemLibrary } from "./problem-library-recall.js";
@@ -168,7 +169,7 @@ export async function prepareFrozenClusteringJob(selection: ClusteringJobConfig[
     const material = jobMaterial(inputs, model);
     tasks.push(...planClusteringTasks(model, material.observations, config));
   }
-  return { config, plan: { tasks, inputs, summary: {
+  return { config, plan: { tasks: parallelClusteringAssignments(tasks, inputs), inputs, summary: {
     runs: directories, attribution_answers: sources.length,
     recalled_problems: recall.length, recalled_answers: new Set(recall.map(ref => ref.input_id)).size,
     models: Object.fromEntries(Object.keys(inputs).map(model => [model, {
@@ -197,7 +198,7 @@ async function syncJobLibrary(run: string, state: RunState, inputs: Record<strin
       let library = saved ?? emptyLibrary(model);
       if (library.model !== model) throw new Error("问题库模型身份不一致：" + model);
       const assigned = new Set<string>();
-      for (const task of state.manifest.tasks) {
+      for (const task of acceptedClusteringOrder(state)) {
         const data = task.data as ClusteringJobTask, receipt = state.receipts[task.id];
         if (task.stage !== "clustering" || data.model !== model || !receipt) continue;
         const observations = jobObservations(inputs, data);
@@ -275,11 +276,16 @@ export const clusteringJobWorkflow: WorkflowDefinition = {
     const inputs = await loadClusteringJobInputs(state.manifest.config as ClusteringJobConfig);
     await syncJobLibrary(run, state, inputs);
     excludeEmptyClusteringRewrites(state);
+    state.manifest.tasks = parallelClusteringAssignments(state.manifest.tasks, inputs, state.manifest.states, state.receipts, state.manifest.executionScope);
     return { tasks: state.manifest.tasks, inputs, summary: state.manifest.preflight };
   },
   advance(task, _receipt, state, inputs) {
     excludeEmptyClusteringRewrites(state);
-    return { tasks: planDeferredRecall(task, state, inputs) };
+    const discovery = discoverAfterAssignments(task, state, inputs);
+    if (discovery) return discovery;
+    const planned = parallelClusteringAssignments(state.manifest.tasks, inputs, state.manifest.states, state.receipts, state.manifest.executionScope);
+    return { tasks: planDeferredRecall(task, state, inputs),
+      replace: planned.filter((next, index) => next !== state.manifest.tasks[index]) };
   },
   bind(task, inputs, dependencies, context) {
     const data = task.data as ClusteringJobTask, material = jobMaterial(inputs, data.model);
@@ -291,7 +297,7 @@ export const clusteringJobWorkflow: WorkflowDefinition = {
       return bindRewriteItems(input);
     }
     const classes = material.library.components.reduce((sum, component) => sum + component.classes.length, 0);
-    const assignmentOnly = !!data.revisit || !!material.config.clusteringJob.assignmentOnly;
+    const assignmentOnly = !!data.assignmentPass || !!data.revisit || !!material.config.clusteringJob.assignmentOnly;
     const limits = material.config.clustering;
     const items = jobObservations(inputs, data);
     const known = new Set(material.library.components.flatMap(component => [component.label, ...component.aliases].map(normalizeLabel)));

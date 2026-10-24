@@ -916,6 +916,33 @@ test("an unknown final submission ledger stops automatic retries and permits exp
   } finally { await worker.close(); await rm(directory, { recursive: true, force: true }); }
 });
 
+test("a socket closed before worker dispatch retries the same attempt without duplicating a model session", async (t) => {
+  const {directory,config,modelForStage}=await fixtureConfig([[raw()],[],[raw()],[]]);
+  const plan=await buildPlan(config),target=plan.tasks.find(task=>task.stage==='criteria')!;
+  let sessions=0;const attempts:string[]=[];
+  const worker=await startWorker({identity:fakeIdentity,async createSession(options){sessions++;return {
+    async run(){const accepted=await submitFor(options,draftFor(options.spec,taskResult(options.spec)));assert.equal(accepted.isError,undefined,JSON.stringify(accepted));},
+    async abort(){},async dispose(){},
+  };}},path.join(directory,'worker'));
+  const fetch=globalThis.fetch;
+  t.mock.method(globalThis,'fetch',async(url:Parameters<typeof fetch>[0],init?:Parameters<typeof fetch>[1])=>{
+    if(String(url)===`${worker.url}/api/attempts`&&init?.method==='POST'){
+      attempts.push(JSON.parse(String(init.body)).attemptId);
+      if(attempts.length===1)throw new TypeError('fetch failed',{cause:Object.assign(new Error('other side closed'),{code:'UND_ERR_SOCKET'})});
+    }
+    return fetch(url,init);
+  });
+  try{
+    await runEvaluation({...services,runId:'dispatch-reconnect',output:config.output,config,engine:'pi',identity:fakeIdentity,
+      evaluatorVersion:fakeEvaluatorVersion,plan,taskIds:[target.id],policy:config.execution,modelForStage,
+      concurrency:1,retries:0,retryDelaySeconds:0,workerUrls:[worker.url]});
+    const state=await readRunState(path.join(config.output.path,'dispatch-reconnect'));
+    assert.equal(state.manifest.states[target.id].status,'succeeded',state.manifest.states[target.id].reason);
+    assert.equal(state.manifest.states[target.id].attempts,1);assert.equal(sessions,1);
+    assert.equal(attempts.length,2);assert.equal(attempts[0],attempts[1]);
+  }finally{await worker.close();await rm(directory,{recursive:true,force:true});}
+});
+
 test("a rejected worker start with no registered attempt can retry without spending content", async (t) => {
   const input = raw("rejected-worker-start", null);
   const { directory, config, modelForStage } = await fixtureConfig([[input], [], [input], []]);

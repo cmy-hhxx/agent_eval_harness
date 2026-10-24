@@ -28,7 +28,7 @@ export function planClusteringTasks(model: string, observations: ClusteringObser
     tasks.push({ id, stage: "clustering", dependencies: previous ? { previous } : {}, inputIds: {}, data });
     if (config.rewrite.clustering) tasks.push({ id: randomUUID(), stage: "rewrite",
       dependencies: { source: id }, inputIds: {}, data: { ...data, rewriteOf: id } });
-    previous = id;
+    if (!revisit && !config.clusteringJob.assignmentOnly) previous = id;
   }
   return tasks;
 }

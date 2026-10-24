@@ -142,3 +142,36 @@ export function calculate(operation: string, operands: string[]): {
   }, values[0]);
   return { operation, operands, ...result(evaluated) };
 }
+
+/** Restricted arithmetic for evidence-backed review; exact rationals, with one final rounding. */
+export function calculateExpression(expression: string, inputs: Record<string, string>) {
+  if (expression.length > 1000) throw new Error("表达式最多1000字符");
+  const tokens = expression.match(/[A-Za-z_][A-Za-z_0-9]*|(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?|[()+*/-]/g) ?? [];
+  if (tokens.join("") !== expression.replace(/\s/g, "") || tokens.length > 100) throw new Error("只支持变量、数字、四则运算和括号，最多100节点");
+  let cursor = 0;
+  const atom = (): Rational => {
+    const token = tokens[cursor++];
+    if (token === "(") { const value = sum(); if (tokens[cursor++] !== ")") throw new Error("括号不匹配"); return value; }
+    if (token === "-") return multiply(decimal("-1"), atom());
+    if (token === "+") return atom();
+    if (!token) throw new Error("表达式不完整");
+    return decimal(Object.hasOwn(inputs, token) ? inputs[token] : token);
+  };
+  const product = (): Rational => {
+    let value = atom();
+    while (["*", "/"].includes(tokens[cursor])) {
+      const operation = tokens[cursor++], right = atom();
+      if (operation === "/" && right.numerator === 0n) throw new Error("除数不能为零");
+      value = multiply(value, operation === "*" ? right : { numerator: right.numerator < 0n ? -right.denominator : right.denominator, denominator: magnitude(right.numerator) });
+    }
+    return value;
+  };
+  const sum = (): Rational => {
+    let value = product();
+    while (["+", "-"].includes(tokens[cursor])) { const operation = tokens[cursor++]; value = add(value, product(), operation === "+" ? 1n : -1n); }
+    return value;
+  };
+  const value = sum();
+  if (cursor !== tokens.length) throw new Error("表达式存在剩余内容");
+  return { ...result(value), exact_fraction: { numerator: value.numerator.toString(), denominator: value.denominator.toString() } };
+}

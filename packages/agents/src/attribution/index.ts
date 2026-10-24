@@ -1,3 +1,6 @@
+import { directAttributionProfile } from "./direct.js";
+export { directAttributionProfile, validateDirectAttribution, type DirectAttribution, type DirectFinding } from "./direct.js";
+export {checkDirectAttributionLanguage,type AttributionLanguageField,type AttributionLanguageStatus} from './direct-language.js';
 import { agentPrompt, standardConflictInstructions } from "@eval/prompts";
 import { type AgentDefinition, type AgentProfile } from "@eval/contracts";
 import requestSchema from "../../../../schemas/attribution/request.schema.json" with { type: "json" };
@@ -64,5 +67,5 @@ export const attributionProfile: AgentProfile = {
 };
 export const attributionAgent: AgentDefinition = {
   id: "attribution",
-  profiles: { default: attributionProfile },
+  profiles: { default: attributionProfile, direct: directAttributionProfile },
 };

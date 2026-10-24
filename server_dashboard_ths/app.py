@@ -790,6 +790,10 @@ class Dataset:
                                     if self.record_identity(json.loads(raw), model) in changes:
                                         raise ValueError("published identity is missing from the archive index; refusing to overwrite")
                                     offsets.append([output.tell(), len(raw)])
+                                    # A valid last JSON value without a newline must not join the next append.
+                                    if not raw.endswith(b"\n"):
+                                        raw += b"\n"
+                                        offsets[-1][1] = len(raw)
                                     output.write(raw)
                         after = target.stat()
                         if (before.st_size, before.st_mtime_ns) != (after.st_size, after.st_mtime_ns):

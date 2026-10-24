@@ -1,0 +1,132 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import {rm,appendFile} from 'node:fs/promises';
+import path from 'node:path';
+import {runEvaluation,AgentRegistry} from '@eval/host';
+import {startWorker} from '@eval/runtime/worker';
+import type {AgentBackend} from '@eval/contracts';
+import {scoreAgent,type ScoreResult} from '@eval/agents/score';
+import {attributionAgent} from '@eval/agents/attribution';
+import {rewriteAgent} from '@eval/agents/rewrite';
+import {scoreDirectory} from '@eval/prompts';
+import {fixtureConfig,sessionRaw,fakeIdentity,fakeEvaluatorVersion,parsedMaterial} from '../../../../tests/fixtures/comparison.js';
+import {services} from '../../../../tests/fixtures/services.js';
+import {planAnswerReview,answerReviewWorkflow,answerReviewRepository,reportAnswerReview,validateAnswerReview,prepareAnswerReviewRetry,prepareAnswerReviewAutomaticResume,appendAnswerReviewAttribution,type AnswerReviewConfig} from './index.js';
+function score(caseId:string,q:string,a:string):ScoreResult{
+ const known=new Set(['T1','T2','E2','L1','U2','D1']);
+ const evidence=[{evidence_id:'q',source_id:'Q',start:0,end:Array.from(q).length,quote:q},{evidence_id:'a',source_id:'A',start:0,end:Array.from(a).length,quote:a}];
+ const judgments=(active:boolean)=>({status:active?'met' as const:'not_applicable' as const,applicability:active?'both' as const:'not_triggered' as const,reason:active?'原题与完整回答支持该项。':'本数学文字回答未触发该项。',evidence_ids:['q','a']});
+ const directory=scoreDirectory as {units:Record<string,string>;diagnostics:Record<string,string>;parents:Record<string,string>};
+ return {case_id:caseId,final_answer_score:{status:'met',grade:'全部满足',score:10,score_range:null,reason:'计算结果完整正确。',evidence_ids:['q','a'],finding_ids:[]},
+  evaluations:Object.entries(directory.units).map(([item_id,item_name])=>({...judgments(known.has(item_id)),item_id,item_name,score:known.has(item_id)?4:null,score_range:null,grade:known.has(item_id)?'全部必要要求满足':'不适用',diagnostics:Object.entries(directory.parents).filter(([,parent])=>parent===item_id).map(([diagnostic_id])=>({...judgments(known.has(item_id)),diagnostic_id,diagnostic_name:directory.diagnostics[diagnostic_id]}))})),findings:[],evidence,explicit_probability:null,probability_evidence_ids:[]};
+}
+test('Score and direct Attribution run independently, omit SYS/DEV, and rewrite only attribution text',async t=>{
+ const trace=sessionRaw('one');trace.traces[0].messages.forEach((message,i)=>Object.assign(message,{role:i===0?'user':'assistant',type:'message'}));
+ trace.traces[0].messages.unshift({role:'system',type:'message',content:'SECRET_PRIVATE_POLICY'} as any);
+ trace.meta.n_messages=trace.traces[0].meta.n_messages=3;
+ Object.assign(trace.meta,{batch_id:'b1',opaque:{unicode:'🧪',nullable:null},export_only:'PRIVATE_META_SENTINEL'});
+ Object.assign(trace,{_source:{original_file:'batch.7z/answers.jsonl',original_line:8,original_item:2,business_date:'2026-10-23'}});
+ const fixture=await fixtureConfig([[trace as any],[],[],[]],true);t.after(()=>rm(fixture.directory,{recursive:true,force:true}));
+ const config={...fixture.config,workflow:'answer-review',inputs:{...fixture.config.inputs,versions:fixture.config.inputs.versions.slice(0,1)},comparisons:[]} as AnswerReviewConfig;
+ const plan=await planAnswerReview(config);assert.equal(plan.tasks.filter(t=>t.stage==='criteria'||t.stage==='comparison').length,0);
+ assert.deepEqual(plan.tasks.filter(t=>['score','attribution'].includes(t.stage)).map(t=>t.dependencies),[{},{}]);
+ assert(!JSON.stringify(Object.values(plan.inputs)).includes('SECRET_PRIVATE_POLICY'));
+ assert(!JSON.stringify(Object.values(plan.inputs)).includes('PRIVATE_META_SENTINEL'));
+ const agents=new AgentRegistry([scoreAgent,attributionAgent,rewriteAgent]);
+ const languageRejected=new Set<string>();
+ const backend:AgentBackend={identity:fakeIdentity,async createSession(options){return{async run(){
+  const id=options.spec.evaluation.id;
+  if(id==='rewrite'){
+   const material=parsedMaterial(options.spec) as {items:{id:string;text:string}[]};
+   const result=await options.execute('submit_evaluation',{rewrites:material.items.map(row=>({id:row.id,text:row.text}))});assert.notEqual(result.isError,true,JSON.stringify(result));return;
+  }
+  const inspect=await options.execute('review_material',{action:'inspect'}),info=inspect.details as {case_id:string};
+  const read=async(source_id:string)=>{const r=await options.execute('review_material',{action:'read',source_id});return (r.details as {content:string}).content;};
+  const q=await read('Q'),a=await read('A');
+  const quoted=await options.execute('review_material',{action:'batch',operations:[{action:'quote',source_id:'Q',text:q},{action:'quote',source_id:'A',text:a},{action:'quote',source_id:'A',text:'不存在的原文'}]});
+  const rows=(quoted.details as any).results;assert.deepEqual(rows.map((r:any)=>r.ok),[true,true,false]);assert.equal(rows[1].end,Array.from(a).length);
+  const value=id==='score'?score(info.case_id,q,a):{summary:'计算结果正确，没有确认问题。',findings:[{type:'strength',dimension:'correctness',stage:'final_answer',importance:'high',text:'正确计算并交付了结果。',reason:'原文算式与结果相符。',evidence_status:'established',evidence_ids:[rows[1].evidence_id],component:[],label:null,definition:null}]};
+  if(id==='attribution'&&!languageRejected.has(options.spec.taskId)){
+   languageRejected.add(options.spec.taskId);
+   const rejected=await options.execute('submit_evaluation',{...value,summary:'The answer is correct and complete.'});
+   assert.equal(rejected.isError,true);assert.match(JSON.stringify(rejected),/attribution_language/);
+   return; // The real Worker must issue its repair nudge and call this session again.
+  }
+  const accepted=await options.execute('submit_evaluation',value);assert.notEqual(accepted.isError,true,JSON.stringify(accepted));
+ },async abort(){},async dispose(){}};}};
+ const worker=await startWorker(backend,path.join(fixture.directory,'worker'));t.after(()=>worker.close());
+ await runEvaluation({...services,agents,taskSource:answerReviewWorkflow,repository:answerReviewRepository,report:reportAnswerReview,runId:'flow',output:config.output,config,plan,
+  engine:'pi',identity:fakeIdentity,evaluatorVersion:fakeEvaluatorVersion,modelForStage:stage=>fixture.modelForStage(stage==='score'?'attribution':stage),policy:config.execution,concurrency:3,retries:0,retryDelaySeconds:0,workerUrls:[worker.url]});
+ const state=await answerReviewRepository.readRun(path.join(config.output.path,'flow'));assert.equal(Object.keys(state.receipts).length,3,JSON.stringify(state.manifest.states));assert.equal(validateAnswerReview(state).valid,true);
+ const s=plan.tasks.find(t=>t.stage==='score')!,a=plan.tasks.find(t=>t.stage==='attribution')!;
+ assert.equal((state.receipts[s.id].evaluation as ScoreResult).final_answer_score.score,10);
+ assert.equal(state.receipts[a.id].submissionStats?.contentSubmissions,2,'English rejection is repaired in-session and remains counted');
+ assert.equal(state.receipts[s.id].exported!.file,'score.jsonl');assert.equal(state.receipts[a.id].exported!.file,'attribution.jsonl');
+ assert(!Object.hasOwn(state.receipts[a.id].exported!.row,'evaluation'));
+ assert(!Object.hasOwn((state.receipts[a.id].evaluation as any).findings[0],'problem'));
+ assert.equal((state.receipts[a.id].evaluation as any).evidence[0].quote,'2+2=4');
+ const exported=state.receipts[a.id].exported!.row;
+ assert.equal(exported.trace_id,'trace-one');assert.equal(exported.source_archive,'batch.7z');assert.equal(exported.source_member,'answers.jsonl');assert.equal(exported.source_line,8);assert.equal(exported.source_item,2);
+ for(const receipt of Object.values(state.receipts))assert.deepEqual(receipt.exported!.row.meta,trace.meta);
+ const before=structuredClone(state.receipts),resumed=await answerReviewWorkflow.reconcile!(path.join(config.output.path,'flow'),state,config);assert.deepEqual(state.receipts,before);
+ // Re-export metadata on resume without changing a prior accepted judgment, including rewritten rows.
+ for(const receipt of Object.values(state.receipts))delete receipt.exported!.row.meta;
+ await answerReviewRepository.createResultWriter(path.join(config.output.path,'flow'),resumed.inputs)(state);
+ for(const [id,receipt] of Object.entries(state.receipts)){assert.deepEqual(receipt.exported!.row.meta,trace.meta);assert.deepEqual(receipt.evaluation,before[id].evaluation);}
+ // Exercise actual Host dispatch after appending to a saved day, not just checkpoint decoding.
+ const version=config.inputs.versions[0],file=version.sources[0].path;
+ const next={...sessionRaw('two'),batch_id:'b1'};
+ await appendFile(file,JSON.stringify(next)+'\n');
+ const delta:AnswerReviewConfig={...config,reviewStages:['attribution'],rewrite:{...config.rewrite,attribution:false},
+  inputs:{...config.inputs,records:[{model:version.id,batch_id:'b1',case_id:'two',trace_id:'trace-two',input_file:file,input_index:1}]}};
+ const run=path.join(config.output.path,'flow');
+ assert.equal(await appendAnswerReviewAttribution(run,delta),1);
+ assert.deepEqual([...await prepareAnswerReviewAutomaticResume(run,new Set(['trace-one','trace-two']))],['trace-two']);
+ await runEvaluation({...services,agents,taskSource:answerReviewWorkflow,repository:answerReviewRepository,report:reportAnswerReview,
+  runId:'flow',output:delta.output,config:delta,plan:await planAnswerReview(delta),engine:'pi',identity:fakeIdentity,
+  evaluatorVersion:fakeEvaluatorVersion,modelForStage:fixture.modelForStage,policy:delta.execution,concurrency:1,retries:0,retryDelaySeconds:0,workerUrls:[worker.url]});
+ const appended=await answerReviewRepository.readRun(run);
+ assert.equal(Object.keys(appended.receipts).length,4,JSON.stringify(appended.manifest.states));
+ const added=appended.manifest.tasks.find(t=>(t.data as any).candidate.trace_id==='trace-two')!;
+ assert.equal(appended.manifest.states[added.id].status,'succeeded');
+ assert.equal(appended.receipts[added.id].exported!.row.trace_id,'trace-two');
+ for(const [id,receipt] of Object.entries(before))assert.deepEqual(appended.receipts[id].exported,receipt.exported);
+ assert.equal(await appendAnswerReviewAttribution(run,delta),0);
+});
+
+test('continuous resume preserves costs and identities and leaves terminal content failures reported',async t=>{
+ const rows=['retry','spent','stopped','fresh','invalid','language'].map(id=>({...sessionRaw(id),batch_id:'b1'}));
+ const f=await fixtureConfig([rows as any,[],[],[]]);t.after(()=>rm(f.directory,{recursive:true,force:true}));
+ const config={...f.config,workflow:'answer-review',reviewStages:['attribution'],comparisons:[],inputs:{...f.config.inputs,versions:f.config.inputs.versions.slice(0,1)}} as AnswerReviewConfig;
+ config.execution.repairAttempts=3;
+ const plan=await planAnswerReview(config),run=path.join(config.output.path,'automatic');
+ const states=Object.fromEntries(plan.tasks.map(task=>{const id=(task.data as any).candidate.case_id;return [task.id,{status:id==='fresh'?'pending':'failed',attempts:id==='fresh'?0:2,
+  ...(id==='fresh'?{}:{failure:{contentSubmissions:id==='spent'?4:1,fileErrors:0,repeatedErrors:0,stopped:id==='stopped',attemptId:'prior',
+   errors:[{category:['invalid','language'].includes(id)?'structure':'transport',code:id==='language'?'attribution_language':'test',path:'/',message:'test failure'}]}})}];}));
+ const state:any={manifest:{runId:'automatic',config,tasks:plan.tasks,states,inputCatalog:plan.catalog,inputs:{},pausedStages:[{stage:'attribution'}]},receipts:{},usage:{input:1,output:2,cacheRead:0,cacheWrite:0,totalTokens:3},recordedAttempts:8};
+ await answerReviewRepository.writeRun(run,state);
+ const eligible=await prepareAnswerReviewAutomaticResume(run,new Set(rows.map(r=>r.traces[0].meta.trace_id)));
+ assert.deepEqual([...eligible].sort(),['trace-fresh','trace-language','trace-retry']);
+ const after=await answerReviewRepository.readRun(run);
+ assert.deepEqual(after.manifest.states,states);assert.deepEqual(after.manifest.tasks.map(t=>t.id),plan.tasks.map(t=>t.id));
+ assert.deepEqual(after.usage,state.usage);assert.equal(after.recordedAttempts,8);assert.equal(after.manifest.executionScope?.length,3);
+});
+
+test('exact incremental coordinates select only new attribution and reject trace identity drift',async t=>{
+ const one={...sessionRaw('one'),batch_id:'b1'},invalid={...sessionRaw('invalid'),batch_id:'b1'};invalid.traces.push(invalid.traces[0]);
+ const f=await fixtureConfig([[one as any,invalid as any],[],[],[]]);t.after(()=>rm(f.directory,{recursive:true,force:true}));
+ const version=f.config.inputs.versions[0];const config={...f.config,workflow:'answer-review',reviewStages:['attribution'],comparisons:[],
+   inputs:{...f.config.inputs,versions:[version],records:[{model:version.id,batch_id:'b1',case_id:'one',trace_id:'trace-one',input_file:version.sources[0].path,input_index:0}]}} as AnswerReviewConfig;
+ const plan=await planAnswerReview(config);assert.deepEqual(plan.tasks.map(t=>t.stage),['attribution']);assert.equal(plan.summary.valid_inputs,1);assert.deepEqual(plan.summary.issues,[]);
+ config.inputs.records![0].trace_id='changed';const drift=await planAnswerReview(config);assert.equal(drift.tasks.length,0);assert.equal((drift.summary.issues as unknown[]).length,1);
+});
+
+test('manual failure retry preserves accepted rows and charges new task UUIDs only for unfinished work',async t=>{
+ const f=await fixtureConfig();t.after(()=>rm(f.directory,{recursive:true,force:true}));
+ const config={...f.config,workflow:'answer-review',reviewStages:['attribution'],comparisons:[],inputs:{...f.config.inputs,versions:f.config.inputs.versions.slice(0,1)}} as AnswerReviewConfig;
+ const plan=await planAnswerReview(config),task=plan.tasks[0],run=path.join(f.config.output.path,'retry');
+ const state:any={manifest:{runId:'retry',config,tasks:plan.tasks,states:{[task.id]:{status:'failed',attempts:2,failure:{contentSubmissions:4}}},inputCatalog:plan.catalog,inputs:{},pausedStages:[{stage:'attribution'}]},receipts:{},usage:{input:1,output:2,cacheRead:0,cacheWrite:0,totalTokens:3},recordedAttempts:2};
+ await answerReviewRepository.writeRun(run,state);const changes=await prepareAnswerReviewRetry(run),after=await answerReviewRepository.readRun(run);
+ assert.equal(changes.length,1);assert.notEqual(changes[0].to,task.id);assert.deepEqual(after.usage,state.usage);assert.equal(after.recordedAttempts,2);
+ assert.deepEqual(after.manifest.states[changes[0].to],{status:'pending',attempts:0});assert.equal(after.manifest.tasks[0].inputIds.case,task.inputIds.case);
+});

@@ -1,3 +1,4 @@
+import { readAnswerReviewCommand, runAnswerReviewCommand } from "./answer-review-command.js";
 import { configurationSecrets } from "./settings.js";
 import { parseArgs } from "node:util";
 import { stat } from "node:fs/promises";
@@ -142,7 +143,7 @@ dashboard: --port 4173 在本机启动控制看板`,
     if (values[flag] && command !== "run" && !(flag !== "pilot-cases" && command === "reattribute") &&
       !(flag === "resume-stage" && ["cluster", "validate-stability"].includes(command))) throw new Error(`--${flag} 不适用于当前命令`);
   if (values.execute && !["model-probe", "validate-stability"].includes(command)) throw new Error("--execute 仅用于 model-probe 或 validate-stability");
-  if (values.stage && command !== "model-probe") throw new Error("--stage 仅用于 model-probe");
+  if (values.stage && !["model-probe", "run", "preflight"].includes(command)) throw new Error("--stage 仅用于 model-probe");
   for (const flag of ["cases", "max-attempts", "stop-starting-at", "seed"] as const)
     if (values[flag] !== undefined && command !== "validate-stability") throw new Error(`--${flag} 仅用于 validate-stability`);
   for (const flag of ["pilot-answers", "pilot-per-model", "from-date"] as const)
@@ -229,12 +230,16 @@ dashboard: --port 4173 在本机启动控制看板`,
     const release = command === "status" ? async () => {} : await runLock(run);
     let result;
     try {
-      const isStability = command === "report" && Boolean((await readJson<{
+      const checkpoint = await readJson<{
+        workflow?: string;
         manifest?: { config?: { stability?: unknown } };
-      }>(path.join(run, "state.json"))).manifest?.config?.stability);
+      }>(path.join(run, "state.json"));
+      const isStability = command === "report" && Boolean(checkpoint.manifest?.config?.stability);
       result =
-        command === "status"
-          ? await readJson(path.join(run, "state.json"))
+        checkpoint.workflow === "answer-review"
+          ? await readAnswerReviewCommand(command as "report" | "status" | "validate", run)
+          : command === "status"
+          ? checkpoint
           : command === "validate"
             ? await validateRun(run, (binding, result, audit) => agents.validate(binding, result, audit), {
               rewriteScopes: values["require-rewrite"], batchIds: values["require-batch"],
@@ -261,6 +266,7 @@ dashboard: --port 4173 在本机启动控制看板`,
     values["dashboard-settings"] ? JSON.parse(values["dashboard-settings"]) : undefined,
   );
   logger.addSecrets(...configurationSecrets());
+  if (values.stage && host.workflow !== "answer-review" && command !== "model-probe") throw new Error("--stage 只用于独立评审或model-probe");
   if (command === "model-probe") {
     if (!["pi", "prime"].includes(values.engine)) throw new Error("--engine must be pi or prime");
     const result = await runModelProbe({ configPaths: values.config, engine: values.engine as Engine,
@@ -269,6 +275,8 @@ dashboard: --port 4173 在本机启动控制看板`,
     if (result.status === "failed") process.exitCode = 2;
     return;
   }
+  if (host.workflow === "answer-review" && !["run", "preflight", "index"].includes(command))
+    throw new Error("独立评审使用 run、preflight、status、report 或 validate");
   if (command === "validate-stability") {
     if (values.input || values.batch || values.case || values["limit-cases"])
       throw new Error("validate-stability 使用 --cases 固定样本清单或 --run 选择已接受来源");
@@ -362,6 +370,15 @@ dashboard: --port 4173 在本机启动控制看板`,
     const limit = Number(values["limit-cases"]);
     if (!Number.isInteger(limit) || limit < 1) throw new Error("limit-cases must be positive");
     config.inputs.limit = limit;
+  }
+  if (host.workflow === "answer-review") {
+    process.exitCode = await runAnswerReviewCommand({ ...host, evaluation: config }, {
+      command, runId: values["run-id"], engine: values.engine, debug: values.debug, stage: values.stage,
+      workers: values.worker, skipFailed: values["skip-failed"], discoverInputs: values["discover-inputs"],
+      resumeStages: values["resume-stage"], balanceChannels: values["balance-channels"],
+      pilotCases: values["pilot-cases"] === undefined ? undefined : Number(values["pilot-cases"]),
+    });
+    return;
   }
   const plan = resuming ? { tasks: [], inputs: {}, summary: {} } :
     await comparisonWorkflow.plan(config, command === "preflight" ? { materializeInputs: false } : undefined);

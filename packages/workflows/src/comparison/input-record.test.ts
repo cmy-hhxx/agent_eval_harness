@@ -8,6 +8,20 @@ import { answerTurnContexts, normativeSources, originalUserTimestamp } from "@ev
 
 const version = { id: "independent", name: "Independent", adapter: "a", sources: [] };
 
+test("a single trace without timing uses explicit session milliseconds without replacing trace values", () => {
+  const source = sessionRaw();
+  const trace = source.traces[0].meta as Record<string, unknown>;
+  Object.assign(source.meta, { first_token_time_cost: 593, finish_answer_time_cost: 14931 });
+  delete trace.first_token_time_cost;
+  delete trace.finish_answer_time_cost;
+  assert.equal(adapt(source, version, "fixture", 1, "batch").answer_timing.first_token_seconds, .593);
+  assert.equal(adapt(source, version, "fixture", 1, "batch").answer_timing.finish_seconds, 14.931);
+  trace.finish_answer_time_cost = 1200;
+  assert.equal(adapt(source, version, "fixture", 1, "batch").answer_timing.finish_seconds, 1.2);
+  trace.finish_answer_time_cost = null;
+  assert.equal(adapt(source, version, "fixture", 1, "batch").answer_timing.finish_seconds, null);
+});
+
 test("single-trace input selects its message format independently of the configured model adapter", () => {
   const source = sessionRaw(), before = structuredClone(source);
   Object.assign(source.meta, { usage: { input_tokens: 999 }, model: "session-agent", trace_id: "session-trace" });

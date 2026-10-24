@@ -398,7 +398,9 @@ export async function buildPlan(
     skipped: unknown[] = [],
     seen = new Set<string>(),
     invalid = new Set<string>();
-  const scope = config.inputs.workbench?.records;
+  if(config.inputs.records && config.inputs.workbench)throw new Error('不能同时设置独立记录范围和工作台范围');
+  const scope = config.inputs.records ?? config.inputs.workbench?.records;
+  if(scope && new Set(scope.map(row=>canonical([row.model,row.input_file,row.input_index]))).size!==scope.length)throw new Error('输入范围包含重复坐标');
   const scopeRows = scope && new Map(scope.map(row => [canonical([row.model, row.input_file, row.input_index + 1]), row]));
   const foundScope = new Set<string>();
   for (const version of config.inputs.versions) {
@@ -480,6 +482,8 @@ export async function buildPlan(
             }
             if (row.error) throw row.error;
             const record = row.record!;
+            const selectedRecord=scopeRows?.get(canonical([version.id,source,index]));
+            if(selectedRecord&&'trace_id' in selectedRecord&&selectedRecord.trace_id!==record.trace_id)throw new Error('清洗范围与实际trace_id不一致');
             if (config.prediction) {
               const selection = predictionSelections.find(item => item.batchId === record.batch_id && item.caseId === record.case_id)!;
               const answer = predictionAnswers!.get(predictionKey(selection.batchId, selection.questionId));
@@ -565,7 +569,7 @@ export async function buildPlan(
     }
   const selected = [...cases.values()]
     .sort((a, b) => (canonical(a) < canonical(b) ? -1 : 1))
-    .slice(0, config.inputs.workbench ? undefined : config.inputs.limit);
+    .slice(0, scope ? undefined : config.inputs.limit);
   // Read each model's problem library once; clustering tasks get its projection and budget headroom.
   const libraries = new Map<string, ProblemLibrary>();
   if (config.clustering.enabled)

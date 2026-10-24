@@ -40,6 +40,7 @@ type ConfigObject = Record<string, unknown>;
 export interface HostConfig {
   /** Declared identity of the judging logic; stamped onto every accepted result. */
   evaluatorVersion: string;
+  workflow: "comparison" | "answer-review";
   /** Workflow-facing evaluation inputs and budgets. Contains no model configuration. */
   evaluation: EvalConfig;
   /** Model profiles and per-stage bindings, resolved against config.ini channels. */
@@ -203,7 +204,7 @@ function buildEvaluation(source: ConfigObject): EvalConfig {
     if (new Set(coordinates).size !== coordinates.length) throw new Error("Duplicate cleaning coordinates");
   }
   const versions = config.inputs?.versions;
-  if (!Array.isArray(versions) || versions.length < (config.inputs.workbench ? 1 : 2)) throw new Error("至少配置两个输入版本");
+  if (!Array.isArray(versions) || versions.length < (config.inputs.workbench || source.workflow === "answer-review" ? 1 : 2)) throw new Error("至少配置两个输入版本");
   for (const item of versions) {
     if (!/^[a-z0-9][a-z0-9_.-]{0,180}$/.test(item.id) || item.id.includes("..") || !inputAdapterIds.includes(item.adapter))
       throw new Error("Invalid input version");
@@ -220,7 +221,7 @@ function buildEvaluation(source: ConfigObject): EvalConfig {
       throw new Error(`Duplicate or empty ${key}`);
   }
   const rawGroups = source.comparisons;
-  if (!Array.isArray(rawGroups) || (!rawGroups.length && !config.inputs.workbench)) throw new Error("Missing comparisons");
+  if (!Array.isArray(rawGroups) || (!rawGroups.length && !config.inputs.workbench && source.workflow !== "answer-review")) throw new Error("Missing comparisons");
   const seenGroups = new Set<string>();
   for (const group of rawGroups) {
     if (
@@ -452,5 +453,6 @@ export async function loadConfig(
     throw new Error("rewrite 已启用但缺少 bindings.rewrite");
   if (evaluation.clustering.enabled && !models.bindings.clustering)
     throw new Error("clustering 已启用但缺少 bindings.clustering");
-  return { evaluatorVersion, evaluation, models, automation: configuration.automation };
+  if (source.workflow !== undefined && !["comparison", "answer-review"].includes(String(source.workflow))) throw new Error("Invalid workflow");
+  return { evaluatorVersion, workflow: source.workflow === "answer-review" ? "answer-review" : "comparison", evaluation, models, automation: configuration.automation };
 }

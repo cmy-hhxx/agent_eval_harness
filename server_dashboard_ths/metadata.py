@@ -29,11 +29,14 @@ def normalize_meta(source: dict, issues: list | None = None) -> dict:
     def warn(field, reason, error):
         issues.append({"field": "meta." + field, "reason": reason, "error": error})
 
-    def count(value, field):
+    def count(value, field, *, integral_float=False):
         if value is None:
             return None
         if type(value) is int and 0 <= value <= 9007199254740991:
             return value
+        if (integral_float and type(value) is float and math.isfinite(value)
+                and 0 <= value <= 9007199254740991 and value.is_integer()):
+            return int(value)
         warn(field, "metadata_invalid", "应为非负安全整数，已记为未知")
         return None
 
@@ -76,8 +79,10 @@ def normalize_meta(source: dict, issues: list | None = None) -> dict:
 
     for field in ("first_token_time_cost", "first_answer_time_cost", "finish_answer_time_cost", "answer_len", "visual_count"):
         if field in meta:
-            meta[field] = count(meta[field], field)
+            meta[field] = count(meta[field], field, integral_float=field.endswith("_time_cost"))
     for field in ("has_visual",):
+        if type(meta.get(field)) is int and meta[field] in (0, 1):
+            meta[field] = bool(meta[field])
         if meta.get(field) is not None and type(meta[field]) is not bool:
             warn(field, "metadata_invalid", "应为布尔值，已记为未知")
             meta[field] = None

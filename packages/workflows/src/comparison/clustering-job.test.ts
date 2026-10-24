@@ -4,7 +4,9 @@ import { emptyUsage, type PlannedTask, type RunState, type SubmissionReceipt } f
 import { clusteringJobWorkflow } from "./clustering-job.js";
 import { planClusteringTasks, planDeferredRecall } from "./clustering-job-plan.js";
 import type { ClusteringJobConfig, ClusteringJobMaterial } from "./clustering-job-types.js";
-import type { ClusteringObservation } from "@eval/agents/clustering";
+import { acceptedClusteringOrder, discoverAfterAssignments, parallelClusteringAssignments } from "./clustering-job-parallel.js";
+import type { ClusteringJobTask } from "./clustering-job-types.js";
+import type { ClusteringRequest, ClusteringObservation } from "@eval/agents/clustering";
 
 test("directory completion recalls only deferred observations once, without creating classes or attribution work", () => {
   const config = { clusteringJob: { sources: [] }, clustering: { maxCasesPerTask: 1 },
@@ -73,4 +75,70 @@ test("standalone clustering skips zero-slot Rewrite after acceptance and on resu
       assert.equal(state.recordedAttempts, before.recordedAttempts);
     }
   }
+});
+
+test("known-directory assignments run in parallel and unmatched observations retain serial discovery", () => {
+  const config = { clusteringJob: { sources: [] }, clustering: { maxCasesPerTask: 1 },
+    rewrite: { clustering: true } } as unknown as ClusteringJobConfig;
+  const observations = Array.from({ length: 8 }, (_, index) => ({ id: `o${index}`,
+    component: "模型自身推理", refs: [{ input_id: `answer${index}` }] })) as ClusteringObservation[];
+  const inputs = { model: { config, observations, library: { components: [
+    { id: "component", label: "模型自身推理", aliases: [], classes: [{ id: "known" }] },
+  ] } } as unknown as ClusteringJobMaterial };
+  const serial = planClusteringTasks("model", observations, config);
+  const tasks = parallelClusteringAssignments(serial, inputs);
+  const readers = tasks.filter(t => (t.data as ClusteringJobTask).assignmentPass);
+  assert.equal(readers.length, 8);
+  assert(readers.every(t => !Object.keys(t.dependencies).length));
+  const final = tasks.find(t => t.stage === "clustering" && (t.data as ClusteringJobTask).consolidate)!;
+  assert.deepEqual(new Set(Object.values(final.dependencies)), new Set(readers.map(t => t.id)));
+  for (const reader of readers) {
+    const input = clusteringJobWorkflow.bind(reader, inputs, {}, { tasks }).request.input as unknown as ClusteringRequest;
+    assert.equal(input.budget.assignment_only, true);
+    assert.equal(input.budget.max_new_classes, 0);
+    assert.equal(input.budget.consolidate, false);
+  }
+  const state = { manifest: { tasks }, receipts: {} } as unknown as RunState;
+  for (const [index, reader] of readers.toReversed().entries()) {
+    state.receipts[reader.id] = { evaluation: { assignments: [{ item_id: (reader.data as ClusteringJobTask).itemIds[0],
+      ...(index < 2 ? { deferred_reason: "没有匹配类" } : { class_id: "known" }) }] } } as unknown as SubmissionReceipt;
+    const advance = discoverAfterAssignments(reader, state, inputs);
+    if (index < 7) { assert.equal(advance, undefined, "no directory mutation while readers remain"); continue; }
+    assert(advance);
+    const discovery = advance.tasks.filter(t => t.stage === "clustering");
+    assert.equal(discovery.length, 2);
+    assert.deepEqual(new Set(discovery.flatMap(t => (t.data as ClusteringJobTask).itemIds)), new Set(["o7", "o6"]));
+    assert.deepEqual(discovery[0].dependencies, final.dependencies);
+    assert.equal(discovery[1].dependencies.previous, discovery[0].id);
+    assert.deepEqual(advance.replace[0].dependencies, { previous: discovery[1].id });
+    state.manifest.tasks = state.manifest.tasks.map(t => t.id === final.id ? advance.replace[0] : t);
+    state.manifest.tasks.push(...advance.tasks);
+    for (const task of [...discovery, advance.replace[0]]) state.receipts[task.id] = {} as SubmissionReceipt;
+    const order = acceptedClusteringOrder(state).map(t => t.id);
+    assert(order.indexOf(discovery[1].id) < order.indexOf(final.id), "replay honors appended discovery dependencies");
+    assert.equal(discoverAfterAssignments(reader, state, inputs), undefined, "resume cannot create discovery twice");
+    assert.deepEqual(parallelClusteringAssignments(state.manifest.tasks, inputs), state.manifest.tasks);
+  }
+});
+
+test("parallel assignment planning preserves paid prefixes, task IDs, receipts and narrowed scope", () => {
+  const config = { clusteringJob: { sources: [] }, clustering: { maxCasesPerTask: 1 }, rewrite: { clustering: true } } as unknown as ClusteringJobConfig;
+  const observations = ["a", "b", "c"].map(id => ({ id, component: "推理", refs: [{ input_id: id }] })) as ClusteringObservation[];
+  const inputs = { model: { config, observations, library: { components: [{ label: "推理", aliases: [], classes: [{}] }] } } as unknown as ClusteringJobMaterial };
+  const tasks = planClusteringTasks("model", observations, config), first = tasks[0];
+  const states = { [first.id]: { status: "cancelled" as const, attempts: 1 } };
+  const planned = parallelClusteringAssignments(tasks, inputs, states);
+  assert.equal(planned[0], first);
+  const readers = planned.filter(t => (t.data as ClusteringJobTask).assignmentPass);
+  assert.equal(readers.length, 2);
+  assert(readers.every(t => t.dependencies.previous === first.id));
+  assert.deepEqual(planned.map(t => t.id), tasks.map(t => t.id));
+  const interruptedStates = { ...states, ...Object.fromEntries(tasks.slice(1).map(task => [task.id,
+    { status: "blocked" as const, attempts: 0 }])) };
+  assert.equal(parallelClusteringAssignments(tasks, inputs, interruptedStates)
+    .filter(task => (task.data as ClusteringJobTask).assignmentPass).length, 2,
+    "unattempted descendants blocked by interruption remain eligible on resume");
+  assert.deepEqual(parallelClusteringAssignments(tasks, inputs, states, {}, [first.id]), tasks);
+  const revisit = planClusteringTasks("model", observations, config, "directory", true);
+  assert(revisit.filter(t => t.stage === "clustering").every(t => t.dependencies.previous === "directory"));
 });

@@ -82,6 +82,26 @@ class MetadataTest(unittest.TestCase):
         self.assertIsNone(normalize_meta({"usage": {"input_tokens": 100}})["usage"]["total_tokens"])
         self.assertIsNone(normalize_meta({"usage": {"input_tokens": 100, "output_tokens": 1, "total_tokens": "101"}})["usage"]["total_tokens"])
 
+    def test_integral_millisecond_floats_and_binary_visual_flags_preserve_metrics(self):
+        for flag in (0, 1, False, True):
+            source = {"first_token_time_cost": 593.0, "finish_answer_time_cost": 14931.0,
+                      "first_answer_time_cost": None, "has_visual": flag}
+            before = deepcopy(source)
+            issues = []
+            result = normalize_meta(source, issues)
+            self.assertEqual(result["first_token_time_cost"], 593)
+            self.assertIs(type(result["first_token_time_cost"]), int)
+            self.assertEqual(result["finish_answer_time_cost"], 14931)
+            self.assertIs(result["has_visual"], bool(flag))
+            self.assertIsNone(result["first_answer_time_cost"])
+            self.assertEqual(issues, [])
+            self.assertEqual(source, before)
+            self.assertEqual(normalize_meta(result), result)
+        for value in (593.5, -1.0, math.inf, math.nan, 9007199254740992.0, True, "593"):
+            self.assertIsNone(normalize_meta({"first_token_time_cost": value})["first_token_time_cost"])
+        for value in (2, -1, "0", 0.0):
+            self.assertIsNone(normalize_meta({"has_visual": value})["has_visual"])
+
     def test_request_time_uses_timestamp_not_collection_anchor(self):
         with self.assertRaisesRegex(app.InvalidRecord, "request_time_missing"):
             app.request_day_and_value({}, {"ask_time": 1792664887809})

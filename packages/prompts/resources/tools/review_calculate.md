@@ -1,0 +1,1 @@
+受限复算并登记V_CALC证据。operation为arithmetic/range/suffix；inputs每项填写原始source编号evidence_id、唯一连续quote、唯一number_token（suffix用text_token）、role和unit。arithmetic表达式只含变量、数字、+-*/和括号，最多1000字符/100节点；range用value/lower/upper并显式给include_lower/include_upper；suffix用text和suffix_length。保留result_unit。复算不证明候选使用该方法，也不认证公式业务适用性。

@@ -182,6 +182,9 @@ class AgentDataset(app.Dataset):
             finally:
                 self.staging = None
 
+    def normalize_record(self, item, archive, member, line, index, issues):
+        return normalize(item, self.provider, archive, member, line, index, issues)
+
     def read_archive_records(self, info: dict[str, object]) -> tuple[dict[app.RecordKey, app.IncomingRecord], app.CleaningReport]:
         if self.staging is None:
             raise RuntimeError("archive processing has no staging directory")
@@ -223,7 +226,7 @@ class AgentDataset(app.Dataset):
                             skipped.read += 1
                             try:
                                 issues = []
-                                model, day, row = normalize(item, self.provider, path.name, member, line, index, issues)
+                                model, day, row = self.normalize_record(item, path.name, member, line, index, issues)
                                 key = self.record_identity(row, model)
                             except app.InvalidRecord as exc:
                                 skipped.exclude(self.provider, exc.reason, path.name, member, line, index, item)

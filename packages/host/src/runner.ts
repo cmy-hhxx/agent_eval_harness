@@ -494,17 +494,28 @@ export async function runEvaluation(options: RunOptions): Promise<Record<string,
       let attemptDidNotStart = false;
       try {
         options.onProgress?.(`running ${task.stage} ${task.id} attempt ${state.attempts}`);
-        try {
-          await request(`${workerUrl}/api/attempts`, "POST", spec, controller.signal);
-        } catch (error) {
+        for (let dispatch = 0; ; dispatch++) {
           try {
-            await request(`${workerUrl}/api/attempts/${spec.attemptId}`);
-          } catch (lookup) {
-            // An explicit pre-execution rejection and an absent attempt prove
-            // that this dispatch cannot have spent content submissions.
-            attemptDidNotStart = error instanceof HttpError && error.status >= 400 && error.status < 500 &&
-              lookup instanceof HttpError && lookup.status === 404;
-            throw error;
+            await request(`${workerUrl}/api/attempts`, "POST", spec, controller.signal);
+            break;
+          } catch (error) {
+            try {
+              await request(`${workerUrl}/api/attempts/${spec.attemptId}`);
+              break;
+            } catch (lookup) {
+              const absent = lookup instanceof HttpError && lookup.status === 404;
+              const code = error instanceof Error && error.cause && typeof error.cause === "object" && "code" in error.cause
+                ? error.cause.code : undefined;
+              const transient = error instanceof Error && (error.name === "TimeoutError" ||
+                ["ECONNRESET", "ETIMEDOUT", "UND_ERR_SOCKET", "UND_ERR_CONNECT_TIMEOUT"].includes(String(code)));
+              // Worker creation is idempotent for this exact attempt/spec. Reconnect
+              // before a missing dispatch consumes a new attempt or pauses the stage.
+              if (absent && transient && dispatch < 2 && !controller.signal.aborted) continue;
+              // An explicit pre-execution rejection and an absent attempt prove
+              // that this dispatch cannot have spent content submissions.
+              attemptDidNotStart = error instanceof HttpError && error.status >= 400 && error.status < 500 && absent;
+              throw error;
+            }
           }
         }
         if (manifest.debug || options.onEvent)

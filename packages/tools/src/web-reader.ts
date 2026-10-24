@@ -17,6 +17,7 @@ interface WebDownload {
 }
 /** DNS and transport overrides are trusted test seams, never tool input. */
 export interface WebReaderOptions {
+  beforeRequest?: (url: string) => void;
   timeoutMs?: number;
   maxBytes?: number;
   maxTextChars?: number;
@@ -486,7 +487,7 @@ export function createWebReader(options: WebReaderOptions = {}): WebReader {
             const errors = new Set<string>();
             for (const address of addresses) {
               controller.signal.throwIfAborted();
-              try { response = await download(url, address, controller.signal); break; }
+              try { options.beforeRequest?.(url.toString()); response = await download(url, address, controller.signal); break; }
               catch (error) { controller.signal.throwIfAborted(); errors.add(networkErrorCode(error)); }
             }
             if (!response) throw new Error(`读取公共网页网络请求失败（${hostname}，${[...errors].join("、")}）`);

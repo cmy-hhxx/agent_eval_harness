@@ -22,6 +22,10 @@
     "./clustering": {
       "types": "./clustering.d.ts",
       "import": "./clustering.js"
+    },
+    "./score": {
+      "types": "./score.d.ts",
+      "import": "./score.js"
     }
   }
 }
