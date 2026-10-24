@@ -25,8 +25,8 @@ function rating<T extends Omit<Rating,'grade'>>(row:T,final=false):T&{grade:stri
   return {...row,grade:row.status==='not_applicable'?'不适用':row.score_range?'待核':grades[String(row.score)]};
 }
 /** Exact spans alone determine evidence identity; no semantic judgment or score is derived here. */
-export function combineScoreAxes(parts:ScoreAxisResult[]):ScoreAxisResult[]{
-  const spans=new Map<string,ReviewQuote>();
+export function combineScoreAxes(parts:ScoreAxisResult[],sharedQuotes:ReviewQuote[]):ScoreAxisResult[]{
+  const spans=new Map(sharedQuotes.map(quote=>[canonical([quote.source_id,quote.start,quote.end]),quote]));
   return parts.map(part=>{
     const refs=new Map<string,string>();
     for(const quote of part.evidence){const key=canonical([quote.source_id,quote.start,quote.end]);let row=spans.get(key);

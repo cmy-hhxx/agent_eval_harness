@@ -20,7 +20,7 @@ function parts(){return scoreAxes.map(axis=>{
   p.validate!(request(originalResult.evidence),result,audit());return result;
 });}
 test('six independently resolved axes preserve judgments; final grouping merges one cross-axis issue without averaging',()=>{
-  const axes=combineScoreAxes(parts()),evidence=[...new Map(axes.flatMap(p=>p.evidence).map(q=>[q.evidence_id,q])).values()];
+  const axes=combineScoreAxes(parts(),originalResult.evidence),evidence=[...new Map(axes.flatMap(p=>p.evidence).map(q=>[q.evidence_id,q])).values()];
   const remap=(ids:string[])=>ids.map(id=>{const old=originalResult.evidence.find(q=>q.evidence_id===id)!;return evidence.find(q=>q.source_id===old.source_id&&q.start===old.start&&q.end===old.end)!.evidence_id;});
   const {grade:_grade,...rating}=originalResult.final_answer_score;
   const draft={final_answer_score:{...rating,evidence_ids:remap(rating.evidence_ids),finding_ids:['T:F1']},finding_groups:[['T:F1','D:F1']],explicit_probability:null,probability_evidence_ids:[]};

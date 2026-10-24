@@ -28,3 +28,20 @@ test('late evidence is supplemented once with the original cumulative proof and 
   assert.deepEqual((binding.request.sources.case.value as any).review_seed.actions,proof.actions);
   assert.equal(advanceScore(evidence,receipt({summary:'补查完成',checks:[]}),{} as RunState,{}).tasks.length,7);
 });
+test('final material preserves verification evidence coordinates when axes quote a different order and reuse local IDs',()=>{
+  const seed:ReviewAudit={quotes:[{evidence_id:'EV_1',source_id:'Q',start:0,end:2,quote:'题目'},{evidence_id:'EV_2',source_id:'A',start:0,end:2,quote:'答案'}],sources:[],actions:[],viewed:[],searches:[]};
+  const checks=[{claim:'题意',affected_item_ids:['T1'],status:'supported',reason:'公开题面',evidence_ids:['EV_1']}];
+  const first=scoreEvidenceTask(candidate),final=advanceScore(first,receipt({summary:'ready',checks}),{} as RunState,{}).tasks[6];
+  const dependencies:Record<string,SubmissionReceipt>={evidence:receipt({summary:'ready',checks},seed)};
+  for(const axis of ['T','E','L','A','U','D']){
+    const extra=axis==='E'?{evidence_id:'EV_3',source_id:'P',start:0,end:2,quote:'过程'}:axis==='L'?{evidence_id:'EV_3',source_id:'P',start:2,end:4,quote:'后续'}:undefined;
+    dependencies[axis]=receipt({case_id:'input',evaluations:[{item_id:axis+'1',evidence_ids:extra?['EV_2','EV_3']:['EV_2']}],diagnostics:[],findings:[],verification_requests:[],evidence:[seed.quotes[1],...(extra?[extra]:[])]});
+  }
+  const source={case_id:'input',task_question:'题目',candidate_output_id:'A',evidence:{Q:'题目',A:'答案',P:'过程后续'},availability:{candidate_output:'available' as const},public_requirements:{question:'题目'},view:{case_id:'input',task_question:'题目',availability:{candidate_output:'available'}}};
+  const binding=bindScore(final,source,dependencies),quotes=(binding.request.sources.case.value as any).review_seed.quotes as ReviewAudit['quotes'];
+  for(const initial of seed.quotes)assert.deepEqual(quotes.find(q=>q.evidence_id===initial.evidence_id),initial,'verification references must keep the exact original source span');
+  const axes=(binding.request.sources.score.value as any).axes;
+  assert.equal(axes[1].evaluations[0].evidence_ids[1],'EV_3');
+  assert.equal(axes[2].evaluations[0].evidence_ids[1],'EV_4');
+  assert.deepEqual(quotes.map(q=>q.quote),['题目','答案','过程','后续']);
+});

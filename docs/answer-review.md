@@ -20,7 +20,7 @@ Score对外接收单题材料并返回一个JSON，内部使用同一Agent的多
 
 评分含义沿用[原skill规则](../packages/prompts/resources/score/skill/)。总分0–10、12核心单元0–4、24诊断不另计分；过程错误恢复与最终有效交付分别评价。待核使用有宽度区间，不适用不补0，题目未明示日期时接受候选采用日期，正常对应的行动回执按原rubric认可成功。
 
-正常结果有八个顶层字段：case_id、final_answer_score、evaluations、diagnostics、findings、evidence、explicit_probability、probability_evidence_ids。12核心项与24诊断使用平级数组，固定父子关系仍校验。模型只提交实际判断和证据编号，程序补身份、固定名称、分档和准确Unicode码点引文。总分轮仅将同一问题分组，程序合并编号及引用，不改六轴判断或丢弃问题。
+正常结果有八个顶层字段：case_id、final_answer_score、evaluations、diagnostics、findings、evidence、explicit_probability、probability_evidence_ids。12核心项与24诊断使用平级数组，固定父子关系仍校验。模型只提交实际判断和证据编号，程序补身份、固定名称、分档和准确Unicode码点引文。统一取证的编号保持稳定，六轴新增证据按原文坐标去重并消解局部编号冲突。总分轮仅将同一问题分组，程序合并编号及引用，不改六轴判断或丢弃问题。
 
 统一取证阶段重新复算关键计算，外部事实先使用与Eris相同的Serper搜索，摘要不足再读取原文。SEARCH_API_KEY通过既有配置注入；全题最多6个底层外部请求、3个来源URL，失败和重定向计入，补查不重置预算。六轴仅可读取和引用固定材料。关键新缺口统一补查一次，之后六轴重新评分；仍不足保留待核。真正跨轴矛盾最多定向重评一次，仍不一致则拒收，不由总分轮覆盖分项。
 

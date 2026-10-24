@@ -21,8 +21,8 @@ export function bindScore(task:PlannedTask,source:ReviewCase&{view:JsonObject},d
   if(data.score_part==='axis'){profile=`axis-${data.score_axis!.toLowerCase()}`;input.score_axis=data.score_axis!;}
   if(data.score_part==='final'){
     profile='default';
-    const axes=combineScoreAxes(scoreAxes.map(axis=>dependencies[axis]!.evaluation as ScoreAxisResult));
-    const quotes=new Map(axes.flatMap(part=>part.evidence).map(q=>[q.evidence_id,q]));
+    const axes=combineScoreAxes(scoreAxes.map(axis=>dependencies[axis]!.evaluation as ScoreAxisResult),seed!.quotes);
+    const quotes=new Map([...seed!.quotes,...axes.flatMap(part=>part.evidence)].map(q=>[q.evidence_id,q]));
     current.review_seed={...seed!,quotes:[...quotes.values()]};
     input.shared_quotes=current.review_seed.quotes as unknown as JsonObject[];
     input.axis_assessments=scoreFinalMaterial(axes) as unknown as JsonObject[];
