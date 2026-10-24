@@ -41,16 +41,17 @@ test('Score and direct Attribution run independently, omit SYS/DEV, and rewrite 
    const material=parsedMaterial(options.spec) as {items:{id:string;text:string}[]};
    const result=await options.execute('submit_evaluation',{rewrites:material.items.map(row=>({id:row.id,text:row.text}))});assert.notEqual(result.isError,true,JSON.stringify(result));return;
   }
-  const inspect=await options.execute('review_material',{action:'inspect'}),info=inspect.details as {case_id:string};
-  const read=async(source_id:string)=>{const r=await options.execute('review_material',{action:'read',source_id});return (r.details as {content:string}).content;};
+  const materialTool=id==='score'?'score_material':'review_material';
+  const inspect=await options.execute(materialTool,{action:'inspect'}),info=inspect.details as {case_id:string};
+  const read=async(source_id:string)=>{const r=await options.execute(materialTool,{action:'read',source_id});return (r.details as {content:string}).content;};
   const q=await read('Q'),a=await read('A');
-  const quoted=await options.execute('review_material',{action:'batch',operations:[{action:'quote',source_id:'Q',text:q},{action:'quote',source_id:'A',text:a},{action:'quote',source_id:'A',text:'不存在的原文'}]});
+  const quoted=await options.execute(materialTool,{action:'batch',operations:[{action:'quote',source_id:'Q',text:q},{action:'quote',source_id:'A',text:a},{action:'quote',source_id:'A',text:'不存在的原文'}]});
   const rows=(quoted.details as any).results;assert.deepEqual(rows.map((r:any)=>r.ok),[true,true,false]);assert.equal(rows[1].end,Array.from(a).length);
   let value:any=id==='score'?score(info.case_id,q,a):{summary:'计算结果正确，没有确认问题。',findings:[{type:'strength',dimension:'correctness',stage:'final_answer',importance:'high',text:'正确计算并交付了结果。',reason:'原文算式与结果相符。',evidence_status:'established',evidence_ids:[rows[1].evidence_id],component:[],label:null,definition:null}]};
   if(id==='score'){
    const profile=options.spec.evaluation.profile;
    const refs=(ids:string[])=>ids.map(id=>id==='q'?rows[0].evidence_id:rows[1].evidence_id);
-   if(profile==='evidence')value={summary:'已读取完整原题及回答。',checks:[]};
+   if(profile==='evidence')value={facts:[],unresolved:[]};
    else if(profile.startsWith('axis-')){
     const axis=profile.slice(-1).toUpperCase();
     value={evaluations:value.evaluations.filter((r:any)=>r.item_id.startsWith(axis)).map(({item_name:_name,grade:_grade,...r}:any)=>({...r,evidence_ids:refs(r.evidence_ids)})),

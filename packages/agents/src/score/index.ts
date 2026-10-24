@@ -10,7 +10,7 @@ import {validateScore,validateScoreAxis} from './validate.js';
 import {scoreAxes,type ScoreAxis,type ScoreAxisResult,type ScoreEvidence,type ScoreException,type ScoreFinding,type ScoreRepair,type ScoreResult,type Rating} from './types.js';
 export * from './types.js';
 export {validateScore} from './validate.js';
-export interface ScoreContext {axis?:ScoreAxis;axes?:ScoreAxisResult[];repair_used?:boolean;evidence_used?:boolean}
+export interface ScoreContext {axis?:ScoreAxis;axes?:ScoreAxisResult[];repair_used?:boolean;evidence_used?:boolean;previous_evidence?:ScoreEvidence}
 function fail(path:string,message:string):never{throw new ValidationError([{category:'decision',code:'score_contract',path,message}]);}
 const material=(request:AgentRequest)=>request.sources.case.value as unknown as ReviewCase;
 export function scoreAudit(request:AgentRequest,audit:ToolAudit):ReviewAudit{
@@ -33,30 +33,42 @@ export function combineScoreAxes(parts:ScoreAxisResult[],sharedQuotes:ReviewQuot
       if(row&&row.quote!==quote.quote)fail('/evidence','同一坐标对应不同证据原文。');
       if(!row){row={...quote,evidence_id:`EV_${spans.size+1}`};spans.set(key,row);}refs.set(quote.evidence_id,row.evidence_id);}
     const evidence_ids=(ids:string[])=>ids.map(id=>refs.get(id)??fail('/evidence_ids','分项引用缺失证据。'));
+    const references=(text:string)=>text.replace(/\bEV_\d+\b/g,id=>refs.get(id)??id);
     const axis=part.evaluations[0].item_id[0];
-    return {...part,evaluations:part.evaluations.map(row=>({...row,evidence_ids:evidence_ids(row.evidence_ids)})),
-      diagnostics:part.diagnostics.map(row=>({...row,evidence_ids:evidence_ids(row.evidence_ids)})),
-      findings:part.findings.map(row=>({...row,finding_id:`${axis}:${row.finding_id}`,evidence_ids:evidence_ids(row.evidence_ids)})),
+    return {...part,evaluations:part.evaluations.map(row=>({...row,reason:references(row.reason),evidence_ids:evidence_ids(row.evidence_ids)})),
+      diagnostics:part.diagnostics.map(row=>({...row,reason:references(row.reason),evidence_ids:evidence_ids(row.evidence_ids)})),
+      findings:part.findings.map(row=>({...row,finding_id:`${axis}:${row.finding_id}`,description:references(row.description),evidence_ids:evidence_ids(row.evidence_ids)})),
       evidence:[...new Set(part.evidence.map(q=>refs.get(q.evidence_id)!))].map(id=>[...spans.values()].find(q=>q.evidence_id===id)!)};
   });
 }
 export function scoreFinalMaterial(parts:ScoreAxisResult[]){
-  return parts.map(({evaluations,...part})=>({...part,evaluations:evaluations.map(({score:_score,score_range:_range,grade:_grade,...row})=>row)}));
+  return parts.map(({evaluations,diagnostics,evidence:_evidence,case_id:_case,...part})=>({...part,
+    evaluations:evaluations.map(({score:_score,score_range:_range,grade:_grade,item_name:_name,...row})=>row),
+    diagnostics:diagnostics.map(({diagnostic_name:_name,...row})=>row)}));
 }
 function profile(id:string,promptName:string,submissionSchema:AgentProfile['submissionSchema'],toolNames:string[],resolve:NonNullable<AgentProfile['resolve']>,validate?:AgentProfile['validate']):AgentProfile{
   const prompt=agentPrompt('score',toolNames,promptName);
   return {id,...prompt,requestSchema:{type:'object',required:['case_id','task_question','availability'],additionalProperties:true},submissionSchema,
-    toolNames,renderPrompt:(input,policy,failure)=>prompt.renderPrompt({...input,score_directory:scoreDirectory},policy,failure),resolve,validate};
+    toolNames,renderPrompt:(input,policy,failure)=>{
+      const axis=id.startsWith('axis-')?id.at(-1)!.toUpperCase():undefined;
+      const select=(values:Record<string,string>)=>Object.fromEntries(Object.entries(values).filter(([key])=>!axis||key.startsWith(axis)));
+      const directory={units:select(scoreDirectory.units),...(id==='evidence'?{}:{diagnostics:select(scoreDirectory.diagnostics)})};
+      return prompt.renderPrompt({...input,score_directory:directory},policy,failure);
+    },resolve,validate};
 }
-const evidenceProfile=profile('evidence','evidence',evidenceSchema,['review_material','review_calculate','review_external','read_artifact'],(request,draft,audit)=>{
-  const proof=scoreAudit(request,audit),value=draft as ScoreEvidence|Omit<ScoreException,'case_id'>;
+const evidenceProfile=profile('evidence','evidence',evidenceSchema,['score_material','score_calculate','score_external','read_artifact'],(request,draft,audit)=>{
+  const proof=scoreAudit(request,audit),value=draft as Omit<ScoreEvidence,'changed_item_ids'>|Omit<ScoreException,'case_id'>;
   if('assessment_status' in value){const result={...value,case_id:material(request).case_id};validateScore(request,result,audit);return result;}
-  for(const row of value.checks){quotes(request,audit,[row]);if(!row.affected_item_ids.length||row.affected_item_ids.some(id=>!Object.hasOwn(scoreDirectory.units,id)))fail('/checks','核验须定位实际相关的核心项。');
-    if(row.status!=='unverified'&&!row.evidence_ids.length)fail('/checks','已确认核验结论必须有证据。');}
-  if(proof.actions.length>6||new Set(proof.sources.flatMap(s=>typeof s.record.url==='string'?[s.record.url]:[])).size>3)fail('/checks','全题外部核验预算超限。');
-  return value;
+  const previous=(request.sources.score.value as unknown as ScoreContext).previous_evidence;
+  for(const row of value.facts){quotes(request,audit,[row]);if(!row.affected_item_ids.length&&!value.full_rescore_reason||row.affected_item_ids.some(id=>!Object.hasOwn(scoreDirectory.units,id)))fail('/facts','新事实须定位实际相关核心项，不能隔离影响时明确full_rescore_reason。');}
+  if(value.full_rescore_reason&&!value.facts.length)fail('/full_rescore_reason','没有新事实不能全量重评；缺口保留待核。');
+  const known=new Map(Object.keys(scoreDirectory.units).map(id=>[id,new Set((previous?.facts??[]).filter(row=>row.affected_item_ids.includes(id)).flatMap(row=>row.evidence_ids))]));
+  const changed=value.full_rescore_reason?Object.keys(scoreDirectory.units):[...new Set(value.facts.flatMap(row=>row.affected_item_ids.filter(id=>row.evidence_ids.some(ref=>!known.get(id)!.has(ref)))))];
+  if(proof.actions.length>6||new Set(proof.sources.flatMap(s=>typeof s.record.url==='string'?[s.record.url]:[])).size>3)fail('/facts','全题外部核验预算超限。');
+  const facts=[...new Map([...(previous?.facts??[]),...value.facts].map(row=>[canonical([[...row.affected_item_ids].sort(),[...row.evidence_ids].sort()]),row])).values()];
+  return {...value,facts,changed_item_ids:changed};
 });
-const axisProfiles=Object.fromEntries(scoreAxes.map(axis=>[`axis-${axis.toLowerCase()}`,profile(`axis-${axis.toLowerCase()}`,'axis',axisSchema,['review_material','read_artifact'],(request,draft,audit)=>{
+const axisProfiles=Object.fromEntries(scoreAxes.map(axis=>[`axis-${axis.toLowerCase()}`,profile(`axis-${axis.toLowerCase()}`,`axis-${axis.toLowerCase()}`,axisSchema,['score_material','read_artifact'],(request,draft,audit)=>{
   const value=draft as ScoreAxisResult;
   const result:ScoreAxisResult={...value,case_id:material(request).case_id,evaluations:value.evaluations.map(row=>({...rating(row),item_name:scoreDirectory.units[row.item_id]})),
     diagnostics:value.diagnostics.map(row=>({...row,diagnostic_name:scoreDirectory.diagnostics[row.diagnostic_id]})),
@@ -72,7 +84,7 @@ for(const axis of scoreAxes){const p=axisProfiles['axis-'+axis.toLowerCase()];p.
     schema.$defs.finding.properties.affected_item_ids.items.enum=units;schema.$defs.finding.properties.diagnostic_ids.items.enum=diagnostics;
     schema.$defs.finding.properties.primary_diagnostic_id.enum=[...diagnostics,'unmapped'];return schema;};
 }
-export const scoreProfile=profile('default','default',finalSchema,['review_material','read_artifact'],(request,draft,audit)=>{
+export const scoreProfile=profile('default','default',finalSchema,['score_material','read_artifact'],(request,draft,audit)=>{
   const context=request.sources.score.value as unknown as ScoreContext,value=draft as ScoreRepair|{final_answer_score:ScoreResult['final_answer_score'];finding_groups:string[][];explicit_probability:number|null;probability_evidence_ids:string[]};
   if('action' in value){
     if(!value.axis_ids.length&&!value.verification_requests.length)fail('/axis_ids','修正请求必须定位具体轴或证据缺口。');

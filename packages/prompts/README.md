@@ -37,4 +37,4 @@
 
 Eris 通过 `erisPrompt(toolNames)` 和 [createEris](../../agent/src/core/profile.ts)装配；能力与维护入口见 [Eris](../../agent/README.md#修改-eris)。
 
-Score的evidence、axis、default分别负责统一取证、单轴评分与独立总分，原skill规则统一装配；机械字段由Score组装，最终总分不接收六轴数值分数。
+Score的evidence、axis-t/e/l/a/u/d、default分别负责统一取证、单轴评分与独立总分，按职责装配原skill规则；机械字段由Score组装，最终总分不接收六轴数值分数。取证只输出事实引用与缺口，正文按需通过score_material读取；score_calculate用EV引用复算并自动登记结果，score_external使用Score专用代理传输。补查只重评新增事实影响的轴，影响无法隔离时才全量重评。

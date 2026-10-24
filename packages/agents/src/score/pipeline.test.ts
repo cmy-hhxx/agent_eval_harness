@@ -7,7 +7,7 @@ import originalCase from './fixtures/example-case.json' with {type:'json'};
 import originalResult from './fixtures/example-output.json' with {type:'json'};
 const audit=():ToolAudit=>({calls:0,requiredReadCalls:0,viewedImages:[],traceReads:[],calculations:[],artifacts:[]});
 function request(quotes:ReviewQuote[],axes?:ScoreAxisResult[]):AgentRequest{
-  return {input:{},sources:{case:{id:originalCase.case_id,value:{...originalCase,review_seed:{quotes,sources:[],actions:[],viewed:[],searches:[]}}},score:{id:'context',value:{axes}}}} as unknown as AgentRequest;
+  return {input:{},sources:{case:{id:originalCase.case_id,value:{...structuredClone(originalCase),review_seed:{quotes,sources:[],actions:[],viewed:[],searches:[]}}},score:{id:'context',value:{axes}}}} as unknown as AgentRequest;
 }
 function parts(){return scoreAxes.map(axis=>{
   const p=scoreAgent.profiles[`axis-${axis.toLowerCase()}`];
@@ -42,9 +42,9 @@ test('axis boundaries, fabricated evidence, missing diagnostics and invalid scor
 });
 test('evidence submissions cannot confuse diagnostic identifiers with core item identifiers',()=>{
   const p=scoreAgent.profiles.evidence,validate=new Ajv2020({strict:false}).compile(p.submissionSchema);
-  const value={summary:'EPS期间待核。',checks:[{claim:'EPS期间待核',affected_item_ids:['E03'],status:'unverified',reason:'需确认原始期间。',evidence_ids:[]}]};
+  const value={facts:[],unresolved:[{claim:'EPS期间待核',affected_item_ids:['E03']}]};
   assert.equal(validate(value),false,'the model-facing schema must reject the exact identifier mix-up observed in the real pilot');
-  value.checks[0].affected_item_ids=['E2'];assert.equal(validate(value),true);
+  value.unresolved[0].affected_item_ids=['E2'];assert.equal(validate(value),true);
 });
 test('model-facing metadata pointers reject the missing slash seen in real axis repairs',()=>{
   const schema=scoreAgent.profiles['axis-a'].submissionSchema as any;
@@ -85,4 +85,30 @@ test('after supplementation the final profile requires an axis repair instead of
   assert.throws(()=>scoreProfile.resolve!(context,repair,audit()),/verification_requests必须为空/);
   const directed={...repair,verification_requests:[]};assert.equal(validate(directed),true);
   assert.deepEqual(scoreProfile.resolve!(context,directed,audit()),directed);
+});
+test('an axis receives its original anchors and common rules without every other axis anchor',()=>{
+  const text=scoreAgent.profiles['axis-t'].systemPrompt;
+  assert(text.includes('### T1 对象、目标与公开约束'));assert(text.includes('### T2 必要覆盖与实际交付'));
+  assert(text.includes('明示数值、简化或反事实假设默认作为解题约定'));
+  assert(!text.includes('### E1 依据可追溯、范围与时点'));
+  assert(!text.includes('## 4. 最终解答质量总分：0–10分'));
+});
+test('final material has each judgment once without repeated quotes or program-owned names',()=>{
+  const material=scoreFinalMaterial(parts());
+  for(const part of material as any[]){
+    assert(!('evidence' in part));assert(!('case_id' in part));
+    for(const row of part.evaluations)assert(!('item_name' in row));
+    for(const row of part.diagnostics)assert(!('diagnostic_name' in row));
+  }
+});
+test('evidence carries raw references rather than a shared correctness verdict and tracks only changed facts',()=>{
+  const profile=scoreAgent.profiles.evidence,validate=new Ajv2020({strict:false}).compile(profile.submissionSchema);
+  const bad={facts:[{affected_item_ids:['L2'],evidence_ids:['EV_1'],status:'contradicted'}],unresolved:[]};
+  assert.equal(validate(bad),false,'candidate correctness is not a property of shared collection output');
+  const previous={facts:[{affected_item_ids:['T1'],evidence_ids:['EV_1']}],unresolved:[],changed_item_ids:['T1']};
+  const context=request(originalResult.evidence);(context.sources.score.value as any).previous_evidence=previous;
+  const result=profile.resolve!(context,{facts:[...previous.facts,{affected_item_ids:['E2'],evidence_ids:['EV_2']}],unresolved:[]},audit()) as any;
+  assert.deepEqual(result.changed_item_ids,['E2']);assert.equal(result.facts.length,2);
+  const unchanged=profile.resolve!(context,{facts:previous.facts,unresolved:[]},audit()) as any;assert.deepEqual(unchanged.changed_item_ids,[]);
+  assert.throws(()=>profile.resolve!(context,{facts:[],unresolved:[],full_rescore_reason:'取证失败'},audit()),/没有新事实/);
 });

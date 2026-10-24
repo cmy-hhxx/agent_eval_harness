@@ -1,0 +1,1 @@
+搜索或读取解决本题关键事实缺口所需的外部来源。search填写query；admit_search按真实search_id/result_index登记摘要；摘要不足再read原始url，可用start_line/page定位。均填写待核claim、affected_item_ids和verification_role（as_of_information/retrospective_fact_check/normative_reference）。全题累计最多6个底层请求、3个关键来源URL，失败与重定向计入，补查不重置。工具保留真实响应与来源范围，搜索走Serper，读取使用显式代理及已核验的公共地址。取证失败不证明候选错误；标题/摘要只在实际表述范围内提供有限支持。

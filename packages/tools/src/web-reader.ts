@@ -24,7 +24,7 @@ export interface WebReaderOptions {
   maxPdfPages?: number;
   lookup?: (hostname: string) => Promise<ResolvedAddress[]>;
   publicLookup?: (hostname: string, signal: AbortSignal) => Promise<ResolvedAddress[]>;
-  download?: (url: URL, address: ResolvedAddress, signal: AbortSignal) => Promise<WebDownload>;
+  download?: (url: URL, address: ResolvedAddress, signal: AbortSignal, accept?:string) => Promise<WebDownload>;
 }
 interface ParsedLine { text: string; page?: number }
 interface ParsedDocument {
@@ -100,7 +100,7 @@ function publicAddress(address: string): boolean {
   return true;
 }
 
-async function defaultDownload(url: URL, address: ResolvedAddress, signal: AbortSignal, accept?: string): Promise<WebDownload> {
+export async function defaultDownload(url: URL, address: ResolvedAddress, signal: AbortSignal, accept?: string): Promise<WebDownload> {
   return new Promise((resolve, reject) => {
     const request = (url.protocol === "https:" ? httpsRequest : httpRequest)(url, {
       signal,
@@ -127,7 +127,7 @@ function networkErrorCode(error: unknown): string {
 }
 
 /** Resolve non-public local DNS answers independently, then validate and pin the public replacement. */
-async function defaultPublicLookup(hostname: string, callerSignal: AbortSignal): Promise<ResolvedAddress[]> {
+async function defaultPublicLookup(hostname: string, callerSignal: AbortSignal,download:NonNullable<WebReaderOptions['download']>=defaultDownload): Promise<ResolvedAddress[]> {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), 8_000);
   const signal = AbortSignal.any([callerSignal, controller.signal]);
@@ -136,7 +136,7 @@ async function defaultPublicLookup(hostname: string, callerSignal: AbortSignal):
       const url = new URL("https://cloudflare-dns.com/dns-query");
       url.searchParams.set("name", hostname);
       url.searchParams.set("type", type === 1 ? "A" : "AAAA");
-      const response = await defaultDownload(url, { address: "1.1.1.1", family: 4 }, signal, "application/dns-json");
+      const response = await download(url, { address: "1.1.1.1", family: 4 }, signal, "application/dns-json");
       if (response.statusCode !== 200) { response.destroy?.(); throw new Error("读取公共 DNS 核验失败"); }
       const bytes = await collectBody(response, 64 * 1024, signal);
       let json: unknown;
@@ -449,8 +449,8 @@ export function createWebReader(options: WebReaderOptions = {}): WebReader {
   for (const [key, value, maximum] of [["timeoutMs", timeoutMs, 30_000], ["maxBytes", maxBytes, MAX_BYTES], ["maxTextChars", maxTextChars, 500_000], ["maxPdfPages", maxPdfPages, 200]] as const)
     if (!Number.isInteger(value) || value < 1 || value > maximum) throw new Error(`读取 ${key} 必须为 1—${maximum} 的整数`);
   const lookup = options.lookup ?? ((hostname: string) => lookupDns(hostname, { all: true, verbatim: true }));
-  const publicLookup = options.publicLookup ?? (options.lookup ? undefined : defaultPublicLookup);
   const download = options.download ?? defaultDownload;
+  const publicLookup = options.publicLookup ?? (options.lookup ? undefined : (hostname:string,signal:AbortSignal)=>defaultPublicLookup(hostname,signal,download));
   return {
     async read(request, callerSignal) {
       const parameters = readParameters(request);

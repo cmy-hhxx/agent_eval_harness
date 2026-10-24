@@ -1,0 +1,1 @@
+读取本题固定材料并登记精确引文。inspect列source_id与长度；read按Unicode码点start/length读取；search定位字面文本并返回start/end及上下文。quote可用source_id、start、end直接引用已读/检索命中的区间，不需复写原文；或提供text，重复片段须同时指定已观察的start。程序生成原文和坐标，返回EV编号。batch一次执行1–32条操作；将同一轮需要的读取、检索、取证合并调用。不要遍历与判断无关的长轨迹，不把仅可定位误当语义支持。

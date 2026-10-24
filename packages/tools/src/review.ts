@@ -3,6 +3,7 @@ import type { ToolDefinition, ToolContext, ReviewCase, ReviewAudit, ReviewQuote 
 import { calculateExpression } from "./decimal.js";
 import { createWebReader } from "./web-reader.js";
 import { createSerperSearch } from "./serper.js";
+import {createScoreNetwork} from './score-network.js';
 
 const output = (value: unknown) => ({ content: [{ type: "text" as const, text: JSON.stringify(value) }], details: value });
 const text = { type: "string", minLength: 1 };
@@ -18,11 +19,11 @@ export function reviewAudit(context: Pick<ToolContext,"audit"|"inputs">): Review
 export function reviewSources(value: ReviewCase, audit?: ReviewAudit) {
   return { ...value.evidence, ...Object.fromEntries((audit?.sources ?? []).map(row => [row.id, row.content])) };
 }
-function exactQuote(context: ToolContext, sourceId: string, quote: string): ReviewQuote {
+function exactQuote(context: ToolContext, sourceId: string, quote: string,offset?:number): ReviewQuote {
   const audit = reviewAudit(context), source = reviewSources(reviewCase(context), audit)[sourceId];
   if (!source || !quote) throw new Error("引用来源或原文为空");
-  const index = source.indexOf(quote);
-  if (index < 0 || source.indexOf(quote, index + 1) !== -1) throw new Error("引文须在来源中唯一且连续；扩大引文以消歧");
+  const index = offset===undefined?source.indexOf(quote):Array.from(source).slice(0,offset).join('').length;
+  if(index<0||!source.startsWith(quote,index)||offset===undefined&&source.indexOf(quote,index+1)!==-1)throw new Error("引文须在来源中唯一且连续；扩大引文或按已读取的起点消歧");
   const start = Array.from(source.slice(0, index)).length, end = start + Array.from(quote).length;
   const existing = audit.quotes.find(row => row.source_id === sourceId && row.start === start && row.end === end);
   if (existing) return existing;
@@ -82,13 +83,23 @@ export const reviewTools: Omit<ToolDefinition,"description">[] = [{
     additionalProperties: schema({ evidence_id: text, quote: text, number_token: text, text_token: text, role: text, unit: { type: "string" } }, ["evidence_id","quote","role","unit"]) },
     expression: text, result_unit: { type: "string" }, include_lower: { type: "boolean" }, include_upper: { type: "boolean" }, suffix_length: { type: "integer", minimum: 1 } }, ["operation","inputs","result_unit"]),
   async execute(context, value) {
-    const args = value as { operation: string; inputs: Record<string,{evidence_id:string;quote:string;number_token?:string;text_token?:string;role:string;unit:string}>; expression?: string; result_unit:string;include_lower?:boolean;include_upper?:boolean;suffix_length?:number };
+    return calculateReview(context,value,false);
+  },
+},externalTool('review_external')];
+
+interface CalculationInput {evidence_id:string;quote?:string;number_token?:string;text_token?:string;role:string;unit:string}
+function calculateReview(context:ToolContext,value:unknown,references:boolean){
+    const args = value as { operation: string; inputs: Record<string,CalculationInput>; expression?: string; result_unit:string;include_lower?:boolean;include_upper?:boolean;suffix_length?:number };
     const numbers: Record<string,string> = {};
+    const inputs:Record<string,unknown>={};
     for (const [name, row] of Object.entries(args.inputs)) {
-      exactQuote(context, row.evidence_id, row.quote);
+      const selected=references?reviewAudit(context).quotes.find(q=>q.evidence_id===row.evidence_id):undefined;
+      if(references&&!selected)throw Error('复算须引用本题已登记的EV证据编号');
+      const quote=selected?exactQuote(context,selected.source_id,selected.quote,selected.start):exactQuote(context,row.evidence_id,row.quote!);
       const token = row.number_token ?? row.text_token;
-      if (!token || row.quote.indexOf(token) < 0 || row.quote.indexOf(token, row.quote.indexOf(token)+1) >= 0) throw new Error("输入值须唯一来自所引原文");
+      if (!token || quote.quote.indexOf(token) < 0 || quote.quote.indexOf(token, quote.quote.indexOf(token)+1) >= 0) throw new Error("输入值须唯一来自所引原文");
       numbers[name] = token;
+      inputs[name]=references?{...row,evidence_id:quote.source_id,quote:quote.quote,start:quote.start,end:quote.end}:row;
     }
     let result: unknown;
     if (args.operation === "arithmetic") result = calculateExpression(args.expression!, numbers);
@@ -98,11 +109,14 @@ export const reviewTools: Omit<ToolDefinition,"description">[] = [{
       const lo = calculateExpression("value-lower", numbers).exact_fraction, hi = calculateExpression("value-upper", numbers).exact_fraction;
       result = { in_range: (args.include_lower ? BigInt(lo.numerator) >= 0n : BigInt(lo.numerator) > 0n) && (args.include_upper ? BigInt(hi.numerator) <= 0n : BigInt(hi.numerator) < 0n) };
     }
-    const record = { record_type: "calculation", spec: args, result, result_unit: args.result_unit };
-    return output(admit(context, JSON.stringify(record, null, 2), record, "V_CALC"));
-  },
-}, {
-  name: "review_external",
+    const record = { record_type: "calculation", spec: {...args,inputs}, result, result_unit: args.result_unit };
+    const source=admit(context,JSON.stringify(record,null,2),record,'V_CALC');
+    if(!references)return output(source);
+    const quote=exactQuote(context,source.source_id,source.content);
+    return output({source_id:source.source_id,evidence_id:quote.evidence_id,result,result_unit:args.result_unit});
+}
+function externalTool(name:string,network?:typeof createScoreNetwork):Omit<ToolDefinition,'description'>{return {
+  name,
   inputSchema: schema({ action: { enum: ["search", "read", "admit_search"] }, query: text, url: text, search_id: text,
     result_index: {type:"integer",minimum:0}, claim: text, affected_item_ids:{type:"array",items:text,minItems:1}, verification_role:roles,
     start_line: {type:"integer",minimum:1}, page:{type:"integer",minimum:1} }, ["action","claim","affected_item_ids","verification_role"]),
@@ -122,27 +136,57 @@ export const reviewTools: Omit<ToolDefinition,"description">[] = [{
       const search = audit.searches.find(row => row.id === args.search_id);
       const rows = search?.result.results as Record<string,unknown>[] | undefined, row = rows?.[args.result_index];
       if (!row || typeof row.url !== "string") throw new Error("须选择实际搜索返回中的来源");
-      return output(register(row.url, JSON.stringify(row,null,2), { obtained_by:"review_external.search", acquisition_ref:search!.id, scope:"search_snippet",publication_date:row.date ?? null }));
+      return output(register(row.url, JSON.stringify(row,null,2), { obtained_by:name+'.search', acquisition_ref:search!.id, scope:"search_snippet",publication_date:row.date ?? null }));
     }
     if (args.action === "search") {
       if (!process.env.SEARCH_API_KEY) throw new Error("宿主没有配置搜索工具；相关事实保留unverified");
       const actions: ReviewAudit["actions"] = [];
+      const transport=network?await network():undefined;
       try {
         const search=createSerperSearch({apiKey:process.env.SEARCH_API_KEY,fetch:async(url,options)=>{
-          actions.push(recordAction('search',{query:args.query}));return fetch(url,options);
+          actions.push(recordAction('search',{query:args.query}));return (transport?.fetch??fetch)(url,options);
         }});
         const result = await search.search({queries:[{query:args.query}],limit:5},signal) as unknown as Record<string,unknown>, id = randomUUID();
         for(const action of actions)action.result=result;
         audit.searches.push({id,result}); return output({search_id:id,result,external_actions_used:audit.actions.length});
       } catch(error){for(const action of actions)action.error=String(error);throw error;}
+      finally{await transport?.close();}
     }
     if (!args.url || !urls.has(args.url) && urls.size >= 3) throw new Error("读取需要URL且不能超过3个关键来源");
     const actions: ReviewAudit["actions"] = [];
+    const transport=network?await network():undefined;
     try {
-      const reader = createWebReader({ beforeRequest: url => { actions.push(recordAction("read",{url,request:args})); } });
+      const reader = createWebReader({ ...(transport?{download:transport.download}:{}),beforeRequest: url => { actions.push(recordAction("read",{url,request:args})); } });
       const result = await reader.read({url:args.url,startLine:args.start_line,lineCount:120,page:args.page},signal);
       for (const action of actions) action.result = {url:args.url,format:result.format};
-      return output(register(args.url, JSON.stringify(result,null,2), {obtained_by:"review_external.read",scope:"actual_tool_return",response:result}));
+      return output(register(args.url, JSON.stringify(result,null,2), {obtained_by:name+'.read',scope:"actual_tool_return",response:result}));
     } catch(error){for(const action of actions)action.error=String(error);throw error;}
+    finally{await transport?.close();}
   },
-}];
+};}
+
+const scoreMaterial:Omit<ToolDefinition,'description'>={...reviewTools[0],name:'score_material',
+  inputSchema:schema({...materialProperties,end:{type:'integer',minimum:1},action:{enum:['inspect','read','search','quote','batch']},
+    operations:{type:'array',minItems:1,maxItems:32,items:schema({...materialProperties,end:{type:'integer',minimum:1}},['action'])}},['action']),
+  async execute(context,input,signal){
+    const args=input as {action:string;operations?:Record<string,unknown>[];source_id?:string;text?:string;start?:number;end?:number};
+    if(args.action==='batch'){
+      if(!args.operations?.length||args.operations.length>32||args.operations.some(row=>!['inspect','read','search','quote'].includes(String(row.action))))throw Error('批量操作须为1–32个独立材料操作');
+      const results=[];
+      for(const operation of args.operations){try{const r=await scoreMaterial.execute(context,operation,signal);results.push({ok:true,...r.details as object});}catch(error){results.push({ok:false,action:operation.action,source_id:operation.source_id,error:String(error)});}}
+      return output({results});
+    }
+    if(args.action!=='quote')return reviewTools[0].execute(context,input,signal);
+    let quote=args.text;
+    if(quote===undefined){
+      const chars=Array.from(reviewSources(reviewCase(context),reviewAudit(context))[args.source_id!]??'');
+      if(args.start===undefined||args.end===undefined||args.end<=args.start||args.end>chars.length)throw Error('直接引用须使用已读取区间的start/end');
+      quote=chars.slice(args.start,args.end).join('');
+    }
+    return output(exactQuote(context,args.source_id!,quote,args.start));
+  }};
+const calculationSchema=structuredClone(reviewTools[1].inputSchema) as any;
+delete calculationSchema.properties.inputs.additionalProperties.properties.quote;
+calculationSchema.properties.inputs.additionalProperties.required=calculationSchema.properties.inputs.additionalProperties.required.filter((key:string)=>key!=='quote');
+export const scoreTools:Omit<ToolDefinition,'description'>[]=[scoreMaterial,{...reviewTools[1],name:'score_calculate',inputSchema:calculationSchema,
+  async execute(context,value){return calculateReview(context,value,true);}},externalTool('score_external',createScoreNetwork)];

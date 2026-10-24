@@ -11,6 +11,7 @@ export interface ScoreException {case_id:string;assessment_status:"needs_materia
 export const scoreAxes=['T','E','L','A','U','D'] as const;
 export type ScoreAxis=typeof scoreAxes[number];
 export interface VerificationRequest {claim:string;affected_item_ids:string[]}
-export interface ScoreEvidence {summary:string;checks:{claim:string;affected_item_ids:string[];status:'supported'|'contradicted'|'unverified';reason:string;evidence_ids:string[]}[]}
+export interface ScoreFact {affected_item_ids:string[];evidence_ids:string[]}
+export interface ScoreEvidence {facts:ScoreFact[];unresolved:VerificationRequest[];changed_item_ids:string[];full_rescore_reason?:string}
 export interface ScoreAxisResult {case_id:string;evaluations:Unit[];diagnostics:Diagnostic[];findings:ScoreFinding[];evidence:import('@eval/contracts').ReviewQuote[];verification_requests:VerificationRequest[]}
 export interface ScoreRepair {action:'repair';reason:string;axis_ids:ScoreAxis[];verification_requests:VerificationRequest[]}

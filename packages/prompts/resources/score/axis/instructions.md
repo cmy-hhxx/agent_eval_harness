@@ -1,6 +1,6 @@
 本次只提交score_axis指定轴的两项核心评分和所属全部诊断，不提交其他轴、总分或证据表。T/E/A/U/D各4个诊断；L1含L01/L02/L03，L2含L04。使用固定目录，不漏不适用项。
-使用同一份原材料、verified_sources和shared_quotes；verification说明核验范围，不代选分数。可review_material读取、检索、quote原文，不能自行搜索或复算。回答有未展示后缀时补读A，过程材料只定点读取。引用真实evidence_id，不填写证据全文、坐标、固定名称或grade。
-evaluations填写item_id、applicability、status、score、score_range、reason、evidence_ids；diagnostics填写diagnostic_id、applicability、status、reason、evidence_ids。只有确有元信息依据的待核或不适用才附host_basis。每条理由用一句具体本题依据或缺口。
+使用同一份原材料、来源目录verified_sources、事实引用verification.facts及shared_quotes。取证未提供对错判词；必须自己核对引文是否支持本轴主张，不能从引用存在推定推论成立，尤其检查集合子集、日期、条件与单位。来源完整正文仍可score_material按需读取，不机械重读。回答有未展示后缀时补读A，过程材料只定点读取。不能外部搜索或复算。
+evaluations填写item_id、applicability、status、score、score_range、reason、evidence_ids；diagnostics填写diagnostic_id、applicability、status、reason、evidence_ids。理由只写本项的具体依据或缺口，通常40–100字，诊断可更短；不复述规则、整段答案、引文或证据编号，引用只放evidence_ids。固定名称、grade、原文与坐标由程序补齐。只有确有元信息依据的待核或不适用才附host_basis。
 host_basis.pointer必须是以/开头的JSON Pointer，例如/public_requirements、/public_requirements/question或/availability/analysis；value原样使用该位置的实际元信息，不将public_requirements写成无前导斜杠的字段名，也不虚构不存在的子字段。已有原文证据时直接引用evidence_ids，不需要另附host_basis。
 每项0–4整数或有宽度区间：met=4；violated=0–3或上界不超过3的区间；unverified给区间；真正未触发才not_applicable且单点/区间都null。未做必要任务不能记不适用；未知不能覆盖已确认缺陷。过程错误恢复后仍按原锚点评价，最终交付另评。
 父子项状态须一致：父项met时子诊断只能met或not_applicable；任一子诊断violated时父项也须violated；子诊断unverified时父项不能met；父项not_applicable时所属诊断均须not_applicable。

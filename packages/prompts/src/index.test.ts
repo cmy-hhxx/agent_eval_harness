@@ -36,14 +36,14 @@ function pathName(source: string): string { return source.slice(source.lastIndex
 
 test('all Score phases share the public-material boundary without changing other agents',()=>{
   const boundary=readFileSync(new URL('../resources/score/material-boundary.md',import.meta.url),'utf8').trim();
-  for(const profile of ['evidence','axis','default']){
-    const prompt=agentPrompt('score',['review_material'],profile);
+  for(const profile of ['evidence','axis-t','axis-e','axis-l','axis-a','axis-u','axis-d','default']){
+    const prompt=agentPrompt('score',['score_material'],profile);
     assert(prompt.instructions.includes(boundary));assert(prompt.systemPrompt.includes(boundary));
   }
   for(const stage of stages)assert(!agentPrompt(stage,[]).instructions.includes(boundary));
   const calculation=readFileSync(new URL('../resources/tools/review_calculate.md',import.meta.url),'utf8').trim();
-  const scoreCalculation=readFileSync(new URL('../resources/score/evidence/calculate.md',import.meta.url),'utf8').trim();
-  assert.equal(agentPrompt('score',['review_calculate'],'evidence').toolDescriptions.review_calculate,calculation+'\n'+scoreCalculation);
+  const scoreCalculation=readFileSync(new URL('../resources/tools/score_calculate.md',import.meta.url),'utf8').trim();
+  assert.equal(agentPrompt('score',['score_calculate'],'evidence').toolDescriptions.score_calculate,scoreCalculation);
   assert.equal(agentPrompt('attribution',['review_calculate'],'direct').toolDescriptions.review_calculate,calculation);
 });
 

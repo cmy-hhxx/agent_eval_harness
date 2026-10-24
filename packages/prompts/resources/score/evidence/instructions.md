@@ -1,8 +1,6 @@
-本会话只做统一取证，不填写12项评分或24项诊断。先读完整题面和最终回答；answer_requires_more=true时用review_material.read补齐A。按需要定点读取推理和工具轨迹，不遍历无关长材料。
-关键计算必须用review_calculate独立复算，保持输入、公式、单位和结果对应；登记并引用返回的V_CALC来源。原文用review_material.quote取得证据编号，可batch多条，不复制证据表、不手算坐标。
-review_calculate.inputs.*.evidence_id引用原始source_id，不是EV_编号；参数示例见该工具说明。工具报错先修正参数，仍失败则保留相关计算待核，不能以心算冒充已完成的V_CALC复算。
-关键外部事实缺独立依据时先review_external.search，再admit_search登记真实结果；摘要不足就read原文。对应对象、期间、口径与verification_role，不使用事后结果评价预测。未明示日期时接受候选采用的日期。全题累计最多6个外部底层请求、3个来源URL，失败和重定向计入；已有调用不重置。缺证保留未知。
-提交JSON仅包含summary和checks。每条check填写claim、affected_item_ids、status(supported/contradicted/unverified)、reason、evidence_ids。只列实际需要的关键核验，可为空，不机械生成12或24条。确定结论须有原文或复算证据，未知写具体缺口。checks不是既定评分。summary用一句说明完成范围和剩余缺口。
-repair_request存在时只补查具体缺口，复用已有来源和剩余预算。完整题面缺失、回答未捕获、真实空答或阻断公开规则冲突用原异常结构，case_id由执行器填写。不添加建议、统计和排名。
-
-affected_item_ids只填写核心单元T1/T2/E1/E2/L1/L2/A1/A2/U1/U2/D1/D2，不填写T01、E03等诊断编号；核验阶段不接收诊断编号。
+本会话只收集原文与关键复算，不评价候选对错、不做推论或评分。先读完整题面和最终回答；answer_requires_more=true时用score_material.read补齐A。围绕能改变判断的对象、日期、口径和派生数值定点取证，批量读取/quote；不遍历无关长轨迹，不逐一复核所有抄录数字。
+用score_material登记含必要上下文的引文；已有search/read的start/end时直接quote该区间，避免反复寻找唯一片段。关键派生计算用score_calculate，输入引用已取得EV编号；程序自动登记结果引用，勿再读取/quote整份计算记录。错误输入与正确算术分别保留，不以心算冒充已复算。
+关键外部事实缺依据时先score_external.search，admit_search登记真实结果；摘要不足再read。检查对象、时点、口径与verification_role，不用事后结果评预测。明示相容前提作为题设条件，不因缺实时观测把它记为题设矛盾。失败保留缺口，不判候选错误。
+正常提交仅含facts、unresolved两个平级数组。facts每条只填affected_item_ids和evidence_ids：引用实际原文/复算，保留原文的集合范围、时间和条件，不另写supported/contradicted判词或解释；语义判断由各轴独立完成。unresolved只列仍可能改变评分的具体事实缺口（claim、affected_item_ids），理由短且不复述题面。只用12核心编号，不用诊断编号。
+repair_request存在时只补查指定缺口，复用原证据和全题剩余额度；facts只列新增或改变的事实引用，不重复已有映射，unresolved更新仍未解决的缺口。新增事实标出所有可能受影响核心项；仅在影响无法隔离时填写full_rescore_reason及具体原因，执行器才全量重评。没有新事实时facts为空，不因请求失败而全量重评。
+完整题面缺失、回答未捕获、真实空答或阻断公开规则冲突用原异常结构，case_id由程序填写。不添加建议、统计和排名。

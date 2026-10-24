@@ -4,24 +4,15 @@
     {
       "type": "object",
       "properties": {
-        "summary": {
-          "type": "string",
-          "minLength": 1
-        },
-        "checks": {
+        "facts": {
           "type": "array",
           "items": {
             "type": "object",
             "properties": {
-              "claim": {
-                "type": "string",
-                "minLength": 1
-              },
               "affected_item_ids": {
                 "type": "array",
                 "items": {
                   "type": "string",
-                  "minLength": 1,
                   "enum": [
                     "T1",
                     "T2",
@@ -40,42 +31,97 @@
                 "minItems": 0,
                 "uniqueItems": true
               },
-              "status": {
-                "enum": [
-                  "supported",
-                  "contradicted",
-                  "unverified"
-                ]
-              },
-              "reason": {
-                "type": "string",
-                "minLength": 1
-              },
               "evidence_ids": {
                 "type": "array",
                 "items": {
                   "type": "string",
                   "minLength": 1
                 },
-                "minItems": 0,
+                "minItems": 1,
+                "uniqueItems": true
+              }
+            },
+            "required": [
+              "affected_item_ids",
+              "evidence_ids"
+            ],
+            "additionalProperties": false
+          },
+          "minItems": 0,
+          "uniqueItems": true
+        },
+        "unresolved": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "claim": {
+                "type": "string",
+                "minLength": 1
+              },
+              "affected_item_ids": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "enum": [
+                    "T1",
+                    "T2",
+                    "E1",
+                    "E2",
+                    "L1",
+                    "L2",
+                    "A1",
+                    "A2",
+                    "U1",
+                    "U2",
+                    "D1",
+                    "D2"
+                  ]
+                },
+                "minItems": 1,
                 "uniqueItems": true
               }
             },
             "required": [
               "claim",
-              "affected_item_ids",
-              "status",
-              "reason",
-              "evidence_ids"
+              "affected_item_ids"
             ],
             "additionalProperties": false
           },
-          "minItems": 0
+          "minItems": 0,
+          "uniqueItems": true
+        },
+        "full_rescore_reason": {
+          "type": "string",
+          "minLength": 1
+        },
+        "changed_item_ids": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "enum": [
+              "T1",
+              "T2",
+              "E1",
+              "E2",
+              "L1",
+              "L2",
+              "A1",
+              "A2",
+              "U1",
+              "U2",
+              "D1",
+              "D2"
+            ]
+          },
+          "minItems": 0,
+          "uniqueItems": true
         }
       },
       "required": [
-        "summary",
-        "checks"
+        "facts",
+        "unresolved",
+        "changed_item_ids"
       ],
       "additionalProperties": false
     },

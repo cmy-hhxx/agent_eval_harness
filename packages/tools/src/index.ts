@@ -13,7 +13,7 @@ import { calculate } from "./decimal.js";
 import { fitStringPage } from "./pagination.js";
 import { RequiredReadBudget } from "./required-reading.js";
 import { traceReadCoverage } from "./trace-audit.js";
-import { reviewTools } from "./review.js";
+import { reviewTools,scoreTools } from "./review.js";
 
 const schema = (properties: JsonSchema, required = Object.keys(properties)): JsonSchema => ({
   type: "object",
@@ -208,6 +208,7 @@ export type ExecutableTool = Omit<ToolDefinition, "description">;
 
 export const builtinTools: ExecutableTool[] = [
   ...reviewTools,
+  ...scoreTools,
   {
     name: "edit_json",
     fileWriter: true,
