@@ -18,13 +18,13 @@ test('AIME results show score and direct attribution with independent statuses, 
   const compiled = await build({entryPoints:[path.join(directory,'aime-results.js')],bundle:true,write:false,format:'iife',globalName:'Aime',platform:'browser'});
   dom.window.setTimeout = () => 0;
   const calls:{url:string;body:any}[] = [], sample = {inputId:'input-1',batchId:'b',caseId:'case-1',traceId:'trace-1',question:'完整问句 <script>',model:'aime_fast',status:'partial',stages:{score:{status:'succeeded',taskId:'score-1'},attribution:{status:'failed',taskId:'attr-1',error:'证据错误',attempts:2}}};
-  let failed = false, empty = false, sampleTotal = 26, attributionPrepared = false;
+  let failed = false, empty = false, ownerBlocked = false, sampleTotal = 26, attributionPrepared = false;
   const fetcher = async (url:string,init:RequestInit={}) => {
     const body = init.body ? JSON.parse(String(init.body)) : undefined; calls.push({url,body});
     if (failed) return Response.json({error:'服务断开'},{status:503});
-    if (url.endsWith('/runs')) return Response.json({runs:empty ? [] : [{runId:'1024',date:'2026-10-24',status:'interrupted',questions:13,answers:26,total:26,succeeded:25,partial:1,failed:1,pending:0,taskCompleted:51,taskTotal:52,stages:{score:{total:26,succeeded:26,failed:0},attribution:{total:26,succeeded:25,failed:1}},artifacts:[{name:'results/score.jsonl',path:'/out/results/score.jsonl'}]}]});
+    if (url.endsWith('/runs')) return Response.json({retryAllowed:!ownerBlocked,runs:empty ? [] : [{runId:'1024',date:'2026-10-24',status:'interrupted',questions:13,answers:26,total:26,succeeded:25,partial:1,failed:1,pending:0,taskCompleted:51,taskTotal:52,stages:{score:{total:26,succeeded:26,failed:0},attribution:{total:26,succeeded:25,failed:1}},artifacts:[{name:'results/score.jsonl',path:'/out/results/score.jsonl'}]}]});
     const currentSample = {...sample,stages:{...sample.stages,attribution:{...sample.stages.attribution,status:attributionPrepared ? 'pending' : 'failed'}}};
-    if (url.endsWith('/samples/input-1')) return Response.json({...currentSample,answer:'**最终回答**',input:{messages:['trace']},source:{archive:'input.7z',member:'inside.jsonl',line:8,item:0},tasks:[{id:'attr-1',stage:'attribution',status:currentSample.stages.attribution.status,reason:'证据错误',attempts:2,errors:[{path:'/evidence',message:'缺失'}]},{id:'rewrite-1',stage:'rewrite',status:'failed',reason:'改写校验失败',attempts:1,errors:[]}],results:{score:{evaluation:{final_answer_score:{score:8,status:'met'}}},attribution:{summary:'中文归因总结',findings:[{type:'problem',component:['检索'],label:'证据缺失',definition:'缺少来源',text:'事实未证实',reason:'缺少出处'}],evidence:[{quote:'真实证据'}]}}});
+    if (url.endsWith('/samples/input-1')) return Response.json({...currentSample,answer:'**最终回答**',input:{messages:['trace']},source:{archive:'input.7z',member:'inside.jsonl',line:8,item:0},tasks:[{id:'attr-1',stage:'attribution',status:currentSample.stages.attribution.status,reason:'证据错误',attempts:2,errors:[{path:'/evidence',message:'缺失'}]},{id:'rewrite-1',stage:'rewrite',status:'failed',reason:'改写校验失败',attempts:1,errors:[]}],results:{score:{evaluation:{final_answer_score:{score:8,status:'met'}}},attribution:{summary:'中文归因总结',findings:[{type:'problem',component:['检索'],label:'证据缺失',definition:'缺少来源',text:'事实未证实',reason:'缺少出处',evidence_ids:['EV_1']}],evidence:[{evidence_id:'EV_1',source_id:'A',start:0,end:4,quote:'真实证据'}]}}});
     if (url.includes('/samples?')) {
       const status = new URL(url,'http://fixture').searchParams.get('status');
       const item = status === 'succeeded' ? {...currentSample,status:'succeeded',stages:{score:{status:'succeeded',taskId:'score-1'},attribution:{status:'succeeded',taskId:'attr-1'}}} : currentSample;
@@ -45,6 +45,8 @@ test('AIME results show score and direct attribution with independent statuses, 
     assert.equal(el('aime-detail-title').textContent,'回答详情'); assert.equal(el('aime-question').textContent,sample.question);
     assert.equal(el('aime-detail-panel-attribution').hidden,false); assert.equal(el('aime-detail-panel-answer').hidden,true);
     assert.match(el('aime-score-result').textContent,/最终回答得分.*8/s); assert.match(el('aime-attribution-result').textContent,/中文归因总结.*证据缺失.*真实证据/s);assert.match(el('aime-attribution-errors').textContent,/改写 · 失败 · 1 次.*改写校验失败/s);assert.equal(el('aime-attribution-errors').querySelectorAll('button').length,1,'unsupported rewrite preparation is not offered as a no-op');
+    assert.equal(el('aime-attribution-result').querySelectorAll('.aime-finding').length,1);
+    const evidence=el('aime-attribution-result').querySelector('.aime-evidence');assert.equal(evidence.open,false);el('aime-attribution-result').querySelector('[data-evidence-reference=EV_1]').click();assert.equal(evidence.open,true);
     assert.equal(el('aime-detail').querySelector('script'),null); assert.match(el('aime-location').textContent,/input.7z.*inside.jsonl:8 \[0\]/s); assert(el('aime-answer').querySelector('strong'));
     el('aime-attribution-errors').querySelector('button').click(); await wait(()=>calls.some(call=>call.body?.taskIds)); assert.deepEqual(calls.find(call=>call.body?.taskIds)!.body,{taskIds:['attr-1']});
     await wait(()=>el('aime-detail-operation-status').textContent==='已准备 1 项重试');
@@ -62,8 +64,10 @@ test('AIME results show score and direct attribution with independent statuses, 
     el('aime-next').click(); await wait(()=>calls.some(call=>call.url.includes('offset=20')));
     sampleTotal=5;el('aime-refresh').click();await wait(()=>el('aime-page').textContent.includes('1 / 1 · 5 个回答'));assert(calls.at(-1)!.url.includes('offset=0'));
     assert.match(el('aime-artifacts').querySelector('a').href,/file=results%2Fscore.jsonl/);
+    el('aime-status').value='failed';el('aime-model').value='aime_expert';el('aime-query').value='unrelated';await controller.selectRun('1024',{traceId:'trace-1',model:'aime_fast'});assert.equal(el('aime-status').value,'');assert.equal(el('aime-model').value,'aime_fast');assert.equal(el('aime-query').value,'trace-1');assert.equal(el('aime-detail').open,true);assert.equal(el('aime-question').textContent,sample.question);el('aime-detail-close').click();
     failed = true; el('aime-refresh').click(); await wait(()=>!el('aime-error').hidden); assert.match(el('aime-sample-rows').textContent,/trace-1/); assert.equal(el('aime-retry-failed').disabled,true);
-    failed = false; empty = true; el('aime-refresh').click(); await wait(()=>el('aime-run-status').textContent === '暂无运行');
+    failed=false;attributionPrepared=false;ownerBlocked=true;el('aime-refresh').click();await wait(()=>el('aime-run-status').textContent.includes('来源运行中'));assert.equal(el('aime-retry-failed').disabled,true);await wait(()=>Boolean(el('aime-sample-rows').querySelector('[data-aime-retry]')));assert.equal(el('aime-sample-rows').querySelector('[data-aime-retry]').disabled,true);
+    ownerBlocked=false; empty = true; el('aime-refresh').click(); await wait(()=>el('aime-run-status').textContent === '暂无运行');
     assert.equal(el('aime-detail').hidden,true); assert.equal(el('aime-sample-rows').children.length,0); assert.equal(el('aime-query').value,'trace-1');
   } finally { controller.destroy(); dom.window.close(); }
 });
@@ -74,7 +78,7 @@ test('AIME ignores older refreshes and keeps one polling timer', async () => {
   const compiled=await build({entryPoints:[path.join(directory,'aime-results.js')],bundle:true,write:false,format:'iife',globalName:'Aime',platform:'browser'});
   const timers=new Set<number>();let nextTimer=0,hold=false;const pending:((value:Response)=>void)[]=[];
   dom.window.setTimeout=(_callback:unknown,ms:number)=>{const id=++nextTimer;if(ms===5000)timers.add(id);return id;};dom.window.clearTimeout=(id:number)=>timers.delete(id);
-  const overview=(answers:number)=>({runs:[{runId:'day',date:'2026-10-24',status:'running',answers,total:answers,succeeded:0,taskTotal:answers*2,taskCompleted:0,stages:{},artifacts:[]}]});
+  const overview=(answers:number)=>({retryAllowed:true,runs:[{runId:'day',date:'2026-10-24',status:'running',answers,total:answers,succeeded:0,taskTotal:answers*2,taskCompleted:0,stages:{},artifacts:[]}]});
   const fetcher=async(url:string)=>url.endsWith('/runs') ? hold ? new Promise<Response>(resolve=>pending.push(resolve)) : Response.json(overview(1)) : Response.json({items:[],total:0,offset:0,limit:10});
   dom.window.eval(compiled.outputFiles[0].text+'\nglobalThis.Aime=Aime;');const controller=dom.window.Aime.mountAimeResults(dom.window.document,{fetch:fetcher});const el=(id:string)=>dom.window.document.getElementById(id);
   const settle=async()=>{for(let n=0;n<5;n++)await new Promise(setImmediate);};
@@ -94,7 +98,7 @@ test('AIME filters and preparation actions stay scoped, and closing a loading de
   const calls:{url:string;body:any;signal:AbortSignal}[]=[];let navigation=0,hold=true,detailFailure=false,detailSignal:AbortSignal|undefined;
   const fetcher=async(url:string,init:RequestInit={})=>{
     calls.push({url,body:init.body?JSON.parse(String(init.body)):undefined,signal:init.signal as AbortSignal});
-    if(url.endsWith('/runs'))return Response.json({runs:[{runId:'day',date:'2026-10-24',answers:1,total:1,failed:1,status:'interrupted',stages:{},artifacts:[]}]});
+    if(url.endsWith('/runs'))return Response.json({retryAllowed:true,runs:[{runId:'day',date:'2026-10-24',answers:1,total:1,failed:1,status:'interrupted',stages:{},artifacts:[]}]});
     if(url.endsWith('/retry'))return Response.json({retried:['score-one']});
     if(url.includes('/samples?')){const empty=new URL(url,'http://fixture').searchParams.get('query')==='nothing';return Response.json({items:empty?[]:[sample],total:empty?0:1,offset:0,limit:10});}
     if(url.endsWith('/samples/one')){

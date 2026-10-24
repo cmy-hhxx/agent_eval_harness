@@ -163,7 +163,7 @@ async function waitHealthy(url: string, name: ServiceName, timeoutMs = 90_000): 
 }
 
 const ASSETS = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../dashboard");
-const workbenchAssets = new Set(["tabler.css", "workbench.css", "workbench-region.css", "workbench.bundle.js", "daily-charts.bundle.js", "dashboard.css", "automations.css", "problems.css", "automations.html", "automation-errors.html", "index.html", "problems.html", "intake.html", "batch-runs.html", "analysis.html", "daily.html", "aime-results.html"]);
+const workbenchAssets = new Set(["tabler.css", "workbench.css", "workbench-region.css", "workbench.bundle.js", "daily-charts.bundle.js", "dashboard.css", "automations.css", "problems.css", "automations.html", "automation-errors.html", "index.html", "problems.html", "intake.html", "batch-runs.html", "analysis.html", "daily.html", "aime-results.html", "daily-data.html"]);
 const dataAssets: Record<string, string> = { "data.html": "dashboard.html", "data.css": "dashboard.css", "records.html": "records.html" };
 
 

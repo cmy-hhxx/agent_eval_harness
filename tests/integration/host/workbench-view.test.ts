@@ -12,7 +12,7 @@ function enableDialogs(dom:any) {
 }
 
 
-test('three-module workbench defaults to both daily sources and keeps results and lower-frequency work in place', async () => {
+test('four-module workbench defaults to both daily sources and keeps results and lower-frequency work in place', async () => {
   const directory = path.join(ROOT,'apps/host/dashboard');
   const dom = new JSDOM(await readFile(path.join(directory,'workbench.html'),'utf8'),{url:'http://fixture/',runScripts:'outside-only'}); enableDialogs(dom);
   const stylesheet = dom.window.document.createElement('style'); stylesheet.textContent = await readFile(path.join(directory,'workbench.css'),'utf8'); dom.window.document.head.append(stylesheet);
@@ -34,13 +34,13 @@ test('three-module workbench defaults to both daily sources and keeps results an
     }
     if(url==='/health')return json({ok:true});
     if(url==='/session')return json({authenticated:false});
-    if(/^\/runtime\/api\/daily\/(wencai|aime)\/analytics$/.test(url))return json({source:url.split('/').at(-2),intake:{totals:{answers:0,questions:0,excluded:0},dates:[],models:[],exclusions:[],reportsComplete:true},evaluation:{unit:url.includes('/aime/')?'answers':'comparisons',totals:{total:0,completed:0,partial:0,running:0,pending:0,failed:0},dates:[]}});
+    if(/^\/runtime\/api\/daily\/(wencai|aime)\/analytics$/.test(url))return json({source:url.split('/').at(-2),intake:{totals:{answers:0,questions:0,excluded:0},dates:[],models:[],dateModels:[],datePairs:[],exclusions:[],reportsComplete:true},evaluation:{unit:url.includes('/aime/')?'answers':'comparisons',totals:{total:0,completed:0,partial:0,running:0,pending:0,failed:0},dates:[],groups:[]}});
     if(url==='/runtime/api/daily?page_size=10')return json({sources:['wencai','aime'].map(id=>({id,name:id,status:'idle',concurrency:id==='aime'?64:32,activeRequests:0,waitingRequests:0,settings:{engine:'pi',execution:{timeoutSeconds:600,maxToolCalls:8,retries:1},bindings:{},rewrite:{}},modelCatalog:[],packages:{items:[{id:id+'-package',name:id+'.7z',status:'cleaned',accepted:1,excluded:1}],total:1,page:1,pageSize:40},stages:{},runs:[]})),requests:[]});
     if(url.includes('/packages/')&&url.includes('/report?'))return json({batch_id:'package',status:'cleaned',summary:{read:2,accepted:1,excluded:1,questions:1},section:'exclusions',page:1,page_size:50,total:1,items:[{model:'model',case_id:'isolated',original_file:'archive.7z/member.jsonl',original_line:2,reason:'invalid_input'}]});
-    if(url==='/runtime/api/daily/aime/runs')return json({runs:[]});
+    if(url==='/runtime/api/daily/aime/runs')return json({retryAllowed:true,runs:[]});
     if(url.startsWith('/data/workbench/catalog'))return json({tasks:[{id:'daily',name:'问财日常评测',source:'wencai',category:'daily',dataset:'/data/wencai',profile:'wencai'}],batches:[],total:0,page:1,page_size:50});
-    if(url.endsWith('/runs'))return json({runs:[],errors:[]});
-    if(url.endsWith('/batch-runs'))return json({runs:[]});
+    if(url.endsWith('/runs'))return json({retryAllowed:true,runs:[],errors:[]});
+    if(url.endsWith('/batch-runs'))return json({retryAllowed:true,runs:[]});
     if(url.endsWith('/analysis'))return json({jobs:[]});
     if(url.endsWith('/inputs'))return json({status:'ready',dates:[],issues:0});
     if(url.endsWith('/config'))return json({error:'配置不可用'},503);
@@ -50,12 +50,14 @@ test('three-module workbench defaults to both daily sources and keeps results an
   const select = async(id:string)=>{dom.window.document.getElementById('nav-'+id).click();await wait(()=>dom.window.document.getElementById(id).getAttribute('aria-busy')==='false');await new Promise(setImmediate);assert.equal(dom.window.document.querySelectorAll('[role=tabpanel]:not([hidden])').length,1);};
   try {
     await dom.window.eval(`(async()=>{${compiled.outputFiles[0].text}\n})()`); await new Promise(setImmediate);
-    assert.deepEqual([...dom.window.document.querySelectorAll('[data-module]')].map((item:any)=>item.textContent),['评测','结果','更多']);
+    assert.deepEqual([...dom.window.document.querySelectorAll('[data-module]')].map((item:any)=>item.textContent),['评测','数据','结果','更多']);
     const daily=dom.window.document.getElementById('daily-content'); assert.equal(daily.hidden,false); assert.notEqual(dom.window.getComputedStyle(daily).display,'none');
     assert.match(daily.shadowRoot.textContent,/问财日常四路.*AIME 日常全量/s); assert.equal(dom.window.document.querySelector('iframe'),null);
     assert.equal(requests.some(url=>url.includes('/dashboard/')),false); assert.equal(requests.some(url=>url.includes('reference')),false);
+    await select('data'); const table=dom.window.document.getElementById('daily-data-content');assert.equal(table.hidden,false);assert.ok(table.shadowRoot.textContent.includes('Fast · A / AA'));
     await select('results'); const wencai=dom.window.document.getElementById('wencai-results-content'); assert.equal(wencai.hidden,false); assert.equal(wencai.shadowRoot.getElementById('config').hidden,true);
     assert.equal(requests.includes('/runtime/api/dashboard/config'),false); assert.equal(requests.includes('/runtime/api/dashboard/inputs'),false);
+    assert.match(wencai.shadowRoot.getElementById('run-list').textContent,/暂无问财评测运行/);wencai.shadowRoot.getElementById('run-list').querySelector('button').click();await wait(()=>!dom.window.document.getElementById('evaluate').hidden);await select('results');
     dom.window.document.querySelector('[data-results-source=aime]').click(); await wait(()=>Boolean(dom.window.document.getElementById('aime-results-content').shadowRoot)); assert.equal(wencai.hidden,true);
     const aime=dom.window.document.getElementById('aime-results-content').shadowRoot; aime.getElementById('aime-query').value='我的草稿';
     dom.window.document.querySelector('[data-results-source=wencai]').click(); dom.window.document.querySelector('[data-results-source=aime]').click(); assert.equal(aime.getElementById('aime-query').value,'我的草稿');

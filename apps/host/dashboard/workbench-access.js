@@ -42,7 +42,7 @@ export function mountAccess(root, options = {}) {
     if (signal.aborted) throw new win.DOMException('操作已取消', 'AbortError');
     let abort;
     const cancelled = new Promise((_, reject) => { abort = () => reject(new win.DOMException('操作已取消', 'AbortError')); signal.addEventListener('abort', abort, { once:true }); });
-    try { if (!await Promise.race([login(true), cancelled])) return response; }
+    try { if (!await Promise.race([login(true), cancelled])) throw new win.DOMException('已取消操作', 'AbortError'); }
     finally { signal.removeEventListener('abort', abort); }
     if (signal.aborted) throw new win.DOMException('操作已取消', 'AbortError');
     return fetcher(retry);

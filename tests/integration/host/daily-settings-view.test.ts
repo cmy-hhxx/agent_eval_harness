@@ -38,6 +38,16 @@ async function environment(save?:(id:string,value:any)=>Promise<Response>){
 }
 const wait=async(condition:()=>boolean)=>{for(let n=0;n<100;n++){if(condition())return;await new Promise(setImmediate);}assert.fail('settings did not settle');};
 
+test('cancelling execution login preserves the configuration draft without reporting a save failure',async()=>{
+  const f=await environment(async()=>{throw new DOMException('已取消操作','AbortError');});
+  try{
+    f.el('daily-timeout').value='801';f.el('daily-timeout').dispatchEvent(new f.dom.window.Event('input',{bubbles:true}));
+    f.el('daily-settings-form').dispatchEvent(new f.dom.window.Event('submit',{cancelable:true}));
+    await wait(()=>f.calls.length===1&&!f.el('daily-settings-save').disabled);
+    assert.equal(f.el('daily-settings-status').textContent,'未保存');assert.equal(f.el('daily-timeout').value,'801');assert.equal(f.sources[0].settings.execution.timeoutSeconds,600);
+  }finally{f.close();}
+});
+
 test('source configuration opens on models, keeps full model names and separates execution and directories',async()=>{
   const f=await environment();
   try{

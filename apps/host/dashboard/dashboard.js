@@ -90,6 +90,12 @@ function renderRuns() {
   const list = $("#run-list");
   if (!state.runs.length) {
     list.innerHTML = "";
+    if (options.resultsOnly) {
+      const empty = document.createElement('div'); empty.className = 'results-empty';
+      const text = document.createElement('p'); text.textContent = '暂无问财评测运行'; empty.append(text);
+      if (options.onEvaluate) { const action = document.createElement('button'); action.type = 'button'; action.className = 'button'; action.textContent = '去评测'; action.onclick = options.onEvaluate; empty.append(action); }
+      list.append(empty);
+    }
     return;
   }
   list.innerHTML = state.runs.map((run) => {

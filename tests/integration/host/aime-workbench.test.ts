@@ -34,6 +34,7 @@ test('AIME Workbench persists independent settings and refuses an existing CLI o
   await assert.rejects(aime.setSettings({execution:{timeoutSeconds:null}}),/timeoutSeconds/);
   await assert.rejects(aime.setSettings({bindings:{comparison:{thinking:'high'}}}),/Score与Attribution/);
   const release=await runLock(stateDirectory);
+  assert.equal((await aime.runs()).retryAllowed,false,'an independent owner blocks preparation in the UI as well as the API');
   await assert.rejects(aime.run(new AbortController().signal),/另一个进程.*aime-auto/);
   await release();
   const ini=path.join(f.directory,'config.ini');await writeFile(ini,await readFile(ini,'utf8')+'\nmodels = fixture\n');

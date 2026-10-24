@@ -22,12 +22,14 @@ if ((options.profile || DATASET) === "post_training_model") {
   MODEL_LABELS.b_fast = "AA-fast";
   MODEL_LABELS.b_post_train_fast = "AA-post_train_fast_V1";
 }
+if ((options.profile || DATASET) === "wencai") { MODEL_LABELS.b_fast = "AA Fast"; MODEL_LABELS.b_expert = "AA Expert"; }
 const BASE_PATH = `/data/${DATASET}`;
 const params = new URLSearchParams(location.search);
 const date = options.date || params.get("date") || "";
 const model = options.model || params.get("model") || "";
 let page = Math.max(1, Number.parseInt(params.get("page") || "1", 10) || 1);
 let total = 0;
+let request, disposed = false;
 
 const list = root.querySelector("#records-list");
 const title = root.querySelector("#records-title");
@@ -110,6 +112,7 @@ function renderItems(items) {
     list.append(empty);
     return;
   }
+  if (options.compact) { renderCompact(items); return; }
   const scroll = document.createElement("div");
   scroll.className = "records-table-scroll";
   scroll.tabIndex = 0;
@@ -172,6 +175,29 @@ function renderItems(items) {
   scroll.append(table); list.append(scroll);
 }
 
+function renderCompact(items) {
+  const table = document.createElement('table'); table.className = 'table compact-records-table';
+  const head = document.createElement('thead'), headings = document.createElement('tr');
+  for (const label of ['问句','回答']) { const cell = document.createElement('th'); cell.scope = 'col'; cell.textContent = label; headings.append(cell); }
+  head.append(headings); table.append(head);
+  items.forEach(item => {
+    const body = document.createElement('tbody'), turns = item.format === 'session' ? item.turns : [item];
+    turns.forEach((turn,index) => {
+      const row = document.createElement('tr'), question = document.createElement('td'), answer = document.createElement('td');
+      question.append(makeRecordQuestion(turn.question));
+      const identity = document.createElement('details'), label = document.createElement('summary');
+      label.textContent = turns.length > 1 ? `第 ${index+1} 轮 · 标识` : '标识'; identity.append(label,makeIdentifier(turn.trace_id,'Trace ID'));
+      if (item.session_id) identity.append(makeIdentifier(item.session_id,'Session ID')); question.append(identity);
+      const detail = document.createElement('details'), summary = document.createElement('summary'); summary.textContent = '查看回答'; detail.append(summary);
+      let rendered = false;
+      detail.addEventListener('toggle', () => { if (detail.open && !rendered) { const fields = makeRecordAnswer(turn); fields.firstElementChild?.querySelector('h2')?.remove(); detail.append(fields); rendered = true; } });
+      answer.append(detail); row.append(question,answer); body.append(row);
+    });
+    table.append(body);
+  });
+  list.append(table);
+}
+
 function makeRecordQuestion(value) {
   const node = document.createElement("div");
   node.className = "question-text"; node.textContent = displayText(value) || "（空）";
@@ -193,6 +219,8 @@ function updatePagination() {
 }
 
 async function loadPage() {
+  if (disposed) return;
+  request?.abort(); const controller = new AbortController(); request = controller;
   if (!date || !MODEL_LABELS[model]) {
     title.textContent = "无效的数据地址";
     list.innerHTML = '<p class="records-message records-error">请从数据目录打开样本</p>';
@@ -203,9 +231,10 @@ async function loadPage() {
   previous.disabled = true;
   next.disabled = true;
   try {
-    const response = await fetch(`${BASE_PATH}/records/${encodeURIComponent(date)}/${encodeURIComponent(model)}?page=${page}&page_size=${PAGE_SIZE}`, { cache: "no-store" });
+    const response = await fetch(`${BASE_PATH}/records/${encodeURIComponent(date)}/${encodeURIComponent(model)}?page=${page}&page_size=${PAGE_SIZE}`, { cache: "no-store", signal: controller.signal });
     if (!response.ok) throw new Error(`HTTP ${response.status}`);
     const data = await response.json();
+    if (disposed || controller.signal.aborted) return;
     total = data.total;
     const lastPage = Math.max(1, Math.ceil(total / PAGE_SIZE));
     if (page > lastPage) {
@@ -219,6 +248,7 @@ async function loadPage() {
     const last = Math.min(page * PAGE_SIZE, total);
     count.textContent = total ? `${formatCount(first)}–${formatCount(last)} / ${formatCount(total)} 条` : "0 条";
   } catch {
+    if (disposed || controller.signal.aborted) return;
     list.innerHTML = '<p class="records-message records-error">样本暂不可用</p>';
     pageStatus.textContent = "—";
     count.textContent = "";
@@ -234,6 +264,7 @@ function setPage(value) {
 
 previous.addEventListener("click", () => setPage(page - 1));
 next.addEventListener("click", () => setPage(page + 1));
-void loadPage();
+const ready = loadPage();
+return { ready, destroy() { disposed = true; request?.abort(); } };
 }
 if (globalThis.document?.querySelector("#records-list")) mountRecords(document);

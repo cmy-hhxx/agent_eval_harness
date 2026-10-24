@@ -302,7 +302,8 @@ class WorkbenchCatalog:
         result = {"totals": {"rawRecords": 0, "answers": 0, "questions": 0, "excluded": 0,
                              "duplicates": 0, "metadataIssues": 0, "packages": sum(row["count"] for row in packages),
                              "unreportedAnswers": 0},
-                  "dates": [], "models": [], "exclusions": [], "packages": packages, "reportsComplete": True}
+                  "dates": [], "models": [], "dateModels": [], "datePairs": [],
+                  "exclusions": [], "packages": packages, "reportsComplete": True}
         if not index.is_file():
             if has_reports or next(dataset.output_dir.glob("*/*.jsonl"), None) is not None:
                 raise Conflict("规范输入索引缺失")
@@ -322,6 +323,20 @@ class WorkbenchCatalog:
                     (SELECT day,batch_id,case_id,COUNT(*) AS answers FROM records GROUP BY day,batch_id,case_id)
                 GROUP BY day ORDER BY day
             ''')]
+            result["dateModels"] = [{"date": row[0], "model": row[1], "answers": row[2]} for row in source.execute(
+                "SELECT day,model,COUNT(*) FROM records GROUP BY day,model ORDER BY day,model")]
+            if task["profile"] == "wencai":
+                result["datePairs"] = [{"date": row[0], "tier": row[1], "paired": row[2], "unpaired": row[3]} for row in source.execute('''
+                    WITH cases AS (
+                        SELECT day,batch_id,case_id,MAX(model='a_fast') af,MAX(model='b_fast') bf,
+                               MAX(model='a_expert') ae,MAX(model='b_expert') be
+                        FROM records GROUP BY day,batch_id,case_id
+                    )
+                    SELECT day,'Fast' tier,SUM(af*bf),SUM(ABS(af-bf)) FROM cases GROUP BY day
+                    UNION ALL
+                    SELECT day,'Expert' tier,SUM(ae*be),SUM(ABS(ae-be)) FROM cases GROUP BY day
+                    ORDER BY day,tier
+                ''')]
             cleaning = source.execute('''
                 SELECT COALESCE(SUM(json_extract(report,'$.read')),0),
                        COALESCE(SUM(json_extract(report,'$.excluded')),0),

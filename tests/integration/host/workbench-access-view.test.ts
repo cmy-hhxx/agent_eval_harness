@@ -46,7 +46,7 @@ test('login is shown only for execution and resumes the exact original request w
 test('cancelled or aborted execution is never replayed after login', async () => {
   const f = await fixture();
   try {
-    let request = f.access.fetch('/data/workbench/clean',{method:'POST',body:'{}'});await f.settle(()=>f.el('access-dialog').open);f.el('access-cancel').click();assert.equal((await request).status,401);assert.equal(f.calls(),1);
+    let request = f.access.fetch('/data/workbench/clean',{method:'POST',body:'{}'});const cancelled=assert.rejects(request,{name:'AbortError'});await f.settle(()=>f.el('access-dialog').open);f.el('access-cancel').click();await cancelled;assert.equal(f.calls(),1);
     const controller = new AbortController();request=f.access.fetch('/runtime/api/daily/aime/control',{method:'POST',body:'{}',signal:controller.signal});
     const rejected = assert.rejects(request, { name:'AbortError' });await f.settle(()=>f.el('access-dialog').open);controller.abort();await rejected;f.submit();await f.settle(()=>!f.el('access-dialog').open);assert.equal(f.calls(),2);
   } finally { f.dom.window.close(); }

@@ -6,7 +6,7 @@ const stageName = stage => stage === 'score' ? '独立评分' : stage === 'attri
 
 export function mountAimeResults(root, options = {}) {
   const $ = id => root.querySelector('#' + id), doc = root.ownerDocument || root, fetcher = options.fetch || globalThis.fetch;
-  const state = { runs:[], runId:'', offset:0, limit:10, total:0, items:[], selected:'', revision:0, detailRevision:0, detailTab:'answer', busy:false };
+  const state = { runs:[], runId:'', offset:0, limit:10, total:0, items:[], selected:'', revision:0, detailRevision:0, detailTab:'answer', busy:false, retryAllowed:false };
   let timer, disposed = false, connected = false, detailFocus, detailController, refreshRevision = 0;
   const node = (tag,value) => { const item = doc.createElement(tag); item.textContent = value ?? ''; return item; };
   const button = (label,action,disabled = false) => { const item = node('button',label); item.type = 'button'; item.className = 'button'; item.disabled = disabled; item.onclick = () => void action(); return item; };
@@ -25,6 +25,40 @@ export function mountAimeResults(root, options = {}) {
     if (value && typeof value === 'object') { const list = doc.createElement('dl'); list.className = 'aime-fields'; Object.entries(value).forEach(([key,item]) => { const field = doc.createElement('div'), content = doc.createElement('dd'); field.className = item && typeof item === 'object' ? 'aime-object' : 'aime-scalar'; content.append(valueView(item)); field.append(node('dt',labels[key] || key),content); list.append(field); }); return list; }
     return node('span',value === null ? '无' : typeof value === 'boolean' ? value ? '是' : '否' : labels[value] || value);
   }
+  function attributionView(result) {
+    const content = node('div'), evidence = new Map(), display = { relevance:'相关性',correctness:'正确性',completeness:'完整性',efficiency:'效率',high:'高',medium:'中',low:'低',final_answer:'最终回答',reasoning:'推理',established:'证据充分',unverified:'待核' };
+    const summary = node('p',result.summary); summary.className = 'aime-review-summary'; content.append(summary);
+    const evidenceList = node('div'); evidenceList.className = 'aime-evidence-list';
+    for (const [index, row] of result.evidence.entries()) {
+      const detail = node('details'), title = node('summary',[row.evidence_id || `证据 ${index+1}`,row.source_id,row.start == null ? '' : `${row.start}–${row.end}`].filter(Boolean).join(' · '));
+      detail.className = 'aime-evidence'; detail.tabIndex = -1;
+      const quote = node('blockquote',row.quote); detail.append(title,quote); evidenceList.append(detail);
+      if (row.evidence_id) evidence.set(row.evidence_id,detail);
+    }
+    for (const [type, title] of [['problem','问题'],['strength','优点']]) {
+      const findings = result.findings.filter(row => row.type === type); if (!findings.length) continue;
+      content.append(node('h3',`${title}（${findings.length}）`));
+      findings.forEach(finding => {
+        const section = node('section'); section.className = 'aime-finding';
+        if (finding.label) section.append(node('h4',finding.label));
+        const meta = node('p',[display[finding.dimension] || finding.dimension,finding.importance ? `重要性 ${display[finding.importance] || finding.importance}` : '',display[finding.stage] || finding.stage,finding.evidence_status && finding.evidence_status !== 'established' ? display[finding.evidence_status] || finding.evidence_status : ''].filter(Boolean).join(' · ')); meta.className = 'aime-finding-meta';
+        section.append(meta,node('p',finding.text));
+        if (finding.reason) { const reason = node('p'); reason.append(node('strong','依据：'),doc.createTextNode(finding.reason)); section.append(reason); }
+        if (type === 'problem' && finding.component?.length) section.append(node('p',`责任组件：${finding.component.join('、')}`));
+        if (finding.definition) { const definition = node('details'); definition.append(node('summary','问题定义'),node('p',finding.definition)); section.append(definition); }
+        const references = node('div'); references.className = 'aime-evidence-references';
+        for (const id of finding.evidence_ids || []) {
+          const target = evidence.get(id), reference = target ? button(id,() => { target.open = true; target.scrollIntoView?.({block:'nearest'}); target.focus(); }) : node('code',id);
+          reference.dataset.evidenceReference = id; references.append(reference);
+        }
+        section.append(references); content.append(section);
+      });
+    }
+    if (result.evidence.length) content.append(node('h3',`证据（${result.evidence.length}）`),evidenceList);
+    if (result.rewritten) { const rewritten = node('details'); rewritten.append(node('summary','改写'),valueView(result.rewritten)); content.append(rewritten); }
+    const raw = node('details'); raw.className = 'aime-raw-result'; raw.append(node('summary','原始结果'),node('pre',JSON.stringify(result,null,2))); content.append(raw);
+    return content;
+  }
   function renderRuns() {
     const selected = state.runId; $('aime-run').replaceChildren(...state.runs.map(run => new Option(`${run.date || run.runId} · ${run.answers ?? run.total ?? 0} 回答${run.failed ? ` · ${run.failed} 失败` : ''} · ${labels[run.status] || run.status}`,run.runId))); $('aime-run').value = selected;
     $('aime-run').title = $('aime-run').selectedOptions[0]?.textContent || '';
@@ -35,13 +69,15 @@ export function mountAimeResults(root, options = {}) {
     if (run && numeric(run.partial)) metrics.push(`部分完成 ${run.partial}`);
     if (run && numeric(run.taskCompleted) && numeric(run.taskTotal)) metrics.push(`阶段任务 ${run.taskCompleted} / ${run.taskTotal}`);
     if (run && numeric(run.failed)) metrics.push(`失败 ${run.failed}`);
+    if (!state.retryAllowed) metrics.push('来源运行中');
     $('aime-run-status').replaceChildren(...(run ? metrics.map(text => node('span',text)) : [node('span','暂无运行')]));
     $('aime-stage-counts').replaceChildren(...Object.entries(run?.stages || {}).map(([stage,counts]) => stageProgress(doc,stageName(stage),{...counts,completed:counts.succeeded})));
     $('aime-artifacts').replaceChildren(...(run?.artifacts || []).map(file => { const link = node('a',file.name); link.href = url('/artifacts') + '?file=' + encodeURIComponent(file.name); link.setAttribute('download',''); link.onclick = () => { $('aime-artifact-menu').open = false; }; return link; }));
     $('aime-artifact-menu').hidden = !run?.artifacts?.length;
-    $('aime-retry-failed').disabled = !connected || state.busy || !run || run.status === 'running' || !run.failed;
+    $('aime-retry-failed').disabled = !connected || state.busy || !state.retryAllowed || !run || run.status === 'running' || !run.failed;
+    $('aime-retry-failed').title = state.retryAllowed ? '' : '来源运行中';
     $('aime-go-evaluate').disabled = $('aime-detail-go-evaluate').disabled = state.busy;
-    root.querySelectorAll('[data-task-errors] button,[data-aime-retry]').forEach(item => { item.disabled = !connected || state.busy || run?.status === 'running'; });
+    root.querySelectorAll('[data-task-errors] button,[data-aime-retry]').forEach(item => { item.disabled = !connected || state.busy || !state.retryAllowed || run?.status === 'running'; });
   }
   function renderSamples() {
     $('aime-sample-rows').replaceChildren(...state.items.map(sample => {
@@ -51,7 +87,7 @@ export function mountAimeResults(root, options = {}) {
       const failedStages = ['score','attribution'].filter(stage => ['failed','timed_out','blocked','cancelled'].includes(sample.stages?.[stage]?.status));
       const actions = doc.createElement('td'); actions.className = 'aime-row-actions'; actions.append(button('查看',() => detail(sample.inputId,failedStages[0] || 'answer')));
       const retryIds = failedStages.flatMap(stage => sample.stages[stage].taskId ? [sample.stages[stage].taskId] : []);
-      if (retryIds.length) { const retryButton = button('准备重试',() => retry({taskIds:retryIds}),!connected || state.busy || state.runs.find(run => run.runId === state.runId)?.status === 'running'); retryButton.dataset.aimeRetry = ''; actions.append(retryButton); }
+      if (retryIds.length) { const retryButton = button('准备重试',() => retry({taskIds:retryIds}),!connected || state.busy || !state.retryAllowed || state.runs.find(run => run.runId === state.runId)?.status === 'running'); retryButton.dataset.aimeRetry = ''; actions.append(retryButton); }
       row.append(identity,node('td',sample.model === 'aime_fast' ? 'Fast' : sample.model === 'aime_expert' ? 'Expert' : sample.model));
       const overall = node('td',labels[sample.status] || sample.status); overall.dataset.cell = 'answer-status'; row.append(overall);
       for (const stage of ['score','attribution']) { const status = sample.stages?.[stage]; const cell = node('td',labels[status?.status] || status?.status || '未执行'); if (status?.error) { const reason = node('div',status.error); reason.className = 'aime-error-preview'; reason.title = status.error; cell.append(reason); } row.append(cell); }
@@ -77,7 +113,7 @@ export function mountAimeResults(root, options = {}) {
     finally { if (!disposed && revision === state.revision) $('aime-sample-rows').closest('.table-scroll').setAttribute('aria-busy','false'); }
   }
   async function retry(body) {
-    if (state.busy || !connected) return;
+    if (state.busy || !connected || !state.retryAllowed) return;
     const runId = state.runId, detailInput = $('aime-detail').open ? state.selected : '', tab = state.detailTab;
     state.busy = true; notice('准备中…'); renderRuns();
     try {
@@ -88,7 +124,7 @@ export function mountAimeResults(root, options = {}) {
         notice(Array.isArray(value.retried) ? value.retried.length ? `已准备 ${value.retried.length} 项重试` : '没有可重试任务' : '已准备重试');
       }
     }
-    catch (cause) { if (!disposed && state.runId === runId) { notice(''); error(`准备重试失败：${cause.message}`,$('aime-detail').open); } }
+    catch (cause) { if (!disposed && state.runId === runId) { notice(''); if (cause.name !== 'AbortError') error(`准备重试失败：${cause.message}`,$('aime-detail').open); } }
     finally { state.busy = false; renderRuns(); }
   }
   function detailTab(tab) {
@@ -120,21 +156,28 @@ export function mountAimeResults(root, options = {}) {
       for (const stage of ['score','attribution']) {
         const tasks = value.tasks.filter(task => task.stage === stage || stage === 'attribution' && task.stage === 'rewrite'), status = tasks.find(task => task.stage === stage)?.status || value.stages?.[stage]?.status;
         $(`aime-detail-tab-${stage}`).textContent = `${stageName(stage)}${status ? ` · ${labels[status] || status}` : ''}`;
-        $(`aime-${stage}-errors`).replaceChildren(...tasks.filter(task => task.reason || task.errors?.length || ['failed','timed_out','blocked','cancelled'].includes(task.status)).map(task => { const item = doc.createElement('section'); item.append(node('h3',`${task.stage === stage ? '' : stageName(task.stage) + ' · '}${labels[task.status] || task.status} · ${task.attempts} 次`),node('pre',task.reason || ''),valueView(task.errors || [])); if (task.stage === stage && ['failed','timed_out','blocked','cancelled'].includes(task.status)) item.append(button('准备重试此项',() => retry({taskIds:[task.id]}),state.busy || run?.status === 'running')); return item; }));
+        $(`aime-${stage}-errors`).replaceChildren(...tasks.filter(task => task.reason || task.errors?.length || ['failed','timed_out','blocked','cancelled'].includes(task.status)).map(task => { const item = doc.createElement('section'); item.append(node('h3',`${task.stage === stage ? '' : stageName(task.stage) + ' · '}${labels[task.status] || task.status} · ${task.attempts} 次`),node('pre',task.reason || ''),valueView(task.errors || [])); if (task.stage === stage && ['failed','timed_out','blocked','cancelled'].includes(task.status)) item.append(button('准备重试此项',() => retry({taskIds:[task.id]}),state.busy || !state.retryAllowed || run?.status === 'running')); return item; }));
         const result = value.results?.[stage]; if (!result) { $(`aime-${stage}-result`).replaceChildren(node('p',labels[status] || status || '未执行')); continue; }
-        const content = stage === 'score' ? result.evaluation : {summary:result.summary,findings:result.findings.map(finding => finding.type === 'strength' ? Object.fromEntries(Object.entries(finding).filter(([key]) => !['component','label','definition'].includes(key))) : finding),evidence:result.evidence,...(result.rewritten ? {rewritten:result.rewritten} : {})};
-        $(`aime-${stage}-result`).replaceChildren(valueView(content));
+        $(`aime-${stage}-result`).replaceChildren(stage === 'score' ? valueView(result.evaluation) : attributionView(result));
       }
       error('',true);
     } catch (cause) { if (!controller.signal.aborted && revision === state.detailRevision) { error(`详情读取失败：${cause.message}`,true); renderRuns(); } }
     finally { if (!disposed && revision === state.detailRevision) { $('aime-detail').setAttribute('aria-busy','false'); $('aime-detail-loading').hidden = true; } }
   }
-  async function selectRun(id) { if (state.runId !== id) { state.runId = id; state.offset = 0; state.selected = ''; state.detailRevision++; detailController?.abort(); notice(''); $('aime-artifact-menu').open = false; if ($('aime-detail').open) $('aime-detail').close(); $('aime-detail').hidden = true; } renderRuns(); await samples(); }
+  async function switchRun(id) { if (state.runId !== id) { state.runId = id; state.offset = 0; state.selected = ''; state.detailRevision++; detailController?.abort(); notice(''); $('aime-artifact-menu').open = false; if ($('aime-detail').open) $('aime-detail').close(); $('aime-detail').hidden = true; } renderRuns(); await samples(); }
+  async function selectRun(id, selection) {
+    $('aime-model').value = selection?.model || ''; $('aime-status').value = ''; $('aime-query').value = selection?.traceId || selection?.caseId || ''; state.offset = 0;
+    await switchRun(id);
+    if (!selection?.traceId && !selection?.caseId) return;
+    const sample = state.items.find(row => selection.traceId ? row.traceId === selection.traceId : row.caseId === selection.caseId && (!selection.batchId || row.batchId === selection.batchId));
+    if (sample) await detail(sample.inputId,sample.stages.attribution?.status === 'succeeded' ? 'attribution' : sample.stages.score?.status === 'succeeded' ? 'score' : 'answer');
+    else error('所选回答尚未进入该运行');
+  }
   async function refresh() {
     const revision = ++refreshRevision;
     clearTimeout(timer);
     try {
-      const value = await request('/runtime/api/daily/aime/runs'); if (disposed || revision !== refreshRevision) return; state.runs = value.runs;
+      const value = await request('/runtime/api/daily/aime/runs'); if (disposed || revision !== refreshRevision) return; state.runs = value.runs; state.retryAllowed = value.retryAllowed;
       if (!state.runs.some(run => run.runId === state.runId)) {
         state.runId = state.runs[0]?.runId || ''; state.offset = 0; state.selected = ''; state.detailRevision++; detailController?.abort(); if ($('aime-detail').open) $('aime-detail').close(); $('aime-detail').hidden = true;
       }
@@ -144,7 +187,7 @@ export function mountAimeResults(root, options = {}) {
     finally { if (!disposed && revision === refreshRevision && state.runs.some(run => run.status === 'running')) timer = setTimeout(() => void refresh(),5000); }
   }
   const filter = () => { state.offset = 0; notice(''); void samples(); };
-  $('aime-run').onchange = event => void selectRun(event.target.value); $('aime-refresh').onclick = () => void refresh(); $('aime-filters').onsubmit = event => { event.preventDefault(); filter(); };
+  $('aime-run').onchange = event => void switchRun(event.target.value); $('aime-refresh').onclick = () => void refresh(); $('aime-filters').onsubmit = event => { event.preventDefault(); filter(); };
   for (const id of ['aime-model','aime-status']) $(id).onchange = filter;
   $('aime-filter-reset').onclick = () => { for (const key of ['model','status','query']) $(`aime-${key}`).value = ''; filter(); };
   $('aime-prev').onclick = () => { state.offset = Math.max(0,state.offset-state.limit); void samples(); }; $('aime-next').onclick = () => { state.offset += state.limit; void samples(); };

@@ -8,6 +8,7 @@ export interface EvaluationAnalytics {
   models: (EvaluationCounts & { model: string })[];
   dates: (EvaluationCounts & { date: string | null })[];
   stages: { stage: string; total: number; completed: number; pending: number; failed: number; running: number }[];
+  groups: (EvaluationCounts & { date: string | null; model: string; stages: EvaluationAnalytics["stages"] })[];
 }
 const empty = (): EvaluationCounts => ({ total: 0, completed: 0, partial: 0, pending: 0, failed: 0, running: 0 });
 const failures = new Set(["failed", "timed_out", "blocked", "cancelled"]);
@@ -64,7 +65,8 @@ export function comparisonEvaluationAnalytics(date: string, runs: readonly Check
     for (const target of [totals, counts]) { target.total++; target[status]++; }
   }
   return { unit: "comparisons", totals, models: [...models].map(([model, counts]) => ({ model, ...counts })),
-    dates: [{ date, ...totals }], stages: [...stages.values()] };
+    dates: [{ date, ...totals }], stages: [...stages.values()],
+    groups: [...models].map(([model, counts]) => ({ date, model, ...counts, stages: [] })) };
 }
 
 export function combineEvaluationAnalytics(unit: EvaluationAnalytics["unit"], rows: Omit<EvaluationAnalytics, "unit">[]): EvaluationAnalytics {
@@ -84,5 +86,6 @@ export function combineEvaluationAnalytics(unit: EvaluationAnalytics["unit"], ro
     }
   }
   return { unit, totals, models: [...models].map(([model, counts]) => ({ model, ...counts })),
-    dates: [...dates].sort(([a], [b]) => (a ?? "").localeCompare(b ?? "")).map(([date, counts]) => ({ date, ...counts })), stages: [...stages.values()] };
+    dates: [...dates].sort(([a], [b]) => (a ?? "").localeCompare(b ?? "")).map(([date, counts]) => ({ date, ...counts })),
+    stages: [...stages.values()], groups: rows.flatMap(row => row.groups) };
 }

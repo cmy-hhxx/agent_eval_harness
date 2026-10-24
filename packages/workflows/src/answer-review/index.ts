@@ -344,15 +344,18 @@ function answerReviewCoverage(){
     },
     finish(){
       const totals=empty(),models=new Map<string,Counts>(),dates=new Map<string|null,Counts>();
-      const counts=Object.fromEntries(stages.map(stage=>[stage,{stage,total:0,completed:0,pending:0,failed:0,running:0}]));
+      const stageCounts=()=>Object.fromEntries(stages.map(stage=>[stage,{stage,total:0,completed:0,pending:0,failed:0,running:0}]));
+      const counts=stageCounts(),groups=new Map<string,{date:string|null;model:string;counts:Counts;stages:ReturnType<typeof stageCounts>}>();
       for(const answer of answers.values()){
-        const statuses=stages.map(stage=>{const status=answer.stages[stage];counts[stage].total++;counts[stage][status]++;return status;});
+        const key=canonical([answer.date,answer.model]),group=groups.get(key)??{date:answer.date,model:answer.model,counts:empty(),stages:stageCounts()};groups.set(key,group);
+        const statuses=stages.map(stage=>{const status=answer.stages[stage];for(const target of [counts[stage],group.stages[stage]]){target.total++;target[status]++;}return status;});
         const status=statuses.every(value=>value==='completed')?'completed':statuses.includes('failed')?'failed':
           statuses.includes('completed')?'partial':statuses.includes('running')?'running':'pending';
         const model=models.get(answer.model)??empty(),daily=dates.get(answer.date)??empty();models.set(answer.model,model);dates.set(answer.date,daily);
-        for(const count of [totals,model,daily]){count.total++;count[status]++;}
+        for(const count of [totals,model,daily,group.counts]){count.total++;count[status]++;}
       }
-      return {totals,questions:new Set([...answers.values()].map(answer=>answer.question)).size,models:[...models].map(([model,counts])=>({model,...counts})),dates:[...dates].map(([date,counts])=>({date,...counts})),stages:Object.values(counts)};
+      return {totals,questions:new Set([...answers.values()].map(answer=>answer.question)).size,models:[...models].map(([model,counts])=>({model,...counts})),dates:[...dates].map(([date,counts])=>({date,...counts})),stages:Object.values(counts),
+        groups:[...groups.values()].map(group=>({date:group.date,model:group.model,...group.counts,stages:Object.values(group.stages)}))};
     },
   };
 }

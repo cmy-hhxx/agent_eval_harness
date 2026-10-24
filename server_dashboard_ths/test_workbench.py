@@ -377,6 +377,22 @@ class WorkbenchTest(unittest.TestCase):
         finally:
             source.close()
 
+    def test_daily_date_counts_match_business_pairs_instead_of_model_row_minimums(self):
+        self.package(origin="/data/wencai", rows=[archive_row("b_fast", case) for case in ("match", "only-b")], extra={
+            "A-fast.jsonl": "\n".join(json.dumps(archive_row("a_fast", case)) for case in ("match", "only-a")),
+            "A-expert.jsonl": json.dumps(archive_row("a_expert", "expert")),
+            "AA-expert.jsonl": json.dumps(archive_row("b_expert", "expert")),
+        })
+        batch = self.discover_batches()[0]
+        self.clean([batch["id"]])
+        result = self.catalog.analytics({"task_id": [batch["task_id"]]})
+        self.assertEqual({row["model"]: row["answers"] for row in result["dateModels"]},
+                         {"a_fast": 2, "b_fast": 2, "a_expert": 1, "b_expert": 1})
+        self.assertEqual(result["datePairs"], [
+            {"date": "2026-09-29", "tier": "Expert", "paired": 1, "unpaired": 0},
+            {"date": "2026-09-29", "tier": "Fast", "paired": 1, "unpaired": 2},
+        ])
+
     def test_analytics_distinguishes_empty_input_from_missing_index_and_unreported_history(self):
         task = self.task()
         empty = self.catalog.analytics({"task_id": [task["id"]]})

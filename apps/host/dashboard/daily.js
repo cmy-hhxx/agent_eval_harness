@@ -53,13 +53,13 @@ export function mountDaily(root, options = {}) {
     if (!connected || sourceBusy.has(id)) return;
     sourceBusy.add(id); renderSources();
     try { await api(`/${encodeURIComponent(id)}/control`,{action}); await refresh(); }
-    catch (cause) { error(`${sourceLabels[id]}：${cause.message}`); }
+    catch (cause) { if (cause.name !== 'AbortError') error(`${sourceLabels[id]}：${cause.message}`); }
     finally { sourceBusy.delete(id); renderSources(); }
   }
   async function concurrency(id, input, output) {
     sourceBusy.add(id); renderSources();
     try { await api(`/${encodeURIComponent(id)}/concurrency`,{concurrency:Number(input.value)}); input.dataset.dirty = ''; await refresh(); }
-    catch (cause) { output.textContent = cause.message; }
+    catch (cause) { if (cause.name !== 'AbortError') output.textContent = cause.message; }
     finally { sourceBusy.delete(id); renderSources(); }
   }
   function renderSources() {
@@ -80,9 +80,10 @@ export function mountDaily(root, options = {}) {
         const footer = node('footer'), requests = node('span'); footer.className = 'daily-source-footer'; requests.className = 'daily-source-requests'; requests.dataset.cell = 'requests';
         const form = doc.createElement('form'), input = doc.createElement('input'), output = doc.createElement('output');
         form.className = 'daily-concurrency'; input.type = 'number'; input.min = '1'; input.required = true; input.setAttribute('aria-label',`${sourceLabels[source.id] || source.name} LLM 并发`);
-        input.oninput = () => { input.dataset.dirty = 'true'; }; const label = node('label','并发'), apply = node('button','应用'); label.append(input); apply.className = 'button'; apply.type = 'submit'; form.append(label,apply,output);
+        input.oninput = () => { input.dataset.dirty = 'true'; }; const label = node('label'), concurrencyLabel = node('span','并发'), apply = node('button','应用'); concurrencyLabel.dataset.cell = 'concurrency-label'; label.append(concurrencyLabel,input); apply.className = 'button'; apply.type = 'submit'; form.append(label,apply,output);
         form.onsubmit = event => { event.preventDefault(); void concurrency(source.id,input,output); }; footer.append(requests,form); card.append(header,counts,footer); $('daily-sources').append(card);
       }
+      card.querySelector('[data-cell=concurrency-label]').textContent = source.externalOwner ? '下次并发' : '并发'; card.querySelector('.daily-concurrency button').textContent = source.externalOwner ? '保存' : '应用';
       card.classList.toggle('selected',source.id === selected); card.querySelector('.daily-source-select').setAttribute('aria-pressed',String(source.id === selected));
       card.querySelector('[data-cell=selection]').textContent = source.id === selected ? '当前' : '查看';
       card.querySelector('[data-cell=status]').textContent = source.externalOwner ? '独立进程占用' : source.readError ? '读取失败' : textStatus(source.status);
@@ -225,7 +226,7 @@ export function mountDaily(root, options = {}) {
         for (const [stage,counts] of Object.entries(item.coverage?.stages || {})) { const detail = doc.createElement('details'); detail.append(node('summary',`${stageLabels[stage] || stage} ${counts.completed || 0}/${counts.total || 0}${counts.failed ? ` · 失败 ${counts.failed}` : ''}`),node('div',`待处理 ${counts.pending || 0} · 进行中 ${counts.running || 0}`)); stages.append(detail); } coverage.append(stages);
         if (item.coverage?.mongoStatus) coverage.append(node('div',`MongoDB ${textStatus(item.coverage.mongoStatus)}`));
         const id = selected;
-        for (const runId of item.coverage?.runIds || []) results.append(button(runId,() => { $('daily-package-report').close(); return options.onResults?.(id,runId); }));
+        for (const runId of item.coverage?.runIds || []) results.append(button(runId,() => { $('daily-package-report').close(); const selection = Object.fromEntries([['batchId',item.batch_id],['caseId',item.case_id],['traceId',item.trace_id],['model',item.model]].filter(([,value]) => typeof value === 'string' && value)); return options.onResults?.(id,runId,selection); }));
       } else { coverage.textContent = report.section === 'metadata_issues' ? `${item.field || ''} · ${item.error || item.reason || ''}` : cleaningReason(item.reason || item.error); coverage.title = item.reason || item.error || ''; }
       row.append(node('td',`${item.model || ''}\n${item.case_id || ''}`),location,coverage,results); return row;
     }));
@@ -273,7 +274,7 @@ export function mountDaily(root, options = {}) {
     if (invalid) { const panel = invalid.closest('[data-settings-panel]'); if (panel) selectSettingsTab(panel.dataset.settingsPanel); const advanced = invalid.closest('details'); if (advanced) advanced.open = true; invalid.focus(); invalid.reportValidity(); return; }
     const id = selected, settings = settingsValue(); busy = true; renderDetail();
     try { await api(`/${id}/settings`,settings); drafts.delete(id); settingsMessages.set(id,'已保存 · 下次运行生效'); await refresh(); if (!disposed && selected === id) $('daily-settings-status').textContent = settingsMessages.get(id); }
-    catch (cause) { settingsMessages.set(id,cause.message); if (!disposed && selected === id) $('daily-settings-status').textContent = cause.message; }
+    catch (cause) { settingsMessages.set(id,cause.name === 'AbortError' ? '未保存' : cause.message); if (!disposed && selected === id) $('daily-settings-status').textContent = settingsMessages.get(id); }
     finally { busy = false; renderDetail(); }
   };
   const ready = refresh();

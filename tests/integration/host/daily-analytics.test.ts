@@ -23,6 +23,7 @@ test("daily comparison coverage counts paired business identities once and waits
   let result = comparisonEvaluationAnalytics("2026-10-24", [saved]);
   assert.deepEqual(result.totals, { total: 1, completed: 0, partial: 1, pending: 0, failed: 0, running: 0 });
   assert.equal(result.models[0].model, "Fast");
+  assert.deepEqual(result.groups.map(({date,model,total,partial})=>({date,model,total,partial})), [{date:"2026-10-24",model:"Fast",total:1,partial:1}]);
   assert.equal(result.stages.find(stage => stage.stage === "comparison")!.total, 1, "audit tasks are not daily comparisons");
   saved.tasks.rewrite.status = "succeeded"; saved.tasks.rewrite.receipt = receipt as any;
   result = comparisonEvaluationAnalytics("2026-10-24", [saved, structuredClone(saved)]);
@@ -63,6 +64,11 @@ test("AIME analytics is an exclusive trace-aware distribution across both stages
   view = await answerReviewRunSummaries([{ run: path.join(directory, "one"), date: "2026-10-24" }, { run: path.join(directory, "two"), date: "2026-10-24" }]);
   assert.equal(view.coverage.totals.total, 6, "the same answers in another registered daily run are counted once");
   assert.equal(view.coverage.totals.completed, 1); assert.equal(view.coverage.dates[0].date, "2026-10-24");
+  assert.equal(view.coverage.groups.length, 1);
+  assert.equal(view.coverage.groups[0].total, 6, "date/mode groups retain trace deduplication across runs");
+  assert.equal(view.coverage.groups[0].model, "aime_fast");
+  assert.equal(view.coverage.groups[0].stages.find(stage=>stage.stage==="score")!.completed, 1);
+  assert.equal(view.coverage.groups[0].stages.find(stage=>stage.stage==="attribution")!.completed, 3);
   assert.equal(await readFile(path.join(directory, "one/state.json"), "utf8"), before, "analytics cannot mutate progress or receipts");
   assert.equal(view.runs.length, 2, "run history remains independently inspectable");
   repeated.inputs.complete.version = "aime_expert";

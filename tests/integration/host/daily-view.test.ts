@@ -105,7 +105,7 @@ test('package reports show exact exclusions and per-answer evaluation coverage w
   const dom = new JSDOM(await readFile(path.join(directory,'daily.html'),'utf8'),{url:'http://fixture/',runScripts:'outside-only'}); enableDialogs(dom);
   const compiled = await build({entryPoints:[path.join(directory,'daily.js')],bundle:true,write:false,format:'iife',globalName:'Daily',platform:'browser'});
   dom.window.setTimeout = () => 0;
-  const calls:string[] = [], recalls:string[][] = [];
+  const calls:string[] = [], recalls:unknown[][] = [];
   const summary = {read:52,accepted:50,excluded:2,questions:25,metadata_issue_count:1,file_errors:[]};
   const fetcher = async (url:string) => {
     calls.push(url);
@@ -117,13 +117,13 @@ test('package reports show exact exclusions and per-answer evaluation coverage w
     return Response.json({sources:[{id:'wencai',name:'问财',workflow:'comparison',status:'idle',concurrency:32,settings:{bindings:{},execution:{}},packages:{items:[{id:'package-1',name:'online.7z',status:'cleaned',accepted:50,excluded:2}],total:1,page:1,pageSize:50},runs:[],stages:{}}],requests:[]});
   };
   const wait = async (condition:()=>boolean) => {for(let n=0;n<100;n++){if(condition())return;await new Promise(resolve=>setTimeout(resolve,5));}assert.fail('package report did not update');};
-  dom.window.eval(compiled.outputFiles[0].text+'\nglobalThis.Daily=Daily;'); const controller = dom.window.Daily.mountDaily(dom.window.document,{fetch:fetcher,onResults:(...args:string[])=>recalls.push(args)});
+  dom.window.eval(compiled.outputFiles[0].text+'\nglobalThis.Daily=Daily;'); const controller = dom.window.Daily.mountDaily(dom.window.document,{fetch:fetcher,onResults:(...args:unknown[])=>recalls.push(args)});
   const el = (id:string) => dom.window.document.getElementById(id);
   try {
     await controller.ready; el('daily-package-rows').querySelector('button').click(); await wait(()=>el('daily-report-rows').textContent.includes('case-1'));
     assert.equal(el('daily-package-report').hidden,false); assert.match(el('daily-report-summary').textContent,/读入 52.*纳入 50.*排除 2/);
     assert.equal(el('daily-package-report').open,true); assert.match(el('daily-report-rows').textContent,/member.jsonl · 18 \/ 0.*online.7z\/member.jsonl.*独立评分 1\/1.*回答归因 0\/1 · 失败 1/s);
-    el('daily-report-rows').querySelector('button').click(); assert.deepEqual(recalls,[['wencai','1024']]);
+    el('daily-report-rows').querySelector('button').click(); assert.deepEqual(JSON.parse(JSON.stringify(recalls)),[['wencai','1024',{caseId:'case-1',model:'aime_fast'}]]);
     assert.equal(el('daily-package-report').open,false); el('daily-package-rows').querySelector('button').click(); await wait(()=>el('daily-package-report').open && el('daily-report-loading').hidden);
     el('daily-report-size').value='50'; el('daily-report-size').dispatchEvent(new dom.window.Event('change')); await wait(()=>el('daily-report-page').textContent.startsWith('1 / 2'));
     el('daily-report-next').click(); await wait(()=>calls.some(url=>url.includes('section=records&page=2'))); await wait(()=>el('daily-report-page').textContent.startsWith('2 / 2'));

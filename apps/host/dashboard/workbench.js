@@ -11,6 +11,7 @@ import { mountData } from '../../../server_dashboard_ths/dashboard.js';
 import { mountRecords } from '../../../server_dashboard_ths/records.js';
 import { Tab } from '@tabler/core';
 import { mountAccess } from './workbench-access.js';
+import { mountDailyData } from './daily-data.js';
 
 const access = mountAccess(document);
 window.fetch = access.fetch;
@@ -152,7 +153,7 @@ async function showMore(id = document.getElementById('more-section').value) {
   if (!moreLoaded.has(id)) moreLoaded.set(id,Promise.resolve().then(moreLoaders[id]));
   activate('more'); await moreLoaded.get(id);
 }
-async function showResults(source = resultSource, runId) {
+async function showResults(source = resultSource, runId, selection) {
   resultSource = source;
   document.querySelectorAll('[data-results-source]').forEach(node => { const selected = node.dataset.resultsSource === source; node.classList.toggle('active',selected); node.setAttribute('aria-pressed',String(selected)); });
   for (const id of ['wencai','aime']) document.getElementById(`${id}-results-content`).hidden = id !== source;
@@ -160,7 +161,8 @@ async function showResults(source = resultSource, runId) {
     const host = `${source}-results-content`;
     const pending = attempt(host, async () => {
       const root = await region(host,source === 'aime' ? 'aime-results.html' : 'index.html',[]);
-      const controller = source === 'aime' ? mountAimeResults(root,{async onEvaluate() { await loadModule('evaluate'); activate('evaluate'); daily?.select('aime'); }}) : mountRuns(root,{apiRoot,resultsOnly:true});
+      const onEvaluate = async () => { await loadModule('evaluate'); activate('evaluate'); daily?.select(source); };
+      const controller = source === 'aime' ? mountAimeResults(root,{onEvaluate}) : mountRuns(root,{apiRoot,resultsOnly:true,onEvaluate});
       await controller.ready;
       document.getElementById(host).hidden = resultSource !== source;
       resultControllers.set(source,Promise.resolve(controller));
@@ -171,12 +173,13 @@ async function showResults(source = resultSource, runId) {
   activate('results');
   const controller = await resultControllers.get(source);
   if (runId && controller) {
-    if (source === 'aime') await controller.selectRun(runId);
-    else await controller.restoreRecall(new URLSearchParams({run:runId}));
+    if (source === 'aime') await controller.selectRun(runId,selection);
+    else await controller.restoreRecall(new URLSearchParams({run:runId,...Object.fromEntries([['batch',selection?.batchId],['case',selection?.caseId],['model',selection?.model]].filter(([,value]) => value))}));
   }
 }
 const loaders = {
   evaluate: () => attempt('daily-content',async () => { daily = mountDaily(await region('daily-content','daily.html',[]),{onResults:showResults}); await daily.ready; }),
+  data: () => attempt('daily-data-content',async () => { const controller = mountDailyData(await region('daily-data-content','daily-data.html',['data.css']),{onResults:showResults,recordsTemplate:()=>asset('records.html')}); await controller.ready; }),
   results: () => showResults(),
   more: () => showMore(),
 };

@@ -39,7 +39,7 @@ export async function loadAimeWorkbench(file:string,options:{id?:string;name?:st
     for(const entry of entries)if(entry.isDirectory()&&!dates.has(entry.name)&&await exists(path.join(configuration.outputDirectory,entry.name,'state.json')))
       rows.push({run:path.join(configuration.outputDirectory,entry.name),optional:true});
     const view=await answerReviewRunSummaries(rows,state?.jobs.flatMap(job=>job.records)??[]);
-    return {...view,runs:view.runs.sort((a,b)=>(b.date??b.runId).localeCompare(a.date??a.runId))};
+    return {...view,retryAllowed:!running&&!await hasLiveRunOwner(configuration.stateDirectory),runs:view.runs.sort((a,b)=>(b.date??b.runId).localeCompare(a.date??a.runId))};
   };
   const snapshot=async()=>{
     const current=await host(),view=await runs(),stateFile=path.join(configuration.stateDirectory,'state.json');
