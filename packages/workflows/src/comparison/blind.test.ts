@@ -9,9 +9,10 @@ import { emptyUsage, type PlannedTask, type SubmissionReceipt } from "@eval/cont
 import { blindMaterials } from "./blind.js";
 import { instructionSources, resolveEvidence } from "@eval/tools";
 import { bindTask } from "./workflow.js";
-import { criterionInstructionSources } from "./instruction-bindings.js";
+import { criterionInstructionSources } from "../review/instruction-bindings.js";
 import { attributionResult, comparisonResult, criteriaResult, emptyAudit, raw } from "../../../../tests/fixtures/comparison.js";
-import type { AttributionResult, Candidate, RawInput, TaskData } from "./types.js";
+import type { AttributionResult, TaskData } from "./types.js";
+import type { Candidate, RawInput } from "../inputs/types.js";
 
 const evidenceInputId = "7ebfa07b-55d4-4e19-80d0-545eb576289a";
 

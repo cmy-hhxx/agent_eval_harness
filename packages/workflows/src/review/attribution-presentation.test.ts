@@ -4,12 +4,13 @@ import { randomUUID } from "node:crypto";
 import { canonicalEvidence } from "../../../../tests/fixtures/evidence.js";
 import { emptyUsage, type CriteriaInput, type PlannedTask, type SubmissionReceipt } from "@eval/contracts";
 import { attributionTableChecks } from "@eval/agents/attribution";
-import { comparisonScope } from "@eval/agents/comparison";
+import { comparisonScope, type ComparisonAttribution } from "@eval/agents/comparison";
 import { parseTraceTables, evidenceSources, parseEvidenceCoordinates, resolveEvidence, selectEvidenceSource } from "@eval/tools";
 import { attributionResult, criteriaResult, emptyAudit, raw } from "../../../../tests/fixtures/comparison.js";
 import { attributionPresentation, tableChecksPresentation } from "./attribution-presentation.js";
-import { bindTask } from "./binding.js";
-import type { Candidate, RawInput, TaskData } from "./types.js";
+import { bindTask } from "../comparison/binding.js";
+import type { Candidate, RawInput } from "../inputs/types.js";
+import type { TaskData } from "../comparison/types.js";
 
 const evidenceInputId = "7ebfa07b-55d4-4e19-80d0-545eb576289a";
 
@@ -121,21 +122,22 @@ test("Comparison binding projects blinded attribution quotes only in modelInput 
   const criteriaTask: PlannedTask = { id: task.dependencies.criteria!, stage: "criteria", inputIds: task.inputIds,
     dependencies: {}, data: { stage: "criteria", candidates, reference: "4" } satisfies TaskData };
   const binding = bindTask(task, inputs, dependencies, { tasks: [criteriaTask, task] });
-  const original = binding.request.input.attributions as Record<string, ReturnType<typeof attributionResult>>;
-  const shown = binding.modelInput!.attributions as Record<string, ReturnType<typeof attributionPresentation>>;
+  const original = binding.request.input.attributions as Record<string, ComparisonAttribution>;
+  const shown = binding.modelInput!.attributions as Record<string, ReturnType<typeof attributionPresentation<ComparisonAttribution>>>;
   assert.equal(original.A!.findings[0]!.evidence[0]!.quote.length > 200, true);
   const projected = shown.A!.findings[0]!.evidence[0]!;
   assert("reference" in projected);
   assert.equal(resolveEvidence(binding.request.sources.A!.value as RawInput, projected.reference, "A", emptyAudit(), "/evidence", binding.request.sources.A!.id).quote,
     original.A!.findings[0]!.evidence[0]!.quote);
-  assert.equal(shown.A!.findings[0]!.finding_id, original.A!.findings[0]!.finding_id);
+  assert.equal(shown.A!.findings[0]!.finding_index, 0);
+  assert(!Object.hasOwn(original.A!.findings[0]!, "finding_id"));
+  assert(!Object.hasOwn(original.A!.findings[0]!, "problem"));
   assert.deepEqual(binding.modelInput!.comparison_scope, comparisonScope(binding.request));
   assert.equal(comparisonScope(binding.request).findings.A[0]!.scope, "source_only");
   assert.deepEqual(shown.A!.findings[0]!.assessment, original.A!.findings[0]!.assessment);
   assert(!JSON.stringify(shown).includes("A组Fast"));
   assert.deepEqual({ dependencies, inputs }, before);
 });
-
 
 test("foreign evidence previews and reads the actual peer input under its anonymous comparison label", () => {
   const peerId = randomUUID(), quote = "来自真实对方的核验文本。".repeat(100);
@@ -155,7 +157,6 @@ test("foreign evidence previews and reads the actual peer input under its anonym
   assert.equal(resolveEvidence(peer, evidence.reference, "B", emptyAudit(), "/evidence", peerId).quote, quote);
   assert.deepEqual(result, before);
 });
-
 
 test("table check model views use own full-directory ordinals while trusted own and peer checks remain exact", () => {
   const question = "列出股票名称与代码。", table = (code: string) => `| 股票代码 | 股票简称 |\n|---|---|\n| ${code} | Alpha |`;

@@ -7,8 +7,8 @@ import { randomUUID } from 'node:crypto';
 import { rm, readFile, rename } from 'node:fs/promises';
 import { emptyUsage, type RunState, type SubmissionReceipt, type AgentBackend } from '@eval/contracts';
 import { writeJson, readJson, listRunArtifacts } from '@eval/data';
-import { buildPlan, createResultWriter, writeRunState, readRunState, loadRunInputs, prepareFrozenClusteringJob, clusteringJobRepository, clusteringJobWorkflow, reportClusteringJob,
-  type TaskData, type ClusteringJobConfig } from '@eval/workflows/comparison';
+import { buildPlan, createResultWriter, writeRunState, readRunState, prepareFrozenClusteringJob, clusteringJobRepository, clusteringJobWorkflow, reportClusteringJob, type TaskData, type ClusteringJobConfig } from "@eval/workflows/comparison";
+import { loadRunInputs } from "@eval/workflows/inputs";
 import { runEvaluation } from '@eval/host';
 import { startWorker } from '@eval/runtime/worker';
 import { DashboardBatches } from '../../../apps/host/src/dashboard-batches.js';

@@ -5,7 +5,8 @@ import { randomUUID } from "node:crypto";
 import { resolveEvidence } from "@eval/tools";
 import { attributionResult, comparisonResult, criteriaResult, emptyAudit } from "../../../../tests/fixtures/comparison.js";
 import { verificationPresentation, verificationInspectionPresentation } from "./verification-presentation.js";
-import type { RawInput } from "./types.js";
+import type { RawInput } from "../inputs/types.js";
+import { comparisonAttribution } from "./comparison-attribution.js";
 
 
 test("verification keeps all fixed slot standards and original nested norms without repeating source analyses", () => {
@@ -36,7 +37,7 @@ test("verification keeps all fixed slot standards and original nested norms with
   const request = { task_analysis: analysis, ground_truth: { available: true, value: "4" },
     candidates: { A: { ...material, candidate_id: inputA }, B: { ...material, criterion_instruction_sources: {}, candidate_id: inputB, original_answer_timing: { finish_seconds: null },
       original_answer_usage: { total_tokens: null, issues: ["source usage unavailable"] } } },
-    attributions: { A: result, B: { ...attributionResult(true, "2+2=4", true, inputB), correctness_evidence: [canonicalEvidence(inputB, 2, "2+2=4")], criterion_assessments: [], findings: [] } }, comparison_draft: draft };
+    attributions: { A: comparisonAttribution(result), B: comparisonAttribution({ ...attributionResult(true, "2+2=4", true, inputB), correctness_evidence: [canonicalEvidence(inputB, 2, "2+2=4")], criterion_assessments: [], findings: [] }) }, comparison_draft: draft };
   const before = structuredClone({ request, trace });
   const shown = verificationPresentation(request, { A: { id: inputA, value: trace }, B: { id: inputB, value: trace } }, analysis);
   const blind = verificationInspectionPresentation(shown, analysis);
@@ -65,6 +66,9 @@ test("verification keeps all fixed slot standards and original nested norms with
   assert(!Object.hasOwn(shown.sections[2].comparison_draft!, "task_analysis"));
   assert.equal(shown.sections[1].findings!.A[0].assessment.criterion_id, "private-rule");
   assert.equal(shown.sections[1].findings!.A[0].assessment.requirement_index, 1);
+  assert(!Object.hasOwn(shown.sections[1].findings!.A[0], "problem"));
+  assert(!Object.hasOwn(shown.sections[1].findings!.A[0], "finding_id"));
+  assert.equal(shown.sections[2].source_assessments!.A.summary, result.summary);
   const candidate = shown.sections[0].materials!.filter(item => item.kind === "answer").find(item => item.candidate === "A")!;
   assert.equal(candidate.final_answer, "2+2=4");
   assert.equal(candidate.original_user_timestamp, "2026-09-25T00:00:00Z");
@@ -114,7 +118,7 @@ test("blind source directory exposes complete readable own governing norms beyon
   const material = { question: "计算2+2", catalog: [], citation_inventory: {}, answer_generation: null,
     original_answer_timing: { finish_seconds: null }, original_answer_usage: { total_tokens: null, issues: [] } };
   const request = { candidates: { A: { ...material, candidate_id: inputA, final_message_index: 3 }, B: { ...material, candidate_id: inputB, final_message_index: 1 } },
-    task_analysis: analysis, ground_truth: { available: true, value: "4" }, attributions: { A: { ...attributionResult(true, "2+2=4", true, inputA), correctness_evidence: [canonicalEvidence(inputA, 3, "2+2=4")], criterion_assessments: [], findings: [] }, B: { ...attributionResult(true, "2+2=4", true, inputB), findings: [] } },
+    task_analysis: analysis, ground_truth: { available: true, value: "4" }, attributions: { A: comparisonAttribution({ ...attributionResult(true, "2+2=4", true, inputA), correctness_evidence: [canonicalEvidence(inputA, 3, "2+2=4")], criterion_assessments: [], findings: [] }), B: comparisonAttribution({ ...attributionResult(true, "2+2=4", true, inputB), findings: [] }) },
     comparison_draft: comparisonResult() };
   const before = structuredClone({ request, own, unknown });
   const shown = verificationInspectionPresentation(verificationPresentation(request, { A: { id: inputA, value: own }, B: { id: inputB, value: unknown } }, analysis), analysis);

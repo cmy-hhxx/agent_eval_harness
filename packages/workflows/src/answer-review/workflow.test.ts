@@ -29,7 +29,7 @@ test('Score and unified Attribution run independently, omit SYS/DEV, and rewrite
  Object.assign(trace.meta,{batch_id:'b1',opaque:{unicode:'🧪',nullable:null},export_only:'PRIVATE_META_SENTINEL'});
  Object.assign(trace,{_source:{original_file:'batch.7z/answers.jsonl',original_line:8,original_item:2,business_date:'2026-10-23'}});
  const fixture=await fixtureConfig([[trace as any],[],[],[]],true);t.after(()=>rm(fixture.directory,{recursive:true,force:true}));
- const config={...fixture.config,workflow:'answer-review',inputs:{...fixture.config.inputs,versions:fixture.config.inputs.versions.slice(0,1)},comparisons:[]} as AnswerReviewConfig;
+ const config={...fixture.config,workflow:'answer-review',inputs:{...fixture.config.inputs,versions:fixture.config.inputs.versions.slice(0,1)},} as AnswerReviewConfig;
  const plan=await planAnswerReview(config);assert.equal(plan.tasks.filter(t=>t.stage==='criteria'||t.stage==='comparison').length,0);
  assert.deepEqual(plan.tasks.filter(t=>['score','attribution'].includes(t.stage)).map(t=>t.dependencies),[{},{}]);
  assert(!JSON.stringify(Object.values(plan.inputs)).includes('SECRET_PRIVATE_POLICY'));
@@ -83,6 +83,8 @@ test('Score and unified Attribution run independently, omit SYS/DEV, and rewrite
  assert.equal((state.receipts[a.id].evaluation as any).findings[0].problem,null);
  assert.equal((state.receipts[a.id].evaluation as any).findings[0].evidence[0].quote,'2+2=4');
  const exported=state.receipts[a.id].exported!.row;
+ assert(Object.hasOwn(exported,'rewritten'));
+ assert(!Object.hasOwn(state.receipts[a.id].evaluation as object,'rewritten'));
  assert.equal(exported.trace_id,'trace-one');assert.equal(exported.source_archive,'batch.7z');assert.equal(exported.source_member,'answers.jsonl');assert.equal(exported.source_line,8);assert.equal(exported.source_item,2);
  for(const receipt of Object.values(state.receipts).filter(r=>r.exported))assert.deepEqual(receipt.exported!.row.meta,trace.meta);
  const before=structuredClone(state.receipts),resumed=await answerReviewWorkflow.reconcile!(path.join(config.output.path,'flow'),state,config);assert.deepEqual(state.receipts,before);
@@ -90,6 +92,9 @@ test('Score and unified Attribution run independently, omit SYS/DEV, and rewrite
  for(const receipt of Object.values(state.receipts).filter(r=>r.exported))delete receipt.exported!.row.meta;
  await answerReviewRepository.createResultWriter(path.join(config.output.path,'flow'),resumed.inputs)(state);
  for(const [id,receipt] of Object.entries(state.receipts).filter(([,r])=>r.exported)){assert.deepEqual(receipt.exported!.row.meta,trace.meta);assert.deepEqual(receipt.evaluation,before[id].evaluation);}
+ const restored=await answerReviewRepository.readRun(path.join(config.output.path,'flow'));
+ assert.deepEqual(restored.receipts[a.id].evaluation,before[a.id].evaluation);
+ assert.deepEqual(restored.receipts[a.id].exported!.row.rewritten,exported.rewritten);
  // Exercise actual Host dispatch after appending to a saved day, not just checkpoint decoding.
  const version=config.inputs.versions[0],file=version.sources[0].path;
  const next={...sessionRaw('two'),batch_id:'b1'};
@@ -115,7 +120,7 @@ test('Score and unified Attribution run independently, omit SYS/DEV, and rewrite
 test('continuous resume preserves costs and identities and leaves terminal content failures reported',async t=>{
  const rows=['retry','spent','stopped','fresh','invalid','language'].map(id=>({...sessionRaw(id),batch_id:'b1'}));
  const f=await fixtureConfig([rows as any,[],[],[]]);t.after(()=>rm(f.directory,{recursive:true,force:true}));
- const config={...f.config,workflow:'answer-review',reviewStages:['attribution'],comparisons:[],inputs:{...f.config.inputs,versions:f.config.inputs.versions.slice(0,1)}} as AnswerReviewConfig;
+ const config={...f.config,workflow:'answer-review',reviewStages:['attribution'],inputs:{...f.config.inputs,versions:f.config.inputs.versions.slice(0,1)}} as AnswerReviewConfig;
  config.execution.repairAttempts=3;
  const plan=await planAnswerReview(config),run=path.join(config.output.path,'automatic');
  const states=Object.fromEntries(plan.tasks.map(task=>{const id=(task.data as any).candidate.case_id;return [task.id,{status:id==='fresh'?'pending':'failed',attempts:id==='fresh'?0:2,
@@ -133,7 +138,7 @@ test('continuous resume preserves costs and identities and leaves terminal conte
 test('exact incremental coordinates select only new attribution and reject trace identity drift',async t=>{
  const one={...sessionRaw('one'),batch_id:'b1'},invalid={...sessionRaw('invalid'),batch_id:'b1'};invalid.traces.push(invalid.traces[0]);
  const f=await fixtureConfig([[one as any,invalid as any],[],[],[]]);t.after(()=>rm(f.directory,{recursive:true,force:true}));
- const version=f.config.inputs.versions[0];const config={...f.config,workflow:'answer-review',reviewStages:['attribution'],comparisons:[],
+ const version=f.config.inputs.versions[0];const config={...f.config,workflow:'answer-review',reviewStages:['attribution'],
    inputs:{...f.config.inputs,versions:[version],records:[{model:version.id,batch_id:'b1',case_id:'one',trace_id:'trace-one',input_file:version.sources[0].path,input_index:0}]}} as AnswerReviewConfig;
  const plan=await planAnswerReview(config);assert.deepEqual(plan.tasks.map(t=>t.stage),['attribution']);assert.equal(plan.summary.valid_inputs,1);assert.deepEqual(plan.summary.issues,[]);
  config.inputs.records![0].trace_id='changed';const drift=await planAnswerReview(config);assert.equal(drift.tasks.length,0);assert.equal((drift.summary.issues as unknown[]).length,1);
@@ -141,7 +146,7 @@ test('exact incremental coordinates select only new attribution and reject trace
 
 test('manual failure retry preserves task identity and spent budgets until current limits allow another attempt',async t=>{
  const f=await fixtureConfig([[{...sessionRaw('retry'),batch_id:'b1'} as any],[],[],[]]);t.after(()=>rm(f.directory,{recursive:true,force:true}));
- const config={...f.config,workflow:'answer-review',reviewStages:['attribution'],comparisons:[],inputs:{...f.config.inputs,versions:f.config.inputs.versions.slice(0,1)}} as AnswerReviewConfig;
+ const config={...f.config,workflow:'answer-review',reviewStages:['attribution'],inputs:{...f.config.inputs,versions:f.config.inputs.versions.slice(0,1)}} as AnswerReviewConfig;
  config.execution.maxTaskAttempts=2;config.execution.repairAttempts=3;
  const plan=await planAnswerReview(config),task=plan.tasks[0],run=path.join(f.config.output.path,'retry');
  const state:any={manifest:{runId:'retry',config,tasks:plan.tasks,states:{[task.id]:{status:'failed',attempts:2,failure:{contentSubmissions:4}}},inputCatalog:plan.catalog,inputs:{},pausedStages:[{stage:'attribution'}]},receipts:{},usage:{input:1,output:2,cacheRead:0,cacheWrite:0,totalTokens:3},recordedAttempts:2};
@@ -160,7 +165,7 @@ test('manual failure retry preserves task identity and spent budgets until curre
 
 test('failed instruction review resumes independently and keeps accepted main attribution immutable',async t=>{
  const f=await fixtureConfig();t.after(()=>rm(f.directory,{recursive:true,force:true}));
- const config={...f.config,workflow:'answer-review',reviewStages:['attribution'],comparisons:[],rewrite:{...f.config.rewrite,attribution:false},inputs:{...f.config.inputs,versions:f.config.inputs.versions.slice(0,1)}} as AnswerReviewConfig;
+ const config={...f.config,workflow:'answer-review',reviewStages:['attribution'],rewrite:{...f.config.rewrite,attribution:false},inputs:{...f.config.inputs,versions:f.config.inputs.versions.slice(0,1)}} as AnswerReviewConfig;
  const plan=await planAnswerReview(config),sessions:string[]=[];let failReview=true;
  const backend:AgentBackend={identity:fakeIdentity,async createSession(options){sessions.push(options.spec.taskId);return {async run(){
   if(options.spec.evaluation.id==='instruction-review'&&failReview)throw Error('controlled instruction review interruption');
@@ -189,7 +194,7 @@ test('failed instruction review resumes independently and keeps accepted main at
 test('main attribution and independent reviews share one concurrency limit of sixteen',async t=>{
  const rows=Array.from({length:18},(_,index)=>({...sessionRaw('case'+index),batch_id:'b1'}));
  const f=await fixtureConfig([rows as any,[],[],[]]);t.after(()=>rm(f.directory,{recursive:true,force:true}));
- const config={...f.config,workflow:'answer-review',reviewStages:['attribution'],comparisons:[],rewrite:{...f.config.rewrite,attribution:false},inputs:{...f.config.inputs,versions:f.config.inputs.versions.slice(0,1)}} as AnswerReviewConfig;
+ const config={...f.config,workflow:'answer-review',reviewStages:['attribution'],rewrite:{...f.config.rewrite,attribution:false},inputs:{...f.config.inputs,versions:f.config.inputs.versions.slice(0,1)}} as AnswerReviewConfig;
  const plan=await planAnswerReview(config);let active=0,peak=0,started=0,checks=0,release!:()=>void;
  const gate=new Promise<void>(resolve=>{release=resolve;});
  const backend:AgentBackend={identity:fakeIdentity,async createSession(options){return {async run(){

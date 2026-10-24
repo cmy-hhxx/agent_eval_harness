@@ -1,5 +1,4 @@
-import type { ResolvedEvidence, RewrittenResult, TaskAnalysis } from "@eval/contracts";
-import type { JsonObject } from "@eval/contracts";
+import type { ResolvedEvidence, TaskAnalysis } from "@eval/contracts";
 export type { TaskAnalysis } from "@eval/contracts";
 
 export type CriterionStatus = "met" | "partial" | "unmet" | "unknown" | "not_applicable";
@@ -32,13 +31,31 @@ export interface Finding {
     evidence_status: "established" | "uncertain";
     impact: string;
   };
-  stage_trace?: JsonObject;
 }
 export interface CriterionAssessment {
   criterion_id: string;
   status: CriterionStatus;
   evidence_status: EvidenceStatus;
   summary: string;
+  evidence: Evidence[];
+  context_evidence?: Evidence[];
+}
+/** The comparison-owned view of an accepted attribution, projected by the workflow. */
+export interface ComparisonAttribution {
+  has_standard_answer: boolean;
+  is_correct: boolean | null;
+  correctness_reason: string;
+  correctness_evidence: Evidence[];
+  numeric_checks: { label: string; expected: string; actual: string | null; scale: string;
+    mode: "rounded" | "exact"; matches: boolean; evidence_index: number }[];
+  standard_conflict?: boolean;
+  summary: string;
+  task_analysis: TaskAnalysis;
+  findings: (Finding & { finding_index?: number })[];
+  criterion_assessments: CriterionAssessment[];
+  core_assessment: { meets_core: boolean | null; reason: string; criterion_ids: string[] };
+  table_resolutions?: { table_id: string; row_index: number; outcome: "supported" | "conflict";
+    reason: string; evidence: Evidence[] }[];
 }
 export interface SourceReviewItem {
   kind: "unverified" | "unresolved_conflict" | "invalid_material";
@@ -59,12 +76,7 @@ export interface ComparisonInput {
     original_answer_timing: { finish_seconds: number | null };
     original_answer_usage: { total_tokens: number | null; issues: string[] };
   }>;
-  attributions: Record<string, {
-    task_analysis: TaskAnalysis;
-    findings: Finding[];
-    criterion_assessments: CriterionAssessment[];
-    core_assessment: { meets_core: boolean | null; reason: string; criterion_ids: string[] };
-  }>;
+  attributions: Record<string, ComparisonAttribution>;
 }
 export interface ComparisonVerificationInput extends ComparisonInput {
   comparison_draft: ComparisonResult;
@@ -120,7 +132,6 @@ export interface AlignedComparison {
  * One independently judged pair. The workflow derives a verdict only after a decided result.
  */
 export interface ComparisonResult {
-  rewritten?: RewrittenResult;
   status: "decided" | "needs_review";
   review_requests: { candidate: string; criterion_ids: string[]; finding_indices: number[]; reason: string }[];
   task_analysis: TaskAnalysis;

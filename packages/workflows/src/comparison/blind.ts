@@ -1,6 +1,6 @@
 import { presentSource, type SourcePresentation } from "@eval/contracts";
 import type { AttributionResult } from "@eval/agents/attribution";
-import type { Candidate, RawInput } from "./types.js";
+import type { Candidate, RawInput } from "../inputs/types.js";
 
 // A comparison receives a view of its dependencies, never their identity-bearing source.
 // Top-level message provenance is removed; known identity strings are masked in both

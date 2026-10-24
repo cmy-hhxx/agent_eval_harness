@@ -1,110 +1,21 @@
 import { randomUUID } from "node:crypto";
-import {
-  errorText,
-  ValidationError,
-  type RunManifest,
-  type RunState,
-  type TaskPlan,
-  type ValidationIssue,
-} from "@eval/contracts";
-import { createRunRepository, fileSourceReader } from "@eval/data";
-import { adapt, buildPlan, candidateKey, inputSources, locateRecordStream, selectComparisonGroups, taskCase, taskIdentity } from "./input.js";
-import type { BatchPreflight, Candidate, ComparisonResult, EvalConfig, TaskData } from "./types.js";
+import { loadRunInputs } from "../inputs/load.js";
+import { type RunState, type TaskPlan } from "@eval/contracts";
+import { createRunRepository } from "@eval/data";
+import { candidateKey } from "../inputs/records.js";
+import { buildPlan, selectComparisonGroups, taskCase, taskIdentity } from "./input.js";
+import type { BatchPreflight, ComparisonResult, EvalConfig, TaskData } from "./types.js";
+import type { Candidate } from "../inputs/types.js";
 import { comparisonCodec } from "./codec.js";
-import { normalizeInput } from "./input-record.js";
 import { encodeResult, stageResult } from "./results.js";
 import { comparisonSlots } from "./commentary.js";
 import { reconcileAttributionRewriteGroups } from "./attribution-rewrite-planning.js";
-import { pendingTaskProgress } from "./task-progress.js";
+import { pendingTaskProgress } from "../review/task-progress.js";
 import { configureStandardReview } from "./review.js";
+
 export const comparisonRepository = createRunRepository(comparisonCodec, encodeResult);
 export const { readRun: readRunState, writeRun: writeRunState, createResultWriter, readTasks: readRunTasks } =
   comparisonRepository;
-
-export async function loadRunInputs(
-  manifest: RunManifest,
-  issues?: ValidationIssue[],
-  taskIds?: ReadonlySet<string>,
-  records?: Map<string, Candidate>,
-  projectInput: (source: unknown) => unknown = normalizeInput,
-): Promise<Record<string, unknown>> {
-  const inputs: Record<string, unknown> = {},
-    errors: ValidationIssue[] = [];
-  const config = manifest.config as EvalConfig;
-  const inputIds = taskIds && new Set(manifest.tasks.filter((task) => taskIds.has(task.id)).flatMap((task) => Object.values(task.inputIds)));
-  const sources = inputSources((manifest.inputCatalog as Candidate[]).filter((candidate) => !inputIds || inputIds.has(candidate.input_id)));
-  for (const [source, candidates] of sources) {
-    const found: Record<string, unknown> = {};
-    let revision: string;
-    const register = (candidate: Candidate, record: Candidate, byteOffset: number, byteLength: number) => {
-      records?.set(candidate.input_id, record);
-      Object.defineProperty(found, candidate.input_id, {
-        enumerable: true,
-        configurable: true,
-        get: () => projectInput(JSON.parse(fileSourceReader.record(source, byteOffset, byteLength, revision))),
-      });
-    };
-    try {
-      revision = await fileSourceReader.revision(source);
-      const byLine = new Map<number, Candidate[]>();
-      for (const candidate of candidates)
-        byLine.set(candidate.line, [...(byLine.get(candidate.line) || []), candidate]);
-      for await (const { line, index, byteOffset, byteLength } of fileSourceReader.lines(source, revision)) {
-        const registered = byLine.get(index);
-        if (!registered) continue;
-        for (const candidate of registered) {
-          try {
-            const version = config.inputs.versions.find((item) => item.id === candidate.version);
-            if (!version) throw new Error("Input version is not registered");
-            const raw = JSON.parse(line);
-            const record = adapt(raw, version, source, index, config.inputs.default_batch_id);
-            if (candidateKey(record) === candidateKey(candidate)) register(candidate, record, byteOffset, byteLength);
-          } catch { /* Reordered or missing records are resolved by business identity below. */ }
-        }
-        byLine.delete(index);
-        if (!byLine.size) break;
-      }
-      if (await fileSourceReader.revision(source) !== revision)
-        throw new Error("读取期间输入文件发生变化，请重试：" + source);
-    } catch (error) {
-      errors.push({
-        category: "file",
-        code: "input_source_unavailable",
-        path: source,
-        expected: "可读取的原始输入文件",
-        actual: null,
-        message: errorText(error),
-      });
-      continue;
-    }
-    for (const candidate of candidates) {
-      try {
-        const version = config.inputs.versions.find((version) => version.id === candidate.version);
-        if (!version) throw new Error("Input version is not registered");
-        if (!Object.hasOwn(found, candidate.input_id)) {
-          const { record, byteOffset, byteLength } = await locateRecordStream(source, candidate, version, config.inputs.default_batch_id);
-          register(candidate, record, byteOffset, byteLength);
-        }
-      } catch (error) {
-        errors.push({
-          category: "file",
-          code: "input_source_unavailable",
-          path: source,
-          expected: candidate.input_id,
-          actual: null,
-          message: errorText(error),
-        });
-      }
-    }
-    if (await fileSourceReader.revision(source).catch(() => null) !== revision) {
-      errors.push({ category: "file", code: "input_source_changed", path: source,
-        message: "读取期间输入文件发生变化，请重试：" + source });
-    } else Object.defineProperties(inputs, Object.getOwnPropertyDescriptors(found));
-  }
-  if (issues) issues.push(...errors);
-  else if (errors.length) throw new ValidationError(errors);
-  return inputs;
-}
 export async function reconcileRun(_run: string, state: RunState, current: unknown,
   options?: { extendVersions: boolean; preserveCompletedResults?: boolean }): Promise<TaskPlan> {
   const config = state.manifest.config as EvalConfig,

@@ -5,7 +5,7 @@ import { rm } from "node:fs/promises";
 import path from "node:path";
 import { emptyUsage, type RunState } from "@eval/contracts";
 import { writeJsonl } from "@eval/data";
-import type { Candidate } from "@eval/workflows/comparison";
+import type { Candidate } from "@eval/workflows/inputs";
 import { fixtureConfig, raw, emptyAudit, fakeIdentity, fakeEvaluatorVersion, attributionResult } from "../../../../tests/fixtures/comparison.js";
 import { answerReviewRepository, answerReviewWorkflow, planAnswerReview, type AnswerReviewConfig } from "./index.js";
 
@@ -13,8 +13,7 @@ async function fixture(t: TestContext) {
   const rows = [raw("accepted"), raw("pending")];
   const f = await fixtureConfig([rows, [], [], []]);
   t.after(() => rm(f.directory, { recursive: true, force: true }));
-  const config: AnswerReviewConfig = { ...f.config, workflow: "answer-review", reviewStages: ["attribution"],
-    comparisons: [], inputs: { ...f.config.inputs, versions: f.config.inputs.versions.slice(0, 1) } };
+  const config: AnswerReviewConfig = { ...f.config, workflow: "answer-review", reviewStages: ["attribution"], inputs: { ...f.config.inputs, versions: f.config.inputs.versions.slice(0, 1) } };
   const plan = await planAnswerReview(config), run = path.join(config.output.path, "resume");
   const state: RunState = { manifest: { format: "evaluation-run", debug: false, runId: "resume", status: "interrupted",
     engine: fakeIdentity, evaluatorVersion: fakeEvaluatorVersion, config, tasks: plan.tasks, inputCatalog: plan.catalog,

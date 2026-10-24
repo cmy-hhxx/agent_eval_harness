@@ -11,7 +11,7 @@ export * from "./types.js";
 export { criteriaSources, eligibleCriterionSource } from "./sources.js";
 export type { CriterionSource } from "./sources.js";
 export type { CriteriaSubmission } from "./resolve.js";
-const prompt = agentPrompt("criteria", []);
+const prompt = agentPrompt("criteria", [], { fileSubmission: false });
 export const criteriaProfile: AgentProfile = {
   id: "default",
   requestSchema,

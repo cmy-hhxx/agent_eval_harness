@@ -4,7 +4,8 @@ import { mkdtemp, readFile, rm } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import type { JsonObject, PlannedTask, TaskState } from "@eval/contracts";
-import type { Candidate, TaskData } from "./types.js";
+import type { Candidate } from "../inputs/types.js";
+import type { TaskData } from "./types.js";
 import { summarizeResults, taskFailureSummary, writeOverview } from "./report.js";
 
 const answer = (id: string, version: string, correct: boolean | null, batch = "day", caseId = "case", inputId = `${batch}:${caseId}:${version}`): JsonObject => ({

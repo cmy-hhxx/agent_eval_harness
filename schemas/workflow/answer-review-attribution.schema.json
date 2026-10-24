@@ -130,7 +130,7 @@
       "type": "object"
     },
     "rewritten": {
-      "$ref": "../attribution/result.schema.json#/properties/rewritten"
+      "$ref": "rewritten.schema.json"
     },
     "has_standard_answer": {
       "$ref": "../attribution/result.schema.json#/properties/has_standard_answer"

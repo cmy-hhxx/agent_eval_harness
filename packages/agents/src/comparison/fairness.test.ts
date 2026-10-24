@@ -130,7 +130,7 @@ test("decisive references exclude the winner's defects and the loser's counterad
     const source = input.attributions[label];
     source.task_analysis = structuredClone(input.task_analysis);
     source.criterion_assessments.push({ criterion_id: "explanation", status: label === "A" ? "partial" : "met",
-      evidence_status: "established", summary: label === "A" ? "解释需修正。" : "解释正确。" });
+      evidence_status: "established", summary: label === "A" ? "解释需修正。" : "解释正确。", evidence: [] });
     const finding = structuredClone(source.findings[0]);
     finding.type = label === "A" ? "problem" : "strength";
     finding.assessment.requirement_index = 1;

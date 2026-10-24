@@ -1,6 +1,7 @@
 import type { JsonObject, PlannedTask, ResultReference, RunState, SubmissionReceipt } from "@eval/contracts";
 import { createRunRepository, type RunCodec } from "@eval/data";
-import type { Candidate, TaskData } from "./types.js";
+import type { Candidate } from "../inputs/types.js";
+import type { TaskData } from "./types.js";
 
 interface SavedTask extends Omit<PlannedTask, "data"> { data: Omit<TaskData, "candidates"> & { candidateIds: Record<string, string> } }
 interface Checkpoint {

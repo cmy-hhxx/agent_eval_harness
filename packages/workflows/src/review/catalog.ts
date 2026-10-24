@@ -1,7 +1,7 @@
-import { isToolSpan } from "./adapters.js";
+import { isToolSpan } from "../inputs/adapters.js";
 import { canonical } from "@eval/contracts";
 import { traceExchanges } from "@eval/tools";
-import type { RawInput } from "./types.js";
+import type { RawInput } from "../inputs/types.js";
 
 /** Link tool returns to their preceding invocation without guessing from nearby messages. */
 export function traceCatalog(raw: RawInput) {

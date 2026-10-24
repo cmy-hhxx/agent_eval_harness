@@ -11,8 +11,7 @@ import { fixtureConfig, raw, attributionResult, emptyAudit, fakeIdentity, fakeEv
 test("catalog reads current AIME without overviews, namespaces equal run IDs and preserves code-point evidence", async t => {
   const row = raw("one"); row.messages.at(-1)!.content = "答案😀正确";
   const f = await fixtureConfig([[row], [], [], []]); t.after(() => rm(f.directory, { recursive: true, force: true }));
-  const config: AnswerReviewConfig = { ...f.config, workflow: "answer-review", reviewStages: ["attribution"],
-    comparisons: [], rewrite: { ...f.config.rewrite, attribution: false }, inputs: { ...f.config.inputs, versions: f.config.inputs.versions.slice(0, 1) } };
+  const config: AnswerReviewConfig = { ...f.config, workflow: "answer-review", reviewStages: ["attribution"], rewrite: { ...f.config.rewrite, attribution: false }, inputs: { ...f.config.inputs, versions: f.config.inputs.versions.slice(0, 1) } };
   const plan = await planAnswerReview(config), task = plan.tasks[0];
   const inputId = answerReviewTaskInput(task), evaluation = attributionResult(true,"答案😀正确",true,inputId);
   const sourceId = evaluation.findings[0].evidence[0].evidence_id;

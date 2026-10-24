@@ -1,8 +1,9 @@
-import { isToolSpan } from "./adapters.js";
+import { isToolSpan } from "../inputs/adapters.js";
 import type { JsonObject } from "@eval/contracts";
 import { citationMarkers, type CitationMarker } from "@eval/tools";
-import type { Finding, RawInput } from "./types.js";
-import { citationInventory } from "./citations.js";
+import type { Finding } from "./types.js";
+import type { RawInput } from "../inputs/types.js";
+import { citationInventory } from "../review/citations.js";
 
 const aliases: Record<string, string> = {
   search: "Search",

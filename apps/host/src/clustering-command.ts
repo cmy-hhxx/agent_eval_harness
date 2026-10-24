@@ -11,6 +11,7 @@ export async function runClusteringCommand(host: HostConfig, options: {
   runs?: string[]; selectionFile?: string; runId?: string; output?: string; apply?: boolean;
   engine: string; debug?: boolean; workers?: string[]; resumeStages?: string[]; balanceChannels?: boolean;
 }): Promise<number> {
+  if (host.workflow !== "comparison") throw new Error("聚类作业需要对战工作流配置");
   if (!["pi", "prime"].includes(options.engine)) throw new Error("--engine must be pi or prime");
   if (options.apply && !options.runId) throw new Error("cluster --apply 需要 --run-id 保存独立进度");
   if (options.runId) safeId(options.runId);

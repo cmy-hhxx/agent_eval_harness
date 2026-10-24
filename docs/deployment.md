@@ -100,7 +100,7 @@ npm run build
 
 ## 统计 relay
 
-服务器每四小时生成并校验冻结 Schema 后的累计快照，追加到 `runtime/log/comparison-statistics-log.jsonl`，然后进入 `pending`。服务器不直接 POST 外部报表地址。
+仅显式启用 `publishStatisticsLog` 的来源每四小时生成累计快照，校验冻结 Schema 后追加到 `runtime/log/comparison-statistics-log.jsonl`，然后进入 `pending`。日常来源默认关闭统计日志生成与上报；服务器不直接 POST 外部报表地址。
 
 本地只需运行：
 

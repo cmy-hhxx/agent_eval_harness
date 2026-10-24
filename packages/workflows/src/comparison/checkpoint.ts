@@ -1,5 +1,6 @@
 import type { RunManifest, RunState, SubmissionReceipt, TaskState } from "@eval/contracts";
-import type { Candidate, Stage, TaskData } from "./types.js";
+import type { Candidate } from "../inputs/types.js";
+import type { Stage, TaskData } from "./types.js";
 
 type DiskReference = { file?: string; comparisonId?: string; taskId?: string };
 export type Patch = { path: string[]; value?: unknown; from?: string[] }[];

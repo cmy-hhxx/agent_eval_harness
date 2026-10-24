@@ -7,9 +7,10 @@ import { citationInventory, citationSourceParts } from "./citations.js";
 import { attributionProfile } from "@eval/agents/attribution";
 import { comparisonProfile } from "@eval/agents/comparison";
 import { Ajv2020 } from "ajv/dist/2020.js";
-import { bindTask } from "./binding.js";
+import { bindTask } from "../comparison/binding.js";
 import { criteriaResult, emptyAudit } from "../../../../tests/fixtures/comparison.js";
-import type { Candidate, RawInput, TaskData } from "./types.js";
+import type { Candidate, RawInput } from "../inputs/types.js";
+import type { TaskData } from "../comparison/types.js";
 
 const evidenceInputId = "7ebfa07b-55d4-4e19-80d0-545eb576289a";
 
@@ -563,7 +564,6 @@ test("both current agent request schemas accept the visual inventory with comple
     assert.equal(validate(missingContext), false, "each marker requires its actual original context");
   }
 });
-
 
 test("identical complete returned sources retain every location without becoming an ambiguous footnote", () => {
   const source = "<referencable-result>\nID: 13\n标题: 原网页\n溯源地址: https://example.test/report\n发布时间: 2026-09-24 12:00\n摘要: 完整相同来源正文。\n</referencable-result>";

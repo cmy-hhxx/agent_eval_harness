@@ -29,7 +29,7 @@ export function clusteringDisplaySources(state: RunState): ClusteringDisplaySour
     const receipt = state.receipts[task.id];
     if (task.stage !== "clustering" || !receipt) return [];
     return [{ receipt, rewritten: acceptedRewriteProjection(view, task.id)?.rewritten ??
-      (receipt.evaluation as ClusteringResult).rewritten }];
+      (receipt.exported?.row.result as { rewritten?: RewrittenResult } | undefined)?.rewritten }];
   });
 }
 

@@ -3,11 +3,13 @@ import assert from "node:assert/strict";
 import { canonical, emptyUsage, evidenceId, type JsonObject, type PlannedTask, type SubmissionReceipt } from "@eval/contracts";
 import { resolveEvidence } from "@eval/tools";
 import { presentedMaterialReads, projectComparisonEvidence } from "./evidence-presentation.js";
-import { comparisonWorkflow } from "./workflow.js";
+import { comparisonWorkflow } from "../comparison/workflow.js";
 import { criteriaResult, emptyAudit } from "../../../../tests/fixtures/comparison.js";
-import type { Candidate, RawInput, TaskData } from "./types.js";
+import type { Candidate, RawInput } from "../inputs/types.js";
+import type { TaskData } from "../comparison/types.js";
 import { AgentRegistry } from "@eval/host";
 import { attributionAgent } from "@eval/agents/attribution";
+
 const id = "11111111-1111-4111-8111-111111111111", reference = { evidence_id: evidenceId(id, 0, "text", "/content", 0, 3) };
 test("presented ranges use actual preview length and exclude raw business fields", () => {
   const ref = { evidence_id: evidenceId(id, 2, "text", "/output", 40, 800) };

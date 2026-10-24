@@ -7,12 +7,13 @@ import {
   type SubmissionReceipt,
 } from "@eval/contracts";
 import { attributionProfile } from "@eval/agents/attribution";
-import { instructionReviewRow } from "./instruction-review.js";
+import { instructionReviewRow } from "../review/instruction.js";
 import { criteriaProfile } from "@eval/agents/criteria";
 import { comparisonProfile } from "@eval/agents/comparison";
 import type { RewriteResult } from "@eval/agents/rewrite";
 import type { ClusteringObservation, ClusteringResult } from "@eval/agents/clustering";
-import type { AttributionResult, ComparisonResult, EvalConfig, RawInput, Stage, TaskData } from "./types.js";
+import type { AttributionResult, ComparisonResult, EvalConfig, Stage, TaskData } from "./types.js";
+import type { RawInput } from "../inputs/types.js";
 import { annotateFindings } from "./annotations.js";
 import { clusteringSchema, rewrittenSchema, outputSchema } from "./schema.js";
 import { decideVerdict, tierOf, verdictReason } from "./verdicts.js";

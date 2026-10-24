@@ -4,7 +4,7 @@ import {exists,readJson,writeJson,runLock,createFileLogger,hasLiveRunOwner} from
 import type {ModelRequestControl} from '@eval/host';
 import {runAimeIncremental,runAimeWatch,answerReviewRepository,answerReviewProgress,prepareAnswerReviewRetry,prepareAnswerReviewAutomaticResume,appendAnswerReviewInputs,planAnswerReview,
   type AimeIncrementalState,type AimeJob,type AimeRecord,type AimeCleaningReport,type AimeEvaluationResult} from '@eval/workflows/answer-review';
-import {loadConfig,type HostConfig} from './config.js';
+import {loadConfig,type HostConfig,type AnswerReviewHostConfig} from './config.js';
 import {configurationSecrets,readSettings} from './settings.js';
 import {ROOT} from './paths.js';
 
@@ -42,17 +42,16 @@ async function command(executable:string,args:string[],env:NodeJS.ProcessEnv,sig
     child.once('error',error=>{cleanup();reject(error);});child.once('close',(code,stopped)=>{cleanup();code===0?resolve():reject(Error(`${executable} exited ${code??stopped}: ${stderr}`));});
   });
 }
-export function aimeScopedHost(base:HostConfig,job:AimeJob,concurrency:number):HostConfig{
-  const host=structuredClone(base),models=new Set(job.records.map(r=>r.model));host.workflow='answer-review';
-  host.evaluation.inputs={timing_unit:base.evaluation.inputs.timing_unit,
-    versions:base.evaluation.inputs.versions.filter(v=>models.has(v.id)).map(v=>({...v,
+export function aimeScopedHost(base:HostConfig,job:AimeJob,concurrency:number):AnswerReviewHostConfig{
+  const source=structuredClone(base),models=new Set(job.records.map(r=>r.model));
+  const inputs={timing_unit:source.evaluation.inputs.timing_unit,
+    versions:source.evaluation.inputs.versions.filter(v=>models.has(v.id)).map(v=>({...v,
       sources:[...new Set(job.records.filter(r=>r.model===v.id).map(r=>r.input_file))].map(file=>({kind:'file' as const,path:file}))})),
     records:job.records.map(r=>({model:r.model,batch_id:r.batch_id,case_id:r.case_id,trace_id:r.trace_id,input_file:r.input_file,input_index:r.input_index}))};
-  if(host.evaluation.inputs.versions.length!==models.size)throw Error('AIME模型组未在当前配置登记');
-  host.evaluation.output={kind:'directory',path:path.dirname(job.output)};host.evaluation.comparisons=[];
-  host.evaluation.rewrite={attribution:false,comparison:false,clustering:false};host.evaluation.clustering.enabled=false;
-  host.evaluation.standardAnswerReview=false;delete host.evaluation.prediction;delete host.evaluation.reviewQuestions;
-  host.evaluation.execution.concurrency=concurrency;return host;
+  if(inputs.versions.length!==models.size)throw Error('AIME模型组未在当前配置登记');
+  return {...source,workflow:'answer-review',evaluation:{workflow:'answer-review',inputs,
+    output:{kind:'directory',path:path.dirname(job.output)},rewrite:{attribution:false},
+    execution:{...source.evaluation.execution,concurrency}}};
 }
 export interface AimeRunOptions {
   signal:AbortSignal;pauseSignal?:AbortSignal;modelRequests?:ModelRequestControl;watch?:boolean;manualRetry?:boolean;

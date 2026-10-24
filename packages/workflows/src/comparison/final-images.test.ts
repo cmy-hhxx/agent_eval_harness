@@ -12,7 +12,8 @@ import { comparisonAgent } from "@eval/agents/comparison";
 import { cite, createRegistry, messageContentSources, ToolRuntime } from "@eval/tools";
 import { attributionResult, comparisonResult, criteriaResult, emptyAudit, optionalVerificationTask } from "../../../../tests/fixtures/comparison.js";
 import { comparisonWorkflow } from "./workflow.js";
-import type { Candidate, RawInput, TaskData } from "./types.js";
+import type { Candidate, RawInput } from "../inputs/types.js";
+import type { TaskData } from "./types.js";
 
 function fixture(mode: "attribution" | "comparison" | "verification", captureText?: string) {
   const candidates: Record<string, Candidate> = Object.fromEntries(["A", "B"].map(label => [label, {

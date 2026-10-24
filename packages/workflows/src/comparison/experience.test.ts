@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { originalAnswerUsage } from "./experience.js";
-import type { RawInput } from "./types.js";
+import type { RawInput } from "../inputs/types.js";
 
 const source = (usage?: unknown): RawInput => ({ messages: [], meta: { usage } });
 

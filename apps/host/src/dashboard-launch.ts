@@ -6,7 +6,7 @@ import { exists, locateRun, readJson } from "@eval/data";
 import { readRunState, reconcileRun } from "@eval/workflows/comparison";
 import type { JsonObject, TaskPlan } from "@eval/contracts";
 import type { EvalConfig } from "@eval/workflows/comparison";
-import { dashboardSettings, loadConfig } from "./config.js";
+import { dashboardSettings, loadComparisonConfig } from "./config.js";
 import { createModelResolver } from "./models.js";
 import {
   discoverDashboardModels,
@@ -77,10 +77,10 @@ async function prepare(options: LaunchOptions, value: Record<string, unknown>, l
   if (engine !== "pi" && engine !== "prime") throw new HttpError(400, "engine must be pi or prime");
   const chosen = selection(value);
   let settings: ReturnType<typeof dashboardSettings>;
-  let host: Awaited<ReturnType<typeof loadConfig>>;
+  let host: Awaited<ReturnType<typeof loadComparisonConfig>>;
   try {
     settings = dashboardSettings(value.settings ?? {});
-    host = await loadConfig(options.configPaths, undefined, settings);
+    host = await loadComparisonConfig(options.configPaths, undefined, settings);
   } catch (error) {
     throw new HttpError(400, errorText(error));
   }

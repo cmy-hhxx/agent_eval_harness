@@ -2,7 +2,8 @@ import path from "node:path";
 import { randomUUID } from "node:crypto";
 import { emptyUsage, type PlannedTask, type RunState } from "@eval/contracts";
 import { writeJsonl } from "@eval/data";
-import { adapt, attributionRewritePlaceholder, createResultWriter, writeRunState, type AttributionJobConfig, type Candidate, type TaskData } from "@eval/workflows/comparison";
+import { adapt, type Candidate } from "@eval/workflows/inputs";
+import { attributionRewritePlaceholder, createResultWriter, writeRunState, type AttributionJobConfig, type TaskData } from "@eval/workflows/comparison";
 import { attributionResult, criteriaResultForTask, emptyAudit, fakeEvaluatorVersion, fakeIdentity, fakeJudge, fixtureConfig, raw } from "./comparison.js";
 
 export async function attributionPilotFixture() {

@@ -24,7 +24,7 @@ const toolNames = [
   "read_trace", "search_trace", "view_image", "calculate", "execute_code",
   "read_artifact", "edit_json",
 ];
-const prompt = agentPrompt("attribution", toolNames);
+const prompt = agentPrompt("attribution", toolNames, { fileSubmission: true, draftWriteInCallLimit: true });
 export const attributionProfile: AgentProfile = {
   id: "default",
 

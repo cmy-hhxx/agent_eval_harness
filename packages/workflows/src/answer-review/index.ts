@@ -4,16 +4,18 @@ import {randomUUID} from "node:crypto";
 import {isDeepStrictEqual} from "node:util";
 import {canonical,HttpError,type AgentBinding,type PlannedTask,type RunState,type RunManifest,type WorkflowDefinition,type JsonObject,type SubmissionReceipt,type TaskPlan,type RunReference} from "@eval/contracts";
 import {createRunRepository,readJson,writeJson,atomicWrite,runLock,exists,type RunCodec} from "@eval/data";
-import {buildPlan,analysisTraceMap,contentText,locateRecordStream,attributionTrace,validateOriginalAttributionEvidence,bindAttributionMaterial,bindInstructionReview,instructionReviewFollowup,instructionReviewRow,loadRunInputs,normalizeInput,pendingTaskProgress,type EvalConfig,type Candidate,type RawInput} from "@eval/workflows/comparison";
+import { analysisTraceMap, attributionTrace, validateOriginalAttributionEvidence, bindAttributionMaterial, bindInstructionReview, instructionReviewRow, pendingTaskProgress } from "@eval/workflows/review";
+import { collectInputs, contentText, locateRecordStream, loadRunInputs, normalizeInput, type Candidate, type RawInput, type EvaluationConfig } from "@eval/workflows/inputs";
 import {attributionProfile,type AttributionResult} from "@eval/agents/attribution";
 import attributionOutputSchema from '../../../../schemas/workflow/answer-review-attribution.schema.json' with {type:'json'};
+import rewrittenSchema from '../../../../schemas/workflow/rewritten.schema.json' with {type:'json'};
 import type {ScoreResult} from "@eval/agents/score";
 import {answerReviewMaterial} from "./material.js";
 import {scoreEvidenceTask,bindScore,advanceScore,scoreBlockedReason,isFormalScore,scoreExportState,type ReviewTaskData} from './score.js';
 export {answerReviewMaterial} from "./material.js";
 export * from './incremental.js';
 export * from './watch.js';
-export interface AnswerReviewConfig extends EvalConfig {workflow:'answer-review';reviewStages?:('score'|'attribution')[];reviewTaskIds?:string[]}
+export interface AnswerReviewConfig extends EvaluationConfig {workflow:'answer-review';rewrite:{attribution:boolean};reviewStages?:('score'|'attribution')[];reviewTaskIds?:string[]}
 type TaskData=ReviewTaskData;
 const sourceMeta=Symbol('source meta: export only');
 const sourceTrace=Symbol('original trace: workflow only');
@@ -26,12 +28,12 @@ export function attributionTextSlots(value:AttributionResult){return [{id:'summa
   ...(f.problem?[{id:`findings.${i}.problem.label`,text:f.problem.label,label:'问题名称'},{id:`findings.${i}.problem.definition`,text:f.problem.definition,label:'问题定义'}]:[]),
 ])];}
 export async function planAnswerReview(config:AnswerReviewConfig){
-  const indexed=await buildPlan({...config,comparisons:[],clustering:{...config.clustering,enabled:false}},undefined,{materializeInputs:false});
-  const catalog=indexed.catalog as Candidate[],stages=config.reviewStages??['score','attribution'],tasks:PlannedTask[]=[];
+  const indexed=await collectInputs(config,undefined,{materializeInputs:false});
+  const catalog=indexed.catalog,stages=config.reviewStages??['score','attribution'],tasks:PlannedTask[]=[];
   for(const candidate of catalog)for(const stage of stages){const task:PlannedTask=stage==='score'?scoreEvidenceTask(candidate):{id:randomUUID(),stage,inputIds:{answer:candidate.input_id},dependencies:{},data:{candidate} satisfies TaskData};tasks.push(task);
     if(stage==='attribution'&&config.rewrite.attribution)tasks.push({id:randomUUID(),stage:'rewrite',inputIds:{},dependencies:{source:task.id},data:{candidate,rewriteOf:task.id} satisfies TaskData});}
   const manifest={config,tasks,inputCatalog:catalog} as RunManifest,inputs=prepareInputs(await loadReviewInputs(manifest),catalog);
-  const summary={workflow:'answer-review',cases:catalog.length,valid_inputs:catalog.length,score_tasks:tasks.filter(t=>t.stage==='score').length,attribution_tasks:tasks.filter(t=>t.stage==='attribution').length,rewrite_tasks:tasks.filter(t=>t.stage==='rewrite').length,criteria_tasks:0,comparison_tasks:0,issues:indexed.summary.issues??[]};
+  const summary={workflow:'answer-review',cases:catalog.length,valid_inputs:catalog.length,score_tasks:tasks.filter(t=>t.stage==='score').length,attribution_tasks:tasks.filter(t=>t.stage==='attribution').length,rewrite_tasks:tasks.filter(t=>t.stage==='rewrite').length,criteria_tasks:0,comparison_tasks:0,issues:indexed.issues};
   return {tasks,inputs,catalog,summary};
 }
 /** Limit a pilot by business case while retaining every model and selected stage for that case. */
@@ -72,7 +74,11 @@ export const answerReviewWorkflow:WorkflowDefinition={
       const candidate=(task.data as TaskData).candidate,original=(inputs[candidate.input_id] as {[sourceTrace]:RawInput})[sourceTrace];
       validateOriginalAttributionEvidence(receipt.evaluation,{[candidate.input_id]:original},receipt.audit);
     }
-    return {tasks:instructionReviewFollowup(task,state)};
+    if(task.stage!=='attribution'||state.manifest.tasks.some(item=>item.stage==='instruction-review'&&item.dependencies.source===task.id))return {tasks:[]};
+    const inputId=task.inputIds.answer;
+    if(!inputId)throw Error('归因后置检查缺少本方原始输入身份。');
+    const candidate=(task.data as TaskData).candidate;
+    return {tasks:[{id:randomUUID(),stage:'instruction-review',inputIds:{case:inputId},dependencies:{source:task.id},data:{candidate}}]};
   },
   async reconcile(_run,state,current){
     const manifest=state.manifest,saved=manifest.config as AnswerReviewConfig,config=current as AnswerReviewConfig;
@@ -127,8 +133,11 @@ export const answerReviewWorkflow:WorkflowDefinition={
   },
 };
 const resultFile=(stage:string)=>stage==='score'?'score.jsonl':stage==='instruction-review'?'instruction_review.jsonl':'attribution.jsonl';
-export const answerReviewAttributionSchema=attributionOutputSchema;
-const validateAttributionOutput=new Ajv2020({allErrors:true,strict:false}).addSchema(attributionProfile.resultSchema!,'attribution/result.schema.json').compile(attributionOutputSchema);
+const validateAttributionOutput=new Ajv2020({allErrors:true,strict:false})
+  .addSchema(attributionProfile.resultSchema!,'/attribution/result.schema.json')
+  .addSchema(rewrittenSchema,'/workflow/rewritten.schema.json')
+  .addSchema(attributionOutputSchema,'/workflow/answer-review-attribution.schema.json')
+  .getSchema('/workflow/answer-review-attribution.schema.json')!;
 function attributionEvaluation(row:JsonObject){
   const properties=(attributionProfile.resultSchema as {properties:Record<string,unknown>}).properties;
   return Object.fromEntries(Object.keys(properties).filter(key=>Object.hasOwn(row,key)).map(key=>[key,row[key]]));
@@ -329,11 +338,6 @@ function stageCounts(rows:ReturnType<typeof samples>,stage:typeof reviewStages[n
     failed:views.filter(view=>failed.has(view.status)).length,running:views.filter(view=>view.status==='running').length,pending:views.filter(view=>view.status==='pending').length};
 }
 export async function answerReviewProgress(run:string){return samples(await readJson<Checkpoint>(path.join(run,'state.json')));}
-/** Status and pagination read only the compact checkpoint, never the entire result JSONL bodies. */
-export async function answerReviewRunSummary(run:string,date?:string){
-  const saved=await readJson<Checkpoint>(path.join(run,'state.json'));
-  return reviewRunSummary(run,saved,date);
-}
 async function reviewRunSummary(run:string,saved:Checkpoint,date?:string){
   const state=codec.decode(saved,()=>{throw Error('概要不得读取结果正文');},new Set()),rows=samples(saved),counts=Object.fromEntries(stages.map(stage=>[stage,stageCounts(rows,stage)]));
   const models:Record<string,{answers:number;completed:number;failed:number;pending:number}>={};

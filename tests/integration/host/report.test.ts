@@ -5,7 +5,7 @@ import path from "node:path";
 import { Ajv2020 } from "ajv/dist/2020.js";
 import { emptyUsage, type PlannedTask, type SubmissionReceipt } from "@eval/contracts";
 import { writeJson } from "@eval/data";
-import { adapt } from "@eval/workflows/comparison";
+import { adapt } from "@eval/workflows/inputs";
 import { comparisonWorkflow } from "@eval/workflows/comparison";
 import { comparisonProfile } from "@eval/agents/comparison";
 import { outputSchema } from "@eval/workflows/comparison";

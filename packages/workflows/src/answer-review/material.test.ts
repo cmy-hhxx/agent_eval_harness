@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { adapt, type RawInput } from "@eval/workflows/comparison";
+import { adapt, type RawInput } from "@eval/workflows/inputs";
 import { answerReviewMaterial } from "./material.js";
 
 test("review availability recognizes reasoning in both current trace formats", () => {

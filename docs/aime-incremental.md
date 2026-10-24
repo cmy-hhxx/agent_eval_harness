@@ -26,7 +26,7 @@ tmux attach -t aime-auto
 - 每轮扫描固定当时的目录快照；持续模式下一轮处理之后到达的包。同名包的大小或修改时间变化也属于更新，按修改时间顺序检查；不把同名包永久跳过。归档名、文件大小和纳秒修改时间是文件处理收据，不使用内容哈希。完全保留文件名、大小和修改时间的原地修改无法识别，更新包应正常更新修改时间。
 - 新包和更新包先做有限的稳定检查及完整性检查，再在临时目录解包。尚未稳定、损坏或被替换的包列入报告，下一轮重试。
 - fast/expert 取记录的 `agent_mode`、`session_type` 和 trace 的 `mode`；相互冲突或未知时隔离。业务日期沿用清洗器的请求时间规则，换算为北京时间；缺请求时间时仅使用已捕获 trace 的明确时间，不取归档文件名。
-- 本次保留评测器的单 trace 契约：多 trace、空回答、缺失真实 `trace_id`、模式冲突及当前 TypeScript 输入适配器拒绝的记录均隔离，不拆分、不裁剪、不拼接。回答和工具轨迹保留原文。
+- 评测器采用单 trace 契约：多 trace、空回答、缺失真实 `trace_id`、模式冲突及当前 TypeScript 输入适配器拒绝的记录均隔离，不拆分、不裁剪、不拼接。回答和工具轨迹保留原文。
 - 记录层按真实 `trace_id` 和现有业务身份查重。完全相同的已发布记录报告为重复；同一身份内容不同报告为冲突，不覆盖既有输入或判词。
 - 隔离报告保存归档、成员文件、原始行号、数组项位置和原因。原始记录仍在原包中，不再复制原始正文到评测 run。
 
@@ -41,13 +41,14 @@ tmux attach -t aime-auto
 ```text
 1_aime/eval_output/0_daily_eval/<MMDD>/results/score.jsonl
 1_aime/eval_output/0_daily_eval/<MMDD>/results/attribution.jsonl
+1_aime/eval_output/0_daily_eval/<MMDD>/results/instruction_review.jsonl
 ```
 
 每条正式结果直接包含真实 `trace_id`、`business_date`、`source_archive`、`source_member`、`source_line`、`source_item`、`input_file`、`input_line`，以及源输入 `meta`。这些字段由程序绑定，不由 Agent 生成。导出契约见 [answer-review-attribution.schema.json](../schemas/workflow/answer-review-attribution.schema.json)。
 
-中文验收使用 `npm run attribution:check-language -- --input <attribution.jsonl>`。`strength` 的 `label=null`、`definition=null` 记为“不适用”；`problem` 的两个字段仍要求非空中文，不把优点的合法空值算成失败。命令只读，不影响正在进行的64并发自动化。
+中文验收使用 `npm run attribution:check-language -- --input <attribution.jsonl>`。`strength` 的 `label=null`、`definition=null` 记为“不适用”；`problem` 的两个字段仍要求非空中文，不把优点的合法空值算成失败。命令只读，不修改结果或运行状态。
 
-例如新增10月24日的数据建立`1024`；后来补到10月19日的数据写回`1019`，不为这次执行另建UUID目录。历史只有归因的回答补建Score任务；可恢复的未完成任务沿原任务与额度继续，内容失败耗尽额度时保留可定位错误，等待显式重试。
+新增日期的回答建立对应 `MMDD` 目录，补到已有日期的回答写回该日目录，不为每次执行另建 UUID 目录。历史只有归因的回答补建Score任务；可恢复的未完成任务沿原任务与额度继续，内容失败耗尽额度时保留可定位错误，等待显式重试。
 
 流程状态保存在配置的既定 `runtime/state/` 子目录；`watch.json` 记录持续进程的 PID、并发、当前轮数、运行/等待/停止状态、下一次扫描时间和最近错误；`last-report.json` 是最近一轮摘要，`ingestions/<UUID>/report.json` 保存清洗明细。状态仅保存输入坐标、收据、进度和正式结果引用。日志复用 `runtime.log`、`evaluation.log`，不新增轮转日志。
 

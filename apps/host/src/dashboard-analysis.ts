@@ -7,7 +7,7 @@ import { exists, localFiles, locateRun, readJson, runLock, writeJson } from "@ev
 import { clusteringJobRepository, prepareClusteringJob, prepareFrozenClusteringJob, readAnalysisAnswers,
   type ClusteringJobConfig, type ClusteringJobSource, type EvalConfig } from "@eval/workflows/comparison";
 import { DashboardBatches } from "./dashboard-batches.js";
-import { loadConfig, createModelResolver } from "./config.js";
+import { loadComparisonConfig, createModelResolver } from "./config.js";
 import { readLock } from "./dashboard-launch.js";
 import type { DashboardModelLoader } from "./dashboard-models.js";
 
@@ -127,7 +127,7 @@ export class DashboardAnalysis {
   async preview(value: Record<string,unknown>) {
     const scope = await this.scope(value), sources = scope.rows.filter(row => row.status === 'available').map(row => row.source!);
     if (!sources.length) throw new HttpError(409,'当前范围没有新的已接受归因');
-    const host = await loadConfig(this.configs), id = randomUUID();
+    const host = await loadComparisonConfig(this.configs), id = randomUUID();
     const output_dir = path.join(scope.output_dir,'clustering');
     const prepared = await prepareClusteringJob([...new Set(sources.map(source=>source.run))],{...host.evaluation,output:{kind:'directory',path:output_dir}},
       {inputIds:sources.map(source=>source.input_id),acceptedOnly:true});
@@ -154,7 +154,7 @@ export class DashboardAnalysis {
         const claims = await this.claims();
         if (selection.sources.some(source=>claims.has(identity(source)))) throw new HttpError(409,'所选归因已纳入其他分析，请刷新范围');
       }
-      const host = await loadConfig(this.configs);
+      const host = await loadComparisonConfig(this.configs);
       const prepared = await prepareFrozenClusteringJob(selection,{...host.evaluation,output:{kind:'directory',path:job.output_dir}});
       const saved = await exists(locateRun(directory).stateFile) ? await clusteringJobRepository.readRun(directory) : undefined;
       const remaining = saved ? saved.manifest.tasks.filter(task=>!saved.receipts[task.id] &&

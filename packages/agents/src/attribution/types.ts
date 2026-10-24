@@ -1,4 +1,4 @@
-import type { ResolvedEvidence, RewrittenResult, TaskAnalysis } from "@eval/contracts";
+import type { ResolvedEvidence, TaskAnalysis } from "@eval/contracts";
 export type { TaskAnalysis, TaskCriterion } from "@eval/contracts";
 export interface Evidence extends ResolvedEvidence {
   /** Foreign review fact source; both fields are absent on the answer's own evidence. */
@@ -102,7 +102,6 @@ export interface AttributionFinding extends Finding {
   problem: ProblemProposal | null;
 }
 export interface AttributionResult {
-  rewritten?: RewrittenResult;
   /** Whether the case carries a usable standard answer; mirrors the request input. */
   has_standard_answer: boolean;
   /** With a reference, null requires an uncertain applicable core criterion and independent review; otherwise boolean. Without a reference, null. */

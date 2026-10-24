@@ -1,9 +1,9 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { raw, sessionRaw } from "../../../../tests/fixtures/comparison.js";
-import { normalizeInput } from "./input-record.js";
-import { adapt } from "./input.js";
-import { originalAnswerUsage } from "./experience.js";
+import { normalizeInput } from "./normalize.js";
+import { adapt } from "./records.js";
+import { originalAnswerUsage } from "../comparison/experience.js";
 import { answerTurnContexts, normativeSources, originalUserTimestamp } from "@eval/tools";
 
 const version = { id: "independent", name: "Independent", adapter: "a", sources: [] };

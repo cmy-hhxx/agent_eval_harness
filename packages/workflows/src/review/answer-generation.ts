@@ -1,5 +1,5 @@
 import { answerTurnContexts, cite, evidenceSources, selectEvidenceSource } from "@eval/tools";
-import type { RawInput } from "./types.js";
+import type { RawInput } from "../inputs/types.js";
 
 type ObjectValue = Record<string, unknown>;
 function object(value: unknown): ObjectValue | undefined {

@@ -6,10 +6,13 @@ import { exists, internalPath, locateRun, readJson, writeJson } from "@eval/data
 import { bindTask } from "./workflow.js";
 import type { AgentBinding, ToolAudit } from "@eval/contracts";
 import { writeOverview } from "./report.js";
-import { loadRunInputs, readRunState } from "./run-data.js";
+import { loadRunInputs } from "../inputs/load.js";
+import { readRunState } from "./run-data.js";
 import { loadAttributionJobInputs, type AttributionJobConfig } from "./attribution-job.js";
-import type { Candidate, EvalConfig, ComparisonResult, TaskData } from "./types.js";
-import { candidateKey, taskCase } from "./input.js";
+import type { Candidate } from "../inputs/types.js";
+import type { EvalConfig, ComparisonResult, TaskData } from "./types.js";
+import { candidateKey } from "../inputs/records.js";
+import { taskCase } from "./input.js";
 import { Ajv2020 } from "ajv/dist/2020.js";
 import { clusteringSchema, rewrittenSchema, outputSchema } from "./schema.js";
 import { attributionProfile } from "@eval/agents/attribution";

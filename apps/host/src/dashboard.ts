@@ -6,7 +6,7 @@ import path from "node:path";
 import { body, json, listen } from "@eval/runtime/http";
 import { errorText, HttpError, safeId } from "@eval/contracts";
 import { deleteRun, exists, localFiles, listRunArtifacts, locateRun, runLock, readJson, RunDeletionError } from "@eval/data";
-import { editableDashboardSettings, loadEvaluation, loadConfig, createModelResolver, readConfigSources } from "./config.js";
+import { editableDashboardSettings, loadComparisonEvaluation, loadConfig, createModelResolver, readConfigSources } from "./config.js";
 import { dashboardReference } from "./dashboard-reference.js";
 import {
   clearUnavailableDashboardModels,
@@ -283,7 +283,7 @@ export async function startDashboard(options: DashboardOptions) {
     }
     if (req.method === "GET" && url.pathname === "/api/dashboard/reference") {
       const [evaluation, current] = await Promise.all([
-        loadEvaluation(options.configPaths), readConfigSources(options.configPaths),
+        loadComparisonEvaluation(options.configPaths), readConfigSources(options.configPaths),
       ]);
       return json(res, dashboardReference(evaluation, current.evaluatorVersion));
     }
@@ -318,7 +318,7 @@ export async function startDashboard(options: DashboardOptions) {
       });
     }
     if (req.method === "GET" && url.pathname === "/api/dashboard/inputs")
-      return json(res, await inputs.read(await loadEvaluation(options.configPaths)));
+      return json(res, await inputs.read(await loadComparisonEvaluation(options.configPaths)));
     if (req.method === "POST" && url.pathname === "/api/dashboard/batch-runs/preview") {
       const entry = await batches.prepare(record(await body(req, 64 * 1024), "Expected JSON object"));
       try {
@@ -469,7 +469,7 @@ export async function startDashboard(options: DashboardOptions) {
     }
     const parts = url.pathname.split("/").filter(Boolean);
     if (req.method === "GET" && parts[0] === "api" && parts[1] === "dashboard" && parts[2] === "library") {
-      const evaluation = await loadEvaluation(options.configPaths);
+      const evaluation = await loadComparisonEvaluation(options.configPaths);
       if (parts.length === 3) return json(res, await listConfiguredProblemLibrary(evaluation));
       if (parts.length === 6 && parts[3] && parts[4] === "classes" && parts[5]) {
         const page = Number(url.searchParams.get("page") || "1");

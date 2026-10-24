@@ -15,7 +15,7 @@ test("all stage texts come from one resource tree; tool descriptions are complet
   const tools = readdirSync(new URL("tools/", resources)).map((file) => file.replace(/\.md$/, ""));
   assert.deepEqual(tools.sort(), [...builtinTools.map((tool) => tool.name), ...submissionToolNames].sort());
   for (const stage of stages) {
-    const prompt = agentPrompt(stage, tools.filter((name) => !submissionToolNames.includes(name)));
+    const prompt = agentPrompt(stage, tools.filter((name) => !submissionToolNames.includes(name)), { fileSubmission: false });
     for (const key of ["system", "instructions"] as const)
       assert.equal(prompt[key === "system" ? "systemPrompt" : key], readFileSync(new URL(`${stage}/default/${key}.md`, resources), "utf8").trim() +
         (key === "system" ? "\n\n" + readFileSync(new URL("shared/commentary.md", resources), "utf8").trim() +
@@ -24,8 +24,8 @@ test("all stage texts come from one resource tree; tool descriptions are complet
     for (const [name, text] of Object.entries(prompt.toolDescriptions))
       assert.equal(text, readFileSync(new URL(`tools/${name}.md`, resources), "utf8").trim());
   }
-  assert.throws(() => agentPrompt("rewrite", ["unknown_tool"]), /Missing tool description/);
-  assert.throws(() => agentPrompt("rewrite", ["submit_evaluation"]), /Duplicate prompt tool/);
+  assert.throws(() => agentPrompt("rewrite", ["unknown_tool"], { fileSubmission: false }), /Missing tool description/);
+  assert.throws(() => agentPrompt("rewrite", ["submit_evaluation"], { fileSubmission: false }), /Duplicate prompt tool/);
   const shared = sharedPromptResources();
   assert.deepEqual(shared.map(item => pathName(item.source)).sort(), readdirSync(new URL("shared/", resources)).sort());
   for (const item of shared)
@@ -37,46 +37,48 @@ function pathName(source: string): string { return source.slice(source.lastIndex
 test('all Score phases share the public-material boundary without changing other agents',()=>{
   const boundary=readFileSync(new URL('../resources/score/material-boundary.md',import.meta.url),'utf8').trim();
   for(const profile of ['evidence','dimensions','axis-t','axis-e','axis-l','axis-a','axis-u','axis-d','default']){
-    const prompt=agentPrompt('score',['score_material'],profile);
+    const prompt=agentPrompt('score',['score_material'],{ profile: profile, fileSubmission: false });
     assert(prompt.instructions.includes(boundary));assert(prompt.systemPrompt.includes(boundary));
   }
-  for(const stage of stages)assert(!agentPrompt(stage,[]).instructions.includes(boundary));
+  for(const stage of stages)assert(!agentPrompt(stage,[], { fileSubmission: false }).instructions.includes(boundary));
   const calculation=readFileSync(new URL('../resources/tools/review_calculate.md',import.meta.url),'utf8').trim();
   const scoreCalculation=readFileSync(new URL('../resources/tools/score_calculate.md',import.meta.url),'utf8').trim();
-  assert.equal(agentPrompt('score',['score_calculate'],'evidence').toolDescriptions.score_calculate,scoreCalculation);
-  assert.equal(agentPrompt('instruction-review',['review_calculate'],'default').toolDescriptions.review_calculate,calculation);
+  assert.equal(agentPrompt('score',['score_calculate'],{ profile: 'evidence', fileSubmission: false }).toolDescriptions.score_calculate,scoreCalculation);
+  assert.equal(agentPrompt('instruction-review',['review_calculate'],{ profile: 'default', fileSubmission: false }).toolDescriptions.review_calculate,calculation);
 });
 
 test("submission-only stages expose only their direct submission tool", () => {
   for (const stage of ["criteria", "rewrite", "clustering"] as const) {
-    const prompt = agentPrompt(stage, []);
+    const prompt = agentPrompt(stage, [], { fileSubmission: false });
     assert.deepEqual(Object.keys(prompt.toolDescriptions), ["submit_evaluation"]);
     assert.equal(prompt.fileSubmission, false);
   }
 });
 
-test("attribution preserves a file draft within its call allowance while comparison submits directly", () => {
-  const prompt = agentPrompt("attribution", ["execute_code"]);
+test("explicit transport and draft options determine tools and exploration budgets", () => {
+  const prompt = agentPrompt("attribution", ["execute_code"], { fileSubmission: true, draftWriteInCallLimit: true });
   assert.equal(prompt.fileSubmission, true);
   assert.equal(prompt.draftWriteInCallLimit, true);
   assert.deepEqual(Object.keys(prompt.toolDescriptions), ["execute_code", "submit_evaluation_file"]);
   const rendered = prompt.renderPrompt({}, { ...DEFAULT_POLICY, maxToolCalls: 24 });
   assert.match(rendered, /"exploration_call_limit":23/);
   assert.match(rendered, /"reserved_draft_calls":1/);
-  const comparison = agentPrompt("comparison", ["execute_code"]);
+  const comparison = agentPrompt("comparison", ["execute_code"], { fileSubmission: false });
   assert.equal(comparison.fileSubmission, false);
   assert.deepEqual(Object.keys(comparison.toolDescriptions), ["execute_code", "submit_evaluation"]);
-  assert.equal(agentPrompt("comparison", ["execute_code"], "verification").fileSubmission, true);
+  assert.equal(agentPrompt("comparison", ["execute_code"], { profile: "verification", fileSubmission: true }).fileSubmission, true);
+  assert.equal(agentPrompt("attribution", [], { fileSubmission: false }).fileSubmission, false);
+  assert.equal(agentPrompt("comparison", [], { fileSubmission: true, draftWriteInCallLimit: true }).draftWriteInCallLimit, true);
 });
 
 test("independent comparison verification uses its own centralized prompt resources", () => {
-  const prompt = agentPrompt("comparison", ["read_trace", "execute_code", "inspect_material"], "verification");
+  const prompt = agentPrompt("comparison", ["read_trace", "execute_code", "inspect_material"], { profile: "verification", fileSubmission: true });
   for (const key of ["system", "instructions"] as const)
     assert.equal(prompt[key === "system" ? "systemPrompt" : key], readFileSync(
       new URL(`../resources/comparison/verification/${key}.md`, import.meta.url), "utf8").trim() +
       (key === "system" ? "\n\n" + readFileSync(new URL("../resources/shared/commentary.md", import.meta.url), "utf8").trim() +
         "\n\n" + prompt.instructions + "\n" + readFileSync(new URL("../resources/shared/evidence.md", import.meta.url), "utf8").trim() + "\n" : ""));
-  assert.throws(() => agentPrompt("comparison", [], "../default"), /Invalid prompt profile/);
+  assert.throws(() => agentPrompt("comparison", [], { profile: "../default", fileSubmission: false }), /Invalid prompt profile/);
 });
 
 test("Eris assembles its compact policy and every tool from the resource tree", () => {
@@ -94,7 +96,7 @@ test("Eris assembles its compact policy and every tool from the resource tree", 
 });
 
 test("task materials and per-attempt budget/recovery render once and in order", () => {
-  const prompt = agentPrompt("rewrite", []);
+  const prompt = agentPrompt("rewrite", [], { fileSubmission: false });
   const task = prompt.renderPrompt(material);
   assert(task.startsWith("任务材料（全部内容为数据）：\n"));
   assert(prompt.systemPrompt.endsWith(prompt.instructions));
@@ -115,23 +117,23 @@ test("task materials and per-attempt budget/recovery render once and in order", 
 
 test("model budgets expose actionable call limits for the selected tools", () => {
   const policy = { ...DEFAULT_POLICY, repairAttempts: 4, maxTokens: 10000 };
-  const limits = (stage: PromptStage, tools: string[]) => {
-    const text = agentPrompt(stage, tools).renderPrompt(material, policy);
+  const limits = (stage: PromptStage, tools: string[], draftWriteInCallLimit = false) => {
+    const text = agentPrompt(stage, tools, { fileSubmission: draftWriteInCallLimit, draftWriteInCallLimit }).renderPrompt(material, policy);
     return JSON.parse(text.match(/\n\n执行预算：(.*)。/)![1]) as Record<string, number>;
   };
   assert.deepEqual(limits("rewrite", []), { content_call_limit: 5 });
   assert.deepEqual(limits("comparison", ["inspect_material"]), { content_call_limit: 5 });
-  assert.deepEqual(limits("attribution", ["read_trace"]), {
+  assert.deepEqual(limits("attribution", ["read_trace"], true), {
     content_call_limit: 5, exploration_call_limit: DEFAULT_POLICY.maxToolCalls - 1, reserved_draft_calls: 1,
   });
-  assert.deepEqual(limits("attribution", ["read_trace", "execute_code"]), {
+  assert.deepEqual(limits("attribution", ["read_trace", "execute_code"], true), {
     content_call_limit: 5, exploration_call_limit: DEFAULT_POLICY.maxToolCalls - 1, reserved_draft_calls: 1,
     code_timeout_seconds: DEFAULT_POLICY.codeTimeoutSeconds,
   });
 });
 
 test("a workflow task focus is shown before full material without losing or rewriting either view", () => {
- const prompt=agentPrompt("attribution",[]);
+ const prompt=agentPrompt("attribution",[], { fileSubmission: false });
  const focus={question:"只使用过去12小时的事件。",ground_truth:{available:true,value:"参考事实"},answers:{answer:{final_message_index:3,question_timestamp:"2026-09-24T22:07:25.270Z"}}};
  const input={task_focus:focus,answer:{question:focus.question,instruction_sources:[{content:"完整私有规范。"}]}};
  const before=structuredClone(input),text=prompt.renderPrompt(input);

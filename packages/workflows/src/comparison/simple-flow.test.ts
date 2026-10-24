@@ -5,7 +5,7 @@ import { rm } from "node:fs/promises";
 import path from "node:path";
 import { comparisonProfile } from "@eval/agents/comparison";
 import type { RunManifest } from "@eval/contracts";
-import { loadConfig } from "@eval/host-app/config";
+import { loadComparisonConfig } from "@eval/host-app/config";
 import { fixtureConfig, raw } from "../../../../tests/fixtures/comparison.js";
 import { ROOT } from "../../../../tests/fixtures/services.js";
 import { buildPlan } from "./input.js";
@@ -29,7 +29,7 @@ test("evaluation with explicit rewrites off has one comparison and no mandatory 
 });
 
 test("real config defaults polish each attribution and comparison, then separately enabled clustering", async () => {
-  const defaults = (await loadConfig(path.join(ROOT, "configs/host.json"), testSettings("http://127.0.0.1:1/v1"))).evaluation;
+  const defaults = (await loadComparisonConfig(path.join(ROOT, "configs/host.json"), testSettings("http://127.0.0.1:1/v1"))).evaluation;
   assert.deepEqual(defaults.rewrite, { attribution: true, comparison: true, comparisonItems: true, clustering: true });
   assert.equal(defaults.clustering.enabled, false);
   assert.equal(defaults.standardAnswerReview, false);

@@ -3,7 +3,7 @@ import type { PlannedTask, RunState, SubmissionReceipt, WorkflowDefinition } fro
 import type { RewriteResult } from "@eval/agents/rewrite";
 import { attributionRewriteGroups, attributionSlots } from "./commentary.js";
 import { sourceRewriteTasks } from "./rewrite-projection.js";
-import { pendingTaskProgress } from "./task-progress.js";
+import { pendingTaskProgress } from "../review/task-progress.js";
 import type { AttributionResult, EvalConfig, TaskData } from "./types.js";
 
 /** The result determines groups only after acceptance; this task reserves its first group. */

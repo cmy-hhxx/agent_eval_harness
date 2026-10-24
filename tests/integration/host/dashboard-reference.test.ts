@@ -4,7 +4,7 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import { createRequire } from "node:module";
 import path from "node:path";
-import { loadConfig } from "@eval/host-app/config";
+import { loadComparisonConfig } from "@eval/host-app/config";
 import { comparisonAgent } from "@eval/agents/comparison";
 import { attributionAgent } from "@eval/agents/attribution";
 import { evidenceSelectionSchema, SUBMISSION_FILE_SCHEMA, SUBMISSION_JSON_SCHEMA, type JsonSchema } from "@eval/contracts";
@@ -16,7 +16,7 @@ import { ROOT } from "../../fixtures/services.js";
 const { JSDOM } = createRequire(import.meta.url)("jsdom");
 
 async function referencePage() {
-  const config = await loadConfig(path.join(ROOT, "configs/host.json"), testSettings("http://127.0.0.1:1/v1"));
+  const config = await loadComparisonConfig(path.join(ROOT, "configs/host.json"), testSettings("http://127.0.0.1:1/v1"));
   const reference = dashboardReference(config.evaluation, config.evaluatorVersion);
   const dom = new JSDOM(await readFile(path.join(ROOT, "apps/host/dashboard/reference.html"), "utf8"));
   try {

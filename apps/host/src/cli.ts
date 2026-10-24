@@ -9,7 +9,8 @@ import { errorText, redact } from "@eval/contracts";
 import { readJson, exists, runLayout, runLock } from "@eval/data";
 import { boundProfiles, createModelResolver, loadConfig, testEvaluationOutput } from "@eval/host-app/config";
 import { services, agents, logger } from "./composition.js";
-import { comparisonWorkflow, indexDataset, selectDataset, prepareComparisonRewrites, prepareComparisonVerification, prepareDeferredClustering, prepareFailedTasks, reviewProblemOccurrences } from "@eval/workflows/comparison";
+import { comparisonWorkflow, selectDataset, prepareComparisonRewrites, prepareComparisonVerification, prepareDeferredClustering, prepareFailedTasks, reviewProblemOccurrences } from "@eval/workflows/comparison";
+import { indexDataset, selectDatasetInputs } from "@eval/workflows/inputs";
 import { reportRun, reportStability } from "@eval/workflows/comparison";
 import { runEvaluation } from "@eval/host";
 import { validateRun } from "@eval/workflows/comparison";
@@ -310,6 +311,7 @@ dashboard: --port 4173 在本机启动控制看板`,
     return;
   }
   if (command === "review-problem-occurrences") {
+    if (host.workflow !== "comparison") throw new Error("问题样本复核需要对战工作流配置");
     if (!values["review-file"]) throw new Error("--review-file required");
     if (selectedRun || values["run-id"] || values.input || values.output || values.batch || values.case || values["limit-cases"])
       throw new Error("问题样本复核使用配置和原登记来源，不接受运行或输入选择覆盖");
@@ -361,7 +363,9 @@ dashboard: --port 4173 在本机启动控制看板`,
   // A resumed run owns its registered source selection; a stale/missing index must not block it.
   if (values.dataset && resuming)
     console.error(`续跑使用 state.json 中的来源，忽略 --dataset ${values.dataset}`);
-  else if (values.dataset) config = await selectDataset(config, catalogRoot, values.dataset);
+  else if (values.dataset) config = "workflow" in config
+    ? await selectDatasetInputs(config, catalogRoot, values.dataset)
+    : await selectDataset(config, catalogRoot, values.dataset);
   for (const profile of boundProfiles(host.models))
     logger.addSecrets(process.env[profile.apiKeyEnv] || "");
   if (values.batch) config.inputs.batches = values.batch;
@@ -371,8 +375,8 @@ dashboard: --port 4173 在本机启动控制看板`,
     if (!Number.isInteger(limit) || limit < 1) throw new Error("limit-cases must be positive");
     config.inputs.limit = limit;
   }
-  if (host.workflow === "answer-review") {
-    process.exitCode = await runAnswerReviewCommand({ ...host, evaluation: config }, {
+  if ("workflow" in config && config.workflow === "answer-review") {
+    process.exitCode = await runAnswerReviewCommand({ ...host, workflow: "answer-review", evaluation: config }, {
       command, runId: values["run-id"], engine: values.engine, debug: values.debug, stage: values.stage,
       workers: values.worker, skipFailed: values["skip-failed"], discoverInputs: values["discover-inputs"],
       resumeStages: values["resume-stage"], balanceChannels: values["balance-channels"],

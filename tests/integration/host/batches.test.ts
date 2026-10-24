@@ -9,7 +9,8 @@ import { readJsonl, writeJsonl } from "@eval/data";
 import { buildPlan } from "@eval/workflows/comparison";
 import { reportRun } from "@eval/workflows/comparison";
 import { readRunState, writeRunState } from "@eval/workflows/comparison";
-import type { BatchPreflight, EvalConfig, RawInput, TaskData } from "@eval/workflows/comparison";
+import type { BatchPreflight, EvalConfig, TaskData } from "@eval/workflows/comparison";
+import type { RawInput } from "@eval/workflows/inputs";
 import { validateRun } from "../../fixtures/services.js";
 import { comparisonResult, criteriaResultForTask, emptyAudit, fakeEvaluatorVersion, fakeIdentity, fakeJudge, fixtureConfig, attributionResult, raw } from "../../fixtures/comparison.js";
 

@@ -4,7 +4,7 @@ import {
   answerReviewWorkflow, answerReviewRepository, answerReviewPilotTaskIds, planAnswerReview,
   reportAnswerReview, validateAnswerReview, type AnswerReviewConfig,
 } from "@eval/workflows/answer-review";
-import { createModelResolver, type HostConfig } from "./config.js";
+import { createModelResolver, type AnswerReviewHostConfig } from "./config.js";
 import { createBalancedModels } from "./balanced-models.js";
 import { services } from "./composition.js";
 
@@ -34,11 +34,10 @@ interface AnswerReviewOptions {
   resumeTaskIds?: string[];
 }
 
-export async function runAnswerReviewCommand(host: HostConfig, options: AnswerReviewOptions) {
+export async function runAnswerReviewCommand(host: AnswerReviewHostConfig, options: AnswerReviewOptions) {
   if (options.stage && !["score", "attribution"].includes(options.stage)) throw Error("独立评审只可选择score或attribution");
   if (!["pi", "prime"].includes(options.engine)) throw Error("engine必须为pi或prime");
-  const config: AnswerReviewConfig = { ...host.evaluation, workflow: "answer-review", comparisons: [],
-    clustering: { ...host.evaluation.clustering, enabled: false },
+  const config: AnswerReviewConfig = { ...host.evaluation,
     ...(options.resumeTaskIds&&{reviewTaskIds:options.resumeTaskIds}),
     reviewStages: options.stage ? [options.stage as "score" | "attribution"] : ["score", "attribution"] };
   if (options.command === "preflight") {

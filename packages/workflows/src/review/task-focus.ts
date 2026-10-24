@@ -1,5 +1,5 @@
 import type { TaskAnalysis } from "@eval/contracts";
-import type { RawInput } from "./types.js";
+import type { RawInput } from "../inputs/types.js";
 
 interface FocusMaterial {
   question: string;

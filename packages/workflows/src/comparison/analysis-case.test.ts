@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { analysisTraceMap } from "./analysis-case.js";
+import { analysisTraceMap } from "../review/analysis.js";
 
 test("case maps link id-less source spans only by a unique tool name and recorded completion time", () => {
   const call = (name: string, end: string, extra = {}) => ({ type: "tool_call", name, end, ...extra });

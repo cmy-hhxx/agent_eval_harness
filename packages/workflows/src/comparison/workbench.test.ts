@@ -3,7 +3,8 @@ import assert from "node:assert/strict";
 import { rm } from "node:fs/promises";
 import { writeJsonl } from "@eval/data";
 import { buildPlan } from "./input.js";
-import type { Candidate, TaskData } from "./types.js";
+import type { Candidate } from "../inputs/types.js";
+import type { TaskData } from "./types.js";
 import { fixtureConfig, raw } from "../../../../tests/fixtures/comparison.js";
 
 test("cleaning scope selects exact records, keeps unpaired attribution and preserves accepted tasks on resume", async t => {

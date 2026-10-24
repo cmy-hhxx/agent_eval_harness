@@ -14,11 +14,8 @@ import {
   fileSourceReader, problemLibraryFile, readJson, withProblemLibraryLock, writeJson, writeJsonl,
 } from "@eval/data";
 import { applyClustering, type ClusteringResult, type ProblemOccurrenceReviewDecision } from "@eval/agents/clustering";
-import {
-  buildPlan, createResultWriter, listConfiguredProblemLibrary, readConfiguredProblemClass,
-  readRunState, reviewProblemOccurrences, syncProblemLibrary, taskObservations, writeRunState,
-  type Candidate, type TaskData,
-} from "@eval/workflows/comparison";
+import { buildPlan, createResultWriter, listConfiguredProblemLibrary, readConfiguredProblemClass, readRunState, reviewProblemOccurrences, syncProblemLibrary, taskObservations, writeRunState, type TaskData } from "@eval/workflows/comparison";
+import { type Candidate } from "@eval/workflows/inputs";
 import { ROOT } from "../../fixtures/services.js";
 import {
   attributionResult, criteriaResultForTask, emptyAudit, fakeEvaluatorVersion, fakeIdentity, fixtureConfig, raw,

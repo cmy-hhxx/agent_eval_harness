@@ -12,7 +12,7 @@ export * from "./library.js";
 export * from "./occurrence-review.js";
 export * from "./pending-observations.js";
 export { representativeSamples } from "./samples.js";
-const prompt = agentPrompt("clustering", []);
+const prompt = agentPrompt("clustering", [], { fileSubmission: false });
 export const clusteringProfile: AgentProfile = {
   id: "default",
 

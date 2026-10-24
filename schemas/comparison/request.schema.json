@@ -199,7 +199,13 @@
           "criterion_assessments",
           "core_assessment",
           "findings",
-          "task_analysis"
+          "task_analysis",
+          "summary",
+          "has_standard_answer",
+          "is_correct",
+          "correctness_reason",
+          "correctness_evidence",
+          "numeric_checks"
         ],
         "properties": {
           "criterion_assessments": {
@@ -356,7 +362,188 @@
             "additionalProperties": false
           },
           "findings": {
-            "type": "array"
+            "type": "array",
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "type",
+                "dimension",
+                "stage",
+                "importance",
+                "text",
+                "reason",
+                "evidence",
+                "assessment"
+              ],
+              "properties": {
+                "type": {
+                  "enum": [
+                    "strength",
+                    "problem"
+                  ]
+                },
+                "dimension": {
+                  "enum": [
+                    "correctness",
+                    "completeness",
+                    "instruction_following",
+                    "evidence_quality",
+                    "reasoning",
+                    "format",
+                    "relevance",
+                    "efficiency"
+                  ]
+                },
+                "stage": {
+                  "enum": [
+                    "context_recall",
+                    "reasoning",
+                    "execution",
+                    "final_answer"
+                  ]
+                },
+                "importance": {
+                  "enum": [
+                    "high",
+                    "medium",
+                    "low"
+                  ]
+                },
+                "text": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "reason": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "evidence": {
+                  "type": "array",
+                  "minItems": 1,
+                  "items": {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "required": [
+                      "evidence_id",
+                      "message_index",
+                      "quote"
+                    ],
+                    "properties": {
+                      "message_index": {
+                        "type": "integer",
+                        "minimum": 0
+                      },
+                      "quote": {
+                        "type": "string",
+                        "minLength": 1
+                      },
+                      "source": {
+                        "type": "string",
+                        "minLength": 1
+                      },
+                      "source_input_id": {
+                        "type": "string",
+                        "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$"
+                      },
+                      "evidence_id": {
+                        "type": "string",
+                        "minLength": 1
+                      }
+                    },
+                    "dependentRequired": {
+                      "source": [
+                        "source_input_id"
+                      ],
+                      "source_input_id": [
+                        "source"
+                      ]
+                    }
+                  }
+                },
+                "context_evidence": {
+                  "type": "array",
+                  "minItems": 1,
+                  "items": {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "required": [
+                      "evidence_id",
+                      "message_index",
+                      "quote"
+                    ],
+                    "properties": {
+                      "message_index": {
+                        "type": "integer",
+                        "minimum": 0
+                      },
+                      "quote": {
+                        "type": "string",
+                        "minLength": 1
+                      },
+                      "source": {
+                        "type": "string",
+                        "minLength": 1
+                      },
+                      "source_input_id": {
+                        "type": "string",
+                        "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$"
+                      },
+                      "evidence_id": {
+                        "type": "string",
+                        "minLength": 1
+                      }
+                    },
+                    "dependentRequired": {
+                      "source": [
+                        "source_input_id"
+                      ],
+                      "source_input_id": [
+                        "source"
+                      ]
+                    }
+                  },
+                  "description": "程序绑定的完整规范上下文，保留条件与例外；不作为直接支持结论的聚焦引用。"
+                },
+                "assessment": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": [
+                    "requirement_index",
+                    "observation",
+                    "evidence_status",
+                    "impact"
+                  ],
+                  "properties": {
+                    "requirement_index": {
+                      "type": [
+                        "integer",
+                        "null"
+                      ],
+                      "minimum": 0
+                    },
+                    "observation": {
+                      "type": "string",
+                      "minLength": 1
+                    },
+                    "evidence_status": {
+                      "enum": [
+                        "established",
+                        "uncertain"
+                      ]
+                    },
+                    "impact": {
+                      "type": "string",
+                      "minLength": 1
+                    }
+                  }
+                },
+                "finding_index": {
+                  "type": "integer",
+                  "minimum": 0
+                }
+              }
+            }
           },
           "task_analysis": {
             "type": "object",
@@ -400,8 +587,212 @@
                 }
               }
             }
+          },
+          "summary": {
+            "type": "string",
+            "minLength": 1
+          },
+          "has_standard_answer": {
+            "type": "boolean"
+          },
+          "is_correct": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "correctness_reason": {
+            "type": "string"
+          },
+          "correctness_evidence": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "evidence_id",
+                "message_index",
+                "quote"
+              ],
+              "properties": {
+                "message_index": {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                "quote": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "source": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "source_input_id": {
+                  "type": "string",
+                  "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$"
+                },
+                "evidence_id": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              },
+              "dependentRequired": {
+                "source": [
+                  "source_input_id"
+                ],
+                "source_input_id": [
+                  "source"
+                ]
+              }
+            }
+          },
+          "numeric_checks": {
+            "type": "array",
+            "maxItems": 64,
+            "description": "记录可直接比较的同口径标准点值，不能仅列错误项；确实未交付该目标时保留 actual=null、matches=false。matches 仅为算术观察，不决定整体正确性。显式容差、区间、上下限及须计算或解码的表达在 correctness_reason 按原规则核验，该目标不入表；最终回答已直接给出的计算结果可按原值入表。无标准或没有直接点值目标时填空数组。",
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "label",
+                "expected",
+                "actual",
+                "scale",
+                "matches",
+                "mode",
+                "evidence_index"
+              ],
+              "properties": {
+                "label": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 100
+                },
+                "expected": {
+                  "type": "string",
+                  "pattern": "^[+-]?\\d+(?:\\.\\d+)?(?:[eE][+-]?\\d{1,3})?$",
+                  "maxLength": 80,
+                  "description": "标准中的原数值，保留小数位与科学计数法指数，不展开或改写精度"
+                },
+                "actual": {
+                  "type": [
+                    "string",
+                    "null"
+                  ],
+                  "pattern": "^[+-]?\\d+(?:\\.\\d+)?(?:[eE][+-]?\\d{1,3})?$",
+                  "maxLength": 80,
+                  "description": "最终回答原数值；确实未提供该项时为null，绝不能用0表示缺失"
+                },
+                "scale": {
+                  "type": "string",
+                  "pattern": "^[+-]?\\d+(?:\\.\\d+)?(?:[eE][+-]?\\d{1,3})?$",
+                  "maxLength": 80,
+                  "description": "有证据依据的回答单位到标准单位的正倍率，同单位填1；不能为使数值相等而选择倍率"
+                },
+                "matches": {
+                  "type": "boolean",
+                  "description": "仅记录 actual*scale 与 expected 的算术比较：rounded 按标准末位精度四舍五入，exact 精确比较；actual=null 时为false。不表示语义正确性，须结合 correctness_reason 的原题、计算与证据判断"
+                },
+                "mode": {
+                  "enum": [
+                    "rounded",
+                    "exact"
+                  ],
+                  "description": "算术观察方式：rounded 按标准末位精度舍入，exact 精确比较，离散计数用exact；精度差异的语义结论由 correctness_reason 说明，容差、区间和上下限不使用此表"
+                },
+                "evidence_index": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "description": "correctness_evidence 的零起始位置；actual 非 null 时证据包含最终回答原值，actual=null 时证据覆盖待核缺失范围，均须指向本方最终回答"
+                }
+              }
+            }
+          },
+          "standard_conflict": {
+            "type": "boolean",
+            "description": "标准答案是否存在已证实的错误；默认 false，证据门槛见评审指引。"
+          },
+          "table_resolutions": {
+            "type": "array",
+            "maxItems": 100,
+            "description": "An evidence-backed judgment of an unresolved table row.",
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "table_id",
+                "row_index",
+                "outcome",
+                "reason",
+                "evidence"
+              ],
+              "properties": {
+                "table_id": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "row_index": {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                "outcome": {
+                  "enum": [
+                    "supported",
+                    "conflict"
+                  ]
+                },
+                "reason": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "evidence": {
+                  "type": "array",
+                  "minItems": 2,
+                  "items": {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "required": [
+                      "evidence_id",
+                      "message_index",
+                      "quote"
+                    ],
+                    "properties": {
+                      "message_index": {
+                        "type": "integer",
+                        "minimum": 0
+                      },
+                      "quote": {
+                        "type": "string",
+                        "minLength": 1
+                      },
+                      "source": {
+                        "type": "string",
+                        "minLength": 1
+                      },
+                      "source_input_id": {
+                        "type": "string",
+                        "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$"
+                      },
+                      "evidence_id": {
+                        "type": "string",
+                        "minLength": 1
+                      }
+                    },
+                    "dependentRequired": {
+                      "source": [
+                        "source_input_id"
+                      ],
+                      "source_input_id": [
+                        "source"
+                      ]
+                    }
+                  }
+                }
+              }
+            }
           }
-        }
+        },
+        "additionalProperties": false
       }
     },
     "task_analysis": {

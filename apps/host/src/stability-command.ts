@@ -25,6 +25,7 @@ export async function runStabilityCommand(host: HostConfig, options: {
   cases?: string; sourceRun?: string; runId?: string; output?: string; apply?: boolean; engine: string;
   debug?: boolean; workers?: string[]; resumeStages?: string[]; maxAttempts?: number; stopStartingAt?: number; seed?: number;
 }): Promise<number> {
+  if (host.workflow !== "comparison") throw new Error("稳定性实验需要对战工作流配置");
   if (!["pi", "prime"].includes(options.engine)) throw new Error("--engine must be pi or prime");
   if (options.apply && !options.runId) throw new Error("validate-stability --execute requires --run-id");
   if (options.runId) safeId(options.runId);

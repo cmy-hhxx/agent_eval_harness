@@ -80,23 +80,6 @@ export async function writeJsonl(file: string, rows: Iterable<unknown> | AsyncIt
   await atomicWrite(file, file.endsWith(".gz") ? gzip(() => lines) : lines);
 }
 
-export async function appendJsonl(file: string, rows: Iterable<unknown>): Promise<void> {
-  await mkdir(path.dirname(file), { recursive: true });
-  const handle = await open(file, "a");
-  try {
-    for (const row of rows) await handle.writeFile((JSON.stringify(row) ?? "null") + "\n");
-    await handle.sync();
-  } finally {
-    await handle.close();
-  }
-  const directory = await open(path.dirname(file), "r");
-  try {
-    await directory.sync();
-  } finally {
-    await directory.close();
-  }
-}
-
 export async function* readJsonlText(file: string, keepFinalLine = false): AsyncGenerator<string> {
   const source = createReadStream(file);
   const stream = file.endsWith(".gz") ? source.pipe(createGunzip()) : source;

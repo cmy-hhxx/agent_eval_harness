@@ -1,8 +1,15 @@
-import type { AttributionResult } from "@eval/agents/attribution";
+import type { ResolvedEvidence } from "@eval/contracts";
 import { displayEvidence, evidenceSources, parseEvidenceCoordinates, parseTraceTables, type TableCheckResult } from "@eval/tools";
-import type { RawInput } from "./types.js";
+import type { RawInput } from "../inputs/types.js";
 
-type Evidence = AttributionResult["correctness_evidence"][number];
+type Evidence = ResolvedEvidence & { source?: string; source_input_id?: string };
+interface EvidenceEntry { evidence: Evidence[]; context_evidence?: Evidence[] }
+interface AttributionEvidenceView {
+  findings: EvidenceEntry[];
+  criterion_assessments: EvidenceEntry[];
+  correctness_evidence?: Evidence[];
+  table_resolutions?: EvidenceEntry[];
+}
 
 /** Preview a long accepted quote only when its exact source location is unambiguous. */
 function evidencePresentation(evidence: Evidence, candidate: string, raw: RawInput, inputId: string,
@@ -29,15 +36,15 @@ function evidencePresentation(evidence: Evidence, candidate: string, raw: RawInp
 }
 
 /** Formal attribution and source values remain intact; only the model view is projected. */
-export function attributionPresentation(result: AttributionResult, candidate: string, raw: RawInput, inputId: string,
+export function attributionPresentation<T extends AttributionEvidenceView>(result: T, candidate: string, raw: RawInput, inputId: string,
   sources: Record<string, RawInput> = {}, sourceIds: Record<string, string> = {}) {
   const evidence = (entries: Evidence[]) => entries.map(entry => evidencePresentation(entry, candidate, raw, inputId, sources, sourceIds));
+  const entries = <U extends EvidenceEntry>(items: U[]) => items.map(item => ({ ...item, evidence: evidence(item.evidence),
+    ...(item.context_evidence ? { context_evidence: evidence(item.context_evidence) } : {}) }));
   return { ...result,
-    correctness_evidence: evidence(result.correctness_evidence),
-    criterion_assessments: result.criterion_assessments.map(item => ({ ...item, evidence: evidence(item.evidence),
-      ...(item.context_evidence ? { context_evidence: evidence(item.context_evidence) } : {}) })),
-    findings: result.findings.map(item => ({ ...item, evidence: evidence(item.evidence),
-      ...(item.context_evidence ? { context_evidence: evidence(item.context_evidence) } : {}) })),
+    ...(result.correctness_evidence ? { correctness_evidence: evidence(result.correctness_evidence) } : {}),
+    criterion_assessments: entries<T["criterion_assessments"][number]>(result.criterion_assessments),
+    findings: entries<T["findings"][number]>(result.findings),
     ...(result.table_resolutions ? { table_resolutions: result.table_resolutions.map(item =>
       ({ ...item, evidence: evidence(item.evidence) })) } : {}),
   };

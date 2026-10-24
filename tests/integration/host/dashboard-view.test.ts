@@ -494,12 +494,12 @@ test("comparison cells preserve complete states, confirmed advantages and direct
     problem.evidence.push({ ...attributionResult(true, "2+2=4", true, peerInput).findings[0]!.evidence[0]!,
       source: "独立工具来源 <img src=x>", source_input_id: peerInput });
     evaluation.findings = [strength, problem];
-    evaluation.rewritten = { evaluator_version: "fixture", rewrites: [
+    const rewritten = { evaluator_version: "fixture", rewrites: [
       { id: "findings.0.text", text: `${names[version]}优点改写 <img src=x>。` },
       { id: "findings.1.reason", text: `${names[version]}缺点依据改写。` },
       { id: "findings.1.assessment.impact", text: `${names[version]}缺点影响改写。` },
     ] };
-    return [version, evaluation];
+    return [version, { ...evaluation, rewritten }];
   }));
   const comparison = comparisonResult(versions, criteria);
   comparison.status = "needs_review";

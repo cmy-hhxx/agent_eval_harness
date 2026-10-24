@@ -3,11 +3,12 @@ import { randomUUID } from "node:crypto";
 import { object, type JsonObject, type PublicationInput, type PublicationResult } from "@eval/contracts";
 import { appendStatisticsLog, completeCaseMetadata, fileSourceReader, readCaseMetadata, readJson, readJsonl, readStatisticsLogs, writeJson, pinInputSources, waitForRunLock } from "@eval/data";
 import { publishMongo, readMongoLabels } from "@eval/runtime/client";
-import { PublicationStatistics, statisticsInput, publishableComparisons, publicationComparison, locateRecordStream, normalizeInput, assertStatisticsLog, assertCompleteComparisonRewrite, type EvalConfig } from "@eval/workflows/comparison";
+import { PublicationStatistics, statisticsInput, publishableComparisons, publicationComparison, assertStatisticsLog, assertCompleteComparisonRewrite, type EvalConfig } from "@eval/workflows/comparison";
+import { locateRecordStream, normalizeInput } from "@eval/workflows/inputs";
 import type { AutomationJob, AutomationState } from "@eval/automations";
 import type { AutomationConfig } from "./automation-config.js";
 import { checkpoint } from "./automation-evaluation.js";
-import { loadConfig } from "./config.js";
+import { loadComparisonConfig } from "./config.js";
 import { logger } from "./composition.js";
 import { automationMongoTarget } from "./automation-sources.js";
 import { predictionOrigin } from "./automation-prediction.js";
@@ -23,7 +24,7 @@ export interface PublicationSnapshot {
 /** Reads immutable input files pinned by the publication lane and accepts only settled result references. */
 export async function publicationSnapshot(config: AutomationConfig, job: AutomationJob, signal: AbortSignal, purpose: "publication" | "statistics" = "publication"): Promise<PublicationSnapshot> {
   job = structuredClone(job);
-  const host = await loadConfig(config.hostConfigs);
+  const host = await loadComparisonConfig(config.hostConfigs);
   const metadata = await readCaseMetadata(path.join(config.sourceDirectory, "case-meta.jsonl"));
   const release = await waitForRunLock(path.join(config.sourceDirectory, job.date, ".snapshot"), signal);
   let runs: { id: string; state: Awaited<ReturnType<typeof checkpoint>> }[];

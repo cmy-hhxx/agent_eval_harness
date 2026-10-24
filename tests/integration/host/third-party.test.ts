@@ -8,11 +8,11 @@ import { Ajv2020 } from "ajv/dist/2020.js";
 import { object, type AgentBackend, type JsonObject } from "@eval/contracts";
 import { readJsonl, writeJsonl } from "@eval/data";
 import { runEvaluation } from "@eval/host";
-import { loadEvaluation } from "@eval/host-app/config";
+import { loadComparisonEvaluation } from "@eval/host-app/config";
 import { startWorker } from "@eval/runtime/worker";
 import { parseTraceTables } from "@eval/tools";
-import { buildPlan, comparisonCodec, comparisonRow, outputSchema, readRunState, resultFile,
-  type AttributionResult, type ComparisonResult, type RawInput, type TaskData } from "@eval/workflows/comparison";
+import { buildPlan, comparisonCodec, comparisonRow, outputSchema, readRunState, resultFile, type AttributionResult, type ComparisonResult, type TaskData } from "@eval/workflows/comparison";
+import { type RawInput } from "@eval/workflows/inputs";
 import { canonicalEvidence } from "../../fixtures/evidence.js";
 import { draftFor, fakeEvaluatorVersion, fakeIdentity, fixtureConfig, parsedMaterial, raw,
   submitFor, taskResult } from "../../fixtures/comparison.js";
@@ -33,7 +33,7 @@ function shortTrace(): RawInput {
 }
 
 test("third-party config retains both A/B tiers and registers an answer-only baseline", async () => {
-  const config = await loadEvaluation([path.join(ROOT, "configs/host.json"), path.join(ROOT, "configs/third-party.example.json")]);
+  const config = await loadComparisonEvaluation([path.join(ROOT, "configs/host.json"), path.join(ROOT, "configs/third-party.example.json")]);
   assert.deepEqual(config.inputs.versions.map(version => version.id), ["a_fast", "a_expert", "b_fast", "b_expert", "baseline_fast"]);
   assert.deepEqual(config.comparisons, [["a_fast", "b_fast", "baseline_fast"], ["a_expert", "b_expert"]]);
   assert.equal(config.inputs.versions.at(-1)!.adapter, "a");

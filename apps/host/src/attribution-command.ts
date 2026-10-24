@@ -12,6 +12,7 @@ export async function runAttributionCommand(host: HostConfig, options: {
   apply?: boolean; engine: string; debug?: boolean; workers?: string[]; resumeStages?: string[];
   discoverInputs?: boolean; balanceChannels?: boolean;
 }): Promise<number> {
+  if (host.workflow !== "comparison") throw new Error("重归因作业需要对战工作流配置");
   if (!["pi", "prime"].includes(options.engine)) throw new Error("--engine must be pi or prime");
   if (options.apply && !options.runId) throw new Error("reattribute --apply 需要 --run-id 保存独立进度");
   if (options.runId) safeId(options.runId);

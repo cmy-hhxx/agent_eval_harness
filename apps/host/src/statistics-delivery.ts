@@ -1,6 +1,6 @@
 import path from "node:path";
 import { mkdir } from "node:fs/promises";
-import { object, type JsonObject } from "@eval/contracts";
+import type { JsonObject } from "@eval/contracts";
 import { readJson, readStatisticsLogs, runLock, writeJson } from "@eval/data";
 import { assertStatisticsLog } from "@eval/workflows/comparison";
 
@@ -171,10 +171,4 @@ export class StatisticsDeliveryStore {
 
 export function statisticsSource(config: { id: string; publication: { logFile: string; logUrl: string } }): StatisticsAutomationSource {
   return { id: config.id, logFile: config.publication.logFile, logUrl: config.publication.logUrl };
-}
-
-export function statisticsRecordBody(value: unknown): JsonObject {
-  const record = object(value);
-  assertStatisticsLog(record);
-  return record;
 }

@@ -68,15 +68,20 @@ function scoreRules(profile:string):string {
   common.push(resource('score/skill/source-policy.md'),resource('score/skill/question-issue-policy.md'),resource('score/material-boundary.md'));
   return common.join('\n\n');
 }
-export function agentPrompt(stage: PromptStage, toolNames: string[], profile = "default") {
+export interface AgentPromptOptions {
+  profile?: string;
+  fileSubmission: boolean;
+  draftWriteInCallLimit?: boolean;
+}
+
+export function agentPrompt(stage: PromptStage, toolNames: string[], options: AgentPromptOptions) {
+  const { profile = "default", fileSubmission, draftWriteInCallLimit = false } = options;
   if (!/^[a-z][a-z0-9_-]*$/.test(profile)) throw new Error(`Invalid prompt profile: ${profile}`);
   const resourceProfile=stage==='score'&&(profile.startsWith('axis-')||profile==='dimensions')?'axis':profile;
   const instructions = resource(`${stage}/${resourceProfile}/instructions.md`) + (stage === "score" ? '\n\n'+scoreRules(profile) : "");
   const evidenceGuide = toolNames.some(name => ["read_trace", "search_trace", "view_image", "check_table"].includes(name))
     ? `\n${evidence}\n` : "";
   const systemPrompt = resource(`${stage}/${resourceProfile}/system.md`) + "\n\n" + (stage === "score" ? "" : commentary + "\n\n") + instructions + evidenceGuide;
-  const fileSubmission = stage === "attribution" || stage === "comparison" && profile === "verification";
-  const draftWriteInCallLimit = stage === "attribution";
   const names = [...toolNames, ...submissionToolNames(fileSubmission)];
   if (new Set(names).size !== names.length) throw new Error(`Duplicate prompt tool in ${stage}`);
   const toolDescriptions = Object.fromEntries(names.map((name) => {

@@ -1,11 +1,10 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
-import { bindAttributionMaterial } from "./binding.js";
+import { bindAttributionMaterial } from "./attribution.js";
 import { attributionTrace, validateOriginalAttributionEvidence } from "./public-trace.js";
-import { bindInstructionReview, instructionReviewFollowup } from "./instruction-review.js";
-import type { Candidate, RawInput } from "./types.js";
-import type { PlannedTask, RunState } from "@eval/contracts";
+import { bindInstructionReview } from "./instruction.js";
+import type { Candidate, RawInput } from "../inputs/types.js";
 import { cite, evidenceSources, resolveEvidence, selectEvidenceSource } from "@eval/tools";
 import { emptyAudit } from "../../../../tests/fixtures/comparison.js";
 
@@ -48,19 +47,4 @@ test("main attribution excludes private rules from both prompt and readable sour
   const skillCopy = structuredClone(raw);
   skillCopy.messages[5].input_messages = JSON.stringify([{ role: "tool", content: raw.messages[3].output }]);
   assert(!JSON.stringify(attributionTrace(skillCopy, id, 6)).includes("SKILL_PRIVATE_SENTINEL"));
-});
-
-test("each accepted attribution schedules exactly one separate instruction session without joining comparison dependencies", () => {
-  const inputId = randomUUID();
-  const parent: PlannedTask = { id: randomUUID(), stage: "attribution", inputIds: { answer: inputId }, dependencies: {},
-    data: { candidates: { A: { input_id: inputId } } } };
-  const state = { manifest: { tasks: [parent] } } as RunState;
-  const [check] = instructionReviewFollowup(parent, state);
-  assert.equal(check.stage, "instruction-review");
-  assert.notEqual(check.id, parent.id);
-  assert.deepEqual(check.dependencies, { source: parent.id });
-  assert.deepEqual(parent.dependencies, {});
-  state.manifest.tasks.push(check);
-  assert.deepEqual(instructionReviewFollowup(parent, state), []);
-  assert.deepEqual(instructionReviewFollowup(check, state), []);
 });

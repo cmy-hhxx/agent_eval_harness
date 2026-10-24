@@ -1,7 +1,7 @@
 import {randomUUID} from 'node:crypto';
 import type {AgentBinding,JsonObject,PlannedTask,ReviewAudit,ReviewCase,RunState,SubmissionReceipt,WorkflowDefinition} from '@eval/contracts';
 import {scoreAxes,scoreAxisPart,combineScoreAxes,scoreFinalMaterial,type ScoreAxis,type ScoreAxisResult,type ScoreEvidence,type ScoreRepair} from '@eval/agents/score';
-import type {Candidate} from '@eval/workflows/comparison';
+import type { Candidate } from "@eval/workflows/inputs";
 export interface ReviewTaskData {candidate:Candidate;rewriteOf?:string;score_part?:'evidence'|'axis'|'axes'|'final'|'rejected';score_axis?:ScoreAxis;score_axes?:ScoreAxis[];score_repair_used?:boolean;score_evidence_used?:boolean}
 export function scoreEvidenceTask(candidate:Candidate):PlannedTask{return {id:randomUUID(),stage:'score',inputIds:{case:candidate.input_id},dependencies:{},data:{candidate,score_part:'evidence'} satisfies ReviewTaskData};}
 export function isFormalScore(task:PlannedTask,receipt:SubmissionReceipt|undefined){

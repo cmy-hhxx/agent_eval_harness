@@ -8,10 +8,10 @@ import { selectEvidence, emptyUsage, ValidationError, type CriteriaInput, type P
 import { criteriaProfile, criteriaSources } from "@eval/agents/criteria";
 import { attributionProfile, attributionFindingBasis, type AttributionNorm, type AttributionResult, type AttributionSubmission } from "@eval/agents/attribution";
 import { resolveEvidence } from "@eval/tools";
-import { bindTask } from "./binding.js";
-import type { Candidate, RawInput, TaskData } from "./types.js";
+import { bindTask } from "../comparison/binding.js";
+import type { Candidate, RawInput } from "../inputs/types.js";
+import type { TaskData } from "../comparison/types.js";
 import { emptyAudit } from "../../../../tests/fixtures/comparison.js";
-
 
 const registry = new AgentRegistry([attributionAgent]);
 const qualityChecks = (source_index: number) => ["范围与条件清楚。", "事实与数值准确。", "推导和依据支持结论。", "表述不影响结果使用。"].map(text => ({source_indices: [source_index], text}));

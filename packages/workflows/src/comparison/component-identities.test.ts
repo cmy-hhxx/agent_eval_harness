@@ -1,9 +1,9 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { attributionProfile } from "@eval/agents/attribution";
-import { bindAttributionMaterial } from "./binding.js";
-import { validateOriginalAttributionEvidence } from "./public-trace.js";
-import type { Candidate, RawInput } from "./types.js";
+import { bindAttributionMaterial } from "../review/attribution.js";
+import { validateOriginalAttributionEvidence } from "../review/public-trace.js";
+import type { Candidate, RawInput } from "../inputs/types.js";
 import type { TraceComponentIdentity } from "@eval/tools";
 import { emptyAudit } from "../../../../tests/fixtures/comparison.js";
 

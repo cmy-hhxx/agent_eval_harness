@@ -4,7 +4,7 @@ import type { PlannedTask } from "@eval/contracts";
 import { runLock } from "@eval/data";
 import type { AttributionJobConfig } from "./attribution-job.js";
 import { readRunState, writeRunState } from "./run-data.js";
-import { pendingTaskProgress } from "./task-progress.js";
+import { pendingTaskProgress } from "../review/task-progress.js";
 import type { TaskData } from "./types.js";
 
 export interface AttributionTargetedReviewSelection {

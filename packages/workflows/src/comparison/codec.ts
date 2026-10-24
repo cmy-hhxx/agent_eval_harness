@@ -2,7 +2,8 @@ import { isDeepStrictEqual } from "node:util";
 import type { JsonObject, RunState, SubmissionReceipt } from "@eval/contracts";
 import { canonical, type ResultReference } from "@eval/contracts";
 import type { RunCodec } from "@eval/data";
-import type { Candidate, ComparisonResult, EvalConfig, Stage, TaskData } from "./types.js";
+import type { Candidate } from "../inputs/types.js";
+import type { ComparisonResult, EvalConfig, Stage, TaskData } from "./types.js";
 import { originalResultRow, stageResult, resultFile, acceptedRewrites } from "./results.js";
 import { analysisRunOverview } from "./analysis-progress.js";
 

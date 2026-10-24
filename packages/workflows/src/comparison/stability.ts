@@ -6,12 +6,15 @@ import { fileSourceReader } from "@eval/data";
 import { criteriaProfile } from "@eval/agents/criteria";
 import { attributionProfile } from "@eval/agents/attribution";
 import { comparisonProfile } from "@eval/agents/comparison";
-import { adapt, assertComparableGroups, candidateKey } from "./input.js";
+import { adapt, candidateKey } from "../inputs/records.js";
+import { assertComparableGroups } from "./input.js";
 import { bindTask } from "./binding.js";
-import { comparisonRepository, loadRunInputs } from "./run-data.js";
+import { comparisonRepository } from "./run-data.js";
+import { loadRunInputs } from "../inputs/load.js";
 import { comparisonWorkflow } from "./workflow.js";
 import { seededRandom } from "./stability-statistics.js";
-import type { Candidate, EvalConfig, TaskData, VersionConfig } from "./types.js";
+import type { Candidate, VersionConfig } from "../inputs/types.js";
+import type { EvalConfig, TaskData } from "./types.js";
 export { stabilityRepository } from "./stability-storage.js";
 
 export interface StabilityAnswer {

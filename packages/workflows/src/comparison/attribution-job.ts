@@ -2,13 +2,14 @@ import path from "node:path";
 import { randomUUID } from "node:crypto";
 import { canonical, type PlannedTask, type RunManifest, type TaskPlan, type WorkflowDefinition } from "@eval/contracts";
 import { fileSourceReader, locateRun, readJson } from "@eval/data";
-import { normalizeInput } from "./input-record.js";
+import { normalizeInput } from "../inputs/normalize.js";
 import type { Checkpoint } from "./checkpoint.js";
-import { adapt, candidateKey, inputSources } from "./input.js";
+import { adapt, candidateKey, inputSources } from "../inputs/records.js";
 import { bindTask } from "./binding.js";
 import { advanceReview, configureStandardReview } from "./review.js";
 import { attributionRewritePlaceholder, reconcileAttributionRewriteGroups } from "./attribution-rewrite-planning.js";
-import type { Candidate, EvalConfig, RawInput, TaskData, VersionConfig } from "./types.js";
+import type { Candidate, RawInput, VersionConfig } from "../inputs/types.js";
+import type { EvalConfig, TaskData } from "./types.js";
 
 export interface AttributionJobConfig extends EvalConfig {
   attributionJob: { runs: string[]; fromBatch?: string };

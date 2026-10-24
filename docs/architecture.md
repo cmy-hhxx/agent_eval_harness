@@ -24,6 +24,8 @@ Workbench --> DataService[Python 数据服务]
 
 依赖及公开入口见模块地图。Agent 互不导入；Workflow 连接业务阶段；Data 管文件、锁与日志；Runtime 管进程、传输和 SDK；Contracts 保持纯类型与规则。
 
+Comparison 与 Answer-review 分别拥有配置、任务规划和续跑；共用输入编目、来源读取与评审材料由 Workflow 的 Inputs、Review 模块提供。共享模块不导入具体工作流，独立评测不调用对战规划器。
+
 ## 生命周期
 
 一个 run 由一个持锁 Host 写入；一个 Worker 同时执行一个 attempt。任务按依赖就绪后调度，优先补运行数较少的阶段，同额时优先计划中靠后的阶段，不抢占运行任务。执行范围建立集合索引，范围替换或追加后更新，避免每轮调度逐任务扫描整个范围。任务名额已满时不重复扫描全量计划来扩充 Worker；空位释放或配额提高后继续补位。Worker 等待 Host 核查或最终提交确认时暂停模型空闲计时，总任务截止时间仍然有效，避免将正常排队提交误判为空闲。
@@ -55,7 +57,7 @@ Adapter 展开本地静态 Schema 引用，拒绝外部、循环和动态引用�
 
 显式提示词缓存仅在渠道声明 `supports_explicit_prompt_caching=true` 时启用，适用于支持的 GPT Responses 评测请求；其他请求保留 SDK 策略。它不复用判词或跨任务会话，实际收益以服务返回用量核对。实现与测试见 [sdk-utils.ts](../packages/runtime/src/sdk-utils.ts)。
 
-工作台网关监听内部 `5001`，为 `0.0.0.0` 上唯一对外服务；数据服务 `8081`、自动化看板 `4174` 和运行实例看板 `4173` 只监听回环地址。外部 `/data/*` 原样转发到数据服务，`/runtime/*` 组合自动化与运行实例页面/API。旧一级路径不代理。
+工作台网关监听内部 `5001`，为 `0.0.0.0` 上唯一对外服务；数据服务 `8081`、自动化看板 `4174` 和运行实例看板 `4173` 只监听回环地址。生产只提供 `/` 单页，页面片段和静态资源通过 `/workbench-assets/` 加载；网关按[路由白名单](../apps/host/src/workbench-routes.ts)转发 `/data/` 数据接口与 `/runtime/api/` 接口。
 
 工作台在网关层完成单管理员登录、会话 Cookie 与 relay Bearer token 校验；页面和 API 不自建账号体系。运行实例页的 `/runtime/api/dashboard` 复用 CLI 预检与独立运行子进程，控制转发到持锁 Host，页面不调度或写结果。只读监控投影不替代权威文件。
 

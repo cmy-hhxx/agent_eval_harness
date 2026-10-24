@@ -8,9 +8,11 @@
 
 | 内容 | 实现 |
 |---|---|
-| 输入、身份、分组 | [input.ts](../packages/workflows/src/comparison/input.ts)、[adapters.ts](../packages/workflows/src/comparison/adapters.ts)、[input-record.ts](../packages/workflows/src/comparison/input-record.ts) |
+| 输入与身份 | [共享输入入口](../packages/workflows/src/inputs/index.ts)、[适配器](../packages/workflows/src/inputs/adapters.ts)、[规范化](../packages/workflows/src/inputs/normalize.ts) |
+| 对战分组与规划 | [input.ts](../packages/workflows/src/comparison/input.ts) |
 | 阶段请求、提交和结果 | [schemas/](../schemas/README.md)、[Agent 公开入口](modules/README.md) |
-| 材料绑定与正式导出 | [binding.ts](../packages/workflows/src/comparison/binding.ts)、[schema.ts](../packages/workflows/src/comparison/schema.ts) |
+| 共用评审材料与证据投影 | [共享材料入口](../packages/workflows/src/review/index.ts) |
+| 对战材料组合与正式导出 | [binding.ts](../packages/workflows/src/comparison/binding.ts)、[schema.ts](../packages/workflows/src/comparison/schema.ts) |
 | 报告与回溯 | [report.ts](../packages/workflows/src/comparison/report.ts)、[annotations.ts](../packages/workflows/src/comparison/annotations.ts) |
 
 ### 评测器版本标识
@@ -34,6 +36,7 @@ Attribution的`component`是Workflow身份目录中的实际责任主体名称�
 
 | 阶段 | 材料与职责 |
 |---|---|
+| Score | 单回答的公开原题、候选材料与可选参考；独立取证、分项评分和总分，不读取 Attribution 结论或候选内部指令 |
 | Criteria | 原题、公开用户要求与统一质量规范；定义共同交付边界，不接收内部指令、标准答案、候选回答或普通工具轨迹 |
 | Attribution | 一条回答、公开基准、可选标准答案与过程事实；核对正确性、逐项事实、核心可用性、优点和问题，不读问题库 |
 | Instruction Review | 已接受主归因对应回答的 SYS/DEV、已确认加载的 Skill 与实际行为；独立检查条件、例外及遵循情况，不接收主归因结论 |
@@ -184,7 +187,7 @@ Rewrite 只接收选定文本槽位，不接触原题、原始消息或证据。
 
 归因按概述、判据、每个 finding、表格理由分组，每组最多20槽；对比包含偏好、总评、取舍及已开启的逐项点评。资源行由程序生成，不进入改写。
 
-原判词与证据保留，文案写入源结果的 rewritten；独立聚类作业另存 rewrite.jsonl。同槽按接受时间取最新，局部更新不覆盖其他槽，重放旧收据不回滚。失败保留原文与错误；显式 `validate --require-rewrite` 才要求选定范围全部完成。
+原判词与证据保留，Agent 原始结果不含 `rewritten`。Workflow 按[改写导出契约](../schemas/workflow/rewritten.schema.json)组合文案：对比行与独立归因行写入根 `rewritten`，对战归因行写入 `evaluation.rewritten`，对战聚类行写入 `result.rewritten`；独立聚类作业另存 rewrite.jsonl。恢复时分离原始判断与展示文案；同槽按接受时间取最新，局部更新不覆盖其他槽，重放旧收据不回滚。失败保留原文与错误；显式 `validate --require-rewrite` 才要求选定范围全部完成。
 
 机械校验只检查槽位、非空文本、既定偏好及禁止前缀；事实保真与表达质量须单独复核。失败保留原文和失败记录，不把无改写当成成功改写；后置审阅发现语义漂移时在实验验收中标为未通过。表达优先级为事实与主体、数字条件和确定性、既定取舍、简洁、尖锐。准备、刷新和固定范围见[使用指南](usage.md#重新改写对比文案)。
 

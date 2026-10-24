@@ -3,7 +3,7 @@ import {HttpError,safeId} from '@eval/contracts';
 import {exists,readJson,writeJson,hasLiveRunOwner,localFiles} from '@eval/data';
 import {answerReviewRunSummaries,answerReviewSamples,answerReviewSample,retryAnswerReviewTasks,type AimeIncrementalState} from '@eval/workflows/answer-review';
 import {combineEvaluationAnalytics} from './daily-evaluation-analytics.js';
-import {loadConfig,createModelResolver,dashboardSettings,type HostConfig} from './config.js';
+import {loadConfig,createModelResolver,dashboardSettings,type AnswerReviewHostConfig} from './config.js';
 import {readSettings} from './settings.js';
 import {loadAimeConfiguration,runAimeEvaluation,type AimeRunOptions} from './aime-execution.js';
 
@@ -12,10 +12,11 @@ interface AimeSettingsPatch {engine?:'pi'|'prime';debug?:boolean;bindings?:Recor
 export async function loadAimeWorkbench(file:string,options:{id?:string;name?:string}={}){
   const configuration=await loadAimeConfiguration(file),id=options.id??'aime',name=options.name??'AIME日常',settingsFile=path.join(configuration.stateDirectory,'workbench-settings.json');
   let overlay:AimeSettingsPatch=await exists(settingsFile)?await readJson(settingsFile):{},running=false;
-  const host=async(patch=overlay):Promise<HostConfig>=>{
+  const host=async(patch=overlay):Promise<AnswerReviewHostConfig>=>{
     const {engine:_engine,debug:_debug,...settings}=patch;
     const current=await loadConfig(configuration.hostConfigs,await readSettings(configuration.settingsFile),settings);
-    current.workflow='answer-review';current.evaluation.rewrite={attribution:false,comparison:false,clustering:false};current.evaluation.clustering.enabled=false;
+    if(current.workflow!=='answer-review')throw Error('AIME来源需要独立评测配置');
+    current.evaluation.rewrite={attribution:false};
     return current;
   };
   const initial=await host();

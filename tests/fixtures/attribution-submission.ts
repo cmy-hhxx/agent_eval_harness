@@ -1,7 +1,7 @@
 import { selectEvidence, type AgentRequest, type TaskAnalysis, type ToolAudit } from "@eval/contracts";
 import { attributionNormDirectory, attributionFindingBasis, numericReferenceDirectory, type AttributionResult, type AttributionSubmission } from "@eval/agents/attribution";
 import { parseEvidenceCoordinates, traceComponentIdentities } from "@eval/tools";
-import { businessChains } from "@eval/workflows/comparison";
+import { businessChains } from "@eval/workflows/review";
 type NormChoice = { norm_index: number; requirement_index: number | null; evidence: { evidence_id: string }[] };
 /** Construct the current program-owned directory for a hand-built request. */
 export function setFixtureNormDirectory(request: AgentRequest) {
@@ -12,7 +12,7 @@ export function setFixtureNormDirectory(request: AgentRequest) {
 }
 export function setFixtureComponentCatalog(request: AgentRequest) {
   const answer = request.input.answer as { final_message_index: number; component_catalog?: unknown };
-  Object.assign(answer, { business_chains: businessChains(request.sources.answer.value as import("@eval/workflows/comparison").RawInput, request.sources.answer.id, answer.final_message_index) });
+  Object.assign(answer, { business_chains: businessChains(request.sources.answer.value as import("@eval/workflows/inputs").RawInput, request.sources.answer.id, answer.final_message_index) });
   answer.component_catalog = traceComponentIdentities(request.sources.answer.value as { messages: unknown[] }, request.sources.answer.id, answer.final_message_index);
 }
 

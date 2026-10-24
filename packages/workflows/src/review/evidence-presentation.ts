@@ -1,5 +1,6 @@
 import { projectEvidenceReferences, type EvidenceBank, type JsonObject, type TraceRead } from "@eval/contracts";
 import { parseEvidenceCoordinates } from "@eval/tools";
+
 const object = (value: unknown): JsonObject | undefined => value && typeof value === "object" && !Array.isArray(value) ? value as JsonObject : undefined;
 
 /** Only generated navigation envelopes, never arbitrary business objects or full unseen references. */

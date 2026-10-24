@@ -8,7 +8,8 @@ import type { AttributionResult, ComparisonResult, EvalConfig, Finding, TaskData
 import { toRewrites, type Rewrites } from "@eval/agents/rewrite";
 import { outputSchema } from "./schema.js";
 import { comparisonRow, acceptedRewriteProjection } from "./results.js";
-import { loadRunInputs, readRunState, writeRunState, createResultWriter } from "./run-data.js";
+import { loadRunInputs } from "../inputs/load.js";
+import { readRunState, writeRunState, createResultWriter } from "./run-data.js";
 import { syncProblemLibrary, type ProblemLibraryStats } from "./problem-library.js";
 import { polishComparisonRow, type CommentaryLookup } from "./commentary.js";
 import { taskCase, taskIdentity } from "./input.js";
@@ -353,7 +354,7 @@ export async function reportRun(run: string, options: { details?: boolean } = {}
     const analysis = view.task_analysis as ComparisonResult["task_analysis"];
     const reviews = view.evaluations as Record<
       string,
-      { summary: string; findings: Finding[]; is_correct: boolean | null; correctness_reason: string }
+      { summary: string; findings: (Finding & { stage_trace?: JsonObject })[]; is_correct: boolean | null; correctness_reason: string }
     >;
     const verdicts = view.verdicts as Record<string, JsonObject>;
     const candidates = Object.fromEntries(

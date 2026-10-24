@@ -1,9 +1,12 @@
+import type { EvaluationConfig } from "@eval/workflows/inputs";
+import type { AnswerReviewConfig } from "@eval/workflows/answer-review";
 import path from "node:path";
 import { DEFAULT_POLICY, type OutputTarget, type ProblemLibraryTarget } from "@eval/contracts";
 import { readJson } from "@eval/data";
 import { DEFAULT_FAILURE_GUARD, validateFailureGuard } from "@eval/host";
 import type { EvalConfig } from "@eval/workflows/comparison";
-import { assertComparableGroups, inputAdapterIds, selectComparisonGroups } from "@eval/workflows/comparison";
+import { assertComparableGroups, selectComparisonGroups } from "@eval/workflows/comparison";
+import { inputAdapterIds } from "@eval/workflows/inputs";
 import {
   THINKING_LEVELS,
   DEFAULT_THINKING,
@@ -37,16 +40,20 @@ const CLUSTERING_DEFAULTS: EvalConfig["clustering"] = {
 };
 type ConfigObject = Record<string, unknown>;
 
-export interface HostConfig {
+interface HostConfiguration {
   /** Declared identity of the judging logic; stamped onto every accepted result. */
   evaluatorVersion: string;
-  workflow: "comparison" | "answer-review";
-  /** Workflow-facing evaluation inputs and budgets. Contains no model configuration. */
-  evaluation: EvalConfig;
   /** Model profiles and per-stage bindings, resolved against config.ini channels. */
   models: ModelCatalog;
   automation: ApplicationSettings["automation"];
 }
+
+export type HostConfig = HostConfiguration & (
+  | { workflow: "comparison"; evaluation: EvalConfig }
+  | { workflow: "answer-review"; evaluation: AnswerReviewConfig }
+);
+export type ComparisonHostConfig = Extract<HostConfig, { workflow: "comparison" }>;
+export type AnswerReviewHostConfig = Extract<HostConfig, { workflow: "answer-review" }>;
 
 function isObject(value: unknown): value is ConfigObject {
   return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -125,11 +132,90 @@ export async function readConfigSources(sources: string | string[]): Promise<Con
   return parts.reduce((base, part) => mergeConfig(base, part), {});
 }
 
-function buildEvaluation(source: ConfigObject): EvalConfig {
-  const config: EvalConfig = {
-    inputs: source.inputs as EvalConfig["inputs"],
-    execution: { ...EXECUTION_DEFAULTS, ...(source.execution as Partial<EvalConfig["execution"]>) },
+function buildEvaluationBase(source: ConfigObject): EvaluationConfig {
+  const config: EvaluationConfig = {
+    inputs: source.inputs as EvaluationConfig["inputs"],
+    execution: { ...EXECUTION_DEFAULTS, ...(source.execution as Partial<EvaluationConfig["execution"]>) },
     output: source.output as OutputTarget,
+  };
+  const scope = config.inputs?.workbench;
+  if (scope !== undefined) {
+    if (!isObject(scope) || !isObject(scope.task) || typeof scope.task.id !== "string" || !scope.task.id ||
+        !Array.isArray(scope.batch_ids) || !scope.batch_ids.length || scope.batch_ids.some(id => typeof id !== "string" || !id) ||
+        !Array.isArray(scope.records) || !scope.records.length || scope.records.some(row => !isObject(row) ||
+          (["model", "batch_id", "case_id", "input_file", "package_id", "package_name", "original_file"] as const).some(key => typeof row[key] !== "string" || !row[key]) ||
+          !Number.isSafeInteger(row.input_index) || Number(row.input_index) < 0 || !path.isAbsolute(String(row.input_file)) ||
+          !Number.isSafeInteger(row.original_line) || Number(row.original_line) < 1 || !scope.batch_ids.includes(String(row.package_id))))
+      throw new Error("Invalid cleaning scope");
+    const coordinates = scope.records.map(row => JSON.stringify([row.model,row.input_file,row.input_index]));
+    if (new Set(coordinates).size !== coordinates.length) throw new Error("Duplicate cleaning coordinates");
+  }
+  const versions = config.inputs?.versions;
+  if (!Array.isArray(versions) || versions.length < (config.inputs.workbench || source.workflow === "answer-review" ? 1 : 2)) throw new Error("至少配置两个输入版本");
+  for (const item of versions) {
+    if (!/^[a-z0-9][a-z0-9_.-]{0,180}$/.test(item.id) || item.id.includes("..") || !inputAdapterIds.includes(item.adapter))
+      throw new Error("Invalid input version");
+    if (!Array.isArray(item.sources) || !item.sources.length) throw new Error("Missing input sources");
+    if (item.comparison_tier !== undefined &&
+        (typeof item.comparison_tier !== "string" || !item.comparison_tier.trim()))
+      throw new Error(`Invalid comparison_tier for ${item.id}`);
+    item.timing_unit ??= config.inputs.timing_unit ?? "ms";
+    if (!["ms", "s"].includes(item.timing_unit)) throw new Error("Invalid timing unit");
+  }
+  for (const key of ["id", "name", "display_name"] as const) {
+    const values = versions.map((v) => (key === "display_name" ? v.display_name || v.name : v[key]));
+    if (values.some((v) => !v) || new Set(values).size !== values.length)
+      throw new Error(`Duplicate or empty ${key}`);
+  }
+  for (const key of [
+    "concurrency",
+    "timeoutSeconds",
+    "idleTimeoutSeconds",
+    "maxToolCalls",
+    "codeTimeoutSeconds",
+    "maxOutputChars",
+    "initialContextChars",
+  ] as const) {
+    if (!Number.isInteger(config.execution[key]) || config.execution[key] <= 0)
+      throw new Error(`Invalid execution.${key}`);
+  }
+  for (const key of ["retries", "retryDelaySeconds", "repairAttempts"] as const)
+    if (!Number.isInteger(config.execution[key]) || config.execution[key] < 0)
+      throw new Error(`Invalid execution.${key}`);
+  optionalPositiveInteger(config.execution.maxTaskAttempts, "execution.maxTaskAttempts");
+  if (config.execution.stageRepairAttempts !== undefined &&
+    (!isObject(config.execution.stageRepairAttempts) || Object.entries(config.execution.stageRepairAttempts)
+      .some(([stage,limit])=>!stage.trim()||!Number.isInteger(limit)||limit<0)))
+    throw new Error("Invalid execution.stageRepairAttempts");
+  validateFailureGuard(config.execution.failureGuard!);
+  if (
+    config.execution.maxTokens !== undefined &&
+    (!Number.isInteger(config.execution.maxTokens) || config.execution.maxTokens < 1)
+  )
+    throw new Error("Invalid execution.maxTokens");
+  const output = config.output;
+  if (!isObject(output) || output.kind !== "directory" || typeof output.path !== "string" || !output.path)
+    throw new Error("Missing output target");
+  return config;
+}
+
+type WorkflowEvaluation = EvalConfig | AnswerReviewConfig;
+function isAnswerReviewEvaluation(config: WorkflowEvaluation): config is AnswerReviewConfig {
+  return "workflow" in config && config.workflow === "answer-review";
+}
+
+function buildEvaluation(source: ConfigObject): WorkflowEvaluation {
+  if (source.workflow !== undefined && !["comparison", "answer-review"].includes(String(source.workflow))) throw new Error("Invalid workflow");
+  const base = buildEvaluationBase(source);
+  if (source.workflow === "answer-review") {
+    if (source.rewrite !== undefined && !isObject(source.rewrite)) throw new Error("Invalid rewrite");
+    const rewrite = source.rewrite as ConfigObject | undefined;
+    return { ...base, workflow: "answer-review", rewrite: {
+      attribution: optionalBoolean(rewrite?.attribution, "rewrite.attribution") ?? true,
+    } };
+  }
+  const config: EvalConfig = {
+    ...base,
     problemLibrary: source.problemLibrary as ProblemLibraryTarget,
     comparisons: [],
     standardAnswerReview: optionalBoolean(source.standardAnswerReview, "standardAnswerReview") ?? false,
@@ -191,37 +277,9 @@ function buildEvaluation(source: ConfigObject): EvalConfig {
       clustering: source.rewrite.clustering !== false,
     };
   }
-  const scope = config.inputs?.workbench;
-  if (scope !== undefined) {
-    if (!isObject(scope) || !isObject(scope.task) || typeof scope.task.id !== "string" || !scope.task.id ||
-        !Array.isArray(scope.batch_ids) || !scope.batch_ids.length || scope.batch_ids.some(id => typeof id !== "string" || !id) ||
-        !Array.isArray(scope.records) || !scope.records.length || scope.records.some(row => !isObject(row) ||
-          (["model", "batch_id", "case_id", "input_file", "package_id", "package_name", "original_file"] as const).some(key => typeof row[key] !== "string" || !row[key]) ||
-          !Number.isSafeInteger(row.input_index) || Number(row.input_index) < 0 || !path.isAbsolute(String(row.input_file)) ||
-          !Number.isSafeInteger(row.original_line) || Number(row.original_line) < 1 || !scope.batch_ids.includes(String(row.package_id))))
-      throw new Error("Invalid cleaning scope");
-    const coordinates = scope.records.map(row => JSON.stringify([row.model,row.input_file,row.input_index]));
-    if (new Set(coordinates).size !== coordinates.length) throw new Error("Duplicate cleaning coordinates");
-  }
-  const versions = config.inputs?.versions;
-  if (!Array.isArray(versions) || versions.length < (config.inputs.workbench || source.workflow === "answer-review" ? 1 : 2)) throw new Error("至少配置两个输入版本");
-  for (const item of versions) {
-    if (!/^[a-z0-9][a-z0-9_.-]{0,180}$/.test(item.id) || item.id.includes("..") || !inputAdapterIds.includes(item.adapter))
-      throw new Error("Invalid input version");
-    if (!Array.isArray(item.sources) || !item.sources.length) throw new Error("Missing input sources");
-    if (item.comparison_tier !== undefined &&
-        (typeof item.comparison_tier !== "string" || !item.comparison_tier.trim()))
-      throw new Error(`Invalid comparison_tier for ${item.id}`);
-    item.timing_unit ??= config.inputs.timing_unit ?? "ms";
-    if (!["ms", "s"].includes(item.timing_unit)) throw new Error("Invalid timing unit");
-  }
-  for (const key of ["id", "name", "display_name"] as const) {
-    const values = versions.map((v) => (key === "display_name" ? v.display_name || v.name : v[key]));
-    if (values.some((v) => !v) || new Set(values).size !== values.length)
-      throw new Error(`Duplicate or empty ${key}`);
-  }
+  const versions = config.inputs.versions;
   const rawGroups = source.comparisons;
-  if (!Array.isArray(rawGroups) || (!rawGroups.length && !config.inputs.workbench && source.workflow !== "answer-review")) throw new Error("Missing comparisons");
+  if (!Array.isArray(rawGroups) || (!rawGroups.length && !config.inputs.workbench)) throw new Error("Missing comparisons");
   const seenGroups = new Set<string>();
   for (const group of rawGroups) {
     if (
@@ -239,35 +297,6 @@ function buildEvaluation(source: ConfigObject): EvalConfig {
   }
   config.comparisons = rawGroups as string[][];
   assertComparableGroups(config);
-  for (const key of [
-    "concurrency",
-    "timeoutSeconds",
-    "idleTimeoutSeconds",
-    "maxToolCalls",
-    "codeTimeoutSeconds",
-    "maxOutputChars",
-    "initialContextChars",
-  ] as const) {
-    if (!Number.isInteger(config.execution[key]) || config.execution[key] <= 0)
-      throw new Error(`Invalid execution.${key}`);
-  }
-  for (const key of ["retries", "retryDelaySeconds", "repairAttempts"] as const)
-    if (!Number.isInteger(config.execution[key]) || config.execution[key] < 0)
-      throw new Error(`Invalid execution.${key}`);
-  optionalPositiveInteger(config.execution.maxTaskAttempts, "execution.maxTaskAttempts");
-  if (config.execution.stageRepairAttempts !== undefined &&
-    (!isObject(config.execution.stageRepairAttempts) || Object.entries(config.execution.stageRepairAttempts)
-      .some(([stage,limit])=>!stage.trim()||!Number.isInteger(limit)||limit<0)))
-    throw new Error("Invalid execution.stageRepairAttempts");
-  validateFailureGuard(config.execution.failureGuard!);
-  if (
-    config.execution.maxTokens !== undefined &&
-    (!Number.isInteger(config.execution.maxTokens) || config.execution.maxTokens < 1)
-  )
-    throw new Error("Invalid execution.maxTokens");
-  const output = config.output;
-  if (!isObject(output) || output.kind !== "directory" || typeof output.path !== "string" || !output.path)
-    throw new Error("Missing output target");
   const problemLibrary = config.problemLibrary;
   if (
     !isObject(problemLibrary) ||
@@ -427,21 +456,25 @@ async function mergedSource(
 }
 
 /** Narrows an evaluation to the selected models; configured groups keep their remaining members. */
-function selectVersions(evaluation: EvalConfig, ids: string[]): EvalConfig {
-  if (ids.length < 2) throw new Error("至少选择两个模型");
+function selectVersions(evaluation: WorkflowEvaluation, ids: string[]): WorkflowEvaluation {
+  if (ids.length < (isAnswerReviewEvaluation(evaluation) ? 1 : 2))
+    throw new Error(isAnswerReviewEvaluation(evaluation) ? "至少选择一个模型" : "至少选择两个模型");
   const versions = evaluation.inputs.versions.filter((version) => ids.includes(version.id));
   if (versions.length !== ids.length) throw new Error("运行设置包含未登记的模型");
+  if (isAnswerReviewEvaluation(evaluation)) return { ...evaluation, inputs: { ...evaluation.inputs, versions } };
   const comparisons = selectComparisonGroups(evaluation.comparisons, ids);
   if (!comparisons.length) throw new Error("所选模型没有可比较的组合");
   return { ...evaluation, inputs: { ...evaluation.inputs, versions }, comparisons };
 }
 
 /** Evaluation-only load, without model endpoints; the dashboard uses it for input discovery. */
-export async function loadEvaluation(sources: string | string[], settings?: unknown): Promise<EvalConfig> {
+export async function loadComparisonEvaluation(sources: string | string[], settings?: unknown): Promise<EvalConfig> {
   const { source, versions } = await mergedSource(sources, settings);
   readEvaluatorVersion(source);
   const evaluation = buildEvaluation(source);
-  return versions ? selectVersions(evaluation, versions) : evaluation;
+  const selected = versions ? selectVersions(evaluation, versions) : evaluation;
+  if (isAnswerReviewEvaluation(selected)) throw new Error("此入口需要对战工作流配置");
+  return selected;
 }
 
 export async function loadConfig(
@@ -455,10 +488,22 @@ export async function loadConfig(
   applySettings(configuration);
   const base = buildEvaluation(source), models = buildModels(source, configuration);
   const evaluation = versions ? selectVersions(base, versions) : base;
+  const common = { evaluatorVersion, models, automation: configuration.automation };
+  if (isAnswerReviewEvaluation(evaluation)) {
+    if (evaluation.rewrite.attribution && !models.bindings.rewrite) throw new Error("rewrite 已启用但缺少 bindings.rewrite");
+    return { ...common, workflow: "answer-review", evaluation };
+  }
   if ([evaluation.rewrite.comparison, evaluation.rewrite.attribution, evaluation.rewrite.clustering].some(Boolean) && !models.bindings.rewrite)
     throw new Error("rewrite 已启用但缺少 bindings.rewrite");
   if (evaluation.clustering.enabled && !models.bindings.clustering)
     throw new Error("clustering 已启用但缺少 bindings.clustering");
-  if (source.workflow !== undefined && !["comparison", "answer-review"].includes(String(source.workflow))) throw new Error("Invalid workflow");
-  return { evaluatorVersion, workflow: source.workflow === "answer-review" ? "answer-review" : "comparison", evaluation, models, automation: configuration.automation };
+  return { ...common, workflow: "comparison", evaluation };
+}
+
+/** Comparison-only callers never receive independent-review configuration. */
+export async function loadComparisonConfig(sources: string | string[], configuration?: ApplicationSettings,
+  settings?: unknown): Promise<ComparisonHostConfig> {
+  const host = await loadConfig(sources, configuration, settings);
+  if (host.workflow !== "comparison") throw new Error("此入口需要对战工作流配置");
+  return host;
 }

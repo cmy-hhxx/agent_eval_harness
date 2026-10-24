@@ -29,7 +29,7 @@ export function validateInstructionReview(request:AgentRequest,value:unknown,aud
     if(['met','violated','not_applicable'].includes(row.status)&&!row.behavior_evidence_ids.length)fail(`/checks/${i}`,'确认遵守或违反须引用实际行为，缺材料时保留unverified。');
   }
 }
-const prompt=agentPrompt('instruction-review',['review_material','read_artifact']);
+const prompt=agentPrompt('instruction-review',['review_material','read_artifact'], { fileSubmission: false });
 export const instructionReviewProfile:AgentProfile={id:'default',...prompt,
   requestSchema,submissionSchema,resultSchema,
   toolNames:['review_material','read_artifact'],

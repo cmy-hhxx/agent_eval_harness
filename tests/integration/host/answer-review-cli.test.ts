@@ -16,7 +16,7 @@ import { ROOT } from "../../fixtures/services.js";
 async function fixture(t: TestContext) {
   const f = await fixtureConfig([[raw("one"), raw("two"), raw("three")], [], [], []]);
   t.after(() => rm(f.directory, { recursive: true, force: true }));
-  const config: AnswerReviewConfig = { ...f.config, workflow: "answer-review", reviewStages: ["attribution"], comparisons: [],
+  const config: AnswerReviewConfig = { ...f.config, workflow: "answer-review", reviewStages: ["attribution"],
     inputs: { ...f.config.inputs, versions: f.config.inputs.versions.slice(0, 1) },
     output: { kind: "directory", path: path.join(f.directory, "eval_output/0_daily_eval") } };
   const overlay = path.join(f.directory, "review.json");

@@ -1,4 +1,4 @@
-import type { RawInput } from "./types.js";
+import type { RawInput } from "../inputs/types.js";
 
 /** Source answer usage only; never the evaluator's SDK usage or a sum of trace snapshots. */
 export function originalAnswerUsage(raw: RawInput) {

@@ -1,14 +1,7 @@
 {
   "workflow": "answer-review",
-  "comparisons": [],
   "rewrite": {
-    "attribution": false,
-    "comparison": false,
-    "comparisonItems": false,
-    "clustering": false
-  },
-  "clustering": {
-    "enabled": false
+    "attribution": false
   },
   "bindings": {
     "score": {

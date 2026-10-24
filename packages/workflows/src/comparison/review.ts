@@ -6,8 +6,8 @@ import { attributionProfile, type AttributionResult } from "@eval/agents/attribu
 import type { EvalConfig, TaskData } from "./types.js";
 import { bindTask } from "./binding.js";
 import { attributionRewritePlaceholder, planAttributionRewriteGroups } from "./attribution-rewrite-planning.js";
-import { validateOriginalAttributionEvidence } from "./public-trace.js";
-import type { RawInput } from "./types.js";
+import { validateOriginalAttributionEvidence } from "../review/public-trace.js";
+import type { RawInput } from "../inputs/types.js";
 
 /** Turning the opt-in off releases unfinished consumers back to their original accepted sources. */
 export function configureStandardReview(state: RunState, enabled: boolean): void {

@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
-import { bindAttributionMaterial, type Candidate, type RawInput } from "@eval/workflows/comparison";
+import { bindAttributionMaterial } from "@eval/workflows/review";
+import { type Candidate, type RawInput } from "@eval/workflows/inputs";
 import type { AttributionResult, BusinessChain, ProblemProposal } from "@eval/agents/attribution";
 import { attributionProfile } from "@eval/agents/attribution";
 import { emptyAudit } from "./comparison.js";

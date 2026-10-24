@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { evidenceSources, resolveEvidence, selectEvidenceSource } from "@eval/tools";
 import { answerGenerationPresentation, getAnswerGeneration } from "./answer-generation.js";
-import type { RawInput } from "./types.js";
+import type { RawInput } from "../inputs/types.js";
 
 const evidenceInputId = "7ebfa07b-55d4-4e19-80d0-545eb576289a";
 

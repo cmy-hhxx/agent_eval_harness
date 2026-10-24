@@ -16,7 +16,7 @@ test("known final-only core delivery does not require a source review for unknow
   for (const attribution of Object.values(input.attributions)) {
     attribution.task_analysis = structuredClone(input.task_analysis);
     attribution.criterion_assessments.push({ criterion_id: "process", status: "unknown", evidence_status: "uncertain",
-      summary: "过程没有可核查记录。" });
+      summary: "过程没有可核查记录。", evidence: [] });
   }
   const draft = requestComparisonSubmission(request, example.result as ComparisonResult);
   draft.comparisons = draft.comparisons.map(row => row ?? { importance: "low" });

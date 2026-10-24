@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {advanceScore,scoreEvidenceTask,bindScore,scoreBlockedReason} from './score.js';
 import type {SubmissionReceipt,RunState,ReviewAudit} from '@eval/contracts';
-import type {Candidate} from '@eval/workflows/comparison';
+import type { Candidate } from "@eval/workflows/inputs";
 const candidate={input_id:'input',case_id:'case',batch_id:'batch'} as Candidate;
 const receipt=(evaluation:unknown,review?:ReviewAudit)=>({evaluation,audit:{review}} as SubmissionReceipt);
 test('Score plans one joint judgment and an independent total after evidence acceptance',()=>{

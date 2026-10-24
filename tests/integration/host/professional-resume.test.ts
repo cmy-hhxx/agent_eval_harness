@@ -6,10 +6,8 @@ import type { AgentBackend, TaskAnalysis } from "@eval/contracts";
 import { writeJsonl } from "@eval/data";
 import { runEvaluation } from "@eval/host";
 import { startWorker } from "@eval/runtime/worker";
-import {
-  buildPlan, readRunState, reconcileRun, deliveryCoverage, loadRunInputs,
-  type AttributionResult, type TaskData,
-} from "@eval/workflows/comparison";
+import { buildPlan, readRunState, reconcileRun, deliveryCoverage, type AttributionResult, type TaskData } from "@eval/workflows/comparison";
+import { loadRunInputs } from "@eval/workflows/inputs";
 import { services, validateRun } from "../../fixtures/services.js";
 import { submitFor, inspectFor,
   attributionResult, draftFor, fakeEvaluatorVersion, fakeIdentity, fixtureConfig, parsedMaterial, raw, sessionRaw, taskResult,

@@ -2,29 +2,22 @@
 
 [返回工作台首页](../README.md)
 
-服务只监听 `127.0.0.1:8081`，由工作台网关统一提供 `/data/*` 页面与 API。当前数据根为 `/mnt/fin_bench/eval_data`，外部状态根由 `workbench.json` 指定。
+服务只监听 `127.0.0.1:8081`。生产从工作台 `/` 的数据入口浏览来源、清洗报告与样本，操作见[工作台契约](../../docs/workbench.md)。网关只转发[白名单数据接口](../../apps/host/src/workbench-routes.ts)。当前数据根为 `/mnt/fin_bench/eval_data`，外部状态根由 `workbench.json` 指定。
 
 ## 来源
 
-| 来源 | 页面 | API 前缀 |
-|---|---|---|
-| wencai | `/data/wencai/` | `/data/wencai` |
-| aime | `/data/aime/` | `/data/aime` |
-| ifind | `/data/ifind/` | `/data/ifind` |
+| 来源 | 内部 API 前缀 |
+|---|---|
+| wencai | `/data/wencai` |
+| post_training_model | `/data/post_training_model` |
+| aime | `/data/aime` |
+| ifind | `/data/ifind` |
 
 所有来源使用同一进程和端口，但原始包目录、输出目录、状态目录、去重范围和进度文件彼此独立。
 
-## 页面
-
-访问 `/data/` 进入数据区域首页。页面顶部只提供工作台、运行时和三个数据来源；日期表每页 14 天，显示最近收包、最近入库、待处理包、异常包和归档巡检结果。
-
-wencai 每次展示 Fast 与 Expert 两个 A/B 对战和真实 Comparison 进度。aime/ifind 每次展示 Fast 与 Expert 的实际输入条数，以及标准制定、归因、聚类三个阶段的任务进度；不使用输入行数充当任务分母。
-
-样本页按日期和模型打开，分列展示格式、Trace ID、问句和回答。Session 保留全部轮次；回答与标准答案默认折叠，展开后按安全 Markdown/GFM 渲染。所有来源位于同一数据区域，不使用独立端口的跳转链接。
-
 ## 接口
 
-每个前缀都提供：
+同机客户端通过回环地址访问以下接口，不能假定网关全部开放。每个前缀都提供：
 
 - `GET /health`
 - `GET /dashboard-data`

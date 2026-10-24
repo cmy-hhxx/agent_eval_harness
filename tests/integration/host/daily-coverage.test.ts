@@ -39,7 +39,7 @@ test('package coverage joins exact identities, follows rewrites and requires a c
 
 test('AIME report keeps historical Attribution coverage and marks its missing Score as pending',async t=>{
   const row={...sessionRaw('one'),batch_id:'2026-10-24'},f=await fixtureConfig([[row as any],[],[],[]]);t.after(()=>rm(f.directory,{recursive:true,force:true}));
-  const config:AnswerReviewConfig={...f.config,workflow:'answer-review',reviewStages:['attribution'],comparisons:[],inputs:{...f.config.inputs,versions:f.config.inputs.versions.slice(0,1)}},plan=await planAnswerReview(config);
+  const config:AnswerReviewConfig={...f.config,workflow:'answer-review',reviewStages:['attribution'],inputs:{...f.config.inputs,versions:f.config.inputs.versions.slice(0,1)}},plan=await planAnswerReview(config);
   const task=plan.tasks[0],candidate=(task.data as any).candidate,output=path.join(f.directory,'output'),run=path.join(output,'1024');
   const state:RunState={manifest:{runId:'1024',format:'evaluation-run',status:'interrupted',debug:false,engine:fakeIdentity,evaluatorVersion:fakeEvaluatorVersion,config,
     tasks:plan.tasks,states:{[task.id]:{status:'failed',attempts:2}},inputs:{},inputCatalog:plan.catalog,startedAt:1,preflight:plan.summary},receipts:{},usage:emptyUsage(),recordedAttempts:2};

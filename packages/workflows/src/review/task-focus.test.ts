@@ -5,10 +5,11 @@ import { emptyUsage, type PlannedTask, type SubmissionReceipt, type TaskAnalysis
 import { agentPrompt } from "@eval/prompts";
 import { agents } from "../../../../tests/fixtures/services.js";
 import { cite, evidenceId, evidenceSources, parseEvidenceCoordinates, resolveEvidence } from "@eval/tools";
-import { comparisonWorkflow } from "./workflow.js";
+import { comparisonWorkflow } from "../comparison/workflow.js";
 import { taskAnalysisPresentation, taskFocus } from "./task-focus.js";
 import { attributionResult, comparisonResult, criteriaResult, draftFor, taskResult, emptyAudit } from "../../../../tests/fixtures/comparison.js";
-import type { Candidate, RawInput, TaskData } from "./types.js";
+import type { Candidate, RawInput } from "../inputs/types.js";
+import type { TaskData } from "../comparison/types.js";
 
 const candidateIds = { A: randomUUID(), B: randomUUID() };
 const rubric = (): TaskAnalysis => ({ ...criteriaResult(), requirements: [
@@ -190,7 +191,7 @@ test("public judgment bindings keep global indices and separate blind originals 
     const label = stage === "attribution" ? "answer" : "A";
     assert.equal(focus.answers[label]!.question_timestamp, "2026-09-24T22:07:25.270Z");
     assert.equal(focus.answers[label]!.final_answer, "A 完整最终回答。");
-    const profile = agentPrompt(stage, []);
+    const profile = agentPrompt(stage, [], { fileSubmission: false });
     const prompt = profile.renderPrompt(shown);
     assert(profile.systemPrompt.includes(profile.instructions), "fixed stage instructions belong to the system prompt");
     assert(prompt.indexOf(JSON.stringify(focus.question)) >= 0);

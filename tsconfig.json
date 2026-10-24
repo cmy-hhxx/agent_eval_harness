@@ -101,6 +101,12 @@
       ],
       "@eval/agents/instruction-review": [
         "./packages/agents/src/instruction-review/index.ts"
+      ],
+      "@eval/workflows/inputs": [
+        "./packages/workflows/src/inputs/index.ts"
+      ],
+      "@eval/workflows/review": [
+        "./packages/workflows/src/review/index.ts"
       ]
     }
   },

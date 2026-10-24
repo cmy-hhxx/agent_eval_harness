@@ -10,6 +10,14 @@
     "./answer-review": {
       "types": "./answer-review.d.ts",
       "import": "./answer-review.js"
+    },
+    "./inputs": {
+      "types": "./inputs.d.ts",
+      "import": "./inputs.js"
+    },
+    "./review": {
+      "types": "./review.d.ts",
+      "import": "./review.js"
     }
   }
 }

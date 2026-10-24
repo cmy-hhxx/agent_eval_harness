@@ -57,7 +57,7 @@ test("shared Criteria source combinations keep instruction provenance in either 
       attribution.core_assessment.criterion_ids = attribution.core_assessment.criterion_ids.map(() => "r1");
       attribution.criterion_assessments.push(...task.requirements.slice(1).map(criterion => ({
         criterion_id: criterion.id, status: "met" as const, evidence_status: "established" as const,
-        summary: "数值与标准4一致。" })));
+        summary: "数值与标准4一致。", evidence: [] })));
       attribution.findings[0]!.evidence = [canonicalEvidence(data.request.sources[label]!.id, 2, final)];
     }
     input.attributions.A!.findings[0]!.dimension = "instruction_following";
@@ -399,7 +399,7 @@ const privateTime = () => {
     input.attributions[label].task_analysis = structuredClone(input.task_analysis);
     input.attributions[label].criterion_assessments.push({ criterion_id: "r9",
       status: label === "B" ? "met" : "not_applicable", evidence_status: "established",
-      summary: label === "B" ? "使用明确的数据日期。" : "仅适用B的时间规范。" });
+      summary: label === "B" ? "使用明确的数据日期。" : "仅适用B的时间规范。", evidence: [] });
   }
   data.result.task_analysis = structuredClone(input.task_analysis);
   return data;
@@ -770,7 +770,6 @@ test("established medium problems on both sides of one shared slot can retain me
       finding.evidence = [canonicalEvidence(data.request.sources[label].id, 1, final)];
       finding.assessment.observation = finding.text;
       finding.assessment.impact = "局部解释错误，未使最终数值不可用。";
-      Object.assign(finding, { problem: { diagnosis: "other" as const, investigation: [], component: [], label: "计算说明错误", definition: finding.text } });
     }
     if (swapped) {
       [data.request.sources.A, data.request.sources.B] = [data.request.sources.B, data.request.sources.A];
@@ -877,7 +876,7 @@ test("own scoring points and red flags without findings also retain source cover
     for (const [criterion_id, owner] of [["own_score", "A"], ["own_red", "B"]] as const)
       input.attributions[label].criterion_assessments.push({ criterion_id,
         status: label === owner ? "met" : "not_applicable", evidence_status: "established",
-        summary: label === owner ? "自身规则已评审。" : "该规则不适用。" });
+        summary: label === owner ? "自身规则已评审。" : "该规则不适用。", evidence: [] });
   }
   const source = structuredClone(input.attributions), result = resolve(data);
   validate(data.request, result);
@@ -894,8 +893,7 @@ test("own strengths and material problems remain required matrix findings when t
     text: "按自身时间规范标明数据日期。", assessment: { ...original.assessment, requirement_index: 1 } };
   const problem = { ...structuredClone(original), type: "problem" as const,
     dimension: "instruction_following" as const, importance: "medium" as const,
-    text: "另一处日期表述未遵守自身时间规范。", assessment: { ...original.assessment, requirement_index: 1 },
-    problem: { diagnosis: "other" as const, investigation: [], component: "model", label: "日期表述失当", definition: "日期表述未遵守自身时间规范。" } };
+    text: "另一处日期表述未遵守自身时间规范。", assessment: { ...original.assessment, requirement_index: 1 } };
   input.attributions.B.findings.push(strength, problem);
   const automatic=resolve(data); validate(data.request,automatic);
   assert.deepEqual(automatic.decision_basis.comparisons[1].assessments.B.finding_indices,[1,2]);
@@ -1003,7 +1001,6 @@ test("uncertain findings cannot be decisive and one-sided material advantages ca
   problem.reason = "用户要求说明计算过程，回答只给出结果4。";
   problem.assessment.observation = problem.text;
   problem.assessment.impact = "数值可用，但共同要求中的过程说明缺失。";
-  Object.assign(problem, { problem: { diagnosis: "other" as const, investigation: [], component: [], label: "计算过程缺失", definition: problem.text } });
   input.attributions.B.criterion_assessments[0].status = "partial";
   input.attributions.B.criterion_assessments[0].summary = problem.text;
   data.result.decision_basis.comparisons[0].assessments.B.status = "partial";

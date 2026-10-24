@@ -70,6 +70,18 @@ test("main evaluation and standalone clustering share ordered accepted Rewrite p
   }
 });
 
+test("restored clustering display reads Workflow-exported polish without modifying the raw Agent result", () => {
+  const raw = result(), source = receipt(raw);
+  const rewritten = { evaluator_version: "fixture", rewrites: [{ id: "new_classes.0.label", text: "恢复后的类名" }] };
+  source.exported = { id: "clustering", row: { result: { ...raw, rewritten } } };
+  const state = { manifest: { tasks: [{ id: "clustering", stage: "clustering", data: {} }] },
+    receipts: { clustering: source } } as unknown as RunState;
+  assert.deepEqual(clusteringDisplaySources(state)[0].rewritten, rewritten);
+  assert.equal(clusteringClassText(library(), clusteringDisplaySources(state)).get("problem")!.label, "恢复后的类名");
+  assert.deepEqual(source.evaluation, raw);
+  assert(!Object.hasOwn(source.evaluation as object, "rewritten"));
+});
+
 test("class display recalls standalone maintenance Rewrite by its event directory without copying prose into the library", async () => {
   const directory = await mkdtemp(path.join(os.tmpdir(), "clustering-display-"));
   try {

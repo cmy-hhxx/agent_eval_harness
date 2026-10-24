@@ -1,6 +1,6 @@
 import { instructionSources, parseEvidenceCoordinates, resolveEvidence } from "@eval/tools";
 import { ValidationError, type ToolAudit } from "@eval/contracts";
-import type { RawInput } from "./types.js";
+import type { RawInput } from "../inputs/types.js";
 
 /** Task-local view: preserve message positions and factual leaf paths while excluding private instructions. */
 export function attributionTrace(raw: RawInput, inputId: string, finalIndex: number): RawInput {

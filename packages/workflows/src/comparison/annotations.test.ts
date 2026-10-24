@@ -1,7 +1,8 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { annotateFindings } from "./annotations.js";
-import type { Finding, RawInput } from "./types.js";
+import type { Finding } from "./types.js";
+import type { RawInput } from "../inputs/types.js";
 
 const evidenceInputId = "7ebfa07b-55d4-4e19-80d0-545eb576289a";
 

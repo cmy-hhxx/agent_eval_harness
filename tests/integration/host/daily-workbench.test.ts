@@ -38,8 +38,7 @@ test("daily HTTP exposes AIME stages and controls without starting evaluations o
     const ini = await writeTestSettings(directory), host = path.join(directory, "aime.json");
     const output = path.join(directory, "eval_output/0_daily_eval"); await mkdir(output, { recursive: true });
     await writeJson(host, { workflow: "answer-review", models: { judge: { model: "fixture" } },
-      inputs: { versions: [{ id: "aime_fast", name: "aime_fast", adapter: "a", sources: [{ kind: "directory", path: path.join(directory, "inputs") }] }] },
-      comparisons: [], bindings: { score: { profile: "judge" }, attribution: { profile: "judge" } }, output: { kind: "directory", path: output } });
+      inputs: { versions: [{ id: "aime_fast", name: "aime_fast", adapter: "a", sources: [{ kind: "directory", path: path.join(directory, "inputs") }] }] }, bindings: { score: { profile: "judge" }, attribution: { profile: "judge" } }, output: { kind: "directory", path: output } });
     const file = path.join(directory, "source.json");
     await writeJson(file, { archiveDirectory: path.join(directory, "online_data"), inputDirectory: path.join(directory, "2_daily_eval_input"),
       outputDirectory: output, stateDirectory: path.join(directory, "state"), dataStateDirectory: path.join(directory, "data-state"),

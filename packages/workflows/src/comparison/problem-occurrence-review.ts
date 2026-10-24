@@ -9,9 +9,11 @@ import {
   type ClusteringAssignment, type ClusteringResult, type ProblemOccurrenceReviewDecision, type ProblemOccurrenceReviewTarget,
 } from "@eval/agents/clustering";
 import { parseEvidenceCoordinates, resolveEvidence } from "@eval/tools";
-import { loadRunInputs, readRunState, readRunTasks } from "./run-data.js";
+import { loadRunInputs } from "../inputs/load.js";
+import { readRunState, readRunTasks } from "./run-data.js";
 import { taskObservations } from "./observations.js";
-import type { AttributionResult, Candidate, EvalConfig, RawInput, TaskData } from "./types.js";
+import type { AttributionResult, EvalConfig, TaskData } from "./types.js";
+import type { Candidate, RawInput } from "../inputs/types.js";
 import { clusteringJobStorage, loadClusteringJobInputs, readClusteringJobSources } from "./clustering-job.js";
 import { allClusteringJobSources, clusteringJobItems, jobObservations, type ClusteringJobConfig, type ClusteringJobTask } from "./clustering-job-types.js";
 

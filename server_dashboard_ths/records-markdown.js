@@ -6,18 +6,6 @@ function parseMarkdown(source) {
   return fromMarkdown(source, { extensions: [gfm()], mdastExtensions: [gfmFromMarkdown()] });
 }
 
-export function markdownPreview(source) {
-  function text(node) {
-    if (["definition", "footnoteDefinition", "html"].includes(node.type)) return "";
-    if (typeof node.value === "string") return node.value;
-    if (node.type === "image" || node.type === "imageReference") return node.alt || "";
-    const separator = ["root", "list", "listItem", "blockquote", "table", "tableRow"].includes(node.type) ? " " : "";
-    return (node.children || []).map(text).join(separator);
-  }
-  // Only parse enough text for the compact overview; full answers stay lazy.
-  return text(parseMarkdown(source.slice(0, 1000))).replace(/\s+/g, " ").trim();
-}
-
 // Build DOM nodes instead of interpreting answer HTML. Links share one protocol allowlist.
 export function renderMarkdown(source) {
   const tree = parseMarkdown(source);

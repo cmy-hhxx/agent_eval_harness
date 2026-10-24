@@ -1,6 +1,7 @@
 import { errorText } from "@eval/contracts";
 import { fileSourceReader } from "@eval/data";
-import { comparisonWorkflow, createInputScanCache, listInputDates, listInputInventory, type EvalConfig } from "@eval/workflows/comparison";
+import { comparisonWorkflow, listInputDates, listInputInventory, type EvalConfig } from "@eval/workflows/comparison";
+import { createInputScanCache } from "@eval/workflows/inputs";
 
 /** Source revisions, not content hashes: a changed or missing file invalidates the projection. */
 async function sourceRevision(config: EvalConfig) {

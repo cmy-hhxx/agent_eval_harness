@@ -5,13 +5,14 @@ import template from "../../../../schemas/workflow/export.schema.json" with { ty
 import annotation from "../../../../schemas/workflow/annotation.schema.json" with { type: "json" };
 import clusteringResult from "../../../../schemas/clustering/result.schema.json" with { type: "json" };
 import clusteringTemplate from "../../../../schemas/workflow/clustering.schema.json" with { type: "json" };
+import rewritten from "../../../../schemas/workflow/rewritten.schema.json" with { type: "json" };
 // Only export-specific identity, display and trace annotations belong to Workflow.
-export const rewrittenSchema = object(object(comparisonProfile.resultSchema!).properties).rewritten as JsonSchema;
+export const rewrittenSchema: JsonSchema = rewritten;
 export const clusteringSchema: JsonSchema = {
   ...clusteringTemplate,
   properties: {
     ...(clusteringTemplate.properties as Record<string, unknown>),
-    result: clusteringResult,
+    result: { ...clusteringResult, properties: { ...clusteringResult.properties, rewritten: rewrittenSchema } },
   },
 };
 const comparison = object(structuredClone(comparisonProfile.resultSchema!).properties);

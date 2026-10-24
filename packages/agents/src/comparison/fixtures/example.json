@@ -57,6 +57,67 @@
       },
       "attributions": {
         "A": {
+          "summary": "正确给出结果。",
+          "task_analysis": {
+            "task_type": "整数加法",
+            "goal": "计算2+2",
+            "requirements": [
+              {
+                "id": "sum",
+                "text": "给出正确的加法结果",
+                "applies_to": [],
+                "acceptance_rule": "给出正确的加法结果\n\n最终回答明确给出4。"
+              }
+            ],
+            "scoring_points": [],
+            "red_flags": []
+          },
+          "findings": [
+            {
+              "type": "strength",
+              "dimension": "correctness",
+              "stage": "final_answer",
+              "importance": "high",
+              "text": "加法结果正确",
+              "reason": "与要求一致。",
+              "evidence": [
+                {
+                  "message_index": 1,
+                  "quote": "2+2=4",
+                  "evidence_id": "ev_11111111-1111-4111-8111-111111111111_1_text_0_5_/content"
+                }
+              ],
+              "assessment": {
+                "requirement_index": 0,
+                "observation": "2+2=4",
+                "evidence_status": "established",
+                "impact": "完成核心要求。"
+              },
+              "finding_index": 0
+            }
+          ],
+          "criterion_assessments": [
+            {
+              "criterion_id": "sum",
+              "status": "met",
+              "evidence_status": "established",
+              "summary": "正确给出4。",
+              "evidence": [
+                {
+                  "message_index": 1,
+                  "quote": "2+2=4",
+                  "evidence_id": "ev_11111111-1111-4111-8111-111111111111_1_text_0_5_/content"
+                }
+              ]
+            }
+          ],
+          "core_assessment": {
+            "meets_core": true,
+            "reason": "结果可用。",
+            "criterion_ids": [
+              "sum"
+            ]
+          },
           "has_standard_answer": true,
           "is_correct": true,
           "correctness_reason": "结果正确。",
@@ -67,6 +128,9 @@
               "evidence_id": "ev_11111111-1111-4111-8111-111111111111_1_text_0_5_/content"
             }
           ],
+          "numeric_checks": []
+        },
+        "B": {
           "summary": "正确给出结果。",
           "task_analysis": {
             "task_type": "整数加法",
@@ -94,7 +158,7 @@
                 {
                   "message_index": 1,
                   "quote": "2+2=4",
-                  "evidence_id": "ev_11111111-1111-4111-8111-111111111111_1_text_0_5_/content"
+                  "evidence_id": "ev_22222222-2222-4222-8222-222222222222_1_text_0_5_/content"
                 }
               ],
               "assessment": {
@@ -103,8 +167,7 @@
                 "evidence_status": "established",
                 "impact": "完成核心要求。"
               },
-              "problem": null,
-              "finding_id": "f0"
+              "finding_index": 0
             }
           ],
           "criterion_assessments": [
@@ -117,7 +180,7 @@
                 {
                   "message_index": 1,
                   "quote": "2+2=4",
-                  "evidence_id": "ev_11111111-1111-4111-8111-111111111111_1_text_0_5_/content"
+                  "evidence_id": "ev_22222222-2222-4222-8222-222222222222_1_text_0_5_/content"
                 }
               ]
             }
@@ -128,9 +191,7 @@
             "criterion_ids": [
               "sum"
             ]
-          }
-        },
-        "B": {
+          },
           "has_standard_answer": true,
           "is_correct": true,
           "correctness_reason": "结果正确。",
@@ -141,68 +202,7 @@
               "evidence_id": "ev_22222222-2222-4222-8222-222222222222_1_text_0_5_/content"
             }
           ],
-          "summary": "正确给出结果。",
-          "task_analysis": {
-            "task_type": "整数加法",
-            "goal": "计算2+2",
-            "requirements": [
-              {
-                "id": "sum",
-                "text": "给出正确的加法结果",
-                "applies_to": [],
-                "acceptance_rule": "给出正确的加法结果\n\n最终回答明确给出4。"
-              }
-            ],
-            "scoring_points": [],
-            "red_flags": []
-          },
-          "findings": [
-            {
-              "type": "strength",
-              "dimension": "correctness",
-              "stage": "final_answer",
-              "importance": "high",
-              "text": "加法结果正确",
-              "reason": "与要求一致。",
-              "evidence": [
-                {
-                  "message_index": 1,
-                  "quote": "2+2=4",
-                  "evidence_id": "ev_22222222-2222-4222-8222-222222222222_1_text_0_5_/content"
-                }
-              ],
-              "assessment": {
-                "requirement_index": 0,
-                "observation": "2+2=4",
-                "evidence_status": "established",
-                "impact": "完成核心要求。"
-              },
-              "problem": null,
-              "finding_id": "f0"
-            }
-          ],
-          "criterion_assessments": [
-            {
-              "criterion_id": "sum",
-              "status": "met",
-              "evidence_status": "established",
-              "summary": "正确给出4。",
-              "evidence": [
-                {
-                  "message_index": 1,
-                  "quote": "2+2=4",
-                  "evidence_id": "ev_22222222-2222-4222-8222-222222222222_1_text_0_5_/content"
-                }
-              ]
-            }
-          ],
-          "core_assessment": {
-            "meets_core": true,
-            "reason": "结果可用。",
-            "criterion_ids": [
-              "sum"
-            ]
-          }
+          "numeric_checks": []
         }
       },
       "task_analysis": {

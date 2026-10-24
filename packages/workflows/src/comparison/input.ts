@@ -1,219 +1,17 @@
-import { fileSourceReader, problemLibraryFile, readProblemLibrary } from "@eval/data";
+import { collectInputs } from "../inputs/scan.js";
+import { candidateKey, type InputScanner } from "../inputs/records.js";
+import { problemLibraryFile, readProblemLibrary } from "@eval/data";
 import { randomInt, randomUUID } from "node:crypto";
 import { isDeepStrictEqual } from "node:util";
-import { type PlannedTask, type ProblemLibrary, type TaskPlan, type ValidationIssue } from "@eval/contracts";
-import { canonical, errorText, object, ValidationError } from "@eval/contracts";
+import { type PlannedTask, type ProblemLibrary, type TaskPlan } from "@eval/contracts";
+import { canonical } from "@eval/contracts";
 import { emptyLibrary, projectLibrary } from "@eval/agents/clustering";
-import { inputAdapters, resolveAdapter } from "./adapters.js";
-import { normalizeInput } from "./input-record.js";
 import { attributionRewritePlaceholder } from "./attribution-rewrite-planning.js";
 import { predictionKey, predictionMaterial, readPredictionAnswers } from "./prediction.js";
-import type {
-  BatchPreflight,
-  Candidate,
-  EvalConfig,
-  RawInput,
-  TaskData,
-  Timing,
-  VersionConfig,
-} from "./types.js";
+import type { BatchPreflight, EvalConfig, TaskData } from "./types.js";
+import type { Candidate } from "../inputs/types.js";
 
-export function contentText(value: unknown): string {
-  if (typeof value === "string") return value;
-  if (Array.isArray(value))
-    return value
-      .filter((v) => typeof v === "string" || (v && typeof v === "object"))
-      .map(contentText)
-      .join("\n");
-  if (value && typeof value === "object") return String((value as { text?: unknown }).text ?? "");
-  return "";
-}
-export function strings(value: unknown, prefix = ""): [string, string][] {
-  if (typeof value === "string") return [[prefix, value]];
-  if (!value || typeof value !== "object") return [];
-  return Object.entries(value).flatMap(([key, child]) =>
-    strings(child, `${prefix}/${key.replaceAll("~", "~0").replaceAll("/", "~1")}`),
-  );
-}
 const normalize = (text: string) => text.replace(/\s+/gu, "");
-export function inputSources(candidates: Candidate[]): Map<string, Candidate[]> {
-  const sources = new Map<string, Candidate[]>();
-  for (const c of candidates) {
-    if (!sources.has(c.source)) sources.set(c.source, []);
-    sources.get(c.source)!.push(c);
-  }
-  return sources;
-}
-export function adapt(
-  value: unknown,
-  item: VersionConfig,
-  source: string,
-  line: number,
-  defaultBatch?: string,
-): Candidate {
-  const session = Object.hasOwn(object(value), "traces"), raw = normalizeInput(value);
-  const meta = raw.meta || {};
-  const errors: ValidationIssue[] = [];
-  if (
-    raw.request_time !== undefined &&
-    raw.request_time !== null &&
-    (typeof raw.request_time !== "string" || !raw.request_time.trim())
-  )
-    errors.push({
-      category: "input",
-      code: "request_time_invalid",
-      path: "/request_time",
-      actual: raw.request_time,
-      expected: "非空字符串、null 或缺失",
-      message: "request_time 必须是非空字符串或 null",
-    });
-  if (raw.has_standard_answer !== undefined && typeof raw.has_standard_answer !== "boolean")
-    errors.push({
-      category: "input",
-      code: "standard_answer_flag_invalid",
-      path: "/has_standard_answer",
-      actual: raw.has_standard_answer,
-      expected: "boolean",
-      message: "has_standard_answer 必须是布尔值",
-    });
-  const batch = raw.batch_id || meta.batch_id || defaultBatch,
-    id = raw.case_id || meta.case_id;
-  for (const [key, value] of [
-    ["batch_id", batch],
-    ["case_id", id],
-  ] as const)
-    if (typeof value !== "string" || !value.trim())
-      errors.push({
-        category: "input",
-        code: "identity_invalid",
-        path: "/" + key,
-        actual: value ?? null,
-        expected: "非空字符串",
-        message: "缺少或无效的 " + key,
-      });
-  if (errors.length) throw new ValidationError(errors);
-  if (raw.version && raw.version !== item.name) throw new Error("输入 version 与配置版本不一致");
-  if (raw.case_id && meta.case_id && raw.case_id !== meta.case_id)
-    throw new Error("顶层 case_id 与 meta.case_id 冲突");
-  const messages = raw.messages;
-  if (
-    meta.ok === false ||
-    !Array.isArray(messages) ||
-    !messages.length ||
-    messages.some((m) => !m || typeof m !== "object" || Array.isArray(m))
-  )
-    throw new Error("缺少有效回答或采集失败");
-  const adapter = session
-    ? Object.values(inputAdapters).find(adapter => messages.every(message => adapter.accepts(message)))
-    : resolveAdapter(item.adapter);
-  if (!adapter) throw new Error("链路含未支持的消息类型");
-  if (messages.some((m) => !adapter.accepts(m))) throw new Error("链路含未支持的消息类型");
-  const lastUser = messages.findLastIndex((m) => m.role === "user" || m.role === undefined && m.type === "user_question");
-  if (lastUser < 0) throw new Error("无法定位用户问题");
-  const final = messages.findLastIndex(
-    (m, i) => i > lastUser &&
-      (session && messages[lastUser].type === "user_question"
-        ? m.type === "final_answer" && (m.role === undefined || m.role === "assistant")
-        : m.role === "assistant" || m.role === undefined && m.type === "final_answer") &&
-      !!contentText(m.content).trim(),
-  );
-  if (final < 0) throw new Error("最后一轮没有完整最终回答");
-  const content = messages[lastUser].content;
-  const question =
-    contentText(Array.isArray(content) ? content.slice(0, 1) : content).trim() ||
-    String(meta.question || "").trim();
-  if (!question || (meta.question && normalize(question) !== normalize(String(meta.question))))
-    throw new Error("用户问题为空或 meta.question 不一致");
-  const references =
-    raw.has_standard_answer === false
-      ? []
-      : ["ground_truth", "std_answer"]
-          .map((k) => meta[k])
-          .filter((v) => v !== null && v !== undefined && v !== "");
-  if (new Set(references.map(canonical)).size > 1) throw new Error("ground_truth 与 std_answer 冲突");
-  const llm = session && typeof meta.model === "string" && meta.model.trim()
-    ? meta.model : adapter.answerModel(raw, messages, final);
-  const fields = {
-    first_token_seconds: "first_token_time_cost",
-    first_answer_seconds: "first_answer_time_cost",
-    finish_seconds: "finish_answer_time_cost",
-  };
-  const timing: Timing = {
-    first_token_seconds: null,
-    first_answer_seconds: null,
-    finish_seconds: null,
-    source_unit: item.timing_unit || "ms",
-    source_values: {},
-    source_fields: {},
-  };
-  for (const [key, field] of Object.entries(fields)) {
-    const value = meta[field];
-    timing.source_values[key] = value ?? null;
-    timing.source_fields[key] = `meta.${field}`;
-    timing[key as keyof typeof fields] =
-      typeof value === "number" && Number.isFinite(value) && value >= 0
-        ? value / (timing.source_unit === "ms" ? 1000 : 1)
-        : null;
-  }
-  return {
-    batch_id: String(batch),
-    case_id: String(id),
-    version: item.id,
-    name: item.display_name || item.name,
-    ...(item.display_name && item.display_name !== item.name ? { identity_names: [item.name] } : {}),
-    input_id: randomUUID(),
-    trace_id: raw.trace_id || meta.trace_id ? String(raw.trace_id || meta.trace_id) : null,
-    source,
-    line,
-    question,
-    answer_timing: timing,
-    final_index: final,
-    reference: references[0] ?? null,
-    llm: llm ? String(llm) : null,
-  };
-}
-export function candidateKey(record: Candidate): string {
-  return canonical([record.batch_id, record.case_id, record.version]);
-}
-function recordMatch(
-  value: string | undefined,
-  line: number,
-  candidate: Candidate,
-  version: VersionConfig,
-  source: string,
-  defaultBatch?: string,
-): { raw: RawInput; line: number; record: Candidate } | undefined {
-  if (!value || !value.trim()) return undefined;
-  try {
-    const raw = object(JSON.parse(value)) as RawInput;
-    const record = adapt(raw, version, source, line, defaultBatch);
-    return candidateKey(record) === candidateKey(candidate) ? { raw: normalizeInput(raw), line, record } : undefined;
-  } catch {
-    return undefined;
-  }
-}
-/** Stream one registered record: the recorded line is re-read first, then the whole source. */
-export async function locateRecordStream(
-  source: string,
-  candidate: Candidate,
-  version: VersionConfig,
-  defaultBatch?: string,
-): Promise<{ raw: RawInput; line: number; record: Candidate; byteOffset: number; byteLength: number }> {
-  const scan = async (expectedLine?: number) => {
-    for await (const { line, index, byteOffset, byteLength } of fileSourceReader.lines(source)) {
-      if (expectedLine !== undefined && index !== expectedLine) continue;
-      const found = recordMatch(line, index, candidate, version, source, defaultBatch);
-      if (found) return { ...found, byteOffset, byteLength };
-      if (expectedLine !== undefined) return undefined;
-    }
-    return undefined;
-  };
-  const direct = await scan(candidate.line);
-  if (direct) return direct;
-  const found = await scan();
-  if (found) return found;
-  throw new Error("输入源记录与登记的业务标识不一致：" + candidate.input_id);
-}
 const LABELS = "ABCDEFGHIJKLMNOPQRSTUVWXYZ".split("");
 /** Business identity for any task, including rewrite tasks that own no input. */
 export function taskCase(data: TaskData): { batch_id: string; case_id: string } {
@@ -285,72 +83,6 @@ export function selectComparisonGroups(groups: readonly string[][], versionIds: 
   }
   return selected;
 }
-interface ScannedInput {
-  index: number;
-  batchId: string | null;
-  caseId: string | null;
-  record?: Candidate;
-  raw?: RawInput;
-  error?: unknown;
-}
-type InputScanner = (source: string, version: VersionConfig, defaultBatch: string | undefined,
-  revision: string) => AsyncIterable<ScannedInput | undefined>;
-
-const scanInputFile: InputScanner = async function* (source, version, defaultBatch, revision) {
-  for await (const { line, index } of fileSourceReader.lines(source, revision)) {
-    if (!line.trim()) { yield undefined; continue; }
-    const entry: ScannedInput = { index, batchId: null, caseId: null };
-    try {
-      const raw = object(JSON.parse(line)) as RawInput, meta = raw.meta || {};
-      const batch = raw.batch_id || meta.batch_id || defaultBatch, id = raw.case_id || meta.case_id;
-      entry.batchId = batch ? String(batch) : null;
-      entry.caseId = id ? String(id) : null;
-      entry.record = adapt(raw, version, source, index, defaultBatch);
-      entry.raw = normalizeInput(raw);
-    } catch (error) { entry.error = error; }
-    yield entry;
-  }
-};
-
-/** One dashboard's compact file projections, shared by inventory and read-only planning. */
-export function createInputScanCache(): InputScanner {
-  const files = new Map<string, { key: string; value: Promise<(ScannedInput | undefined)[]> }>();
-  return async function* (source, version, defaultBatch, revision) {
-    const id = canonical([source, version.id]);
-    const { sources: _sources, ...adapterConfig } = version;
-    const key = canonical([adapterConfig, defaultBatch ?? null, revision]);
-    let entry = files.get(id);
-    if (entry?.key !== key) {
-      const value = (async () => {
-        const rows: (ScannedInput | undefined)[] = [];
-        try {
-          for await (const row of scanInputFile(source, version, defaultBatch, revision)) {
-            if (!row) { rows.push(undefined); continue; }
-            const { raw: _raw, ...projection } = row;
-            rows.push(projection);
-          }
-        } catch (error) {
-          // Do not turn a partial read into an ordinary missing-file diagnostic.
-          if (rows.length) throw new Error(errorText(error), { cause: error });
-          throw error;
-        }
-        return rows;
-      })();
-      entry = { key, value };
-      files.set(id, entry);
-    }
-    try {
-      // A concurrent inventory request may have populated this entry earlier in the request.
-      const rows = await entry.value;
-      if (await fileSourceReader.revision(source) !== revision)
-        throw new Error("读取期间输入文件发生变化，请重试：" + source);
-      for (const row of rows) yield row && { ...row, ...(row.record ? { record: { ...row.record } } : {}) };
-    } catch (error) {
-      if (files.get(id) === entry) files.delete(id);
-      throw error;
-    }
-  };
-}
 
 export interface PlanOptions {
   acceptedTaskIds?: ReadonlySet<string>;
@@ -381,196 +113,24 @@ export async function buildPlan(
   if (options.scanFile && (options.materializeInputs !== false || previous))
     throw new Error("输入扫描索引仅用于新运行的只读预检");
   const oldTasks = new Map(previous?.tasks.map((task) => [taskKey(task), task]));
-  const oldRecords = new Map(
-    (
-      (previous?.catalog as Candidate[] | undefined) ||
-      previous?.tasks.flatMap((task) => Object.values((task.data as TaskData).candidates)) ||
-      []
-    ).map((record) => [candidateKey(record), record]),
-  );
-  const records = new Map<string, Candidate>(),
-    freshRecords = new Set<Candidate>(),
-    sourceRevisions = new Map<string, string>(),
-    inputs: Record<string, unknown> = {},
-    cases = new Map<string, [string, string]>(),
-    locations = new Map<string, { version: string; source: string; line: number }[]>(),
-    resolvedSources: Record<string, string[]> = {};
-  const issues: { batch_id?: string | null; [key: string]: unknown }[] = [],
-    skipped: unknown[] = [],
-    seen = new Set<string>(),
-    invalid = new Set<string>();
-  if(config.inputs.records && config.inputs.workbench)throw new Error('不能同时设置独立记录范围和工作台范围');
-  const scope = config.inputs.records ?? config.inputs.workbench?.records;
-  if(scope && new Set(scope.map(row=>canonical([row.model,row.input_file,row.input_index]))).size!==scope.length)throw new Error('输入范围包含重复坐标');
-  const scopeRows = scope && new Map(scope.map(row => [canonical([row.model, row.input_file, row.input_index + 1]), row]));
-  const foundScope = new Set<string>();
-  for (const version of config.inputs.versions) {
-    const label = version.sources.map((source) => source.path).join(", ");
-    let files: string[];
-    try {
-      files = await fileSourceReader.files(version.sources);
-    } catch (error) {
-      issues.push({
-        source: label,
-        reason:
-          (error as NodeJS.ErrnoException).code === "ENOENT" ? "input_file_missing" : "input_file_unreadable",
-        version: version.id,
-        errors: [
-          {
-            category: "file",
-            code: "input_file_unavailable",
-            path: label,
-            expected: "可读取的输入文件或目录",
-            actual: (error as NodeJS.ErrnoException).code || null,
-            message: errorText(error),
-          },
-        ],
-      });
-      continue;
-    }
-    if (!files.length) {
-      issues.push({
-        source: label,
-        reason: "input_file_missing",
-        version: version.id,
-      });
-      continue;
-    }
-    resolvedSources[version.id] = files;
-    for (const source of files) {
-      let scanned = false;
-      try {
-        const revision = sourceRevisions.get(source) ?? await fileSourceReader.revision(source);
-        sourceRevisions.set(source, revision);
-        for await (const row of (options.scanFile ?? scanInputFile)(source, version, config.inputs.default_batch_id, revision)) {
-          scanned = true;
-          if (!row) continue;
-          const { index, batchId, caseId, raw } = row;
-          if (scopeRows) {
-            const coordinate = canonical([version.id, source, index]), selectedRow = scopeRows.get(coordinate);
-            if (!selectedRow) continue;
-            if (selectedRow.batch_id !== batchId || selectedRow.case_id !== caseId)
-              throw new Error("清洗范围与输入身份不一致：" + source + ":" + index);
-            foundScope.add(coordinate);
-          }
-          let key: string | undefined;
-          try {
-            if (
-              (batchId && config.inputs.batches?.length && !config.inputs.batches.includes(batchId)) ||
-              (caseId && config.inputs.case_ids?.length && !config.inputs.case_ids.includes(caseId))
-            )
-              continue;
-            if (config.prediction && !predictionSelections.some(selection =>
-              selection.batchId === batchId && selection.caseId === caseId && selection.versions.includes(version.id))) continue;
-            if (batchId && caseId) {
-              key = canonical([batchId, caseId, version.id]);
-              cases.set(canonical([batchId, caseId]), [batchId, caseId]);
-              const sources = locations.get(key) || [];
-              sources.push({ version: version.id, source, line: index });
-              locations.set(key, sources);
-              if (seen.has(key))
-                throw new ValidationError([
-                  {
-                    category: "input",
-                    code: "duplicate_input",
-                    path: "/",
-                    actual: [batchId, caseId, version.id],
-                    expected: "每个业务标识仅一条记录",
-                    message: "duplicate_input: 同一批次、case、版本出现多条记录",
-                  },
-                ]);
-              seen.add(key);
-            }
-            if (row.error) throw row.error;
-            const record = row.record!;
-            const selectedRecord=scopeRows?.get(canonical([version.id,source,index]));
-            if(selectedRecord&&'trace_id' in selectedRecord&&selectedRecord.trace_id!==record.trace_id)throw new Error('清洗范围与实际trace_id不一致');
-            if (config.prediction) {
-              const selection = predictionSelections.find(item => item.batchId === record.batch_id && item.caseId === record.case_id)!;
-              const answer = predictionAnswers!.get(predictionKey(selection.batchId, selection.questionId));
-              if (!answer || answer.text !== record.question)
-                throw new Error("Prediction question does not match original input: " + selection.questionId);
-              record.reference = predictionMaterial(config.prediction, selection, answer).reference;
-            }
-            const old = oldRecords.get(candidateKey(record));
-            let unchanged = old?.source === record.source && old?.line === record.line;
-            if (old && Object.hasOwn(previous!.inputs, old.input_id)) {
-              try { unchanged = isDeepStrictEqual(previous!.inputs[old.input_id], raw); }
-              // A lazy prior plan cannot read the old body after a source rewrite. Its
-              // registered business identity still survives reordered or appended rows.
-              catch { unchanged = true; }
-            }
-            if (
-              old &&
-              unchanged
-            )
-              record.input_id = old.input_id;
-            if (key && !invalid.has(key)) {
-              records.set(key, record);
-              freshRecords.add(record);
-            }
-          } catch (error) {
-            if (key) {
-              invalid.add(key);
-              records.delete(key);
-            }
-            issues.push({
-              source,
-              line: index,
-              batch_id: batchId,
-              case_id: caseId,
-              version: version.id,
-              identity: key ? JSON.parse(key) : null,
-              ...(key ? { sources: locations.get(key) } : {}),
-              reason: errorText(error),
-              errors:
-                error instanceof ValidationError
-                  ? error.issues
-                  : [
-                      {
-                        category: "input",
-                        code: error instanceof SyntaxError ? "input_json_invalid" : "input_invalid",
-                        path: "/",
-                        actual: null,
-                        expected: "有效输入记录",
-                        message: errorText(error),
-                      },
-                    ],
-            });
-          }
-        }
-      } catch (error) {
-        // A mid-read failure cannot leave partly registered candidates in the plan.
-        if (scanned || !(error as NodeJS.ErrnoException).code) throw error;
-        issues.push({
-          source,
-          reason: "input_file_unreadable",
-          version: version.id,
-          errors: [{
-            category: "file",
-            code: "input_file_unavailable",
-            path: source,
-            expected: "可读取的输入文件",
-            actual: (error as NodeJS.ErrnoException).code || null,
-            message: errorText(error),
-          }],
-        });
-      }
-    }
-  }
-  // Keep registered work on invalid scans; the caller must not run it without its original material.
-  if (scopeRows && foundScope.size !== scopeRows.size)
-    throw new Error("清洗范围存在缺失或已变动的记录，请检查输入发布状态");
-  for (const [key, record] of oldRecords)
-    if (!records.has(key)) {
-      records.set(key, record);
-      if (Object.hasOwn(previous!.inputs, record.input_id))
-        inputs[record.input_id] = previous!.inputs[record.input_id];
-      cases.set(canonical([record.batch_id, record.case_id]), [record.batch_id, record.case_id]);
-    }
-  const selected = [...cases.values()]
-    .sort((a, b) => (canonical(a) < canonical(b) ? -1 : 1))
-    .slice(0, scope ? undefined : config.inputs.limit);
+  const collected = await collectInputs(config, previous && { inputs: previous.inputs,
+    catalog: previous.catalog as Candidate[] | undefined ?? previous.tasks.flatMap(task => Object.values((task.data as TaskData).candidates)) }, {
+    materializeInputs: options.materializeInputs, scanFile: options.scanFile,
+    ...(config.prediction ? {
+      selectRecord: (batchId: string | null, caseId: string | null, version: string) =>
+        predictionSelections.some(selection => selection.batchId === batchId && selection.caseId === caseId && selection.versions.includes(version)),
+      prepareRecord: (record: Candidate) => {
+        const selection = predictionSelections.find(item => item.batchId === record.batch_id && item.caseId === record.case_id)!;
+        const answer = predictionAnswers!.get(predictionKey(selection.batchId, selection.questionId));
+        if (!answer || answer.text !== record.question)
+          throw new Error("Prediction question does not match original input: " + selection.questionId);
+        record.reference = predictionMaterial(config.prediction!, selection, answer).reference;
+      },
+    } : {}),
+  });
+  const { catalog, inputs, cases: selected, issues, locations, sources: resolvedSources } = collected;
+  const records = new Map(catalog.map(record => [candidateKey(record), record]));
+  const skipped: unknown[] = [];
   // Read each model's problem library once; clustering tasks get its projection and budget headroom.
   const libraries = new Map<string, ProblemLibrary>();
   if (config.clustering.enabled)
@@ -988,44 +548,8 @@ export async function buildPlan(
     }
   }
   for (const issue of issues) if (issue.batch_id) batchStats(issue.batch_id).input_issues++;
-  const catalog = [...records.values()].filter((record) =>
-    selectedKeys.has(canonical([record.batch_id, record.case_id])),
-  );
-  const used = new Set(catalog.map((record) => record.input_id));
-  // Retain byte coordinates only; the Host reads a record when preparing an active task.
-  if ((config.comparisons.length || config.inputs.workbench) && options.materializeInputs !== false) {
-    const bySource = new Map<string, Map<number, Candidate[]>>();
-    for (const record of catalog) {
-      if (!freshRecords.has(record)) continue;
-      const lines = bySource.get(record.source) ?? new Map<number, Candidate[]>();
-      lines.set(record.line, [...(lines.get(record.line) ?? []), record]);
-      bySource.set(record.source, lines);
-    }
-    for (const [source, lines] of bySource) {
-      const found = new Set<number>();
-      for await (const { index, byteOffset, byteLength } of fileSourceReader.lines(source, sourceRevisions.get(source)!)) {
-        const candidates = lines.get(index);
-        if (!candidates) continue;
-        for (const candidate of candidates) {
-          const version = config.inputs.versions.find((item) => item.id === candidate.version)!;
-          Object.defineProperty(inputs, candidate.input_id, {
-            enumerable: true,
-            configurable: true,
-            get() {
-              const raw = object(JSON.parse(fileSourceReader.record(source, byteOffset, byteLength, sourceRevisions.get(source)!))) as RawInput;
-              const current = adapt(raw, version, source, index, config.inputs.default_batch_id);
-              if (candidateKey(current) !== candidateKey(candidate) || current.question !== candidate.question || current.final_index !== candidate.final_index)
-                throw new Error("读取期间输入源记录发生变化，请重试：" + source);
-              return normalizeInput(raw);
-            },
-          });
-        }
-        found.add(index);
-      }
-      if (found.size !== lines.size) throw new Error("读取期间输入源记录缺失，请重试：" + source);
-    }
-  }
-  for (const id of Object.keys(inputs)) if (!used.has(id)) delete inputs[id];
+  if ((config.comparisons.length || config.inputs.workbench) && options.materializeInputs !== false)
+    await collected.materialize();
   for (const review of comparisonPairs.length ? config.reviewQuestions ?? [] : []) if (![...checks.values()].some(task => {
     const candidate = (task.data as TaskData).candidates.A;
     return candidate.batch_id === review.batch_id && candidate.case_id === review.case_id;

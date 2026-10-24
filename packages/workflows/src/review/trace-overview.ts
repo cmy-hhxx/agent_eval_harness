@@ -1,6 +1,6 @@
-import { isToolSpan } from "./adapters.js";
+import { isToolSpan } from "../inputs/adapters.js";
 import { cite, displayEvidence, evidenceSources } from "@eval/tools";
-import type { RawInput } from "./types.js";
+import type { RawInput } from "../inputs/types.js";
 import { traceCatalog } from "./catalog.js";
 
 /** Bounded navigation excerpts, not a judgment of tool success or factual correctness. */

@@ -10,8 +10,9 @@ import { evidenceId, hasSourceTextBlock, parseEvidenceCoordinates } from "@eval/
 import { canonicalEvidence } from "./evidence.js";
 import { ROOT } from "./services.js";
 import { writeJson, writeJsonl } from "@eval/data";
-import { loadConfig, createModelResolver } from "@eval/host-app/config";
-import type { AttributionResult, ComparisonResult, RawInput, TaskData } from "@eval/workflows/comparison";
+import { loadComparisonConfig, createModelResolver } from "@eval/host-app/config";
+import type { AttributionResult, ComparisonResult, TaskData } from "@eval/workflows/comparison";
+import type { RawInput } from "@eval/workflows/inputs";
 import { comparisonSubmission } from "./comparison-submission.js";
 import { normSelection } from "./attribution-submission.js";
 import type { ComparisonSlot } from "@eval/agents/comparison";
@@ -116,7 +117,7 @@ export async function fixtureConfig(
 ) {
   const directory = await mkdtemp(path.join(os.tmpdir(), "dual-eval-test-"));
   process.env.EVAL_CONFIG_FILE = await writeTestSettings(directory);
-  const host = await loadConfig(path.join(ROOT, "configs/host.json"), testSettings("http://127.0.0.1:1/v1"));
+  const host = await loadComparisonConfig(path.join(ROOT, "configs/host.json"), testSettings("http://127.0.0.1:1/v1"));
   const config = host.evaluation;
   config.comparisons = [["a_fast", "b_fast"]];
   config.rewrite = { comparison: rewrite, attribution: rewrite, clustering: rewrite };

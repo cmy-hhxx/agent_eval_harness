@@ -1,4 +1,4 @@
-import { isToolSpan } from "./adapters.js";
+import { isToolSpan } from "../inputs/adapters.js";
 import { answerTurnContexts, citationMarkers, cite, evidenceSources, parseEvidenceCoordinates, selectEvidenceSource, type CitationFormat } from "@eval/tools";
 
 type Evidence = ReturnType<typeof cite>;

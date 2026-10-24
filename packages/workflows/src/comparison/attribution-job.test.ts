@@ -7,7 +7,7 @@ import { emptyUsage, type PlannedTask, type RunState } from "@eval/contracts";
 import { readJson, writeJson, writeJsonl } from "@eval/data";
 import { attributionResult, criteriaResultForTask, emptyAudit, fakeEvaluatorVersion, fakeIdentity, fakeJudge, fixtureConfig, raw } from "../../../../tests/fixtures/comparison.js";
 import { agents } from "../../../../tests/fixtures/services.js";
-import { adapt } from "./input.js";
+import { adapt } from "../inputs/records.js";
 import { attributionJobWorkflow, loadAttributionJobInputs, prepareAttributionJob, type AttributionJobConfig } from "./attribution-job.js";
 import { comparisonRepository } from "./run-data.js";
 import { prepareClusteringJob } from "./clustering-job.js";
@@ -16,7 +16,8 @@ import { validateRun } from "./validate.js";
 import { prepareFailedTasks } from "./repair.js";
 import { attributionRewriteGroups } from "./commentary.js";
 import { supersededAttributionRewriteIds } from "./attribution-rewrite-planning.js";
-import type { Candidate, EvalConfig, RawInput, TaskData } from "./types.js";
+import type { Candidate, RawInput } from "../inputs/types.js";
+import type { EvalConfig, TaskData } from "./types.js";
 
 /** Source fixtures contain only the persisted selection index; no old judgments enter the new run. */
 async function sourceRun(directory: string, config: EvalConfig, catalog: Candidate[], acceptedAt = 1) {

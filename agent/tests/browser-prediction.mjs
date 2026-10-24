@@ -12,9 +12,9 @@ await mkdir(shots, { recursive: true });
 const question = 'A与B的统计口径哪里不同？';
 const acceptedQuestion = 'B回答是否遗漏了关键原文证据？';
 const requests = [], turns = [], errors = [];
-let sessions, delayed;
+let delayed;
 const server = await serveAssistant({ port: 0, userId: 'local', webDirectory: process.cwd() + '/dist/agent/web',
-  endpoints: url => assistantEndpoints(sessions = new AssistantSessions({ directory, url, model: { provider: 'test', model: 'test' },
+  endpoints: url => assistantEndpoints(new AssistantSessions({ directory, url, model: { provider: 'test', model: 'test' },
     systemPrompt: 'test', predictionPrompt: 'predict', tools: [],
     predictor: async options => {
       requests.push(options);

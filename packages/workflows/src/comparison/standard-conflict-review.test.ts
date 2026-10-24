@@ -13,7 +13,8 @@ import { configureStandardReview } from "./review.js";
 import { readRunState, reconcileRun, writeRunState } from "./run-data.js";
 import { prepareFailedTasks } from "./repair.js";
 import { summarizeResults } from "./report.js";
-import type { TaskData, RawInput } from "./types.js";
+import type { TaskData } from "./types.js";
+import type { RawInput } from "../inputs/types.js";
 
 function apply(state: RunState, change: ReturnType<NonNullable<WorkflowDefinition["advance"]>>) {
   for (const replacement of change.replace ?? []) state.manifest.tasks[state.manifest.tasks.findIndex(task => task.id === replacement.id)] = replacement;

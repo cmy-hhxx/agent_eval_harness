@@ -2,6 +2,8 @@
 
 AIME 使用 `workflow: "answer-review"`。工作台的 AIME 日常来源全量执行 Score 和 Attribution，关闭常规 Rewrite；两阶段互不依赖，评测内容与输入契约保持各自现有定义。Workbench 与增量 CLI 共用同一个执行器、状态锁和每日运行。显式手工 CLI 仍可选择单阶段。
 
+独立评测自行规划任务，配置只包含输入、执行预算、输出、归因润色开关与阶段选择，不要求对战组、聚类或问题库设置。来源编目和按坐标重读使用 `@eval/workflows/inputs`，归因与指令检查共用材料使用 `@eval/workflows/review`；共用模块不依赖对战规划或运行状态。
+
 ```mermaid
 flowchart LR
   Input[公开原题与候选材料] --> Score[Score]
@@ -64,7 +66,7 @@ summary、text、reason以及problem的label、definition采用简体中文，�
 结果验收使用同一语言规则，只读检查，不修改结果、不调用模型：
 
 ```bash
-npm run attribution:check-language -- --input /mnt/fin_bench/eval_data/1_aime/eval_output/0_daily_eval/1023/results/attribution.jsonl --limit 602
+npm run attribution:check-language -- --input /path/to/attribution.jsonl --limit 100
 ```
 
 省略`--limit`检查整个文件；指定时检查文件前N行。报告按字段分别统计passed、failed、not_applicable，失败项带1起始物理行号及trace_id、task_id。存在真实失败时返回退出码2，全部通过时返回0；读取与文件更新冲突时重新读取完整范围，连续冲突则明确报错。strength的null字段不会触发中文失败。此检查只验收上述点评字段，不替代证据和完整结果Schema校验。
@@ -92,4 +94,4 @@ npm run eval -- run --run-id answer-review-run --config configs/host.json --conf
 
 快速执行时，公开题面、最终回答及短调用/返回前缀一次提供，未显示后缀明确标记next_start。采集状态按当前A/B消息类型识别，包括无role的reasoning、llm_turn与推理span；无名称的工具返回仍记为已采集工具轨迹。裁判只对影响结论的缺口补查，材料工具支持一次批量读取、检索和取证，Score直接提交JSON，Attribution通过文件提交当前完整判断。缺证保留待核，12单元、24诊断及原分档不删减。并发仍是运行上限，模型生成速度不由Host保证。
 
-日常可按输入批次日期分别运行，例如本批2026年10月19日至22日使用0_daily_eval/1019至1022，每天各有两份results输出；多个日期同时运行时并发之和为总上限。恢复状态引用正式JSONL，不重复保存已接受正文；新增取证来源随正式结果保存。已接受结果不重新评分，续跑只处理未完成任务。输入契约拒绝的多轮或无效记录保留input issues，不截取或拼接成看似成功的评测。
+每日运行目录与增量追加规则见[AIME日常评测](aime-incremental.md#输入结果与运行状态)。恢复状态引用正式JSONL，不重复保存已接受正文；新增取证来源随正式结果保存。输入契约拒绝的多轮或无效记录保留input issues，不截取或拼接成看似成功的评测。

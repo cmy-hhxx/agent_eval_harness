@@ -11,15 +11,12 @@ import { criteriaProfile } from "@eval/agents/criteria";
 import { comparisonProfile } from "@eval/agents/comparison";
 import { startDashboard } from "../../../apps/host/src/dashboard.js";
 import { toDashboardModels } from "../../../apps/host/src/dashboard-models.js";
-import { loadConfig, editableDashboardSettings } from "@eval/host-app/config";
+import { loadComparisonConfig, editableDashboardSettings } from "@eval/host-app/config";
 import { emptyUsage, evidenceId, type JsonObject, type ProblemLibrary, type RunState, type SubmissionReceipt } from "@eval/contracts";
 import { exists, fileSourceReader, readJson, runLock, writeJson, writeJsonl } from "@eval/data";
 import { json, listen } from "@eval/runtime/http";
-import {
-  attributionRow, buildPlan, caseResultView, clusteringRow, createResultWriter, listInputInventory, listRunCases, readCaseDetail,
-  readRegisteredInput, readRunTasks, readTaskResult, taskObservations, writeRunState,
-  type Candidate, type Checkpoint, type TaskData,
-} from "@eval/workflows/comparison";
+import { attributionRow, buildPlan, caseResultView, clusteringRow, createResultWriter, listInputInventory, listRunCases, readCaseDetail, readRegisteredInput, readRunTasks, readTaskResult, taskObservations, writeRunState, type Checkpoint, type TaskData } from "@eval/workflows/comparison";
+import { type Candidate } from "@eval/workflows/inputs";
 import { attributionResult, comparisonResult, criteriaResultForTask, emptyAudit, fakeEvaluatorVersion, fakeIdentity, fixtureConfig, raw } from "../../fixtures/comparison.js";
 import { ROOT } from "../../fixtures/services.js";
 
@@ -1191,7 +1188,7 @@ test("dashboard blocks deletion throughout launch preparation and releases the r
 test("run-scoped settings are validated with the same model and execution configuration as CLI", async () => {
   const fixture = await setup();
   try {
-    const host = await loadConfig([fixture.configFile], testSettings(gateway), {
+    const host = await loadComparisonConfig([fixture.configFile], testSettings(gateway), {
       bindings: { comparison: { model: "one-run-only", thinking: "high" } },
       execution: { concurrency: 3, retries: 0 },
       rewrite: { attribution: true },
@@ -1200,25 +1197,25 @@ test("run-scoped settings are validated with the same model and execution config
     assert.equal(host.models.bindings.attribution.model, undefined);
     assert.equal(host.evaluation.execution.concurrency, 3);
     assert.equal(host.evaluation.rewrite.attribution, true);
-    const original = await loadConfig(fixture.configFile, testSettings(gateway));
+    const original = await loadComparisonConfig(fixture.configFile, testSettings(gateway));
     assert.equal(original.evaluation.execution.concurrency, 2);
     const defaultConfigFile = path.join(fixture.directory, "default-config.json");
     await writeJson(defaultConfigFile, {
       ...await readJson<Record<string, unknown>>(fixture.configFile),
       execution: {},
     });
-    const defaultConfig = await loadConfig(defaultConfigFile, testSettings(gateway));
+    const defaultConfig = await loadComparisonConfig(defaultConfigFile, testSettings(gateway));
     assert.equal(defaultConfig.evaluation.execution.concurrency, 8);
-    const withClustering = await loadConfig([fixture.configFile], testSettings(gateway), {
+    const withClustering = await loadComparisonConfig([fixture.configFile], testSettings(gateway), {
       clustering: { enabled: false },
     });
     assert.equal(withClustering.evaluation.clustering.enabled, false);
     await assert.rejects(
-      loadConfig([fixture.configFile], testSettings(gateway), { clustering: { enabled: "yes" } }),
+      loadComparisonConfig([fixture.configFile], testSettings(gateway), { clustering: { enabled: "yes" } }),
       /聚类设置/,
     );
-    await assert.rejects(loadConfig(fixture.configFile, testSettings(gateway), { execution: { concurrency: 0 } }), /execution.concurrency/);
-    await assert.rejects(loadConfig(fixture.configFile, testSettings(gateway), { bindings: { unknown: { model: "x" } } }), /未知阶段/);
+    await assert.rejects(loadComparisonConfig(fixture.configFile, testSettings(gateway), { execution: { concurrency: 0 } }), /execution.concurrency/);
+    await assert.rejects(loadComparisonConfig(fixture.configFile, testSettings(gateway), { bindings: { unknown: { model: "x" } } }), /未知阶段/);
     const settings = editableDashboardSettings({
       models: { judge: { model: "fixture-model", thinking: "low" } },
       bindings: { comparison: { profile: "judge" }, mystery: { profile: "judge" } },
@@ -1245,21 +1242,21 @@ test("run-scoped settings are validated with the same model and execution config
       { attribution: false, comparison: false, clustering: false });
     const fairSettings = editableDashboardSettings(await readJson(path.join(ROOT, "configs/host.json")));
     assert.deepEqual(fairSettings.comparisons, [["a_fast", "b_fast"], ["a_expert", "b_expert"]]);
-    const selected = await loadConfig([fixture.configFile], testSettings(gateway), {
+    const selected = await loadComparisonConfig([fixture.configFile], testSettings(gateway), {
       versions: ["a_fast", "b_fast"],
     });
     assert.deepEqual(selected.evaluation.inputs.versions.map((version) => version.id), ["a_fast", "b_fast"]);
     assert.deepEqual(selected.evaluation.comparisons, [["a_fast", "b_fast"]]);
     await assert.rejects(
-      loadConfig([fixture.configFile], testSettings(gateway), { versions: ["a_fast"] }),
+      loadComparisonConfig([fixture.configFile], testSettings(gateway), { versions: ["a_fast"] }),
       /至少选择两个模型/,
     );
     await assert.rejects(
-      loadConfig([fixture.configFile], testSettings(gateway), { versions: ["a_fast", "ghost"] }),
+      loadComparisonConfig([fixture.configFile], testSettings(gateway), { versions: ["a_fast", "ghost"] }),
       /未登记的模型/,
     );
     await assert.rejects(
-      loadConfig([fixture.configFile], testSettings(gateway), { versions: ["a_fast", "a_expert"] }),
+      loadComparisonConfig([fixture.configFile], testSettings(gateway), { versions: ["a_fast", "a_expert"] }),
       /没有可比较的组合/,
     );
   } finally {

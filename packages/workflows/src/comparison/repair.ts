@@ -5,7 +5,7 @@ import { emptyLibrary, projectLibrary, type ClusteringResult } from "@eval/agent
 import { attributionRewriteGroups, attributionSlots, comparisonSlots } from "./commentary.js";
 import { taskCase } from "./input.js";
 import { readRunState, writeRunState } from "./run-data.js";
-import { pendingTaskProgress } from "./task-progress.js";
+import { pendingTaskProgress } from "../review/task-progress.js";
 import { stageResult } from "./results.js";
 import { acceptedRewriteProjection } from "./rewrite-projection.js";
 import { supersededAttributionRewriteIds } from "./attribution-rewrite-planning.js";

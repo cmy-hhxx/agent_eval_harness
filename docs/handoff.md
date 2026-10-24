@@ -2,14 +2,14 @@
 
 [返回首页](../README.md) · [自动化](automations.md) · [部署](deployment.md) · [输入契约](contract.md#输入)
 
-数据服务只监听 `127.0.0.1:8081`。工作台通过 `/data/*` 访问它，自动化直接使用同机地址。当前来源和地址由外部 `runtime/config/automations.json` 与仓库 `configs/automations.manifest.json` 决定。
+数据服务只监听 `127.0.0.1:8081`。自动化直接使用同机地址；工作台按[网关路由](../apps/host/src/workbench-routes.ts)转发允许的数据接口。当前来源和执行器由[来源清单](../configs/automations.manifest.json)及其指向的外部配置决定。
 
 ## 路由
 
-| 来源 | 页面与 API 前缀 | 自动化 `sourceUrl` |
+| 来源 | 内部 API 前缀 | 执行器访问方式 |
 |---|---|---|
 | 日常四路（wencai） | `/data/wencai/` | `http://127.0.0.1:8081/data/wencai` |
-| aime | `/data/aime/` | 当前未登记自动化 |
+| aime | `/data/aime/` | 独立增量执行器复用数据服务的清洗与发布实现，直接读取本机规范输入，见[AIME日常评测](aime-incremental.md) |
 | ifind | `/data/ifind/` | 当前未登记自动化 |
 
 每个来源提供：

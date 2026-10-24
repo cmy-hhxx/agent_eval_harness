@@ -1,6 +1,6 @@
 import {parseArgs} from 'node:util';
 import {fileSourceReader,writeJson} from '@eval/data';
-import {adapt} from '@eval/workflows/comparison';
+import { adapt } from "@eval/workflows/inputs";
 import {errorText} from '@eval/contracts';
 
 /** Data-service cleaning calls the actual current TypeScript adapter before publication. */

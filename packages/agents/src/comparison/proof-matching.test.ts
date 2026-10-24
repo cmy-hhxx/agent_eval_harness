@@ -152,7 +152,8 @@ test("instruction pair scope requires all actual norm origins, never coincident 
     assessment: { requirement_index: 0, observation: "风险位于末尾。", evidence_status: "established", impact: "未遵循完整共同要求。" } };
   const analysis: ComparisonInput["task_analysis"] = { task_type: "subjective", goal: "根据完整规范判断交付。", requirements: [
     { id: "norm", text: norm, applies_to: [], acceptance_rule: norm }], scoring_points: [], red_flags: [] };
-  const attribution = { task_analysis: analysis, findings: [finding], criterion_assessments: [],
+  const attribution = { has_standard_answer: false, is_correct: null, correctness_reason: "根据完整规范核验。",
+    correctness_evidence: [], numeric_checks: [], summary: "按完整规范判断交付。", task_analysis: analysis, findings: [finding], criterion_assessments: [],
     core_assessment: { meets_core: true, reason: "核心任务已完成。", criterion_ids: ["norm"] } };
   const input: ComparisonInput = { task_analysis: analysis, candidates: { A: material, B: { ...material, candidate_id: PEER } },
     attributions: { A: attribution, B: { ...attribution, findings: [] } } };

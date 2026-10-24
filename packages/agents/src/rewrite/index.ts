@@ -12,7 +12,7 @@ export const rewriteProfile: AgentProfile = {
   requestSchema,
   submissionSchema,
   resultSchema,
-  ...agentPrompt("rewrite", []),
+  ...agentPrompt("rewrite", [], { fileSubmission: false }),
   toolNames: [],
   modelSubmissionSchema(request) {
     const value = structuredClone(submissionSchema);

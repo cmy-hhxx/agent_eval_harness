@@ -60,7 +60,7 @@ export function scoreAxisPart(value:ScoreAxisResult,axis:ScoreAxis):ScoreAxisRes
     verification_requests:value.verification_requests.filter(row=>firstAffected(row.affected_item_ids)===axis)};
 }
 function profile(id:string,promptName:string,submissionSchema:AgentProfile['submissionSchema'],toolNames:string[],resolve:NonNullable<AgentProfile['resolve']>,validate?:AgentProfile['validate']):AgentProfile{
-  const prompt=agentPrompt('score',toolNames,promptName);
+  const prompt=agentPrompt('score',toolNames,{ profile: promptName, fileSubmission: false });
   return {id,...prompt,requestSchema:{type:'object',required:['case_id','task_question','availability'],additionalProperties:true},submissionSchema,
     toolNames,renderPrompt:(input,policy,failure)=>{
       const axis=id.startsWith('axis-')?id.at(-1)!.toUpperCase():undefined;

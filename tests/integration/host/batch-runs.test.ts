@@ -7,11 +7,12 @@ import { json, listen } from "@eval/runtime/http";
 import { startWorker } from "@eval/runtime/worker";
 import { runEvaluation } from "@eval/host";
 import type { AgentBackend } from "@eval/contracts";
-import { buildPlan, readRunState, prepareFailedTasks, type Candidate } from "@eval/workflows/comparison";
+import { buildPlan, readRunState, prepareFailedTasks } from "@eval/workflows/comparison";
+import { type Candidate } from "@eval/workflows/inputs";
 import { startDashboard } from "../../../apps/host/src/dashboard.js";
 import { DashboardBatches } from "../../../apps/host/src/dashboard-batches.js";
 import { DashboardErrors } from "../../../apps/host/src/dashboard-errors.js";
-import { loadConfig } from "../../../apps/host/src/config.js";
+import { loadComparisonConfig } from "../../../apps/host/src/config.js";
 import { services } from "../../fixtures/services.js";
 import { fixtureConfig, raw, fakeIdentity, fakeEvaluatorVersion, inspectFor, submitFor, draftFor, taskResult } from "../../fixtures/comparison.js";
 
@@ -37,7 +38,7 @@ test("batch API freezes scope, persists across restart, and exposes runs outside
   const preview = await response.json();
   assert.equal(preview.summary.valid_inputs,1); assert.equal(preview.summary.attribution_tasks,1); assert.equal(preview.summary.comparison_tasks,0);
   const catalog = new DashboardBatches(options.batchDirectory,source.url), entry = (await catalog.get(preview.run_id))!;
-  const host = await loadConfig([configFile,catalog.config(entry.runId)]);
+  const host = await loadComparisonConfig([configFile,catalog.config(entry.runId)]);
   assert.equal(host.evaluation.inputs.workbench!.records[0]!.case_id,"chosen");
   assert.equal(host.evaluation.clustering.enabled,false);
   // A preview can stop after inputs.json is durable but before launch.json is published.

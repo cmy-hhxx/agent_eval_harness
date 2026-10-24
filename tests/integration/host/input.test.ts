@@ -8,12 +8,14 @@ import assert from "node:assert/strict";
 import crypto from "node:crypto";
 import { syncBuiltinESMExports } from "node:module";
 import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
-import { loadConfig, loadEvaluation, createModelResolver } from "@eval/host-app/config";
-import { adapt, buildPlan, createInputScanCache, expandComparisonPairs, inputAdapterIds, inputAdapters, reconcileRun } from "@eval/workflows/comparison";
+import { loadComparisonConfig, loadComparisonEvaluation, createModelResolver } from "@eval/host-app/config";
+import { adapt, createInputScanCache, inputAdapterIds, inputAdapters } from "@eval/workflows/inputs";
+import { buildPlan, expandComparisonPairs, reconcileRun } from "@eval/workflows/comparison";
 import { prepare, validateEvaluation } from "../../fixtures/services.js";
 import { annotateFindings } from "@eval/workflows/comparison";
 import type { Finding } from "@eval/workflows/comparison";
-import type { TaskData, RawInput } from "@eval/workflows/comparison";
+import type { TaskData } from "@eval/workflows/comparison";
+import type { RawInput } from "@eval/workflows/inputs";
 import { emptyAudit, fakeEvaluatorVersion, fakeIdentity, fakeJudge, fixtureConfig, attributionResult, comparisonResult, criteriaResultForTask, raw } from "../../fixtures/comparison.js";
 import path from "node:path";
 import { canonical, evidenceId, emptyUsage, ValidationError, type RunState, type SubmissionReceipt } from "@eval/contracts";
@@ -98,12 +100,12 @@ test("semantic review configuration retains explicit questions and rejects ambig
   const entry = { batch_id: "b1", case_id: "q", questions: ["核对限制与实际交付，不预设结论。"] };
   try {
     await writeFile(file, JSON.stringify({ reviewQuestions: [entry] }));
-    const loaded = await loadConfig([base, file], testSettings("https://gateway.example/v1"));
+    const loaded = await loadComparisonConfig([base, file], testSettings("https://gateway.example/v1"));
     assert.deepEqual(loaded.evaluation.reviewQuestions, [entry]);
     for (const reviewQuestions of [[entry, entry], [{ ...entry, questions: [] }], [{ ...entry, questions: [""] }],
       [{ ...entry, case_id: "" }], [{ ...entry, winner: "A" }]]) {
       await writeFile(file, JSON.stringify({ reviewQuestions }));
-      await assert.rejects(loadConfig([base, file], testSettings("https://gateway.example/v1")), /Invalid reviewQuestions/);
+      await assert.rejects(loadComparisonConfig([base, file], testSettings("https://gateway.example/v1")), /Invalid reviewQuestions/);
     }
   } finally { await rm(directory, { recursive: true, force: true }); }
 });
@@ -150,7 +152,7 @@ test("compressed JSONL preserves full records and rejects truncated storage", as
 
 test("configuration composes layered files and resolves bound models", async () => {
   const file = path.join(ROOT, "configs/host.json");
-  const host = await loadConfig(file, testSettings("https://gateway.example/v1"));
+  const host = await loadComparisonConfig(file, testSettings("https://gateway.example/v1"));
   assert.equal(host.models.models.judge?.baseUrl, "https://gateway.example/v1");
   assert.equal(host.models.models.judge?.apiKeyEnv, "EVAL_CHANNEL_KEY_evaluation_Hgateway");
   assert.equal(host.models.bindings.attribution?.profile, "judge");
@@ -164,7 +166,7 @@ test("configuration composes layered files and resolves bound models", async () 
   for (const version of host.evaluation.inputs.versions)
     assert.equal(version.sources[0].path, path.join(ROOT, "data/sources/model-answers", version.id));
   assert.throws(() => createModelResolver(host.models)("attribution"), /Missing model id/);
-  const resolved = await loadConfig([file, path.join(ROOT, "configs/models.example.json")], testSettings("https://gateway.example/v1"));
+  const resolved = await loadComparisonConfig([file, path.join(ROOT, "configs/models.example.json")], testSettings("https://gateway.example/v1"));
   const modelForStage = createModelResolver(resolved.models);
   const unconfigured = createModelResolver({
     ...resolved.models,
@@ -185,7 +187,7 @@ test("configuration composes layered files and resolves bound models", async () 
   assert.equal(overridden("attribution").thinking, "high", "explicit profile reasoning is preserved");
   assert.equal(overridden("comparison").thinking, "low", "stage reasoning overrides the profile default");
   assert.equal(overridden("rewrite").thinking, "low", "polish stays low even when the judge profile is high");
-  await assert.rejects(loadConfig(file, { channels: {}, agent: {}, automation: { channels: [] }, environment: {} }), /Unknown.*channel/);
+  await assert.rejects(loadComparisonConfig(file, { channels: {}, agent: {}, automation: { channels: [] }, environment: {} }), /Unknown.*channel/);
   assert.throws(() => testSettings("file:///tmp/model"), /base_url/);
 });
 
@@ -200,12 +202,12 @@ test("model profiles preserve explicit max effort and inherit channel developer-
     await writeFile(file, JSON.stringify(source));
     const settings = testSettings("https://gateway.example/v1");
     settings.channels["evaluation-gateway"].supportsDeveloperRole = false;
-    const loaded = await loadConfig(file, settings);
+    const loaded = await loadComparisonConfig(file, settings);
     const model = createModelResolver(loaded.models)("attribution");
     assert.equal(model.thinking, "max");
     assert.equal(model.supportsDeveloperRole, false);
     assert.equal(loaded.models.models.judge!.supportsDeveloperRole, false);
-    const withoutCapability = await loadConfig(file, testSettings("https://gateway.example/v1"));
+    const withoutCapability = await loadComparisonConfig(file, testSettings("https://gateway.example/v1"));
     const defaultModel = createModelResolver(withoutCapability.models)("attribution");
     assert.equal(Object.hasOwn(defaultModel, "supportsDeveloperRole"), false);
   } finally { await rm(directory, { recursive: true, force: true }); }
@@ -219,17 +221,17 @@ test("omitted rewrite settings enable each stage while explicit opt-outs remain 
     delete source.standardAnswerReview;
     const file = path.join(directory, "defaults.json");
     await writeFile(file, JSON.stringify(source));
-    const defaults = await loadConfig(file, testSettings("https://gateway.example/v1"));
+    const defaults = await loadComparisonConfig(file, testSettings("https://gateway.example/v1"));
     assert.deepEqual(defaults.evaluation.rewrite, { comparison: true, comparisonItems: true, attribution: true, clustering: true });
     assert.equal(defaults.evaluation.standardAnswerReview, false);
     source.standardAnswerReview = true;
     source.rewrite = { attribution: false };
     await writeFile(file, JSON.stringify(source));
-    const partial = await loadConfig(file, testSettings("https://gateway.example/v1"));
+    const partial = await loadComparisonConfig(file, testSettings("https://gateway.example/v1"));
     assert.equal(partial.evaluation.standardAnswerReview, true);
     source.standardAnswerReview = "true";
     await writeFile(file, JSON.stringify(source));
-    await assert.rejects(loadConfig(file, testSettings("https://gateway.example/v1")), /standardAnswerReview/);
+    await assert.rejects(loadComparisonConfig(file, testSettings("https://gateway.example/v1")), /standardAnswerReview/);
     assert.deepEqual(partial.evaluation.rewrite, { comparison: true, comparisonItems: true, attribution: false, clustering: true });
   } finally {
     await rm(directory, { recursive: true, force: true });
@@ -239,7 +241,7 @@ test("omitted rewrite settings enable each stage while explicit opt-outs remain 
 test("default comparisons plan separate Fast and Expert matches", async () => {
   const { directory, config } = await fixtureConfig();
   try {
-    const loaded = await loadConfig(path.join(ROOT, "configs/host.json"), testSettings("https://gateway.example/v1"));
+    const loaded = await loadComparisonConfig(path.join(ROOT, "configs/host.json"), testSettings("https://gateway.example/v1"));
     config.comparisons = loaded.evaluation.comparisons;
     const plan = await buildPlan(config);
     assert.deepEqual(plan.summary.comparisons, [
@@ -262,7 +264,7 @@ test("configuration and planning reject model IDs that make pair keys ambiguous"
     config.comparisons = [[ambiguous, "b_fast"]];
     const file = path.join(directory, "ambiguous-pair.json");
     await writeFile(file, JSON.stringify({ inputs: config.inputs, comparisons: config.comparisons }));
-    await assert.rejects(loadConfig([path.join(ROOT, "configs/host.json"), file],
+    await assert.rejects(loadComparisonConfig([path.join(ROOT, "configs/host.json"), file],
       testSettings("https://gateway.example/v1")), /保留分隔符 __vs__/);
     await assert.rejects(buildPlan(config), /保留分隔符 __vs__/);
   } finally { await rm(directory, { recursive: true, force: true }); }
@@ -273,10 +275,10 @@ test("comparison tiers reject Fast/Expert mixing, but allow a third model in eac
   try {
     const file = path.join(directory, "comparison.json");
     await writeFile(file, JSON.stringify({ comparisons: [["a_fast", "a_expert"]] }));
-    await assert.rejects(loadConfig([path.join(ROOT, "configs/host.json"), file], testSettings("https://gateway.example/v1")), /Fast.*Expert|fast.*expert/i);
+    await assert.rejects(loadComparisonConfig([path.join(ROOT, "configs/host.json"), file], testSettings("https://gateway.example/v1")), /Fast.*Expert|fast.*expert/i);
     config.comparisons = [["a_fast", "a_expert"]];
     await assert.rejects(buildPlan(config), /Fast.*Expert|fast.*expert/i);
-    await assert.rejects(loadConfig(path.join(ROOT, "configs/host.json"),
+    await assert.rejects(loadComparisonConfig(path.join(ROOT, "configs/host.json"),
       testSettings("https://gateway.example/v1"), { versions: ["a_fast", "a_expert"] }),
     /没有可比较的组合/);
     for (const [id, name, tier] of [["deepseek", "DeepSeek", "Fast"], ["kimi", "Kimi", "Expert"]] as const) {
@@ -286,12 +288,12 @@ test("comparison tiers reject Fast/Expert mixing, but allow a third model in eac
     }
     config.comparisons = [["a_fast", "b_fast", "deepseek"], ["a_expert", "b_expert", "kimi"]];
     const root = path.join(ROOT, "configs/host.json");
-    const loaded = await loadConfig(root, testSettings("https://gateway.example/v1"));
+    const loaded = await loadComparisonConfig(root, testSettings("https://gateway.example/v1"));
     await writeFile(file, JSON.stringify({
       inputs: { versions: [...loaded.evaluation.inputs.versions, ...config.inputs.versions.slice(4)] },
       comparisons: config.comparisons,
     }));
-    assert.deepEqual((await loadConfig([root, file], testSettings("https://gateway.example/v1"))).evaluation.comparisons, config.comparisons);
+    assert.deepEqual((await loadComparisonConfig([root, file], testSettings("https://gateway.example/v1"))).evaluation.comparisons, config.comparisons);
     const plan = await buildPlan(config);
     assert.equal(plan.summary.comparison_tasks, 6);
     assert.deepEqual(plan.tasks.filter((task) => task.stage === "comparison")
@@ -395,9 +397,9 @@ test("model selection and resume collapse equivalent narrowed comparison groups"
     const sources = [path.join(ROOT, "configs/host.json"), file];
     const env = testSettings("https://gateway.example/v1");
     const settings = { versions: ["a_fast", "b_fast"] };
-    const selected = (await loadConfig(sources, env, settings)).evaluation;
+    const selected = (await loadComparisonConfig(sources, env, settings)).evaluation;
     assert.deepEqual(selected.comparisons, [["a_fast", "b_fast"]], "keep the first group's declared order");
-    assert.deepEqual((await loadEvaluation(sources, settings)).comparisons, selected.comparisons);
+    assert.deepEqual((await loadComparisonEvaluation(sources, settings)).comparisons, selected.comparisons);
     const plan = await buildPlan(selected);
     assert.equal(plan.summary.comparison_tasks, 1);
     const state: RunState = {
@@ -407,7 +409,7 @@ test("model selection and resume collapse equivalent narrowed comparison groups"
         states: Object.fromEntries(plan.tasks.map((task) => [task.id, { status: "pending", attempts: 0 }])),
       }, receipts: {}, usage: emptyUsage(), recordedAttempts: 0,
     };
-    const resumed = await reconcileRun(directory, state, (await loadConfig(sources, env)).evaluation);
+    const resumed = await reconcileRun(directory, state, (await loadComparisonConfig(sources, env)).evaluation);
     assert.deepEqual(resumed.summary.comparisons, selected.comparisons);
     assert.equal(resumed.summary.comparison_tasks, 1);
     assert.deepEqual(resumed.tasks.map((task) => task.id), plan.tasks.map((task) => task.id));
@@ -680,7 +682,10 @@ test("public prompt definitions reach prepared tasks and the run snapshot", asyn
         [label, fixtureReceipt(id, label === "criteria" ? criteriaResultForTask(task, plan.inputs)
           : attributionResult(true, "2+2=4", true, task.inputIds[label]!))]));
       const prepared = prepare(task, plan.inputs, dependencies);
-      const prompt = agentPrompt(stage, prepared.evaluation.toolNames);
+      const prompt = agentPrompt(stage, prepared.evaluation.toolNames, {
+        fileSubmission: prepared.evaluation.fileSubmission ?? false,
+        draftWriteInCallLimit: prepared.evaluation.draftWriteInCallLimit,
+      });
       prompts.set(stage, prompt);
       assert.equal(prepared.evaluation.systemPrompt, prompt.systemPrompt);
       assert.equal(prepared.evaluation.submissionNudge, prompt.submissionNudge);
@@ -870,10 +875,10 @@ test("config requires an explicit evaluator version", async () => {
     delete source.evaluatorVersion;
     const file = path.join(directory, "missing-version.json");
     await writeFile(file, JSON.stringify(source));
-    await assert.rejects(loadConfig(file, testSettings("http://127.0.0.1:1/v1")), /evaluatorVersion/);
+    await assert.rejects(loadComparisonConfig(file, testSettings("http://127.0.0.1:1/v1")), /evaluatorVersion/);
     source.evaluatorVersion = "  ";
     await writeFile(file, JSON.stringify(source));
-    await assert.rejects(loadConfig(file, testSettings("http://127.0.0.1:1/v1")), /evaluatorVersion/);
+    await assert.rejects(loadComparisonConfig(file, testSettings("http://127.0.0.1:1/v1")), /evaluatorVersion/);
   } finally {
     await rm(directory, { recursive: true, force: true });
   }

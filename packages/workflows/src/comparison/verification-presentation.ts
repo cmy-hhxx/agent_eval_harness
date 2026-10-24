@@ -1,11 +1,12 @@
 import { comparisonSlotChoices } from "@eval/agents/comparison";
 import type { AgentRequest, TaskAnalysis } from "@eval/contracts";
 import { cite, displayEvidence, evidenceSources, hasSourceTextBlock, images, messageContentSources, instructionSources, originalUserTimestamp, parseEvidenceCoordinates, visualCaptureMarkers } from "@eval/tools";
-import type { AttributionResult } from "@eval/agents/attribution";
+import type { ComparisonAttribution } from "@eval/agents/comparison";
 import { verificationCheckAspects } from "@eval/agents/comparison";
-import type { ComparisonResult, RawInput } from "./types.js";
-import { contentText } from "./input.js";
-import { attributionPresentation } from "./attribution-presentation.js";
+import type { ComparisonResult } from "./types.js";
+import type { RawInput } from "../inputs/types.js";
+import { contentText } from "../inputs/records.js";
+import { attributionPresentation } from "../review/attribution-presentation.js";
 
 /** Convert only valid native calendar instants with an explicit offset; Date's invalid-day rollover is not evidence. */
 function timestampUTC(timestamp: string | null): string | null {
@@ -39,7 +40,7 @@ export function verificationPresentation(input: Record<string, unknown>, sources
     original_answer_timing: { finish_seconds: number | null };
     original_answer_usage: { total_tokens: number | null; issues: string[] };
     criterion_instruction_sources?: Record<string, { evidence_id: string; message_index: number; path: string; quote: string }[]> }>;
-  const attributions = input.attributions as Record<string, AttributionResult>;
+  const attributions = input.attributions as Record<string, ComparisonAttribution>;
   const rawSources = Object.fromEntries(Object.entries(sources).map(([label, source]) => [label, source.value as RawInput]));
   const sourceIds = Object.fromEntries(Object.entries(sources).map(([label, source]) => [label, source.id]));
   const common = (criterion: TaskAnalysis["requirements"][number]) => !criterion.applies_to.length ||

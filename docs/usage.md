@@ -115,7 +115,7 @@ npm run eval -- run --dataset competitor_comparison --engine pi --run-id competi
 
 索引只存文件、行号、UTF-8 字节位置及诊断。选择时重新核对原始文件，修正文件后重新 index；无效或重复记录不能因已建索引而参评。未传 dataset 时扫描配置来源。
 
-续跑按 state.json 中的原来源恢复，再传 dataset 不切换来源。未完成记录缺失或无效时跳过并报告诊断，已接受结果保留。运行中修改源文件会拒绝受影响读取，保存进度后同 ID 续跑。数据与任务页支持按压缩包批次清洗和核对输入；运行表单仍按日期选输入，命名评测集使用 CLI。批次到新运行的范围交接尚未开放。
+续跑按 state.json 中的原来源恢复，再传 dataset 不切换来源。未完成记录缺失或无效时跳过并报告诊断，已接受结果保留。运行中修改源文件会拒绝受影响读取，保存进度后同 ID 续跑。数据与任务页支持按压缩包批次清洗和核对输入，并将所选批次交给新运行预检、启动，操作见[批次运行](workbench.md#当前批次运行操作)；命名评测集使用 CLI。
 
 ### 第三方模型
 
@@ -258,16 +258,16 @@ npm run eval -- dashboard --port 4173 --config configs/host.json --config config
 
 ```bash
 npm run eval -- validate-stability --cases /path/to/cases.json --run-id stability-001 \
-  --max-attempts 240 --stop-starting-at 2026-10-19T07:00:00+08:00 \
+  --max-attempts 240 \
   --config configs/host.json --config configs/local/models.json
 npm run eval -- validate-stability --cases /path/to/cases.json --run-id stability-001 \
-  --max-attempts 240 --stop-starting-at 2026-10-19T07:00:00+08:00 \
+  --max-attempts 240 \
   --config configs/host.json --config configs/local/models.json --execute
 npm run eval -- validate-stability --run-id stability-001 \
   --config configs/host.json --config configs/local/models.json --execute
 ```
 
-同实验 ID 续跑时省略样本、来源、种子和限额选项，沿用已保存的计划、UUID 与累计额度，不重复接受成功试次。首次引用来源结果及续跑都会按业务身份重读原材料，允许文件行重排；问题、参考答案、最终回答位置或其他评测元数据与计划不一致时明确报错，应使用当前来源结果，或通过 `--cases` 新建实验。每题五次原位与五次真正重新调用的换位交错执行；可选择五次整场改写及三次完整链路。失败、重试也消耗阶段额度，240 次是阶段尝试上限，不是 API 请求数或金额；外部协议探测须先从实验额度中扣除。截止时间阻止新派发，在途调用仍可完成。
+同实验 ID 续跑时省略样本、来源、种子和限额选项，沿用已保存的计划、UUID 与累计额度，不重复接受成功试次。首次引用来源结果及续跑都会按业务身份重读原材料，允许文件行重排；问题、参考答案、最终回答位置或其他评测元数据与计划不一致时明确报错，应使用当前来源结果，或通过 `--cases` 新建实验。每题五次原位与五次真正重新调用的换位交错执行；可选择五次整场改写及三次完整链路。失败、重试也消耗阶段额度，240 次是阶段尝试上限，不是 API 请求数或金额；外部协议探测须先从实验额度中扣除。可选 `--stop-starting-at` 接受带时区的 ISO 截止时间，阻止到期后新派发，在途调用仍可完成。
 
 产物为 `validation.json`、`validation.md`、`results/stability-results.jsonl` 和 Host 恢复状态。辅助 `model-behavior.jsonl` 只汇总基准归因。实验不更新来源判决，不进入业务胜率或统计上传。解释方式与语义复核见[质量指南](quality.md#后置稳定性实验)。
 

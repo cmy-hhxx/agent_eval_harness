@@ -12,7 +12,8 @@ import { readRunState, reconcileRun, writeRunState } from "@eval/workflows/compa
 import { evidenceSources, messageContentSources, cite, resolveEvidence } from "@eval/tools";
 import { waitForTestState } from "../../fixtures/wait.js";
 import { canonicalEvidence } from "../../fixtures/evidence.js";
-import type { EvalConfig, RawInput, TaskData } from "@eval/workflows/comparison";
+import type { EvalConfig, TaskData } from "@eval/workflows/comparison";
+import type { RawInput } from "@eval/workflows/inputs";
 import { runEvaluation } from "@eval/host";
 import { validateRun } from "../../fixtures/services.js";
 import { startWorker } from "@eval/runtime/worker";

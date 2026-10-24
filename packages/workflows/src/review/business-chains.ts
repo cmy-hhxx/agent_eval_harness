@@ -3,7 +3,7 @@ import { answerTurnContexts, cite, evidenceSources, messageContentSources, parse
 import type { BusinessChain, Evidence } from "@eval/agents/attribution";
 import { processSourceInventory } from "./citations.js";
 import { getAnswerGeneration } from "./answer-generation.js";
-import type { RawInput } from "./types.js";
+import type { RawInput } from "../inputs/types.js";
 
 const object = (value: unknown): Record<string, unknown> => value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : {};
 

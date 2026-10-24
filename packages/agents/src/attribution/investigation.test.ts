@@ -7,7 +7,7 @@ import { businessChainFixture } from "../../../../tests/fixtures/business-chain.
 import { attributionSubmission } from "../../../../tests/fixtures/attribution-submission.js";
 import { businessChainDirectoryIssues, investigationIssues } from "./investigation.js";
 import { responsibilityIssues } from "./responsibility.js";
-import { bindAttributionMaterial } from "@eval/workflows/comparison";
+import { bindAttributionMaterial } from "@eval/workflows/review";
 import { cite, evidenceSources } from "@eval/tools";
 
 const codes = (f: ReturnType<typeof businessChainFixture>) => investigationIssues(f.binding.request, f.problem, f.evidence, f.audit, "/problem").map(issue => issue.code);

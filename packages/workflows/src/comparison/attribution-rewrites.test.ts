@@ -86,6 +86,8 @@ test("targeted attribution text refresh preserves judgments, evidence and histor
   await comparisonRepository.writeRun(run, after);
   const restored = await readRunState(run), projection = acceptedRewriteProjection(restored, source.id)!;
   assert.deepEqual(restored.receipts[source.id]!.evaluation, before.receipts[source.id]!.evaluation);
+  assert(!Object.hasOwn(restored.receipts[source.id]!.evaluation as object, "rewritten"));
+  assert(Object.hasOwn(restored.receipts[source.id]!.exported!.row.evaluation as object, "rewritten"));
   assert.deepEqual(restored.receipts[rewrite.id]!.evaluation, before.receipts[rewrite.id]!.evaluation);
   assert.equal(restored.receipts[rewrite.id]!.submissionId, before.receipts[rewrite.id]!.submissionId);
   assert.equal(restored.manifest.states[source.id]!.attempts, 1);

@@ -1,5 +1,5 @@
 import type { ReviewCase } from "@eval/contracts";
-import { isToolSpan, type Candidate, type RawInput } from "@eval/workflows/comparison";
+import { isToolSpan, type Candidate, type RawInput } from "@eval/workflows/inputs";
 /** Candidate private instructions never enter either independent evaluator's source map. */
 function publicValue(value: unknown): unknown {
   if(Array.isArray(value))return value.map(publicValue).filter(v=>v!==undefined);
