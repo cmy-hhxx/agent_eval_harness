@@ -49,7 +49,7 @@ export function analyticsView(value,range='30') {
     series:[{name:'有效回答',type:'bar',data:trendRows.map(row=>row[1]),barMaxWidth:24,itemStyle:{color:gray}},
       {name:`完整完成${unit}`,type:'line',yAxisIndex:evaluation.unit==='comparisons'?1:0,data:trendRows.map(row=>row[2]),symbol:'circle',symbolSize:5,lineStyle:{width:2,color:blue},itemStyle:{color:blue},connectNulls:false}]};
   return {
-    scope:`全量数据 · ${format(intake.totals?.questions)} 问句${dates.length?` · ${dates[0]} — ${dates.at(-1)}`:''}`,
+    scope:`已清洗数据 · ${format(intake.totals?.questions)} 问句${dates.length?` · ${dates[0]} — ${dates.at(-1)}`:''}`,
     metrics:[{label:'有效回答',value:format(intake.totals?.answers),unit:'条'},{label:`完整完成${unit}`,value:format(completed),unit:`${evaluation.unit==='comparisons'?'场':'条'} · 纳入 ${format(total)} ${unit}`},
       {label:'已纳入评测完成率',value:number(total)&&total>0&&number(completed)?`${(completed/total*100).toFixed(1)}%`:'—',unit:number(total)?`${format(completed)} / ${format(total)}`:''},
       {label:'清洗排除',value:format(intake.totals?.excluded),unit:intake.reportsComplete===false?'清洗报告未覆盖全量':'条'}],

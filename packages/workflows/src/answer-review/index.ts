@@ -283,6 +283,10 @@ async function reviewRunSummary(run:string,saved:Checkpoint,date?:string){
     else model.pending++;}
   const artifacts=[];
   for(const name of ['report.md','stats.json','results/score.jsonl','results/attribution.jsonl'])if(await exists(path.join(run,name)))artifacts.push({name});
+  if(date===undefined){
+    const dates=new Set(Object.values(saved.inputs).map(input=>input.batch_id));
+    if(dates.size===1&&/^\d{4}-\d{2}-\d{2}$/.test([...dates][0]))date=[...dates][0];
+  }
   return {runId:state.manifest.runId,date:date??null,status:state.manifest.status,answers:rows.length,total:rows.length,
     questions:new Set(rows.map(row=>canonical([row.batchId,row.caseId]))).size,
     taskTotal:Object.values(counts).reduce((n,stage)=>n+stage.total,0),taskCompleted:Object.values(counts).reduce((n,stage)=>n+stage.succeeded,0),models,
@@ -293,11 +297,12 @@ async function reviewRunSummary(run:string,saved:Checkpoint,date?:string){
     stages:counts,evaluatorVersion:state.manifest.evaluatorVersion,artifacts};
 }
 /** One compact read per run, with overlapping daily scopes counted once by answer identity. */
-export async function answerReviewRunSummaries(locations:readonly {run:string;date?:string}[],records:readonly import('./incremental.js').AimeRecord[]=[]){
+export async function answerReviewRunSummaries(locations:readonly {run:string;date?:string;optional?:boolean}[],records:readonly import('./incremental.js').AimeRecord[]=[]){
   const runs=[],coverage=answerReviewCoverage();
   coverage.include(records);
-  for(const {run,date}of locations){
+  for(const {run,date,optional}of locations){
     const saved=await readJson<Checkpoint>(path.join(run,'state.json'));
+    if(optional&&saved.workflow!=='answer-review')continue;
     coverage.add(saved,date);runs.push(await reviewRunSummary(run,saved,date));
   }
   return {runs,coverage:coverage.finish()};

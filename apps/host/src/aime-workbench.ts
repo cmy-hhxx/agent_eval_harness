@@ -32,21 +32,16 @@ export async function loadAimeWorkbench(file:string,options:{id?:string;name?:st
       if(dates.has(job.id)&&dates.get(job.id)!==job.date)throw new HttpError(409,'AIME运行关联多个业务日期');
       dates.set(job.id,job.date);
     }
-    if(state){
-      const rows=[];
-      for(const [runId,date]of dates){
-        const run=path.join(configuration.outputDirectory,safeId(runId));
-        if(await exists(path.join(run,'state.json')))rows.push({run,date});
-        else if(state.jobs.some(job=>job.id===runId&&(job.done||(job.result?.launched??0)>0||(job.result?.succeeded??0)>0)))throw new HttpError(409,'AIME已执行运行的状态文件缺失：'+runId);
-      }
-      const view=await answerReviewRunSummaries(rows,state.jobs.flatMap(job=>job.records));
-      return {...view,runs:view.runs.sort((a,b)=>(b.date??b.runId).localeCompare(a.date??a.runId))};
+    const rows:{run:string;date?:string;optional?:boolean}[]=[];
+    for(const [runId,date]of dates){
+      const run=path.join(configuration.outputDirectory,safeId(runId));
+      if(await exists(path.join(run,'state.json')))rows.push({run,date});
+      else if(state!.jobs.some(job=>job.id===runId&&(job.done||(job.result?.launched??0)>0||(job.result?.succeeded??0)>0)))throw new HttpError(409,'AIME已执行运行的状态文件缺失：'+runId);
     }
-    const rows=[];
     const entries=await exists(configuration.outputDirectory)?await localFiles.list(configuration.outputDirectory,{withFileTypes:true}):[];
-    for(const entry of entries)if(entry.isDirectory()&&await exists(path.join(configuration.outputDirectory,entry.name,'state.json')))
-      rows.push({runId:entry.name,date:dates.get(entry.name),run:path.join(configuration.outputDirectory,entry.name)});
-    const view=await answerReviewRunSummaries(rows);
+    for(const entry of entries)if(entry.isDirectory()&&!dates.has(entry.name)&&await exists(path.join(configuration.outputDirectory,entry.name,'state.json')))
+      rows.push({run:path.join(configuration.outputDirectory,entry.name),optional:true});
+    const view=await answerReviewRunSummaries(rows,state?.jobs.flatMap(job=>job.records)??[]);
     return {...view,runs:view.runs.sort((a,b)=>(b.date??b.runId).localeCompare(a.date??a.runId))};
   };
   const snapshot=async()=>{

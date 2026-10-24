@@ -35,7 +35,7 @@ test('AIME Workbench persists independent settings and refuses an existing CLI o
   assert.equal((await aime.snapshot()).settings.bindings.score.model,'fixture');
 });
 
-test('AIME daily coverage includes registered unplanned answers once and ignores unrelated run directories',async t=>{
+test('AIME daily coverage includes unplanned answers and historical formal runs while ignoring other workflows',async t=>{
   const f=await fixtureConfig();t.after(()=>rm(f.directory,{recursive:true,force:true}));
   const file=path.join(f.directory,'aime.json'),stateDirectory=path.join(f.directory,'aime-state'),outputDirectory=path.join(f.directory,'eval_output/0_daily_eval');
   await writeJson(file,{archiveDirectory:path.join(f.directory,'archives'),inputDirectory:path.join(f.directory,'2_daily_eval_input'),outputDirectory,
@@ -50,9 +50,26 @@ test('AIME daily coverage includes registered unplanned answers once and ignores
   assert.equal(snapshot.stages.score.pending,1);assert.equal(snapshot.stages.attribution.pending,1);
   assert.equal((await aime.runs()).runs.length,0,'registration can precede creation of the evaluation checkpoint');
   assert.equal((await aime.analytics()).totals.total,1);
+  const historical={workflow:'answer-review',manifest:{runId:'saved-history',status:'finished',evaluatorVersion:'fixture'},
+    inputs:{answer:{input_id:'answer',version:'aime_expert',batch_id:'2026-10-19',case_id:'historical-question',trace_id:'historical-trace',question:'earlier question'}},
+    tasks:Object.fromEntries(['score','attribution'].map(stage=>{const id='historical-'+stage;return [id,{task:{stage,inputIds:{case:'answer'},dependencies:{}},data:{input_id:'answer'},
+      state:{status:'succeeded',attempts:1},receipt:{taskId:id,exported:{id,file:stage+'.jsonl'}}}];})),usage:{},recordedAttempts:0};
+  await writeJson(path.join(outputDirectory,'saved-history/state.json'),historical);
+  const complete=await aime.snapshot(),history=(await aime.runs()).runs;
+  assert.deepEqual(complete.answerCounts,{total:2,completed:1,partial:0,pending:1,failed:0,running:0},'historical checkpoints outside the current watch ledger remain in whole-source coverage');
+  assert.equal(history.length,1);assert.equal(history[0].runId,'saved-history');
+  assert.equal(history[0].date,'2026-10-19','the business date comes from input identities rather than the directory name');
+  const analytics=await aime.analytics();
+  assert.equal(analytics.dates.find(row=>row.date==='2026-10-19')?.completed,1);
+  assert.equal(analytics.dates.find(row=>row.date==='2026-10-24')?.pending,1);
+  await writeJson(path.join(stateDirectory,'state.json'),{scans:[],jobs:[job,{...job,id:'unrelated',records:[]}]});
+  await assert.rejects(aime.analytics(),/不属于独立Score/,'a registered wrong workflow is an error, not an ignored extra directory');
   job.done=true;await writeJson(path.join(stateDirectory,'state.json'),{scans:[],jobs:[job]});
   await assert.rejects(aime.analytics(),/已执行运行的状态文件缺失/);
   job.done=false;job.result={launched:1,succeeded:0};
   await writeJson(path.join(stateDirectory,'state.json'),{scans:[],jobs:[job]});
   await assert.rejects(aime.analytics(),/已执行运行的状态文件缺失/,'an executed run with only failures cannot silently lose its progress and budgets');
+  job.result=undefined;await writeJson(path.join(stateDirectory,'state.json'),{scans:[],jobs:[job]});
+  await writeFile(path.join(outputDirectory,'saved-history/state.json'),'{');
+  await assert.rejects(aime.analytics(),SyntaxError,'a malformed historical checkpoint cannot disappear from the reported totals');
 });
