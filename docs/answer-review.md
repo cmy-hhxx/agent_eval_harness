@@ -18,7 +18,7 @@ Score 和 Attribution 都不依赖 Criteria，也不读取彼此的结论。两�
 
 Score对外接收单题材料并返回一个JSON，内部使用同一Agent的多个profile：统一取证与复算 → T/E/L/A/U/D六轴独立会话 → 独立总分。正常执行8次会话，六轴共享固定证据，不读取彼此判词。总分不读取六轴数值分数，也不平均或逐项扣分。
 
-评分含义沿用[原skill规则](../packages/prompts/resources/score/skill/)。总分0–10、12核心单元0–4、24诊断不另计分；过程错误恢复与最终有效交付分别评价。待核使用有宽度区间，不适用不补0，题目未明示日期时接受候选采用日期，正常对应的行动回执按原rubric认可成功。
+评分含义沿用[原skill规则](../packages/prompts/resources/score/skill/)。总分0–10、12核心单元0–4、24诊断不另计分；过程错误恢复与最终有效交付分别评价。待核使用有宽度区间，不适用不补0；无原文证据的元信息依据须使用以/开头的JSON Pointer及对应原值。题目未明示日期时接受候选采用日期，正常对应的行动回执按原rubric认可成功。
 
 正常结果有八个顶层字段：case_id、final_answer_score、evaluations、diagnostics、findings、evidence、explicit_probability、probability_evidence_ids。12核心项与24诊断使用平级数组，固定父子关系仍校验。模型只提交实际判断和证据编号，程序补身份、固定名称、分档和准确Unicode码点引文。统一取证的编号保持稳定，六轴新增证据按原文坐标去重并消解局部编号冲突。总分轮仅将同一问题分组，程序合并编号及引用，不改六轴判断或丢弃问题。
 

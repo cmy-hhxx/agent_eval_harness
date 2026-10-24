@@ -460,7 +460,9 @@
       "properties": {
         "pointer": {
           "type": "string",
-          "minLength": 1
+          "minLength": 1,
+          "pattern": "^/(availability/|public_requirements($|/))",
+          "description": "Absolute JSON Pointer, such as /public_requirements or /availability/analysis."
         },
         "value": {},
         "rule_id": {

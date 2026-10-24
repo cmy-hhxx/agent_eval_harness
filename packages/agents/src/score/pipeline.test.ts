@@ -46,6 +46,14 @@ test('evidence submissions cannot confuse diagnostic identifiers with core item 
   assert.equal(validate(value),false,'the model-facing schema must reject the exact identifier mix-up observed in the real pilot');
   value.checks[0].affected_item_ids=['E2'];assert.equal(validate(value),true);
 });
+test('model-facing metadata pointers reject the missing slash seen in real axis repairs',()=>{
+  const schema=scoreAgent.profiles['axis-a'].submissionSchema as any;
+  const validate=new Ajv2020({strict:false}).compile(schema.$defs.host_basis);
+  const value={rule_id:'no_public_or_observed_trigger',pointer:'public_requirements',value:{question:'题目'}};
+  assert.equal(validate(value),false);
+  value.pointer='/public_requirements';assert.equal(validate(value),true);
+  value.pointer='/candidate_private_rules';assert.equal(validate(value),false);
+});
 test('recovered process defects need not lower a complete final answer',()=>{
   const value=structuredClone(originalResult) as ScoreResult;
   const context=request(value.evidence),source=context.sources.case.value as any;

@@ -41,7 +41,7 @@ function validateScoreBody(request:AgentRequest,value:ScoreResult|ScoreException
     if(!row.evidence_ids.length&&(row.status==='met'||row.status==='violated'||!row.host_basis?.length))bad(path,'确定判断需要原文证据；无证据的待核或不适用需要真实host_basis。');
     for(const host of row.host_basis??[]){
       const allowed=row.status==='not_applicable'?['no_public_or_observed_trigger']:row.status==='unverified'?['unknown_trigger','missing_observation']:[];
-      if(!allowed.includes(host.rule_id)||!(host.pointer.startsWith('/availability/')||host.pointer==='/public_requirements'||host.pointer.startsWith('/public_requirements/')))bad(path+'/host_basis','元信息只能支持待核或不适用，且仅引用availability/public_requirements。');
+      if(!allowed.includes(host.rule_id)||!(host.pointer.startsWith('/availability/')||host.pointer==='/public_requirements'||host.pointer.startsWith('/public_requirements/')))bad(path+'/host_basis','元信息只能支持待核或不适用；pointer须以/开头，如/public_requirements或/availability/analysis。');
       try{let actual:any=material;for(const key of host.pointer.split('/').slice(1))actual=actual[key.replaceAll('~1','/').replaceAll('~0','~')];if(canonical(actual)!==canonical(host.value))throw Error();
         if(host.rule_id==='missing_observation'&&(!host.pointer.startsWith('/availability/')||!['partial','not_collected','unavailable'].includes(actual)))throw Error();
       }catch{bad(path+'/host_basis','元信息值必须与本题实际记录一致。');}
