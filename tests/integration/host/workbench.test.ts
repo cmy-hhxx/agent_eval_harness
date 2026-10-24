@@ -99,7 +99,7 @@ test("public routing exposes only data and runtime regions and never forwards ol
 
 test("workbench proxies only the registered intake endpoints", () => {
   const ports = { data:8081, automation:4174, runs:4173 };
-  for (const route of ["catalog", "tasks", "assign", "clean", "batches/1234-abcd/report", "batches/1234-abcd/sample"]) {
+  for (const route of ["catalog", "analytics", "tasks", "assign", "clean", "batches/1234-abcd/report", "batches/1234-abcd/sample"]) {
     const pathname = `/data/workbench/${route}`;
     assert.deepEqual(workbenchProxyTarget(pathname, ports), { port:8081, path:pathname });
   }

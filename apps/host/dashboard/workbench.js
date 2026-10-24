@@ -25,7 +25,7 @@ function asset(name) {
 function components(root) {
   const rules = [
     ['table', ['table', 'table-vcenter']],
-    ['button.button, button.table-link, .source-nav button, .table-pagination button, .records-pagination button', ['btn', 'btn-sm']],
+    ['button.button:not(.nav-link), button.table-link, .source-nav button, .table-pagination button, .records-pagination button', ['btn', 'btn-sm']],
     ['.button-primary', ['btn-primary']], ['.button-danger', ['btn-danger']],
     ['select', ['form-select']], ['textarea, input:not([type=checkbox]):not([type=radio]):not([type=hidden])', ['form-control']],
     ['input[type=checkbox], input[type=radio]', ['form-check-input']],

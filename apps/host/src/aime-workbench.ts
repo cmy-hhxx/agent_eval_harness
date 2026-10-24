@@ -1,7 +1,8 @@
 import path from 'node:path';
 import {HttpError,safeId} from '@eval/contracts';
 import {exists,readJson,writeJson,hasLiveRunOwner,localFiles} from '@eval/data';
-import {answerReviewRunSummary,answerReviewSamples,answerReviewSample,retryAnswerReviewTasks,type AimeIncrementalState} from '@eval/workflows/answer-review';
+import {answerReviewRunSummaries,answerReviewSamples,answerReviewSample,retryAnswerReviewTasks,type AimeIncrementalState} from '@eval/workflows/answer-review';
+import {combineEvaluationAnalytics} from './daily-evaluation-analytics.js';
 import {loadConfig,createModelResolver,dashboardSettings,type HostConfig} from './config.js';
 import {readSettings} from './settings.js';
 import {loadAimeConfiguration,runAimeEvaluation,type AimeRunOptions} from './aime-execution.js';
@@ -25,13 +26,28 @@ export async function loadAimeWorkbench(file:string,options:{id?:string;name?:st
   const settings={evaluatorVersion:initial.evaluatorVersion,concurrency:configuration.concurrency};
   const runPath=async(runId:string)=>{const run=path.join(configuration.outputDirectory,safeId(runId));if(!await exists(path.join(run,'state.json')))throw new HttpError(404,'AIME运行不存在');return run;};
   const runs=async()=>{
-    if(!await exists(configuration.outputDirectory))return {runs:[] as Awaited<ReturnType<typeof answerReviewRunSummary>>[]};
     const state=await exists(path.join(configuration.stateDirectory,'state.json'))?await readJson<AimeIncrementalState>(path.join(configuration.stateDirectory,'state.json')):undefined;
-    const dates=new Map(state?.jobs.map(job=>[job.id,job.date]));
+    const dates=new Map<string,string>();
+    for(const job of state?.jobs??[]){
+      if(dates.has(job.id)&&dates.get(job.id)!==job.date)throw new HttpError(409,'AIME运行关联多个业务日期');
+      dates.set(job.id,job.date);
+    }
+    if(state){
+      const rows=[];
+      for(const [runId,date]of dates){
+        const run=path.join(configuration.outputDirectory,safeId(runId));
+        if(await exists(path.join(run,'state.json')))rows.push({run,date});
+        else if(state.jobs.some(job=>job.id===runId&&(job.done||(job.result?.launched??0)>0||(job.result?.succeeded??0)>0)))throw new HttpError(409,'AIME已执行运行的状态文件缺失：'+runId);
+      }
+      const view=await answerReviewRunSummaries(rows,state.jobs.flatMap(job=>job.records));
+      return {...view,runs:view.runs.sort((a,b)=>(b.date??b.runId).localeCompare(a.date??a.runId))};
+    }
     const rows=[];
-    for(const entry of await localFiles.list(configuration.outputDirectory,{withFileTypes:true}))if(entry.isDirectory()&&await exists(path.join(configuration.outputDirectory,entry.name,'state.json')))
-      rows.push(await answerReviewRunSummary(path.join(configuration.outputDirectory,entry.name),dates.get(entry.name)));
-    return {runs:rows.sort((a,b)=>(b.date??b.runId).localeCompare(a.date??a.runId))};
+    const entries=await exists(configuration.outputDirectory)?await localFiles.list(configuration.outputDirectory,{withFileTypes:true}):[];
+    for(const entry of entries)if(entry.isDirectory()&&await exists(path.join(configuration.outputDirectory,entry.name,'state.json')))
+      rows.push({runId:entry.name,date:dates.get(entry.name),run:path.join(configuration.outputDirectory,entry.name)});
+    const view=await answerReviewRunSummaries(rows);
+    return {...view,runs:view.runs.sort((a,b)=>(b.date??b.runId).localeCompare(a.date??a.runId))};
   };
   const snapshot=async()=>{
     const current=await host(),view=await runs(),stateFile=path.join(configuration.stateDirectory,'state.json');
@@ -41,18 +57,15 @@ export async function loadAimeWorkbench(file:string,options:{id?:string;name?:st
     const ownerAlive=await hasLiveRunOwner(configuration.stateDirectory),externalOwner=ownerAlive&&!running;
     const deferred=new Set(((report?.deferred??[]) as {archive:string}[]).map(item=>item.archive)),failures=new Set(((report?.archive_failures??[]) as {archive:string}[]).map(item=>item.archive));
     const packages=[...new Map(state?.scans.flatMap(scan=>scan.names.map(archive=>[archive,{name:archive,status:failures.has(archive)?'failed':deferred.has(archive)?'waiting':scan.cleaned?'cleaned':'pending',report:scan.report_file??null}] as const))??[]).values()];
-    const stages:Record<string,{total:number;succeeded:number;failed:number;pending:number;running:number}>={};
-    for(const run of view.runs)for(const [stage,counts]of Object.entries(run.stages)){
-      const total=stages[stage]??={total:0,succeeded:0,failed:0,pending:0,running:0};for(const key of ['total','succeeded','failed','pending','running'] as const)total[key]+=counts[key];
-    }
-    const models:Record<string,{answers:number;completed:number;failed:number;pending:number}>={};
-    for(const run of view.runs)for(const [model,counts]of Object.entries(run.models)){
-      const total=models[model]??={answers:0,completed:0,failed:0,pending:0};for(const key of ['answers','completed','failed','pending'] as const)total[key]+=counts[key];
-    }
+    const stages=Object.fromEntries(view.coverage.stages.map(({stage,...counts})=>[stage,{...counts,succeeded:counts.completed}]));
+    const models=Object.fromEntries(view.coverage.models.map(counts=>[counts.model,{answers:counts.total,completed:counts.completed,failed:counts.failed,
+      pending:counts.pending+counts.partial+counts.running,partial:counts.partial,running:counts.running}]));
+    const totals=view.coverage.totals;
     return {id,name,workflow:'answer-review' as const,archiveDirectory:configuration.archiveDirectory,inputDirectory:configuration.inputDirectory,outputDirectory:configuration.outputDirectory,
-      questions:view.runs.reduce((n,run)=>n+run.questions,0),answers:view.runs.reduce((n,run)=>n+run.answers,0),completedAnswers:view.runs.reduce((n,run)=>n+run.succeeded,0),models,
-      partialAnswers:view.runs.reduce((n,run)=>n+run.partial,0),pendingAnswers:view.runs.reduce((n,run)=>n+run.pending,0),failedAnswers:view.runs.reduce((n,run)=>n+run.failed,0),
-      taskTotal:view.runs.reduce((n,run)=>n+run.taskTotal,0),taskCompleted:view.runs.reduce((n,run)=>n+run.taskCompleted,0),
+      answerCounts:view.coverage.totals,
+      questions:view.coverage.questions,answers:totals.total,completedAnswers:totals.completed,models,
+      partialAnswers:totals.partial,pendingAnswers:totals.pending+totals.partial+totals.running,failedAnswers:totals.failed,
+      taskTotal:view.coverage.stages.reduce((n,stage)=>n+stage.total,0),taskCompleted:view.coverage.stages.reduce((n,stage)=>n+stage.completed,0),
       concurrency:configuration.concurrency,evaluatorVersion:current.evaluatorVersion,ownerAlive,externalOwner,watch:watch??null,
       error:externalOwner?'AIME正由另一个进程运行，请先停止原aime-auto或CLI进程':watch?.lastError??null,
       settings:{engine:overlay.engine??configuration.engine,debug:overlay.debug??false,execution:{...current.evaluation.execution,concurrency:configuration.concurrency},
@@ -76,6 +89,9 @@ export async function loadAimeWorkbench(file:string,options:{id?:string;name?:st
     return snapshot();
   };
   return {id,name,configuration,settings,snapshot,runs,setSettings,
+    async analytics(){
+      return combineEvaluationAnalytics('answers',[(await runs()).coverage]);
+    },
     setConcurrency:(concurrency:number)=>setSettings({execution:{concurrency}}),
     async run(signal:AbortSignal,controls:Pick<AimeRunOptions,'modelRequests'|'pauseSignal'>={}){
       if(running)throw new HttpError(409,'AIME正在运行');running=true;

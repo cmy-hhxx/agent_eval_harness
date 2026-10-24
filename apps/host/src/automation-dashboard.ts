@@ -46,6 +46,7 @@ export async function automationSnapshot(config: AutomationConfig, output: strin
         if (!view.runs.some(run => run.runId === id)) errors.push(`${id}: 评测状态文件缺失`);
     } catch (error) { errors.push(errorText(error)); }
     jobs.push({ ...job, summary: view?.summary ?? job.summary,
+      coverage: view?.coverage,
       cache: cacheUsage(view?.runs ?? []), execution: liveExecution(liveRuns), hours: view?.hours ?? [], monitorError: errors.join("\n") || undefined });
     activeRuns.push(...liveRuns);
   }

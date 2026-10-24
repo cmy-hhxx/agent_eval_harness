@@ -34,3 +34,25 @@ test('AIME Workbench persists independent settings and refuses an existing CLI o
   await aime.setSettings({bindings:{score:{model:'fixture'},attribution:{model:'fixture'}}});
   assert.equal((await aime.snapshot()).settings.bindings.score.model,'fixture');
 });
+
+test('AIME daily coverage includes registered unplanned answers once and ignores unrelated run directories',async t=>{
+  const f=await fixtureConfig();t.after(()=>rm(f.directory,{recursive:true,force:true}));
+  const file=path.join(f.directory,'aime.json'),stateDirectory=path.join(f.directory,'aime-state'),outputDirectory=path.join(f.directory,'eval_output/0_daily_eval');
+  await writeJson(file,{archiveDirectory:path.join(f.directory,'archives'),inputDirectory:path.join(f.directory,'2_daily_eval_input'),outputDirectory,
+    dataStateDirectory:path.join(f.directory,'data-state'),stateDirectory,hostConfigs:[path.join(ROOT,'configs/host.json'),path.join(ROOT,'configs/answer-review.json')],
+    settingsFile:path.join(f.directory,'config.ini'),logDirectory:path.join(f.directory,'log'),logLockDirectory:path.join(f.directory,'log-lock'),concurrency:64});
+  const record={model:'aime_fast',batch_id:'business',case_id:'one',trace_id:'true-trace',date:'2026-10-24',input_file:'aime_fast.jsonl',input_index:0,original_file:'input.7z/a.jsonl',original_line:1,original_item:0};
+  const job={id:'1024',date:record.date,records:[record],done:false,output:path.join(outputDirectory,'1024'),result:undefined as {launched:number;succeeded:number}|undefined};
+  await writeJson(path.join(stateDirectory,'state.json'),{scans:[],jobs:[job,structuredClone(job)]});
+  await writeJson(path.join(outputDirectory,'unrelated/state.json'),{workflow:'wrong-workflow'});
+  const aime=await loadAimeWorkbench(file),snapshot=await aime.snapshot();
+  assert.deepEqual(snapshot.answerCounts,{total:1,completed:0,partial:0,pending:1,failed:0,running:0});
+  assert.equal(snapshot.stages.score.pending,1);assert.equal(snapshot.stages.attribution.pending,1);
+  assert.equal((await aime.runs()).runs.length,0,'registration can precede creation of the evaluation checkpoint');
+  assert.equal((await aime.analytics()).totals.total,1);
+  job.done=true;await writeJson(path.join(stateDirectory,'state.json'),{scans:[],jobs:[job]});
+  await assert.rejects(aime.analytics(),/已执行运行的状态文件缺失/);
+  job.done=false;job.result={launched:1,succeeded:0};
+  await writeJson(path.join(stateDirectory,'state.json'),{scans:[],jobs:[job]});
+  await assert.rejects(aime.analytics(),/已执行运行的状态文件缺失/,'an executed run with only failures cannot silently lose its progress and budgets');
+});

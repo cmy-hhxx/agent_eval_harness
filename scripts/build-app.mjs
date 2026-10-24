@@ -16,6 +16,9 @@ try {
   await build({ entryPoints: [path.join(root, "apps/host/dashboard/workbench.js")],
     outfile: path.join(staging, "apps/host/dashboard/workbench.bundle.js"), bundle: true,
     format: "esm", platform: "browser", target: "es2022" });
+  await build({ entryPoints: [path.join(root, "apps/host/dashboard/daily-charts.js")],
+    outfile: path.join(staging, "apps/host/dashboard/daily-charts.bundle.js"), bundle: true,
+    format: "esm", platform: "browser", target: "es2022", minify: true });
 
   async function resources(directory) {
     for (const entry of await readdir(path.join(root, directory), { withFileTypes: true })) {

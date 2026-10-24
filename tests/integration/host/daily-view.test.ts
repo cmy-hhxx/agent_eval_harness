@@ -18,7 +18,7 @@ test('daily sources control independently and preserve configuration drafts, pac
   const compiled = await build({entryPoints:[path.join(directory,'daily.js')],bundle:true,write:false,format:'iife',globalName:'Daily',platform:'browser'});
   dom.window.setTimeout = () => 0;
   const settings = {engine:'pi',bindings:{attribution:{channel:'judge',model:'judge-model',thinking:'medium'}},execution:{timeoutSeconds:600,maxToolCalls:8,retries:1,repairAttempts:2,maxTaskAttempts:4,retryDelaySeconds:10},rewrite:{attribution:false},debug:false};
-  const sources = ['wencai','aime'].map(id => ({id,name:id,workflow:id === 'aime' ? 'answer-review' : 'comparison',status:'idle',archiveDirectory:`/${id}/input`,outputDirectory:`/${id}/output`,concurrency:id === 'aime' ? 64 : 32,activeRequests:id === 'aime' ? 2 : 3,waitingRequests:1,settings:structuredClone(settings),activeSettings:structuredClone(settings),modelCatalog:[{id:'judge-model',channel:'judge',name:'Judge'}],packages:{items:[{id:'p',name:`${id}.7z`,status:'pending',accepted:2,excluded:1}],total:51,page:1,pageSize:10},stages:{attribution:{total:10,completed:5,running:2,pending:3,failed:0}},runs:[],...(id === 'wencai' ? {mongo:{status:'completed',inputs:2,outputs:1}} : {questions:7,answers:10,completedAnswers:0,partialAnswers:5,pendingAnswers:9,failedAnswers:1,models:{aime_fast:{answers:6,completed:0,failed:1,pending:5},aime_expert:{answers:4,completed:0,failed:0,pending:4}}})}));
+  const sources = ['wencai','aime'].map(id => ({id,name:id,workflow:id === 'aime' ? 'answer-review' : 'comparison',status:'idle',archiveDirectory:`/${id}/input`,outputDirectory:`/${id}/output`,concurrency:id === 'aime' ? 64 : 32,activeRequests:id === 'aime' ? 2 : 3,waitingRequests:1,settings:structuredClone(settings),activeSettings:structuredClone(settings),modelCatalog:[{id:'judge-model',channel:'judge',name:'Judge'}],packages:{items:[{id:'p',name:`${id}.7z`,status:'pending',accepted:2,excluded:1}],total:51,page:1,pageSize:10},stages:{attribution:{total:10,completed:5,running:2,pending:3,failed:0}},runs:[],...(id === 'wencai' ? {comparisonCounts:{total:9,completed:5,pending:3,failed:1,partial:0,running:0},mongo:{status:'completed',inputs:2,outputs:1}} : {answerCounts:{total:10,completed:0,pending:4,failed:1,partial:5,running:0},questions:7,answers:10,completedAnswers:0,partialAnswers:5,pendingAnswers:9,failedAnswers:1,models:{aime_fast:{answers:6,completed:0,failed:1,pending:5},aime_expert:{answers:4,completed:0,failed:0,pending:4}}})}));
   const calls:{url:string;body:any}[] = []; let offline = false;
   const fetcher = async (url:string,init:RequestInit = {}) => {
     if (offline) return new Response(JSON.stringify({error:'离线'}),{status:503});
@@ -38,7 +38,7 @@ test('daily sources control independently and preserve configuration drafts, pac
   const click = (id:string,label:string) => [...row(id).querySelectorAll('button')].find((item:any)=>item.textContent===label).click();
   try {
     await controller.ready; assert.match(el('daily-requests-total').textContent,/请求 5.*等待 2/);
-    assert.equal(el('daily-panel-packages').hidden,false); el('daily-tab-packages').dispatchEvent(new dom.window.KeyboardEvent('keydown',{key:'ArrowLeft',cancelable:true})); assert.equal(el('daily-panel-progress').hidden,false); assert.equal(el('daily-request-section').hidden,true);
+    assert.equal(el('daily-panel-overview').hidden,false); assert.equal(el('daily-panel-packages').hidden,true); el('daily-tab-packages').click(); el('daily-tab-packages').dispatchEvent(new dom.window.KeyboardEvent('keydown',{key:'ArrowLeft',cancelable:true})); assert.equal(el('daily-panel-progress').hidden,false); assert.equal(el('daily-request-section').hidden,true);
     assert.equal(el('daily-stages').querySelector('[role=progressbar]').getAttribute('aria-valuenow'),'5'); assert.equal(el('daily-stages').querySelector('.progress-bar').style.width,'50%');
     el('daily-settings-open').focus(); el('daily-settings-open').click(); assert.equal(el('daily-settings').open,true); dom.window.document.querySelector('[data-daily-close="daily-settings"]').click(); assert.equal(dom.window.document.activeElement,el('daily-settings-open'));
     assert.equal(el('daily-aime-coverage').hidden,true);
@@ -51,12 +51,12 @@ test('daily sources control independently and preserve configuration drafts, pac
     click('aime','立即停止'); await wait(()=>sources[1].status==='idle' && !row('aime').querySelector('input').disabled); assert.equal(sources[0].status,'running');
     el('daily-timeout').value='901'; el('daily-timeout').dispatchEvent(new dom.window.Event('input',{bubbles:true}));
     controller.select('aime'); assert.equal(el('daily-timeout').value,'600'); assert.equal(el('daily-mongo').hidden,true);
-    assert.equal(el('daily-panel-packages').hidden,false);
+    assert.equal(el('daily-panel-overview').hidden,false);
     assert.equal(row('aime').querySelector('[data-cell=completed]').textContent,'0', 'accepted attribution tasks cannot stand in for complete answers');
     assert.equal(row('aime').querySelector('[data-cell=pending]').textContent,'9'); assert.equal(row('aime').querySelector('[data-cell=failed]').textContent,'1');
     assert.equal(el('daily-aime-coverage').hidden,false); assert.match(el('daily-aime-counts').textContent,/问句 7.*回答 10.*完整回答 0.*部分完成回答 5.*阶段任务 5 \/ 10/);
     assert.deepEqual([...el('daily-aime-model-rows').querySelectorAll('tr')].map((row:any)=>[...row.children].map((cell:any)=>cell.textContent)),[['Fast','6','0','1','5'],['Expert','4','0','0','4']]);
-    const aimeSource = sources[1] as Record<string,any>; delete aimeSource.models; delete aimeSource.questions; delete aimeSource.answers; delete aimeSource.completedAnswers; delete aimeSource.partialAnswers;
+    const aimeSource = sources[1] as Record<string,any>; delete aimeSource.models; delete aimeSource.questions; delete aimeSource.answers; delete aimeSource.completedAnswers; delete aimeSource.answerCounts; delete aimeSource.partialAnswers;
     await controller.refresh(); assert.equal(el('daily-aime-model-table').hidden,true); assert.equal(el('daily-aime-counts').textContent,'阶段任务 5 / 10'); assert.equal(row('aime').querySelector('[data-cell=completed]').textContent,'');
     el('daily-settings-form').dispatchEvent(new dom.window.Event('submit',{cancelable:true})); await wait(()=>el('daily-settings-status').textContent.includes('已保存'));
     assert.equal(Object.hasOwn(calls.find(call=>call.url.endsWith('/aime/settings'))!.body,'rewrite'),false);
@@ -98,7 +98,7 @@ test('package reports show exact exclusions and per-answer evaluation coverage w
     assert.equal(el('daily-package-report').open,false); el('daily-package-rows').querySelector('button').click(); await wait(()=>el('daily-package-report').open && el('daily-report-loading').hidden);
     el('daily-report-size').value='50'; el('daily-report-size').dispatchEvent(new dom.window.Event('change')); await wait(()=>el('daily-report-page').textContent.startsWith('1 / 2'));
     el('daily-report-next').click(); await wait(()=>calls.some(url=>url.includes('section=records&page=2'))); await wait(()=>el('daily-report-page').textContent.startsWith('2 / 2'));
-    el('daily-report-section').value='exclusions'; el('daily-report-section').dispatchEvent(new dom.window.Event('change')); await wait(()=>el('daily-report-rows').textContent.includes('missing_trace_id'));
+    el('daily-report-section').value='exclusions'; el('daily-report-section').dispatchEvent(new dom.window.Event('change')); await wait(()=>el('daily-report-rows').textContent.includes('缺少 Trace'));
     assert.match(el('daily-report-rows').textContent,/bad.jsonl.*19 \/ 2/s); assert.match(el('daily-report-page').textContent,/1 \/ 1/);
     el('daily-report-section').value='metadata_issues'; el('daily-report-section').dispatchEvent(new dom.window.Event('change')); await wait(()=>el('daily-report-rows').textContent.includes('difficulty · conflicting_labels'));
     await controller.refresh(); assert.equal(el('daily-report-section').value,'metadata_issues'); assert.match(el('daily-report-rows').textContent,/conflicting_labels/);

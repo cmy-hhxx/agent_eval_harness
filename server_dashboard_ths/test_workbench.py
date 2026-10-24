@@ -328,6 +328,95 @@ class WorkbenchTest(unittest.TestCase):
         finally:
             source.close()
 
+    def test_analytics_aggregates_all_canonical_records_and_actual_exclusion_reasons(self):
+        rows = [archive_row("b_fast", f"case-{index}", request_time=f"2026-09-{29 if index < 60 else 30} 11:00:00")
+                for index in range(120)]
+        self.package("0123456789abcdef_19990101_010000.7z", rows=rows, extra={
+            "AA-post_train_fast_V1.jsonl": "\n".join(json.dumps(archive_row("b_post_train_fast", f"case-{index}")) for index in range(5))})
+        first = self.discover_batches()[0]
+        self.clean([first["id"]])
+        self.package("0123456789abcdef_19990101_020000.7z", rows=[*rows[:3], archive_row("b_fast", "empty", answer="")])
+        second = next(batch for batch in self.discover_batches() if batch["name"] == "0123456789abcdef_19990101_020000.7z")
+        self.clean([second["id"]])
+        self.package("different-task.7z")
+        third = next(batch for batch in self.discover_batches() if batch["name"] == "different-task.7z")
+        task = self.task()
+        self.catalog.assign({"batch_ids": [third["id"]], "task_id": task["id"]})
+        self.clean([third["id"]])
+        with patch.object(self.catalog, "discover", side_effect=AssertionError("GET must not discover")), \
+                patch.object(self.catalog, "dataset", side_effect=AssertionError("GET must not create datasets")), \
+                patch.object(self.datasets[first["origin"]], "open_archive_index", side_effect=AssertionError("GET must not create an index")), \
+                patch("workbench_catalog.json.loads", side_effect=AssertionError("GET must aggregate in SQL without decoding report bodies")):
+            result = self.catalog.analytics({"task_id": [first["task_id"]]})
+        self.assertEqual(result["totals"], {"rawRecords": 129, "answers": 125, "questions": 120, "excluded": 4,
+                                             "duplicates": 3, "metadataIssues": 0, "packages": 2, "unreportedAnswers": 0})
+        self.assertEqual(result["dates"], [{"date": "2026-09-29", "answers": 65, "questions": 60},
+                                            {"date": "2026-09-30", "answers": 60, "questions": 60}])
+        self.assertEqual(result["models"], [{"model": "b_fast", "answers": 120}, {"model": "b_post_train_fast", "answers": 5}])
+        self.assertEqual(result["exclusions"], [{"reason": "duplicate_case", "count": 3}, {"reason": "answer_empty", "count": 1}])
+        self.assertEqual(result["packages"], [{"status": "cleaned", "count": 1}, {"status": "empty", "count": 1}])
+        self.assertTrue(result["reportsComplete"])
+        self.assertEqual(self.catalog.analytics({"task_id": [task["id"]]})["totals"]["answers"], 1)
+
+    def test_analytics_covers_external_publication_before_catalog_adoption_and_rejects_pending(self):
+        self.package()
+        batch = self.discover_batches()[0]
+        dataset = self.datasets[batch["origin"]]
+        with dataset.archive_lock():
+            dataset.process_archives(app.archive_signature(dataset.archive_dir))
+        result = self.catalog.analytics({"task_id": [batch["task_id"]]})
+        self.assertEqual(result["totals"]["answers"], 1)
+        self.assertEqual(result["totals"]["rawRecords"], 1)
+        self.assertEqual(result["packages"], [{"status": "ready", "count": 1}])
+        source = dataset.open_archive_index()
+        try:
+            with source:
+                source.execute("INSERT INTO pending VALUES (1, '{}')")
+            with self.assertRaisesRegex(Conflict, "发布中"):
+                self.catalog.analytics({"task_id": [batch["task_id"]]})
+        finally:
+            source.close()
+
+    def test_analytics_distinguishes_empty_input_from_missing_index_and_unreported_history(self):
+        task = self.task()
+        empty = self.catalog.analytics({"task_id": [task["id"]]})
+        self.assertEqual(empty["totals"]["answers"], 0)
+        self.assertEqual(empty["models"], [])
+        self.assertEqual(empty["dates"], [])
+        self.assertTrue(empty["reportsComplete"])
+        self.package()
+        batch = self.discover_batches()[0]
+        self.clean([batch["id"]])
+        dataset = self.datasets[batch["origin"]]
+        source = dataset.open_archive_index()
+        try:
+            with source:
+                source.execute("UPDATE records SET archive='historical.7z'")
+        finally:
+            source.close()
+        result = self.catalog.analytics({"task_id": [batch["task_id"]]})
+        self.assertEqual(result["totals"]["answers"], 1)
+        self.assertEqual(result["totals"]["unreportedAnswers"], 1)
+        self.assertFalse(result["reportsComplete"])
+        self.assertTrue(all(result["totals"][key] is None for key in ("rawRecords", "excluded", "duplicates", "metadataIssues")))
+        (dataset.state_dir / "archive-records.sqlite").rename(dataset.state_dir / "missing-index.sqlite")
+        with self.assertRaisesRegex(Conflict, "索引缺失"):
+            self.catalog.analytics({"task_id": [batch["task_id"]]})
+
+    def test_analytics_http_validates_task_scope(self):
+        base = self.workbench_url()
+        for query in ("", "?task_id=", "?task_id=one&task_id=two"):
+            with self.assertRaises(HTTPError) as caught:
+                urlopen(base + "analytics" + query)
+            self.assertEqual(caught.exception.code, 400)
+        with self.assertRaises(HTTPError) as caught:
+            urlopen(base + "analytics?task_id=missing")
+        self.assertEqual(caught.exception.code, 404)
+        task = self.task()
+        with urlopen(base + "analytics?task_id=" + task["id"]) as response:
+            self.assertEqual(response.status, 200)
+            self.assertEqual(json.loads(response.read())["totals"]["answers"], 0)
+
     def test_missing_identity_index_cannot_silently_replace_a_published_answer(self):
         self.package("0123456789abcdef_20261019_010000.7z")
         self.clean([self.discover_batches()[0]["id"]])

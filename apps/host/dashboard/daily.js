@@ -1,4 +1,6 @@
 import { stageProgress } from './stage-progress.js';
+import { mountAnalytics } from './daily-analytics.js';
+import { cleaningReason } from './cleaning-labels.js';
 
 const sourceLabels = { wencai:'问财日常四路', aime:'AIME 日常全量' };
 const statusLabels = { idle:'待运行', running:'运行中', pausing:'暂停中', paused:'已暂停', stopping:'停止中', failed:'失败', finished:'已完成', completed:'已完成', pending:'待处理', queued:'排队', stable:'待处理', uploading:'上传中', cleaning:'清洗中', cleaned:'清洗完成', evaluating:'评测中', interrupted:'已中断', ready:'已就绪', retry:'等待重试', stopped:'已停止', waiting:'等待数据', waiting_inputs:'等待配对', partial:'部分完成', empty:'无有效数据', cancelling:'取消中', cancelled:'已取消', uploaded:'已上传', blocked:'已暂停' };
@@ -13,7 +15,8 @@ export function mountDaily(root, options = {}) {
   let data, selected = 'wencai', formSource, busy = false, connected = false, timer, disposed = false, revision = 0, reportDialogSource;
   const sourceBusy = new Set(), drafts = new Map(), settingsMessages = new Map(), packageViews = new Map(), reports = new Map(), reportSections = new Map();
   const sourceViews = new Map(), dialogFocus = new Map(), packageRequests = new Map();
-  function view(id = selected) { if (!sourceViews.has(id)) sourceViews.set(id,{tab:'packages',packagePage:1,packageSize:10,requestPage:1,requestSize:10,runPage:1,runSize:10}); return sourceViews.get(id); }
+  const analytics = mountAnalytics(root,{api,loadCharts:options.loadCharts});
+  function view(id = selected) { if (!sourceViews.has(id)) sourceViews.set(id,{tab:'overview',packagePage:1,packageSize:10,requestPage:1,requestSize:10,runPage:1,runSize:10}); return sourceViews.get(id); }
   function openDialog(id) { const dialog = $(id); if (dialog.open) return; dialogFocus.set(id,root.activeElement || doc.activeElement); dialog.showModal(); }
   for (const id of ['daily-settings','daily-package-report']) $(id).addEventListener('close',() => { const target = dialogFocus.get(id); if (target?.isConnected) target.focus(); else $('daily-settings-open').focus(); });
   root.querySelectorAll('[data-daily-close]').forEach(item => { item.onclick = () => $(item.dataset.dailyClose).close(); });
@@ -21,6 +24,7 @@ export function mountDaily(root, options = {}) {
   function renderTab() {
     const current = view().tab;
     root.querySelectorAll('[data-daily-tab]').forEach(button => { const active = button.dataset.dailyTab === current; button.setAttribute('aria-selected',String(active)); button.tabIndex = active ? 0 : -1; button.classList.toggle('active',active); $(`daily-panel-${button.dataset.dailyTab}`).hidden = !active; });
+    if (current === 'overview') analytics.activate(selected); else analytics.hide();
   }
   function selectTab(tab) { view().tab = tab; renderTab(); }
   const tabs = [...root.querySelectorAll('[data-daily-tab]')];
@@ -65,10 +69,11 @@ export function mountDaily(root, options = {}) {
       }
       row.classList.toggle('selected',source.id === selected); row.querySelector('td:first-child button').setAttribute('aria-pressed',String(source.id === selected));
       row.querySelector('[data-cell=status]').textContent = textStatus(source.status);
-      const stages = Object.values(source.stages || {});
+      const counts = source.id === 'aime' ? source.answerCounts : source.comparisonCounts;
       for (const key of ['pending','completed','failed']) {
-        const answers = source[{pending:'pendingAnswers',completed:'completedAnswers',failed:'failedAnswers'}[key]];
-        row.querySelector(`[data-cell=${key}]`).textContent = source.id === 'aime' ? numeric(answers) ? answers : '' : stages.length && stages.every(counts => numeric(counts[key])) ? stages.reduce((sum,counts) => sum + counts[key],0) : '';
+        const count = key === 'pending' ? counts && ['pending','partial','running'].every(part => numeric(counts[part])) ? counts.pending + counts.partial + counts.running : undefined : counts?.[key];
+        const cell = row.querySelector(`[data-cell=${key}]`); cell.textContent = numeric(count) ? count : '';
+        cell.title = key === 'pending' && counts ? `待评 ${counts.pending} · 部分完成 ${counts.partial} · 进行中 ${counts.running}` : source.id === 'aime' ? '回答' : '对局';
       }
       row.querySelector('[data-cell=requests]').textContent = `${source.activeRequests || 0} / ${source.waitingRequests || 0}`;
       const input = row.querySelector('input'); if (!input.dataset.dirty && root.activeElement !== input) input.value = source.concurrency;
@@ -145,7 +150,7 @@ export function mountDaily(root, options = {}) {
   async function refresh() {
     const current = ++revision;
     clearTimeout(timer);
-    try { const value = await api('?page_size=10'); if (disposed || current !== revision) return; data = value; connected = true; error(''); render(); if (packageViews.has(selected)) await packagePage(0,selected); if (disposed || current !== revision) return; const report = reports.get(selected); if (report && $('daily-package-report').open) await loadReport(selected,report); }
+    try { const value = await api('?page_size=10'); if (disposed || current !== revision) return; data = value; connected = true; error(''); render(); void analytics.refresh(); if (packageViews.has(selected)) await packagePage(0,selected); if (disposed || current !== revision) return; const report = reports.get(selected); if (report && $('daily-package-report').open) await loadReport(selected,report); }
     catch (cause) { if (disposed || current !== revision) return; connected = false; error(`读取失败：${cause.message}`); renderSources(); renderDetail(); }
     finally { if (!disposed && current === revision && (data?.sources.some(source => live(source.status)) || !connected)) timer = setTimeout(() => void refresh(),5000); }
   }
@@ -174,7 +179,7 @@ export function mountDaily(root, options = {}) {
         if (item.coverage?.mongoStatus) coverage.append(node('div',`MongoDB ${textStatus(item.coverage.mongoStatus)}`));
         const id = selected;
         for (const runId of item.coverage?.runIds || []) results.append(button(runId,() => { $('daily-package-report').close(); return options.onResults?.(id,runId); }));
-      } else coverage.textContent = report.section === 'metadata_issues' ? `${item.field || ''} · ${item.error || item.reason || ''}` : item.reason || item.error || '';
+      } else { coverage.textContent = report.section === 'metadata_issues' ? `${item.field || ''} · ${item.error || item.reason || ''}` : cleaningReason(item.reason || item.error); coverage.title = item.reason || item.error || ''; }
       row.append(node('td',`${item.model || ''}\n${item.case_id || ''}`),location,coverage,results); return row;
     }));
     const pages = Math.max(1,Math.ceil((value?.total || 0) / report.pageSize));
@@ -229,5 +234,5 @@ export function mountDaily(root, options = {}) {
     const item = packages?.items.find(item => item.excluded > 0) || packages?.items[0];
     if (item) await selectReport(id,item);
     else { reports.delete(id); renderReport(); $('daily-report-section').value = 'exclusions'; }
-  }, destroy() { disposed = true; clearTimeout(timer); for (const report of reports.values()) report.controller?.abort(); } };
+  }, destroy() { disposed = true; clearTimeout(timer); analytics.destroy(); for (const report of reports.values()) report.controller?.abort(); } };
 }

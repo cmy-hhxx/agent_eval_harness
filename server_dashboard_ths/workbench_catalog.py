@@ -285,6 +285,75 @@ class WorkbenchCatalog:
                 "status": row["status"], "summary": json.loads(row["report"]),
                 "section": section, "page": page, "page_size": page_size, "total": saved[0], "items": items}
 
+    def analytics(self, query):
+        identifiers = query.get("task_id", [])
+        if len(identifiers) != 1 or not identifiers[0]:
+            raise ValueError("须指定一个任务 task_id")
+        with self.db() as db:
+            db.execute("BEGIN")
+            task = db.execute("SELECT * FROM tasks WHERE id=?", (identifiers[0],)).fetchone()
+            if task is None:
+                raise KeyError("任务不存在")
+            packages = [{"status": row[0], "count": row[1]} for row in db.execute(
+                "SELECT status,COUNT(*) FROM batches WHERE task_id=? GROUP BY status ORDER BY status", (task["id"],))]
+            has_reports = db.execute("SELECT 1 FROM batches WHERE task_id=? AND report IS NOT NULL LIMIT 1", (task["id"],)).fetchone()
+        dataset = self.datasets[task["dataset"]]
+        index = dataset.state_dir / "archive-records.sqlite"
+        result = {"totals": {"rawRecords": 0, "answers": 0, "questions": 0, "excluded": 0,
+                             "duplicates": 0, "metadataIssues": 0, "packages": sum(row["count"] for row in packages),
+                             "unreportedAnswers": 0},
+                  "dates": [], "models": [], "exclusions": [], "packages": packages, "reportsComplete": True}
+        if not index.is_file():
+            if has_reports or next(dataset.output_dir.glob("*/*.jsonl"), None) is not None:
+                raise Conflict("规范输入索引缺失")
+            return result
+        source = sqlite3.connect(index.resolve().as_uri() + "?mode=ro", uri=True)
+        try:
+            source.execute("BEGIN")
+            if source.execute("SELECT 1 FROM pending").fetchone():
+                raise Conflict("输入发布中，请稍后刷新")
+            totals = result["totals"]
+            totals["answers"] = source.execute("SELECT COUNT(*) FROM records").fetchone()[0]
+            totals["questions"] = source.execute("SELECT COUNT(*) FROM (SELECT day,batch_id,case_id FROM records GROUP BY day,batch_id,case_id)").fetchone()[0]
+            result["models"] = [{"model": row[0], "answers": row[1]} for row in source.execute(
+                "SELECT model,COUNT(*) FROM records GROUP BY model ORDER BY model")]
+            result["dates"] = [{"date": row[0], "answers": row[1], "questions": row[2]} for row in source.execute('''
+                SELECT day,SUM(answers),COUNT(*) FROM
+                    (SELECT day,batch_id,case_id,COUNT(*) AS answers FROM records GROUP BY day,batch_id,case_id)
+                GROUP BY day ORDER BY day
+            ''')]
+            cleaning = source.execute('''
+                SELECT COALESCE(SUM(json_extract(report,'$.read')),0),
+                       COALESCE(SUM(json_extract(report,'$.excluded')),0),
+                       COALESCE(SUM(json_extract(report,'$.metadata_issue_count')),0)
+                FROM cleaning_reports
+            ''').fetchone()
+            totals["rawRecords"], totals["excluded"], totals["metadataIssues"] = cleaning
+            result["exclusions"] = [{"reason": row[0], "count": row[1]} for row in source.execute('''
+                SELECT json_extract(reason.value,'$.reason') AS reason,
+                       SUM(json_extract(reason.value,'$.count')) AS count
+                FROM cleaning_reports,json_each(report,'$.reasons') AS reason
+                GROUP BY reason ORDER BY count DESC,reason
+            ''')]
+            totals["duplicates"] = sum(row["count"] for row in result["exclusions"]
+                                       if row["reason"] in ("duplicate_case", "duplicate_trace"))
+            totals["unreportedAnswers"] = source.execute('''
+                SELECT COUNT(*) FROM (
+                    SELECT archive,model,batch_id,case_id,day FROM records
+                    EXCEPT
+                    SELECT c.name,json_extract(record.value,'$.model'),json_extract(record.value,'$.batch_id'),
+                           json_extract(record.value,'$.case_id'),json_extract(record.value,'$.date')
+                    FROM cleaning_reports c,json_each(c.report,'$.records') AS record
+                )
+            ''').fetchone()[0]
+            if totals["unreportedAnswers"]:
+                result["reportsComplete"] = False
+                for key in ("rawRecords", "excluded", "duplicates", "metadataIssues"):
+                    totals[key] = None
+        finally:
+            source.close()
+        return result
+
     def published_report(self, batch):
         with self.db() as db:
             task = dict(db.execute("SELECT * FROM tasks WHERE id=?", (batch["task_id"],)).fetchone())

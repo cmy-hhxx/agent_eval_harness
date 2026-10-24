@@ -1039,6 +1039,8 @@ class Handler(BaseHTTPRequestHandler):
         try:
             if self.command == "GET" and path == "catalog":
                 self.send_json(200, catalog.snapshot(parse_qs(parsed.query)))
+            elif self.command == "GET" and path == "analytics":
+                self.send_json(200, catalog.analytics(parse_qs(parsed.query)))
             elif self.command == "GET" and task_clean and task_clean[2] is None:
                 self.send_json(200, catalog.clean_status(task_clean[1]))
             elif self.command == "GET" and re.fullmatch(r"batches/[a-f0-9-]+/(report|sample)", path):

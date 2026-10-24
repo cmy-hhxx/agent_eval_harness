@@ -48,6 +48,7 @@
 | 接口 | 行为 |
 |---|---|
 | `GET /data/workbench/catalog` | 仅读已提交的任务与分页批次索引；支持 source/category/task/status/unassigned/page/page_size。page_size 为 1–100，默认 50；目录发现由后台轮询和显式清洗负责 |
+| `GET /data/workbench/analytics?task_id=<UUID>` | 全任务的已发布输入总量、实际业务日期趋势、模型分布和清洗排除原因；不受批次/报告分页影响，不发现或清洗数据 |
 | `POST /data/workbench/tasks` | 创建任务：name、source、category、profile |
 | `POST /data/workbench/assign` | 批量归属：batch_ids、task_id；整组验证后提交 |
 | `POST /data/workbench/evaluation-scope` | Host 内部读取同任务已清洗批次的固定记录坐标、模型组和来源输出路径；不接收浏览器传入路径 |
@@ -60,6 +61,8 @@
 | `GET /data/workbench/batches/<UUID>/sample` | 按纳入报告的零基 index 读取一个样本；输入改变或缺失明确报错 |
 
 同任务不接受来自不同目录的同名包，避免底层包收据混淆；可建立独立任务区分。任务名称不参与文件路径，输入的业务 `batch_id`、`case_id` 保留原义。
+
+总览回答数、问句数、日期和模型分布从对应数据集的规范输入身份索引聚合，回答保留发布时的去重口径，问句按业务日期、batch_id、case_id跨模型合并；日期来自记录，不解析压缩包名称。原始记录、排除、重复和元数据异常从已有清洗报告聚合，重复仅包含 duplicate_case 与 duplicate_trace。报告缺失的历史输入通过 unreportedAnswers / reportsComplete 明确表示，对应清洗总数返回 null；不把未知补为零。输入发布中或已有输入但索引缺失时明确报错。接口只读 SQLite 与目录元信息，不加载回答正文、不复制结果，也不另存聚合缓存。
 
 清洗状态为 idle、queued、running、stopping、stopped、cancelling、cancelled、finished。任务级清洗和手动清洗共享现有单实例锁，来源关闭时不得继续请求新清洗。取消在解包返回、逐条处理、暂存和事务提交前检查；第三方解包调用返回前不会发布输入。已经提交的发布事务继续完成，不把半套文件暴露给评测器。进程重启后只恢复已提交发布，待处理包保持 interrupted，等待再次明确运行。
 

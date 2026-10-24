@@ -62,7 +62,7 @@ test("intake creates a task, assigns batches, cleans and locates report samples;
     el("intake-rows").querySelector("button").click();
     await waitFor(() => !el("intake-report").hidden);
     assert.match(el("report-counts").textContent,/读入 3 条.*纳入 2 个回答.*排除 1 条/);
-    assert.match(el("report-rows").textContent,/缺回答/);
+    assert.match(el("report-rows").textContent,/空回答/);
     change("report-section","metadata_issues");
     await waitFor(() => /meta.rued.*R 必须是整数/.test(el("report-rows").textContent));
     assert.match(el("report-counts").textContent,/标签与效率异常 1 项/);

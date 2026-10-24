@@ -1,6 +1,5 @@
+import { cleaningReason as reason } from './cleaning-labels.js';
 const states = { uploading:'上传中', ready:'待清洗', queued:'清洗排队中', cleaning:'清洗中', cleaned:'清洗完成', partial:'部分文件失败', empty:'无新增有效回答', failed:'清洗失败', interrupted:'清洗中断' };
-const reasons = { request_time_missing:'缺请求时间', request_time_invalid:'请求时间格式无效', timestamp_time_invalid:'请求时间戳无效', answer_empty:'缺回答', invalid_json:'JSON 格式错误', duplicate_case:'重复记录', identity_conflict:'业务身份内容冲突', question_missing:'缺问题', question_invalid:'问题无效', model_unknown:'无法识别模型', local_import_overlap:'与已登记输入重叠' };
-const reason = value => reasons[value] || value;
 
 export function mountIntake(root, options = {}) {
   const el = id => root.querySelector(`#${id}`);

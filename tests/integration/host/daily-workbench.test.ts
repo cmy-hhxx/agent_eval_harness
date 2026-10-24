@@ -19,8 +19,14 @@ import { ROOT } from "../../fixtures/services.js";
 test("daily HTTP exposes AIME stages and controls without starting evaluations on read", async () => {
   const directory = await mkdtemp(path.join(tmpdir(), "daily-http-"));
   const previous = process.env.EVAL_WORKBENCH_DATA_URL;
-  const data = await listen(async (_req, res) => json(res, { tasks: [{ id: "task", source: "aime", dataset: "/data/aime", archive_dir: "/online_data" }],
-    batches: [{ id: "package", name: "daily.7z", status: "ready", summary: null }], page: 1, page_size: 50, total: 1 }), 0);
+  let analyticsFailure = false;
+  const data = await listen(async (_req, res, url) => {
+    if (url.pathname === "/data/workbench/analytics") {
+      assert.equal(url.searchParams.get("task_id"), "task", "analytics must use the exact daily source's registered task");
+      json(res, analyticsFailure ? { error: "publication pending" } : { totals: { answers: 125, questions: 100 }, dates: [], models: [], exclusions: [], packages: [], reportsComplete: true }, analyticsFailure ? 409 : 200);
+    } else json(res, { tasks: [{ id: "unrelated", source: "wencai", dataset: "/data/wencai", archive_dir: "/other" }, { id: "task", source: "aime", dataset: "/data/aime", archive_dir: "/online_data" }],
+      batches: [{ id: "package", name: "daily.7z", status: "ready", summary: null }], page: 1, page_size: 50, total: 1 });
+  }, 0);
   process.env.EVAL_WORKBENCH_DATA_URL = data.url;
   let calls = 0;
   const control = createAutomationControl(["aime"], async (_id, signal, pauseSignal) => {
@@ -50,6 +56,14 @@ test("daily HTTP exposes AIME stages and controls without starting evaluations o
     assert.equal(initial.sources[0].id, "aime"); assert.equal(initial.sources[0].status, "idle");
     assert.deepEqual(Object.keys(initial.sources[0].settings.bindings), ["score", "attribution"]);
     assert.equal(initial.sources[0].packages.total, 1); assert.equal(calls, 0);
+    const analytics = await get("/api/daily/aime/analytics");
+    assert.equal(analytics.source, "aime"); assert.equal(analytics.intake.totals.answers, 125, "overview is not limited to the one visible package");
+    assert.equal(analytics.evaluation.unit, "answers"); assert.equal(analytics.evaluation.totals.total, 0); assert.equal(calls, 0);
+    assert.equal((await fetch(server.url + "/api/daily/wencai/analytics")).status, 404);
+    analyticsFailure = true;
+    const failed = await fetch(server.url + "/api/daily/aime/analytics");
+    assert.equal(failed.status, 409); assert.equal((await failed.json() as any).error, "publication pending", "unavailable counts are not silently replaced by zero");
+    analyticsFailure = false;
     assert.equal((await post("/api/daily/aime/control", { action: "run" }, "http://other.test")).status, 403);
     assert.equal((await post("/api/daily/aime/control", { action: "run" })).status, 200);
     await new Promise(setImmediate); assert.equal(calls, 1);

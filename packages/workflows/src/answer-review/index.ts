@@ -3,7 +3,7 @@ import {Ajv2020} from 'ajv/dist/2020.js';
 import {randomUUID} from "node:crypto";
 import {isDeepStrictEqual} from "node:util";
 import {canonical,HttpError,type AgentBinding,type PlannedTask,type RunState,type RunManifest,type WorkflowDefinition,type JsonObject,type SubmissionReceipt,type TaskPlan} from "@eval/contracts";
-import {createRunRepository,writeJson,atomicWrite,runLock,exists,type RunCodec} from "@eval/data";
+import {createRunRepository,readJson,writeJson,atomicWrite,runLock,exists,type RunCodec} from "@eval/data";
 import {buildPlan,loadRunInputs,normalizeInput,pendingTaskProgress,type EvalConfig,type Candidate,type RawInput} from "@eval/workflows/comparison";
 import {directAttributionProfile,type DirectAttribution} from "@eval/agents/attribution";
 import attributionOutputSchema from '../../../../schemas/workflow/answer-review-attribution.schema.json' with {type:'json'};
@@ -271,7 +271,11 @@ function samples(state:RunState){
 }
 /** Status and pagination read only the compact checkpoint, never the entire result JSONL bodies. */
 export async function answerReviewRunSummary(run:string,date?:string){
-  const state=await answerReviewRepository.readTasks(run,[]),rows=samples(state),counts=Object.fromEntries(stages.map(stage=>[stage,stageCounts(state,stage)]));
+  const saved=await readJson<Checkpoint>(path.join(run,'state.json'));
+  return reviewRunSummary(run,saved,date);
+}
+async function reviewRunSummary(run:string,saved:Checkpoint,date?:string){
+  const state=codec.decode(saved,()=>{throw Error('概要不得读取结果正文');},new Set()),rows=samples(state),counts=Object.fromEntries(stages.map(stage=>[stage,stageCounts(state,stage)]));
   const models:Record<string,{answers:number;completed:number;failed:number;pending:number}>={};
   for(const row of rows){const model=models[row.model]??={answers:0,completed:0,failed:0,pending:0};model.answers++;
     if(stages.every(stage=>row.stages[stage].status==='succeeded'))model.completed++;
@@ -287,6 +291,65 @@ export async function answerReviewRunSummary(run:string,date?:string){
     failed:rows.filter(row=>stages.some(stage=>failed.has(row.stages[stage].status))).length,
     pending:rows.filter(row=>stages.some(stage=>['pending','running'].includes(row.stages[stage].status))).length,
     stages:counts,evaluatorVersion:state.manifest.evaluatorVersion,artifacts};
+}
+/** One compact read per run, with overlapping daily scopes counted once by answer identity. */
+export async function answerReviewRunSummaries(locations:readonly {run:string;date?:string}[],records:readonly import('./incremental.js').AimeRecord[]=[]){
+  const runs=[],coverage=answerReviewCoverage();
+  coverage.include(records);
+  for(const {run,date}of locations){
+    const saved=await readJson<Checkpoint>(path.join(run,'state.json'));
+    coverage.add(saved,date);runs.push(await reviewRunSummary(run,saved,date));
+  }
+  return {runs,coverage:coverage.finish()};
+}
+function answerReviewCoverage(){
+  const empty=()=>({total:0,completed:0,partial:0,pending:0,failed:0,running:0});
+  type Counts=ReturnType<typeof empty>;
+  type Status='completed'|'running'|'failed'|'pending';
+  const rank:Record<Status,number>={completed:3,running:2,failed:1,pending:0};
+  const answers=new Map<string,{model:string;question:string;date:string|null;stages:Record<string,Status>}>();
+  const include=(model:string,batch:string,caseId:string,trace:string|null|undefined,day:string|null)=>{
+    const key=trace?canonical(['trace',trace]):canonical(['case',model,batch,caseId]),answer=answers.get(key)??{model,question:canonical([batch,caseId]),date:day,stages:{score:'pending',attribution:'pending'} as Record<string,Status>};
+    if(answer.model!==model)throw Error('同一trace_id存在不同回答模型：'+trace);
+    if(answer.date&&day&&answer.date!==day)throw Error('同一回答存在不同业务日期：'+key);
+    answer.date??=day;answers.set(key,answer);return answer;
+  };
+  return {
+    include(records:readonly import('./incremental.js').AimeRecord[]){
+      for(const record of records)include(record.model,record.batch_id,record.case_id,record.trace_id,record.date);
+    },
+    add(saved:Checkpoint,date?:string){
+      if(saved.workflow!=='answer-review')throw Error('该run不属于独立Score/Attribution流程');
+      const tasks=new Map<string,Map<string,{id:string;row:typeof saved.tasks[string]}>>();
+      for(const [id,row]of Object.entries(saved.tasks))if(stages.some(stage=>stage===row.task.stage)){
+        const group=tasks.get(row.data.input_id)??new Map();
+        if(group.has(row.task.stage))throw Error('同一回答存在重复阶段任务：'+row.data.input_id);
+        group.set(row.task.stage,{id,row});tasks.set(row.data.input_id,group);
+      }
+      for(const [id,input]of Object.entries(saved.inputs)){
+        const day=date??(/^\d{4}-\d{2}-\d{2}$/.test(input.batch_id)?input.batch_id:null);
+        const answer=include(input.version,input.batch_id,input.case_id,input.trace_id,day);
+        for(const stage of stages){
+          const task=tasks.get(id)?.get(stage),row=task?.row,state=row?.state.status??'pending';
+          const accepted=state==='succeeded'&&row?.receipt?.taskId===task?.id&&row?.receipt?.exported?.id===task?.id&&row?.receipt?.exported?.file===resultFile(stage);
+          const status:Status=accepted?'completed':state==='succeeded'||failed.has(state)?'failed':state==='running'?'running':'pending';
+          if(!answer.stages[stage]||rank[status]>rank[answer.stages[stage]])answer.stages[stage]=status;
+        }
+      }
+    },
+    finish(){
+      const totals=empty(),models=new Map<string,Counts>(),dates=new Map<string|null,Counts>();
+      const counts=Object.fromEntries(stages.map(stage=>[stage,{stage,total:0,completed:0,pending:0,failed:0,running:0}]));
+      for(const answer of answers.values()){
+        const statuses=stages.map(stage=>{const status=answer.stages[stage];counts[stage].total++;counts[stage][status]++;return status;});
+        const status=statuses.every(value=>value==='completed')?'completed':statuses.includes('failed')?'failed':
+          statuses.includes('completed')?'partial':statuses.includes('running')?'running':'pending';
+        const model=models.get(answer.model)??empty(),daily=dates.get(answer.date)??empty();models.set(answer.model,model);dates.set(answer.date,daily);
+        for(const count of [totals,model,daily]){count.total++;count[status]++;}
+      }
+      return {totals,questions:new Set([...answers.values()].map(answer=>answer.question)).size,models:[...models].map(([model,counts])=>({model,...counts})),dates:[...dates].map(([date,counts])=>({date,...counts})),stages:Object.values(counts)};
+    },
+  };
 }
 export async function answerReviewSamples(run:string,params:URLSearchParams){
   const state=await answerReviewRepository.readTasks(run,[]),query=(params.get('query')??'').toLowerCase(),model=params.get('model'),status=params.get('status');

@@ -3,6 +3,7 @@ import { fileSourceReader } from "@eval/data";
 import type { AutomationJob } from "@eval/automations";
 import { publishableComparisons, type Checkpoint } from "@eval/workflows/comparison";
 import { checkpoint, summarize, isAutomationTask, remoteDateProgress } from "./automation-evaluation.js";
+import { comparisonEvaluationAnalytics, type EvaluationAnalytics } from "./daily-evaluation-analytics.js";
 
 const HOUR = 60 * 60 * 1000;
 
@@ -63,7 +64,9 @@ export function completionTimeline(runs: Checkpoint[]) {
 }
 
 function project(job: AutomationJob, runs: Checkpoint[], limit: number) {
+  const coverage: { coverage?: EvaluationAnalytics } = { coverage: comparisonEvaluationAnalytics(job.date, runs) };
   return {
+    ...coverage,
     summary: runs.length ? summarize(runs) : undefined,
     hours: completionTimeline(runs),
     progress: remoteDateProgress(job.date, runs, limit),

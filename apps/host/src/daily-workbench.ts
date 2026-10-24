@@ -8,10 +8,11 @@ import { automationSnapshot, type AutomationDashboardSource } from "./automation
 import type { createAutomationControl } from "./automation-control.js";
 import type { automationLlm } from "./automation-llm.js";
 import { dailySettingsView, saveDailySettings } from "./daily-settings.js";
-import { sourceCatalog, stopSourceCleaning } from "./daily-ingestion.js";
+import { dataRequest, sourceCatalog, stopSourceCleaning, type CatalogPage } from "./daily-ingestion.js";
 import { discoverDashboardModels } from "./dashboard-models.js";
 import type { loadAimeWorkbench } from "./aime-workbench.js";
 import { dailyPackageReport } from "./daily-coverage.js";
+import { combineEvaluationAnalytics } from "./daily-evaluation-analytics.js";
 
 type Aime = Awaited<ReturnType<typeof loadAimeWorkbench>>;
 export function dailyWorkbench(options: {
@@ -50,12 +51,14 @@ export function dailyWorkbench(options: {
       for (const job of snapshot.jobs) for (const [stage, counts] of Object.entries(job.summary?.stages ?? {}))
         for (const [key, count] of Object.entries(counts)) (stages[stage] ??= {})[key] = (stages[stage][key] ?? 0) + count;
       const deliveries = snapshot.jobs.map(job => job.mongo).filter(item => item !== undefined);
+      const coverage = snapshot.jobs.every(job => job.coverage && !job.monitorError)
+        ? combineEvaluationAnalytics("comparisons", snapshot.jobs.map(job => job.coverage!)) : undefined;
       const delivered = snapshot.jobs.every(job => job.mongo?.status === "completed" && job.mongo.synced &&
         job.mongo.synced.inputsUpdatedAt === (job.inputsUpdatedAt ?? 0) &&
         job.mongo.synced.comparisons === (job.summary?.readyComparisons ?? 0));
       result = { id, name: "问财日常四路", workflow: "comparison", outputDirectory: source.output,
         archiveDirectory: path.join("/mnt/fin_bench/eval_data", "0_wencai/1_7z_data/A_AA_comparision_data"),
-        settings: await dailySettingsView(source.config), stages, error: snapshot.pollError,
+        settings: await dailySettingsView(source.config), stages, comparisonCounts: coverage?.totals, error: snapshot.pollError,
         runs: snapshot.jobs.flatMap(job => job.runIds.map(run_id => ({ run_id, date: job.date, status: job.evaluation,
           completed: Object.values(job.summary?.stages ?? {}).reduce((n, stage) => n + stage.completed, 0),
           total: Object.values(job.summary?.stages ?? {}).reduce((n, stage) => n + stage.total, 0), output_dir: path.join(source.output, run_id) }))),
@@ -99,6 +102,26 @@ export function dailyWorkbench(options: {
     const [, , , id, action, ...parts] = url.pathname.split("/");
     const runtimeId = sourceId(id);
     if (!runtimeId) throw new HttpError(404, "日常来源未登记");
+    if (req.method === "GET" && action === "analytics" && !parts.length) {
+      const source = id === "wencai" ? wencai()! : undefined;
+      const config = { sourceUrl: source?.config.sourceUrl ?? new URL("/data/aime", process.env.EVAL_WORKBENCH_DATA_URL ?? "http://127.0.0.1:8081").href };
+      const intake = async () => {
+        const catalog = await dataRequest(config, "/data/workbench/catalog?page_size=1") as CatalogPage;
+        const task = catalog.tasks.find(task => task.dataset === new URL(config.sourceUrl).pathname);
+        if (!task) throw new HttpError(409, "日常收包任务尚未登记");
+        return dataRequest(config, `/data/workbench/analytics?task_id=${encodeURIComponent(task.id)}`);
+      };
+      const evaluation = async () => {
+        if (id === "aime") return options.aime!.analytics();
+        const snapshot = await automationSnapshot(source!.config, source!.output, source!.state(), source!.settings, source!.monitor);
+        const error = snapshot.jobs.find(job => job.monitorError)?.monitorError;
+        if (error) throw new HttpError(409, error);
+        if (snapshot.jobs.some(job => !job.coverage)) throw new HttpError(409, "日常运行覆盖统计不可用");
+        return combineEvaluationAnalytics("comparisons", snapshot.jobs.map(job => job.coverage!));
+      };
+      const [inputs, coverage] = await Promise.all([intake(), evaluation()]);
+      send({ source: id, sampledAt: Date.now(), intake: inputs, evaluation: coverage }); return true;
+    }
     if (req.method === "GET" && action === "packages") {
       if (parts.length === 2 && parts[1] === "report") {
         const source = wencai();

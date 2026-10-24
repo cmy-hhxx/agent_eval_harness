@@ -85,6 +85,23 @@ class AimeOnceTest(unittest.TestCase):
         self.assertEqual(report["excluded"], 2)
         self.assertEqual(len(self.rows()), 2)
 
+    def test_workbench_analytics_preserves_aime_trace_deduplication_and_mode_counts(self):
+        from workbench_catalog import WorkbenchCatalog
+        catalog = WorkbenchCatalog({"/data/aime": self.data}, self.root / "state", app)
+        first = session("one")
+        self.archive("first.7z", [first, session("two", "expert")])
+        self.process(["first.7z"])
+        self.archive("second.7z", [first, session("three")])
+        self.process(["second.7z"])
+        task = catalog.snapshot({})["tasks"][0]
+        result = catalog.analytics({"task_id": [task["id"]]})
+        self.assertEqual(result["totals"]["answers"], 3)
+        self.assertEqual(result["totals"]["questions"], 3)
+        self.assertEqual(result["totals"]["duplicates"], 1)
+        self.assertEqual(result["models"], [{"model": "aime_expert", "answers": 1}, {"model": "aime_fast", "answers": 2}])
+        self.assertEqual(result["dates"], [{"date": "2026-10-23", "answers": 3, "questions": 3}])
+        self.assertEqual(result["exclusions"], [{"reason": "duplicate_trace", "count": 1}])
+
     def test_multitrace_conflicts_missing_metadata_and_actual_adapter_errors_are_quarantined(self):
         multiple = session("multi"); multiple["traces"] *= 2
         conflict = session("conflict"); conflict["meta"]["session_type"] = "expert"
