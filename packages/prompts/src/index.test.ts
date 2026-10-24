@@ -34,6 +34,15 @@ test("all stage texts come from one resource tree; tool descriptions are complet
 
 function pathName(source: string): string { return source.slice(source.lastIndexOf("/") + 1); }
 
+test('all Score phases share the public-material boundary without changing other agents',()=>{
+  const boundary=readFileSync(new URL('../resources/score/material-boundary.md',import.meta.url),'utf8').trim();
+  for(const profile of ['evidence','axis','default']){
+    const prompt=agentPrompt('score',['review_material'],profile);
+    assert(prompt.instructions.includes(boundary));assert(prompt.systemPrompt.includes(boundary));
+  }
+  for(const stage of stages)assert(!agentPrompt(stage,[]).instructions.includes(boundary));
+});
+
 test("submission-only stages expose only their direct submission tool", () => {
   for (const stage of ["criteria", "rewrite", "clustering"] as const) {
     const prompt = agentPrompt(stage, []);

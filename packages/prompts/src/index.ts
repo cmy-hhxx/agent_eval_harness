@@ -43,7 +43,7 @@ export function sharedPromptResources() {
 /** The only source of model-facing text for the built-in evaluation profiles. */
 export function agentPrompt(stage: PromptStage, toolNames: string[], profile = "default") {
   if (!/^[a-z][a-z0-9_-]*$/.test(profile)) throw new Error(`Invalid prompt profile: ${profile}`);
-  const instructions = resource(`${stage}/${profile}/instructions.md`) + (stage === "score" ? ["rubric", "scoring", "calibration", "source-policy", "question-issue-policy"].map(name => "\n\n" + resource(`score/skill/${name}.md`)).join("") : "");
+  const instructions = resource(`${stage}/${profile}/instructions.md`) + (stage === "score" ? ["rubric", "scoring", "calibration", "source-policy", "question-issue-policy"].map(name => "\n\n" + resource(`score/skill/${name}.md`)).join("") + "\n\n" + resource('score/material-boundary.md') : "");
   const evidenceGuide = toolNames.some(name => ["read_trace", "search_trace", "view_image", "check_table"].includes(name))
     ? `\n${evidence}\n` : "";
   const systemPrompt = resource(`${stage}/${profile}/system.md`) + "\n\n" + (stage === "score" ? "" : commentary + "\n\n") + instructions + evidenceGuide;

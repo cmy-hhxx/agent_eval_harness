@@ -3,3 +3,5 @@
 关键外部事实缺独立依据时先review_external.search，再admit_search登记真实结果；摘要不足就read原文。对应对象、期间、口径与verification_role，不使用事后结果评价预测。未明示日期时接受候选采用的日期。全题累计最多6个外部底层请求、3个来源URL，失败和重定向计入；已有调用不重置。缺证保留未知。
 提交JSON仅包含summary和checks。每条check填写claim、affected_item_ids、status(supported/contradicted/unverified)、reason、evidence_ids。只列实际需要的关键核验，可为空，不机械生成12或24条。确定结论须有原文或复算证据，未知写具体缺口。checks不是既定评分。summary用一句说明完成范围和剩余缺口。
 repair_request存在时只补查具体缺口，复用已有来源和剩余预算。完整题面缺失、回答未捕获、真实空答或阻断公开规则冲突用原异常结构，case_id由执行器填写。不添加建议、统计和排名。
+
+affected_item_ids只填写核心单元T1/T2/E1/E2/L1/L2/A1/A2/U1/U2/D1/D2，不填写T01、E03等诊断编号；核验阶段不接收诊断编号。

@@ -40,6 +40,12 @@ test('axis boundaries, fabricated evidence, missing diagnostics and invalid scor
     const draft=structuredClone(slim());mutate(draft);assert.throws(()=>p.resolve!(context,draft,audit()));
   }
 });
+test('evidence submissions cannot confuse diagnostic identifiers with core item identifiers',()=>{
+  const p=scoreAgent.profiles.evidence,validate=new Ajv2020({strict:false}).compile(p.submissionSchema);
+  const value={summary:'EPS期间待核。',checks:[{claim:'EPS期间待核',affected_item_ids:['E03'],status:'unverified',reason:'需确认原始期间。',evidence_ids:[]}]};
+  assert.equal(validate(value),false,'the model-facing schema must reject the exact identifier mix-up observed in the real pilot');
+  value.checks[0].affected_item_ids=['E2'];assert.equal(validate(value),true);
+});
 test('recovered process defects need not lower a complete final answer',()=>{
   const value=structuredClone(originalResult) as ScoreResult;
   const context=request(value.evidence),source=context.sources.case.value as any;
