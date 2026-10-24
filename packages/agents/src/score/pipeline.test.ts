@@ -77,3 +77,12 @@ test('semantic repair requests preserve the conflict for the workflow gate and e
   const result=scoreAgent.profiles.evidence.resolve!(empty,{assessment_status:'host_empty_response',reason:'完整捕获的空答。',missing_material:[],affected_units:[]},audit());
   assert.deepEqual(result,{case_id:originalCase.case_id,assessment_status:'host_empty_response',reason:'完整捕获的空答。',missing_material:[],affected_units:[]});
 });
+test('after supplementation the final profile requires an axis repair instead of a second evidence request',()=>{
+  const context=request([]);(context.sources.score.value as any).evidence_used=true;
+  const repair={action:'repair',reason:'已补查仍缺正文，轴判词却将标题视为确证，需重评确定性。',axis_ids:['E','A'],verification_requests:[{claim:'确认产品状态',affected_item_ids:['E1']}]};
+  const validate=new Ajv2020({strict:false}).compile(scoreProfile.modelSubmissionSchema!(context));
+  assert.equal(validate(repair),false,'the same repeated supplement observed in the pilot must be rejected as an invalid submission');
+  assert.throws(()=>scoreProfile.resolve!(context,repair,audit()),/verification_requests必须为空/);
+  const directed={...repair,verification_requests:[]};assert.equal(validate(directed),true);
+  assert.deepEqual(scoreProfile.resolve!(context,directed,audit()),directed);
+});

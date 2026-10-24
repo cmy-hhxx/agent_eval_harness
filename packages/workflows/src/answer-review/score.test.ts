@@ -26,7 +26,10 @@ test('late evidence is supplemented once with the original cumulative proof and 
   const source={case_id:'input',task_question:'题目',candidate_output_id:'A',evidence:{Q:'题目',A:'回答'},availability:{candidate_output:'available' as const},public_requirements:{question:'题目'},view:{case_id:'input',task_question:'题目',availability:{candidate_output:'available'}}};
   const binding=bindScore(evidence,source,{evidence:receipt({summary:'ready',checks:[]},proof),feedback:correction});
   assert.deepEqual((binding.request.sources.case.value as any).review_seed.actions,proof.actions);
-  assert.equal(advanceScore(evidence,receipt({summary:'补查完成',checks:[]}),{} as RunState,{}).tasks.length,7);
+  const rescored=advanceScore(evidence,receipt({summary:'补查完成',checks:[]}),{} as RunState,{}).tasks;
+  assert.equal(rescored.length,7);
+  const directed=advanceScore(rescored[6],receipt({action:'repair',reason:'补查后仍有确定性矛盾',axis_ids:['E'],verification_requests:[]}),{} as RunState,{}).tasks;
+  assert.equal(directed.length,2);assert.equal((directed[1].data as any).score_evidence_used,true);assert.equal((directed[1].data as any).score_repair_used,true);
 });
 test('final material preserves verification evidence coordinates when axes quote a different order and reuse local IDs',()=>{
   const seed:ReviewAudit={quotes:[{evidence_id:'EV_1',source_id:'Q',start:0,end:2,quote:'题目'},{evidence_id:'EV_2',source_id:'A',start:0,end:2,quote:'答案'}],sources:[],actions:[],viewed:[],searches:[]};

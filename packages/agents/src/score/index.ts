@@ -76,6 +76,7 @@ export const scoreProfile=profile('default','default',finalSchema,['review_mater
   const context=request.sources.score.value as unknown as ScoreContext,value=draft as ScoreRepair|{final_answer_score:ScoreResult['final_answer_score'];finding_groups:string[][];explicit_probability:number|null;probability_evidence_ids:string[]};
   if('action' in value){
     if(!value.axis_ids.length&&!value.verification_requests.length)fail('/axis_ids','修正请求必须定位具体轴或证据缺口。');
+    if(context.evidence_used&&value.verification_requests.length)fail('/verification_requests','统一补查已用完，verification_requests必须为空；剩余缺证保留待核，既有判词矛盾用axis_ids定向重评。');
     return value;
   }
   const parts=context.axes!;
@@ -96,5 +97,10 @@ export const scoreProfile=profile('default','default',finalSchema,['review_mater
   const used=new Set([...result.evaluations,...result.diagnostics,...result.findings,result.final_answer_score,{evidence_ids:result.probability_evidence_ids}].flatMap(r=>r.evidence_ids));
   result.evidence=result.evidence.filter(q=>used.has(q.evidence_id));validateScore(request,result,audit);return result;
 },(request,value,audit)=>{if(!('action' in (value as object)))validateScore(request,value,audit);});
+scoreProfile.modelSubmissionSchema=request=>{
+  const schema=structuredClone(finalSchema),context=request.sources.score.value as unknown as ScoreContext;
+  if(context.evidence_used){const repair=schema.oneOf[1].properties;Object.assign(repair.verification_requests!,{maxItems:0});Object.assign(repair.axis_ids!,{minItems:1});}
+  return schema;
+};
 scoreProfile.resultSchema={...resultSchema,oneOf:[...resultSchema.oneOf,finalSchema.oneOf[1]]} as AgentProfile['resultSchema'];
 export const scoreAgent:AgentDefinition={id:'score',profiles:{default:scoreProfile,evidence:evidenceProfile,...axisProfiles}};
