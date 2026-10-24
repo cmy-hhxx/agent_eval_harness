@@ -16,7 +16,7 @@ import type { Finding } from "@eval/workflows/comparison";
 import type { TaskData, RawInput } from "@eval/workflows/comparison";
 import { emptyAudit, fakeEvaluatorVersion, fakeIdentity, fakeJudge, fixtureConfig, attributionResult, comparisonResult, criteriaResultForTask, raw } from "../../fixtures/comparison.js";
 import path from "node:path";
-import { canonical, evidenceId, emptyUsage, type RunState, type SubmissionReceipt } from "@eval/contracts";
+import { canonical, evidenceId, emptyUsage, ValidationError, type RunState, type SubmissionReceipt } from "@eval/contracts";
 import { ArtifactStore, compressFile, fileSourceReader, readJsonl, writeJsonl } from "@eval/data";
 import { ROOT } from "../../fixtures/services.js";
 import { createRegistry, ToolRuntime } from "@eval/tools";
@@ -787,7 +787,7 @@ test("subjective inputs still run attribution and direct evidence needs no force
     } as (typeof forged.findings)[number];
     assert.throws(
       () => validateEvaluation(task, plan.inputs, forged, emptyAudit(), {}),
-      /责任组件须选择/,
+      (error: unknown) => error instanceof ValidationError && error.issues!.some(issue => issue.code === "responsibility_actor"),
     );
   } finally {
     await rm(directory, { recursive: true, force: true });
