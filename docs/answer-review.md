@@ -18,16 +18,24 @@ Score 和 Attribution 都不依赖 Criteria，也不读取彼此的结论。两�
 
 ## Score
 
-评分依据来自用户提供的 `judge_skills/scoring-skill-overview.html` 与 `review-evidence-with-tools`。原始 rubric、scoring、calibration、source-policy 和 question-issue-policy 保存在 [Score 提示资源](../packages/prompts/resources/score/skill/)。正常结果保持原 skill 的七个字段：case_id、final_answer_score、evaluations、findings、evidence、explicit_probability、probability_evidence_ids。
+Score对外接收单题材料并返回一个JSON，内部使用同一Agent的多个profile：统一取证与复算 → 六轴联合评分 → 独立总分。正常执行3次会话，六轴各按原锚点判断，在一个会话中共用事实推理。总分仍是独立会话，不读取分项数值，也不平均或逐项扣分，并重新核查交付与问题的支持关系。
 
-- 总分为独立的0–10整数或待核区间，不由12项相加或平均。
-- 12项核心单元为0–4整数或待核区间；24项诊断按固定父子关系嵌套，不单独计分。
-- 状态为met、violated、unverified、not_applicable；满分、较低分、区间与不适用按原分档契约校验。程序不代选分数。
-- 题目未明确日期时接受候选采用日期；正常对应、参数适当且无相反信号的动作回执按原rubric认可成功。成品质量与整题完成仍分别检查。
-- 同一问题只保存一条finding；已恢复过程错误在相应过程项保留，最终有效交付独立评分。
-- 共享证据采用Python Unicode码点区间。完整题面缺失、未捕获回答、真实空答及阻断规则冲突保留原异常结构。
+评分含义沿用[原skill规则](../packages/prompts/resources/score/skill/)。总分0–10、12核心单元0–4、24诊断不另计分；过程错误恢复与最终有效交付分别评价。待核使用有宽度区间，不适用不补0；无原文证据的元信息依据须使用以/开头的JSON Pointer及对应原值。题目未明示日期时接受候选采用日期，正常对应的行动回执按原rubric认可成功。
 
-宿主适配只涉及工具接口、身份和持久化：使用TypeScript、任务UUID及精确原文坐标，不引入独立Python评测器、哈希指纹、输入副本或独立日志。review_material对应inspect/read/search/quote；review_calculate对应受限复算并登记结果；review_external提供实际搜索、读取与搜索片段准入，保留核验角色和取得内容。默认最多6个底层外部动作、3个完整URL，失败与重定向计入动作；工具不可用或缺证时保留待核。执行器的机械接受不证明语义评分准确。
+正常结果有八个顶层字段：case_id、final_answer_score、evaluations、diagnostics、findings、evidence、explicit_probability、probability_evidence_ids。12核心项与24诊断使用平级数组，固定父子关系仍逐轴校验。模型只提交实际判断和证据编号，程序补身份、固定名称、分档和准确Unicode码点引文。统一取证的编号保持稳定，联合收据按轴投影并复用原判词；定向重评新增证据按原文坐标去重并消解局部编号冲突。总分轮仅将同一问题分组，程序合并编号及引用，不改六轴判断或丢弃问题。
+各阶段的提交修复均替换完整对象，不能提交局部字段补丁；评分阶段仍须完整交付其指定轴的全部核心项、诊断及问题/缺口数组。空的可选字段省略，不靠兼容或静默补齐语义字段通过校验。
+
+统一取证只提交事实所对应的证据编号、受影响核心项及待查缺口，不预先判定回答对错。评分阶段只接收facts；自由文本的unresolved仅用于取证恢复，不传给六轴或总分。来源正文按需读取，联合评分核对主张与证据的对象、时间、范围、口径和完整限定语，再提请关键缺口。公开问题给定且兼容的前提可用于条件分析，不因缺少独立实时数据自动扣分；已保留未知的回答不因未穷尽空查询的所有可能原因而扣分，零条返回也不等于查询未执行。各阶段只装配自身负责的原skill规则，六轴不再分为独立会话；12核心项、24诊断及适用、待核、异常语义保留，独立总分边界不变。
+
+Score使用score_material批量读取、检索和引用材料；quote可直接使用已读片段的Unicode码点start/end，程序提取原文，关键数值、日期和条件须完整包含。score_calculate.inputs的evidence_id使用已登记EV编号，程序展开来源、原文与坐标，复算后自动登记V_CALC及结果证据，不要求模型重复抄写输入原文。只复算影响判断的关键推导，失败不以心算冒充成功。复算不认证输入口径，裁判填写的role和表达式不是原字段语义的证据；自行年化或补假设不能替代候选实际采用的期间、单位与公式，也不能补认候选已恢复。对象、币种或周期错配须沿共享依据检查受影响的指标、阈值与结论，不能默认错误只限于一句表述。
+
+score_external使用与Eris相同的Serper搜索，摘要不足再读取原文。SEARCH_API_KEY通过既有配置注入；Score显式使用环境代理，不依赖SDK更换后的全局dispatcher。读取仍校验公共DNS并固定实际连接IP，保留原始Host和TLS主机名，代理旁路按原始域名匹配；不改变其他Agent的网络实现。全题最多6个底层外部请求、3个来源URL，失败和重定向计入，补查不重置预算。
+
+关键新缺口统一补查一次，按新增事实关联的核心项定向重评所属轴，复用联合收据中其余轴的判断；没有新增事实时不重跑分项，剩余缺证保留待核。确有新事实而影响无法隔离时，取证阶段须说明full_rescore_reason，再联合重评六轴；重复旧引用不能触发全量重评。同一问题或缺口关联多个轴时，将关联轴一起重评，避免程序擅自裁剪问题或更改主诊断。单轴使用axis profile，多轴在一次dimensions会话中只重评指定子集。真正跨轴矛盾最多定向重评一次，仍不一致则拒收，不由总分轮覆盖分项。
+
+只有最终结果（或原skill异常对象）写入score.jsonl。中间片段仅作续跑草稿，完成后状态只保留结果引用与进度。公开题面缺失、回答未采集、真实空答和阻断规则冲突保留原异常结构，不伪造评分。结构合法不证明语义准确。
+
+来源验收区分标题/摘要实际支持的属性、待核存续状态与网站条款日期，不把有限核验一概视为无支持；查询字段名称不证明数据库全量覆盖。总分轮核对已确认问题与统一核验及实际引文的确定性，发现同一事实无实证却被确认为错误时，走定向重评或拒收，不靠总分理由中的待核说明掩盖。补查后提交Schema禁止再次请求补查，仍可在独立额度内请求一次定向重评。
 
 ## Attribution 与 Rewrite
 
@@ -70,7 +78,7 @@ npm run eval -- preflight --config configs/host.json --config configs/answer-rev
 npm run eval -- run --run-id answer-review-run --config configs/host.json --config configs/answer-review.json --config /absolute/path/source-and-models.json
 ```
 
-来源配置可以只包含一个模型，也可包含多个分别独立评审的模式。`--stage score`或`--stage attribution`可只跑一个阶段，新运行及续跑都限定实际调度范围；不加时两阶段并发。同run切换阶段或开启Attribution Rewrite时，补建缺失任务，保留已接受收据和已用额度。模型bindings分别提供score、attribution、instruction-review、rewrite；并发是整个运行的并发上限，不是各阶段分别再乘一次。
+来源配置可以只包含一个模型，也可包含多个分别独立评审的模式。`--stage score`或`--stage attribution`可只跑一个阶段，新运行及续跑都限定实际调度范围；不加时两阶段并发，Score内部阶段也受同一运行并发上限约束。同run切换阶段或开启Attribution Rewrite时，补建缺失任务，保留已接受收据和已用额度。模型bindings分别提供score、attribution、instruction-review、rewrite；并发是整个运行的并发上限，不是各阶段分别再乘一次。
 
 `--input ID=PATH`、`--batch`、`--case`和`--limit-cases`沿用公共CLI筛选。`--test-eval`将输出放在同来源的eval_output/test_eval；`--pilot-cases N`同样进入test_eval，按业务题目选择N题及其各模型、所选阶段，完整计划仍保留。普通续跑保留试跑范围，验收后用`--discover-inputs`释放其余已登记回答。`--worker`指定Worker，`--resume-stage`解除指定阶段的熔断，`--skip-failed`保留失败任务，`--balance-channels`沿用渠道分配。日常输出使用本来源的eval_output/0_daily_eval。
 

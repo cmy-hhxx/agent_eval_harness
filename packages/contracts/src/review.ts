@@ -6,6 +6,8 @@ export interface ReviewCase {
   evidence: Record<string, string>;
   availability: Record<string, "available" | "partial" | "not_collected" | "unavailable">;
   public_requirements: { question: string };
+  /** Trusted task-local proof from the preceding Score evidence pass; never model-authored. */
+  review_seed?: ReviewAudit;
 }
 export interface ReviewQuote {
   evidence_id: string; source_id: string; start: number; end: number; quote: string;

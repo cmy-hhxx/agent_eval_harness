@@ -3,33 +3,9 @@
   "evaluations": [
     {
       "applicability": "task_requirement",
-      "diagnostics": [
-        {
-          "applicability": "task_requirement",
-          "diagnostic_id": "T01",
-          "diagnostic_name": "对象与目标识别",
-          "evidence_ids": [
-            "EV_d29803bfa7dc8d0b",
-            "EV_b1c6e3ebc86a2e53"
-          ],
-          "reason": "给定数字与所交付计算支持本项要求。",
-          "status": "met"
-        },
-        {
-          "applicability": "task_requirement",
-          "diagnostic_id": "T02",
-          "diagnostic_name": "约束识别与落实",
-          "evidence_ids": [
-            "EV_d29803bfa7dc8d0b",
-            "EV_b1c6e3ebc86a2e53"
-          ],
-          "reason": "题面明示一句话，回答实际有两个句号形成两句；计算结果仍完整有效。",
-          "status": "violated"
-        }
-      ],
       "evidence_ids": [
-        "EV_d29803bfa7dc8d0b",
-        "EV_b1c6e3ebc86a2e53"
+        "EV_1",
+        "EV_2"
       ],
       "grade": "核心成立且有非关键局部缺陷",
       "item_id": "T1",
@@ -41,33 +17,9 @@
     },
     {
       "applicability": "task_requirement",
-      "diagnostics": [
-        {
-          "applicability": "task_requirement",
-          "diagnostic_id": "T03",
-          "diagnostic_name": "必要覆盖",
-          "evidence_ids": [
-            "EV_d29803bfa7dc8d0b",
-            "EV_b1c6e3ebc86a2e53"
-          ],
-          "reason": "给定数字与所交付计算支持本项要求。",
-          "status": "met"
-        },
-        {
-          "applicability": "task_requirement",
-          "diagnostic_id": "T04",
-          "diagnostic_name": "交付完成",
-          "evidence_ids": [
-            "EV_d29803bfa7dc8d0b",
-            "EV_b1c6e3ebc86a2e53"
-          ],
-          "reason": "题面明示一句话，回答实际有两个句号形成两句；计算结果仍完整有效。",
-          "status": "violated"
-        }
-      ],
       "evidence_ids": [
-        "EV_d29803bfa7dc8d0b",
-        "EV_b1c6e3ebc86a2e53"
+        "EV_1",
+        "EV_2"
       ],
       "grade": "核心成立且有非关键局部缺陷",
       "item_id": "T2",
@@ -79,33 +31,9 @@
     },
     {
       "applicability": "task_requirement",
-      "diagnostics": [
-        {
-          "applicability": "task_requirement",
-          "diagnostic_id": "E01",
-          "diagnostic_name": "来源与范围",
-          "evidence_ids": [
-            "EV_d29803bfa7dc8d0b",
-            "EV_b1c6e3ebc86a2e53"
-          ],
-          "reason": "给定数字与所交付计算支持本项要求。",
-          "status": "met"
-        },
-        {
-          "applicability": "not_triggered",
-          "diagnostic_id": "E02",
-          "diagnostic_name": "时点和版本",
-          "evidence_ids": [
-            "EV_d29803bfa7dc8d0b",
-            "EV_b1c6e3ebc86a2e53"
-          ],
-          "reason": "题面和实际回答未触发本项。",
-          "status": "not_applicable"
-        }
-      ],
       "evidence_ids": [
-        "EV_d29803bfa7dc8d0b",
-        "EV_b1c6e3ebc86a2e53"
+        "EV_1",
+        "EV_2"
       ],
       "grade": "全部必要要求满足",
       "item_id": "E1",
@@ -117,33 +45,9 @@
     },
     {
       "applicability": "task_requirement",
-      "diagnostics": [
-        {
-          "applicability": "task_requirement",
-          "diagnostic_id": "E03",
-          "diagnostic_name": "字段与数值",
-          "evidence_ids": [
-            "EV_d29803bfa7dc8d0b",
-            "EV_b1c6e3ebc86a2e53"
-          ],
-          "reason": "给定数字与所交付计算支持本项要求。",
-          "status": "met"
-        },
-        {
-          "applicability": "task_requirement",
-          "diagnostic_id": "E04",
-          "diagnostic_name": "主张与证据",
-          "evidence_ids": [
-            "EV_d29803bfa7dc8d0b",
-            "EV_b1c6e3ebc86a2e53"
-          ],
-          "reason": "给定数字与所交付计算支持本项要求。",
-          "status": "met"
-        }
-      ],
       "evidence_ids": [
-        "EV_d29803bfa7dc8d0b",
-        "EV_b1c6e3ebc86a2e53"
+        "EV_1",
+        "EV_2"
       ],
       "grade": "全部必要要求满足",
       "item_id": "E2",
@@ -155,44 +59,9 @@
     },
     {
       "applicability": "task_requirement",
-      "diagnostics": [
-        {
-          "applicability": "task_requirement",
-          "diagnostic_id": "L01",
-          "diagnostic_name": "概念和类别",
-          "evidence_ids": [
-            "EV_d29803bfa7dc8d0b",
-            "EV_b1c6e3ebc86a2e53"
-          ],
-          "reason": "给定数字与所交付计算支持本项要求。",
-          "status": "met"
-        },
-        {
-          "applicability": "task_requirement",
-          "diagnostic_id": "L02",
-          "diagnostic_name": "比较、集合、排序",
-          "evidence_ids": [
-            "EV_d29803bfa7dc8d0b",
-            "EV_b1c6e3ebc86a2e53"
-          ],
-          "reason": "给定数字与所交付计算支持本项要求。",
-          "status": "met"
-        },
-        {
-          "applicability": "task_requirement",
-          "diagnostic_id": "L03",
-          "diagnostic_name": "公式与算术",
-          "evidence_ids": [
-            "EV_d29803bfa7dc8d0b",
-            "EV_b1c6e3ebc86a2e53"
-          ],
-          "reason": "给定数字与所交付计算支持本项要求。",
-          "status": "met"
-        }
-      ],
       "evidence_ids": [
-        "EV_d29803bfa7dc8d0b",
-        "EV_b1c6e3ebc86a2e53"
+        "EV_1",
+        "EV_2"
       ],
       "grade": "全部必要要求满足",
       "item_id": "L1",
@@ -204,22 +73,9 @@
     },
     {
       "applicability": "task_requirement",
-      "diagnostics": [
-        {
-          "applicability": "task_requirement",
-          "diagnostic_id": "L04",
-          "diagnostic_name": "推断与方法",
-          "evidence_ids": [
-            "EV_d29803bfa7dc8d0b",
-            "EV_b1c6e3ebc86a2e53"
-          ],
-          "reason": "给定数字与所交付计算支持本项要求。",
-          "status": "met"
-        }
-      ],
       "evidence_ids": [
-        "EV_d29803bfa7dc8d0b",
-        "EV_b1c6e3ebc86a2e53"
+        "EV_1",
+        "EV_2"
       ],
       "grade": "全部必要要求满足",
       "item_id": "L2",
@@ -231,33 +87,9 @@
     },
     {
       "applicability": "not_triggered",
-      "diagnostics": [
-        {
-          "applicability": "not_triggered",
-          "diagnostic_id": "A01",
-          "diagnostic_name": "路径适配",
-          "evidence_ids": [
-            "EV_d29803bfa7dc8d0b",
-            "EV_b1c6e3ebc86a2e53"
-          ],
-          "reason": "题面和实际回答未触发本项。",
-          "status": "not_applicable"
-        },
-        {
-          "applicability": "not_triggered",
-          "diagnostic_id": "A02",
-          "diagnostic_name": "调用约束",
-          "evidence_ids": [
-            "EV_d29803bfa7dc8d0b",
-            "EV_b1c6e3ebc86a2e53"
-          ],
-          "reason": "题面和实际回答未触发本项。",
-          "status": "not_applicable"
-        }
-      ],
       "evidence_ids": [
-        "EV_d29803bfa7dc8d0b",
-        "EV_b1c6e3ebc86a2e53"
+        "EV_1",
+        "EV_2"
       ],
       "grade": "不适用",
       "item_id": "A1",
@@ -269,33 +101,9 @@
     },
     {
       "applicability": "not_triggered",
-      "diagnostics": [
-        {
-          "applicability": "not_triggered",
-          "diagnostic_id": "A03",
-          "diagnostic_name": "返回消费",
-          "evidence_ids": [
-            "EV_d29803bfa7dc8d0b",
-            "EV_b1c6e3ebc86a2e53"
-          ],
-          "reason": "题面和实际回答未触发本项。",
-          "status": "not_applicable"
-        },
-        {
-          "applicability": "not_triggered",
-          "diagnostic_id": "A04",
-          "diagnostic_name": "失败与恢复",
-          "evidence_ids": [
-            "EV_d29803bfa7dc8d0b",
-            "EV_b1c6e3ebc86a2e53"
-          ],
-          "reason": "题面和实际回答未触发本项。",
-          "status": "not_applicable"
-        }
-      ],
       "evidence_ids": [
-        "EV_d29803bfa7dc8d0b",
-        "EV_b1c6e3ebc86a2e53"
+        "EV_1",
+        "EV_2"
       ],
       "grade": "不适用",
       "item_id": "A2",
@@ -307,33 +115,9 @@
     },
     {
       "applicability": "not_triggered",
-      "diagnostics": [
-        {
-          "applicability": "not_triggered",
-          "diagnostic_id": "U01",
-          "diagnostic_name": "缺失与否定",
-          "evidence_ids": [
-            "EV_d29803bfa7dc8d0b",
-            "EV_b1c6e3ebc86a2e53"
-          ],
-          "reason": "题面和实际回答未触发本项。",
-          "status": "not_applicable"
-        },
-        {
-          "applicability": "not_triggered",
-          "diagnostic_id": "U02",
-          "diagnostic_name": "冲突处置",
-          "evidence_ids": [
-            "EV_d29803bfa7dc8d0b",
-            "EV_b1c6e3ebc86a2e53"
-          ],
-          "reason": "题面和实际回答未触发本项。",
-          "status": "not_applicable"
-        }
-      ],
       "evidence_ids": [
-        "EV_d29803bfa7dc8d0b",
-        "EV_b1c6e3ebc86a2e53"
+        "EV_1",
+        "EV_2"
       ],
       "grade": "不适用",
       "item_id": "U1",
@@ -345,33 +129,9 @@
     },
     {
       "applicability": "task_requirement",
-      "diagnostics": [
-        {
-          "applicability": "task_requirement",
-          "diagnostic_id": "U03",
-          "diagnostic_name": "结论强度",
-          "evidence_ids": [
-            "EV_d29803bfa7dc8d0b",
-            "EV_b1c6e3ebc86a2e53"
-          ],
-          "reason": "给定数字与所交付计算支持本项要求。",
-          "status": "met"
-        },
-        {
-          "applicability": "not_triggered",
-          "diagnostic_id": "U04",
-          "diagnostic_name": "修正传播",
-          "evidence_ids": [
-            "EV_d29803bfa7dc8d0b",
-            "EV_b1c6e3ebc86a2e53"
-          ],
-          "reason": "题面和实际回答未触发本项。",
-          "status": "not_applicable"
-        }
-      ],
       "evidence_ids": [
-        "EV_d29803bfa7dc8d0b",
-        "EV_b1c6e3ebc86a2e53"
+        "EV_1",
+        "EV_2"
       ],
       "grade": "全部必要要求满足",
       "item_id": "U2",
@@ -383,33 +143,9 @@
     },
     {
       "applicability": "task_requirement",
-      "diagnostics": [
-        {
-          "applicability": "task_requirement",
-          "diagnostic_id": "D01",
-          "diagnostic_name": "核心答案定位",
-          "evidence_ids": [
-            "EV_d29803bfa7dc8d0b",
-            "EV_b1c6e3ebc86a2e53"
-          ],
-          "reason": "给定数字与所交付计算支持本项要求。",
-          "status": "met"
-        },
-        {
-          "applicability": "not_triggered",
-          "diagnostic_id": "D02",
-          "diagnostic_name": "展示对应",
-          "evidence_ids": [
-            "EV_d29803bfa7dc8d0b",
-            "EV_b1c6e3ebc86a2e53"
-          ],
-          "reason": "题面和实际回答未触发本项。",
-          "status": "not_applicable"
-        }
-      ],
       "evidence_ids": [
-        "EV_d29803bfa7dc8d0b",
-        "EV_b1c6e3ebc86a2e53"
+        "EV_1",
+        "EV_2"
       ],
       "grade": "全部必要要求满足",
       "item_id": "D1",
@@ -421,33 +157,9 @@
     },
     {
       "applicability": "task_requirement",
-      "diagnostics": [
-        {
-          "applicability": "not_triggered",
-          "diagnostic_id": "D03",
-          "diagnostic_name": "重要限制可见",
-          "evidence_ids": [
-            "EV_d29803bfa7dc8d0b",
-            "EV_b1c6e3ebc86a2e53"
-          ],
-          "reason": "本题无影响使用的重要假设或证据缺口。",
-          "status": "not_applicable"
-        },
-        {
-          "applicability": "task_requirement",
-          "diagnostic_id": "D04",
-          "diagnostic_name": "格式与成品可用",
-          "evidence_ids": [
-            "EV_d29803bfa7dc8d0b",
-            "EV_b1c6e3ebc86a2e53"
-          ],
-          "reason": "题面明示一句话，回答实际有两个句号形成两句；计算结果仍完整有效。",
-          "status": "violated"
-        }
-      ],
       "evidence_ids": [
-        "EV_d29803bfa7dc8d0b",
-        "EV_b1c6e3ebc86a2e53"
+        "EV_1",
+        "EV_2"
       ],
       "grade": "核心成立且有非关键局部缺陷",
       "item_id": "D2",
@@ -461,14 +173,14 @@
   "evidence": [
     {
       "end": 22,
-      "evidence_id": "EV_d29803bfa7dc8d0b",
+      "evidence_id": "EV_1",
       "quote": "用一句话计算收入从100增至120的增长率。",
       "source_id": "Q",
       "start": 0
     },
     {
       "end": 31,
-      "evidence_id": "EV_b1c6e3ebc86a2e53",
+      "evidence_id": "EV_2",
       "quote": "收入增长率为(120-100)/100=20%。这是一次增长。",
       "source_id": "A",
       "start": 0
@@ -477,8 +189,8 @@
   "explicit_probability": null,
   "final_answer_score": {
     "evidence_ids": [
-      "EV_d29803bfa7dc8d0b",
-      "EV_b1c6e3ebc86a2e53"
+      "EV_1",
+      "EV_2"
     ],
     "finding_ids": [
       "F1"
@@ -505,12 +217,278 @@
         "D04"
       ],
       "evidence_ids": [
-        "EV_d29803bfa7dc8d0b",
-        "EV_b1c6e3ebc86a2e53"
+        "EV_1",
+        "EV_2"
       ],
       "finding_id": "F1",
       "primary_diagnostic_id": "T02"
     }
   ],
-  "probability_evidence_ids": []
+  "probability_evidence_ids": [],
+  "diagnostics": [
+    {
+      "applicability": "task_requirement",
+      "diagnostic_id": "T01",
+      "diagnostic_name": "对象与目标识别",
+      "evidence_ids": [
+        "EV_1",
+        "EV_2"
+      ],
+      "reason": "给定数字与所交付计算支持本项要求。",
+      "status": "met"
+    },
+    {
+      "applicability": "task_requirement",
+      "diagnostic_id": "T02",
+      "diagnostic_name": "约束识别与落实",
+      "evidence_ids": [
+        "EV_1",
+        "EV_2"
+      ],
+      "reason": "题面明示一句话，回答实际有两个句号形成两句；计算结果仍完整有效。",
+      "status": "violated"
+    },
+    {
+      "applicability": "task_requirement",
+      "diagnostic_id": "T03",
+      "diagnostic_name": "必要覆盖",
+      "evidence_ids": [
+        "EV_1",
+        "EV_2"
+      ],
+      "reason": "给定数字与所交付计算支持本项要求。",
+      "status": "met"
+    },
+    {
+      "applicability": "task_requirement",
+      "diagnostic_id": "T04",
+      "diagnostic_name": "交付完成",
+      "evidence_ids": [
+        "EV_1",
+        "EV_2"
+      ],
+      "reason": "题面明示一句话，回答实际有两个句号形成两句；计算结果仍完整有效。",
+      "status": "violated"
+    },
+    {
+      "applicability": "task_requirement",
+      "diagnostic_id": "E01",
+      "diagnostic_name": "来源与范围",
+      "evidence_ids": [
+        "EV_1",
+        "EV_2"
+      ],
+      "reason": "给定数字与所交付计算支持本项要求。",
+      "status": "met"
+    },
+    {
+      "applicability": "not_triggered",
+      "diagnostic_id": "E02",
+      "diagnostic_name": "时点和版本",
+      "evidence_ids": [
+        "EV_1",
+        "EV_2"
+      ],
+      "reason": "题面和实际回答未触发本项。",
+      "status": "not_applicable"
+    },
+    {
+      "applicability": "task_requirement",
+      "diagnostic_id": "E03",
+      "diagnostic_name": "字段与数值",
+      "evidence_ids": [
+        "EV_1",
+        "EV_2"
+      ],
+      "reason": "给定数字与所交付计算支持本项要求。",
+      "status": "met"
+    },
+    {
+      "applicability": "task_requirement",
+      "diagnostic_id": "E04",
+      "diagnostic_name": "主张与证据",
+      "evidence_ids": [
+        "EV_1",
+        "EV_2"
+      ],
+      "reason": "给定数字与所交付计算支持本项要求。",
+      "status": "met"
+    },
+    {
+      "applicability": "task_requirement",
+      "diagnostic_id": "L01",
+      "diagnostic_name": "概念和类别",
+      "evidence_ids": [
+        "EV_1",
+        "EV_2"
+      ],
+      "reason": "给定数字与所交付计算支持本项要求。",
+      "status": "met"
+    },
+    {
+      "applicability": "task_requirement",
+      "diagnostic_id": "L02",
+      "diagnostic_name": "比较、集合、排序",
+      "evidence_ids": [
+        "EV_1",
+        "EV_2"
+      ],
+      "reason": "给定数字与所交付计算支持本项要求。",
+      "status": "met"
+    },
+    {
+      "applicability": "task_requirement",
+      "diagnostic_id": "L03",
+      "diagnostic_name": "公式与算术",
+      "evidence_ids": [
+        "EV_1",
+        "EV_2"
+      ],
+      "reason": "给定数字与所交付计算支持本项要求。",
+      "status": "met"
+    },
+    {
+      "applicability": "task_requirement",
+      "diagnostic_id": "L04",
+      "diagnostic_name": "推断与方法",
+      "evidence_ids": [
+        "EV_1",
+        "EV_2"
+      ],
+      "reason": "给定数字与所交付计算支持本项要求。",
+      "status": "met"
+    },
+    {
+      "applicability": "not_triggered",
+      "diagnostic_id": "A01",
+      "diagnostic_name": "路径适配",
+      "evidence_ids": [
+        "EV_1",
+        "EV_2"
+      ],
+      "reason": "题面和实际回答未触发本项。",
+      "status": "not_applicable"
+    },
+    {
+      "applicability": "not_triggered",
+      "diagnostic_id": "A02",
+      "diagnostic_name": "调用约束",
+      "evidence_ids": [
+        "EV_1",
+        "EV_2"
+      ],
+      "reason": "题面和实际回答未触发本项。",
+      "status": "not_applicable"
+    },
+    {
+      "applicability": "not_triggered",
+      "diagnostic_id": "A03",
+      "diagnostic_name": "返回消费",
+      "evidence_ids": [
+        "EV_1",
+        "EV_2"
+      ],
+      "reason": "题面和实际回答未触发本项。",
+      "status": "not_applicable"
+    },
+    {
+      "applicability": "not_triggered",
+      "diagnostic_id": "A04",
+      "diagnostic_name": "失败与恢复",
+      "evidence_ids": [
+        "EV_1",
+        "EV_2"
+      ],
+      "reason": "题面和实际回答未触发本项。",
+      "status": "not_applicable"
+    },
+    {
+      "applicability": "not_triggered",
+      "diagnostic_id": "U01",
+      "diagnostic_name": "缺失与否定",
+      "evidence_ids": [
+        "EV_1",
+        "EV_2"
+      ],
+      "reason": "题面和实际回答未触发本项。",
+      "status": "not_applicable"
+    },
+    {
+      "applicability": "not_triggered",
+      "diagnostic_id": "U02",
+      "diagnostic_name": "冲突处置",
+      "evidence_ids": [
+        "EV_1",
+        "EV_2"
+      ],
+      "reason": "题面和实际回答未触发本项。",
+      "status": "not_applicable"
+    },
+    {
+      "applicability": "task_requirement",
+      "diagnostic_id": "U03",
+      "diagnostic_name": "结论强度",
+      "evidence_ids": [
+        "EV_1",
+        "EV_2"
+      ],
+      "reason": "给定数字与所交付计算支持本项要求。",
+      "status": "met"
+    },
+    {
+      "applicability": "not_triggered",
+      "diagnostic_id": "U04",
+      "diagnostic_name": "修正传播",
+      "evidence_ids": [
+        "EV_1",
+        "EV_2"
+      ],
+      "reason": "题面和实际回答未触发本项。",
+      "status": "not_applicable"
+    },
+    {
+      "applicability": "task_requirement",
+      "diagnostic_id": "D01",
+      "diagnostic_name": "核心答案定位",
+      "evidence_ids": [
+        "EV_1",
+        "EV_2"
+      ],
+      "reason": "给定数字与所交付计算支持本项要求。",
+      "status": "met"
+    },
+    {
+      "applicability": "not_triggered",
+      "diagnostic_id": "D02",
+      "diagnostic_name": "展示对应",
+      "evidence_ids": [
+        "EV_1",
+        "EV_2"
+      ],
+      "reason": "题面和实际回答未触发本项。",
+      "status": "not_applicable"
+    },
+    {
+      "applicability": "not_triggered",
+      "diagnostic_id": "D03",
+      "diagnostic_name": "重要限制可见",
+      "evidence_ids": [
+        "EV_1",
+        "EV_2"
+      ],
+      "reason": "本题无影响使用的重要假设或证据缺口。",
+      "status": "not_applicable"
+    },
+    {
+      "applicability": "task_requirement",
+      "diagnostic_id": "D04",
+      "diagnostic_name": "格式与成品可用",
+      "evidence_ids": [
+        "EV_1",
+        "EV_2"
+      ],
+      "reason": "题面明示一句话，回答实际有两个句号形成两句；计算结果仍完整有效。",
+      "status": "violated"
+    }
+  ]
 }

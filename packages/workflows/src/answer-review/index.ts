@@ -9,11 +9,12 @@ import {attributionProfile,type AttributionResult} from "@eval/agents/attributio
 import attributionOutputSchema from '../../../../schemas/workflow/answer-review-attribution.schema.json' with {type:'json'};
 import type {ScoreResult} from "@eval/agents/score";
 import {answerReviewMaterial} from "./material.js";
+import {scoreEvidenceTask,bindScore,advanceScore,scoreBlockedReason,isFormalScore,scoreExportState,type ReviewTaskData} from './score.js';
 export {answerReviewMaterial} from "./material.js";
 export * from './incremental.js';
 export * from './watch.js';
 export interface AnswerReviewConfig extends EvalConfig {workflow:'answer-review';reviewStages?:('score'|'attribution')[];reviewTaskIds?:string[]}
-interface TaskData {candidate:Candidate;rewriteOf?:string}
+type TaskData=ReviewTaskData;
 const sourceMeta=Symbol('source meta: export only');
 const sourceTrace=Symbol('original trace: workflow only');
 function loadReviewInputs(manifest:RunManifest,records?:Map<string,Candidate>){return loadRunInputs(manifest,undefined,undefined,records,source=>{
@@ -27,7 +28,7 @@ export function attributionTextSlots(value:AttributionResult){return [{id:'summa
 export async function planAnswerReview(config:AnswerReviewConfig){
   const indexed=await buildPlan({...config,comparisons:[],clustering:{...config.clustering,enabled:false}},undefined,{materializeInputs:false});
   const catalog=indexed.catalog as Candidate[],stages=config.reviewStages??['score','attribution'],tasks:PlannedTask[]=[];
-  for(const candidate of catalog)for(const stage of stages){const task:PlannedTask={id:randomUUID(),stage,inputIds:stage==='attribution'?{answer:candidate.input_id}:{case:candidate.input_id},dependencies:{},data:{candidate} satisfies TaskData};tasks.push(task);
+  for(const candidate of catalog)for(const stage of stages){const task:PlannedTask=stage==='score'?scoreEvidenceTask(candidate):{id:randomUUID(),stage,inputIds:{answer:candidate.input_id},dependencies:{},data:{candidate} satisfies TaskData};tasks.push(task);
     if(stage==='attribution'&&config.rewrite.attribution)tasks.push({id:randomUUID(),stage:'rewrite',inputIds:{},dependencies:{source:task.id},data:{candidate,rewriteOf:task.id} satisfies TaskData});}
   const manifest={config,tasks,inputCatalog:catalog} as RunManifest,inputs=prepareInputs(await loadReviewInputs(manifest),catalog);
   const summary={workflow:'answer-review',cases:catalog.length,valid_inputs:catalog.length,score_tasks:tasks.filter(t=>t.stage==='score').length,attribution_tasks:tasks.filter(t=>t.stage==='attribution').length,rewrite_tasks:tasks.filter(t=>t.stage==='rewrite').length,criteria_tasks:0,comparison_tasks:0,issues:indexed.summary.issues??[]};
@@ -61,11 +62,12 @@ export function bindAnswerReview(task:PlannedTask,inputs:Record<string,unknown>,
     (inputs[data.candidate.input_id] as {[sourceTrace]:RawInput})[sourceTrace]);
   const original=(inputs[data.candidate.input_id] as {[sourceTrace]:RawInput})[sourceTrace];
   const source=answerReviewMaterial(data.candidate,original,data.candidate.input_id);
-  return {agent:task.stage,profile:'default',request:{input:source.shown,sources:{case:{id:data.candidate.input_id,value:source.material}}}};
+  return bindScore(task,{...source.material,view:source.shown},dependencies);
 }
 export const answerReviewWorkflow:WorkflowDefinition={
-  id:'answer-review',plan:config=>planAnswerReview(config as AnswerReviewConfig),bind:bindAnswerReview,
+  id:'answer-review',plan:config=>planAnswerReview(config as AnswerReviewConfig),bind:bindAnswerReview,blockedReason:scoreBlockedReason,
   advance:(task,receipt,state,inputs)=>{
+    if(task.stage==='score')return advanceScore(task,receipt,state,inputs);
     if(task.stage==='attribution'){
       const candidate=(task.data as TaskData).candidate,original=(inputs[candidate.input_id] as {[sourceTrace]:RawInput})[sourceTrace];
       validateOriginalAttributionEvidence(receipt.evaluation,{[candidate.input_id]:original},receipt.audit);
@@ -109,7 +111,7 @@ export const answerReviewWorkflow:WorkflowDefinition={
     const add=(task:PlannedTask)=>{manifest.tasks.push(task);manifest.states[task.id]={status:'pending',attempts:0};};
     for(const candidate of selected)for(const stage of stages){
       const key=canonical([stage,candidate.input_id]);let task=tasks.get(key);
-      if(!task){task={id:randomUUID(),stage,inputIds:stage==='attribution'?{answer:candidate.input_id}:{case:candidate.input_id},dependencies:{},data:{candidate} satisfies TaskData};add(task);tasks.set(key,task);}
+      if(!task){task=stage==='score'?scoreEvidenceTask(candidate):{id:randomUUID(),stage,inputIds:{answer:candidate.input_id},dependencies:{},data:{candidate} satisfies TaskData};add(task);tasks.set(key,task);}
       if(stage==='attribution'&&config.rewrite.attribution&&!rewrites.has(task.id)){
         add({id:randomUUID(),stage:'rewrite',inputIds:{},dependencies:{source:task.id},data:{candidate,rewriteOf:task.id} satisfies TaskData});
         rewrites.add(task.id);
@@ -154,24 +156,29 @@ const resultEncoder=(task:PlannedTask,state:RunState,inputs:Record<string,unknow
   if(task.stage==='attribution'&&!validateAttributionOutput(row))throw Error('归因导出契约无效：'+JSON.stringify(validateAttributionOutput.errors));
   return {id:task.id,file:resultFile(task.stage),row};
 };
-interface Checkpoint {workflow:'answer-review';manifest:Omit<RunManifest,'tasks'|'states'|'inputs'|'inputCatalog'>;inputs:Record<string,Candidate>;tasks:Record<string,{task:Omit<PlannedTask,'id'|'data'>;data:{input_id:string;rewriteOf?:string};state:RunManifest['states'][string];receipt?:any}>;usage:RunState['usage'];recordedAttempts:number}
+interface Checkpoint {workflow:'answer-review';manifest:Omit<RunManifest,'tasks'|'states'|'inputs'|'inputCatalog'>;inputs:Record<string,Candidate>;tasks:Record<string,{task:Omit<PlannedTask,'id'|'data'>;data:Omit<TaskData,'candidate'>&{input_id:string};state:RunManifest['states'][string];receipt?:any}>;usage:RunState['usage'];recordedAttempts:number}
 const codec:RunCodec<Checkpoint>={
-  encode(state){const {tasks,states,inputs:_inputs,inputCatalog,...manifest}=state.manifest;return {workflow:'answer-review',manifest,inputs:Object.fromEntries((inputCatalog as Candidate[]).map(c=>[c.input_id,c])),usage:state.usage,recordedAttempts:state.recordedAttempts,
+  encode(state){const {tasks,states,inputs:_inputs,inputCatalog,...manifest}=state.manifest;
+    const completedScores=new Map(tasks.filter(t=>isFormalScore(t,state.receipts[t.id])&&state.receipts[t.id].exported).map(t=>[(t.data as TaskData).candidate.input_id,t.id]));return {workflow:'answer-review',manifest,inputs:Object.fromEntries((inputCatalog as Candidate[]).map(c=>[c.input_id,c])),usage:state.usage,recordedAttempts:state.recordedAttempts,
     tasks:Object.fromEntries(tasks.map(task=>{const {id,data,...definition}=task,info=data as TaskData,receipt=state.receipts[id];let saved:any;
-      if(receipt){const {evaluation,submitted:_submitted,exported,...rest}=receipt;const {review:_review,...audit}=rest.audit;saved={...rest,audit:exported?audit:rest.audit,...(exported?{exported:{id:exported.id,file:exported.file}}:{evaluation})};}
-      return [id,{task:definition,data:{input_id:info.candidate.input_id,...(info.rewriteOf?{rewriteOf:info.rewriteOf}:{})},state:states[id],...(saved?{receipt:saved}:{})}];}))};},
-  references(checkpoint,ids){if(checkpoint.workflow!=='answer-review')throw Error('该run不属于独立Score/Attribution流程');
-    return Object.entries(checkpoint.tasks).flatMap(([id,row])=>!ids||ids.has(id)?row.receipt?.exported?[row.receipt.exported]:[]:[]);},
+      if(receipt){const {evaluation,submitted:_submitted,exported,...rest}=receipt;const {review:_review,...audit}=rest.audit;
+        const completed=task.stage==='score'&&!exported?completedScores.get(info.candidate.input_id):undefined;
+        saved={...rest,audit:exported||completed?audit:rest.audit,...(exported?{exported:{id:exported.id,file:exported.file}}:{evaluation:completed?{completed_by:completed}:evaluation})};}
+      return [id,{task:definition,data:{...Object.fromEntries(Object.entries(info).filter(([key])=>key!=='candidate')),input_id:info.candidate.input_id},state:states[id],...(saved?{receipt:saved}:{})}];}))};},
+  references(checkpoint,ids){if(checkpoint.workflow!=='answer-review')throw Error('该run不属于独立Score/Attribution流程');return Object.entries(checkpoint.tasks).flatMap(([id,row])=>!ids||ids.has(id)?row.receipt?.exported?[row.receipt.exported]:[]:[]);},
   resultId:row=>String(row.task_id),
   decode(checkpoint,read,ids){if(checkpoint.workflow!=='answer-review')throw Error('该run不属于独立Score/Attribution流程');
     const tasks:PlannedTask[]=[],receipts:RunState['receipts']={},states:RunManifest['states']={};
-    for(const[id,row]of Object.entries(checkpoint.tasks)){tasks.push({id,...row.task,data:{candidate:checkpoint.inputs[row.data.input_id],...(row.data.rewriteOf?{rewriteOf:row.data.rewriteOf}:{})}});states[id]=row.state;
+    for(const[id,row]of Object.entries(checkpoint.tasks)){tasks.push({id,...row.task,data:{...Object.fromEntries(Object.entries(row.data).filter(([key])=>key!=='input_id')),candidate:checkpoint.inputs[row.data.input_id]}});states[id]=row.state;
       if(row.receipt&&(!ids||ids.has(id))){const saved=row.receipt,exported=saved.exported?{...saved.exported,row:read(saved.exported)}:undefined;
         receipts[id]={...saved,evaluation:saved.evaluation??(row.task.stage==='rewrite'?{rewrites:(exported?.row.rewritten as any)?.rewrites}:row.task.stage==='attribution'?attributionEvaluation(exported!.row):row.task.stage==='instruction-review'?exported?.row.instruction_review:exported?.row.evaluation),audit:{...saved.audit,...(exported?.row.verification?{review:exported.row.verification}:{})},...(exported?{exported}:{})};}}
     return {manifest:{...checkpoint.manifest,tasks,states,inputs:Object.fromEntries(Object.keys(checkpoint.inputs).map(id=>[id,{id,name:id}])),inputCatalog:Object.values(checkpoint.inputs)},receipts,usage:checkpoint.usage,recordedAttempts:checkpoint.recordedAttempts};
   },
 };
-export const answerReviewRepository=createRunRepository(codec,resultEncoder);
+const reviewRepository=createRunRepository(codec,resultEncoder);
+export const answerReviewRepository={...reviewRepository,createResultWriter(run:string,inputs:Record<string,unknown>){
+  const write=reviewRepository.createResultWriter(run,inputs);return (state:RunState)=>write(scoreExportState(state));
+}};
 /** Add newly published answers to the existing day; never replace accepted tasks or result identities. */
 export async function appendAnswerReviewInputs(run:string,config:AnswerReviewConfig){
   const release=await runLock(run);
@@ -187,7 +194,7 @@ export async function appendAnswerReviewInputs(run:string,config:AnswerReviewCon
       if(!prior){catalog.push(candidate);known.set(key(candidate),candidate);added++;}
       for(const stage of config.reviewStages??['score','attribution']){
         const identity=canonical([stage,selected.input_id]);if(taskKeys.has(identity))continue;
-        const task:PlannedTask={id:randomUUID(),stage,inputIds:stage==='attribution'?{answer:selected.input_id}:{case:selected.input_id},dependencies:{},data:{candidate:selected} satisfies TaskData};
+        const task:PlannedTask=stage==='score'?scoreEvidenceTask(selected):{id:randomUUID(),stage,inputIds:{answer:selected.input_id},dependencies:{},data:{candidate:selected} satisfies TaskData};
         state.manifest.tasks.push(task);state.manifest.states[task.id]={status:'pending',attempts:0};taskKeys.add(identity);
       }
     }
@@ -238,9 +245,19 @@ export async function prepareAnswerReviewAutomaticResume(run:string,traceIds:Rea
 export async function reportAnswerReview(run:string,state?:RunState){
   state ??= await answerReviewRepository.readRun(run);
   const stages:Record<string,Record<string,number>>={};for(const task of state.manifest.tasks){const status=state.manifest.states[task.id]?.status??'pending';const row=stages[task.stage]??={};row[status]=(row[status]??0)+1;}
-  const results=state.manifest.tasks.filter(t=>t.stage==='score').flatMap(t=>state.receipts[t.id]?[{task:t,receipt:state.receipts[t.id]}]:[]);
+  const results=state.manifest.tasks.filter(t=>isFormalScore(t,state.receipts[t.id])).flatMap(t=>state.receipts[t.id]?[{task:t,receipt:state.receipts[t.id]}]:[]);
+  const selected=new Set(state.manifest.executionScope??state.manifest.tasks.map(t=>t.id));
+  const phases=state.manifest.tasks.filter(t=>t.stage==='score'&&selected.has(t.id));
+  const submissions=phases.map(t=>({accepted:Boolean(state!.receipts[t.id]),count:state!.receipts[t.id]?.submissionStats?.contentSubmissions??state!.manifest.states[t.id].failure?.contentSubmissions??0}));
+  const score_execution={planned_answers:new Set(phases.map(t=>(t.data as TaskData).candidate.input_id)).size,
+    rejected_answers:new Set(phases.filter(t=>(t.data as TaskData).score_part==='rejected').map(t=>(t.data as TaskData).candidate.input_id)).size,
+    phase_tasks:phases.length,phase_attempts:phases.reduce((n,t)=>n+state!.manifest.states[t.id].attempts,0),
+    phase_tasks_with_submission:submissions.filter(s=>s.count>0).length,first_submission_acceptances:submissions.filter(s=>s.accepted&&s.count===1).length,
+    content_submissions:submissions.reduce((n,s)=>n+s.count,0),accepted_normal:results.filter(r=>'final_answer_score' in (r.receipt.evaluation as object)).length,
+    accepted_exceptions:results.filter(r=>'assessment_status' in (r.receipt.evaluation as object)).length,
+    unverified_final:results.filter(r=>(r.receipt.evaluation as ScoreResult).final_answer_score?.status==='unverified').length};
   const summary={workflow:'answer-review',run_id:state.manifest.runId,status:state.manifest.status,active_stages:(state.manifest.config as AnswerReviewConfig).reviewStages??['score','attribution'],stages,tokens:state.usage,concurrency:state.manifest.concurrency,
-    completed_instruction_reviews:state.manifest.tasks.filter(t=>t.stage==='instruction-review'&&state.receipts[t.id]).length,completed_scores:results.length,completed_attributions:state.manifest.tasks.filter(t=>t.stage==='attribution'&&state.receipts[t.id]).length,
+    completed_instruction_reviews:state.manifest.tasks.filter(t=>t.stage==='instruction-review'&&state.receipts[t.id]).length,completed_scores:results.length,score_execution,completed_attributions:state.manifest.tasks.filter(t=>t.stage==='attribution'&&state.receipts[t.id]).length,
     execution_task_statuses:Object.fromEntries([...new Set(Object.values(state.manifest.states).map(s=>s.status))].map(status=>[status,Object.values(state.manifest.states).filter(s=>s.status===status).length])),paused_stages:state.manifest.pausedStages??[]};
   await writeJson(path.join(run,'stats.json'),summary);
   const lines=['# 独立回答评测','',`状态：${summary.status}`,''];
@@ -255,7 +272,7 @@ export async function reportAnswerReview(run:string,state?:RunState){
   lines.push('');await atomicWrite(path.join(run,'report.md'),lines.join('\n'));return summary;
 }
 export function validateAnswerReview(state:RunState){
-  for(const task of state.manifest.tasks){const r=state.receipts[task.id];if(!r)continue;if(r.taskId!==task.id||!r.exported||r.exported.id!==((task.data as TaskData).rewriteOf??task.id))throw Error('正式结果引用与任务不一致');
+  for(const task of state.manifest.tasks){const r=state.receipts[task.id];if(!r)continue;if(r.taskId!==task.id)throw Error('任务收据身份不一致');if(task.stage==='score'&&!isFormalScore(task,r))continue;if(!r.exported||r.exported.id!==((task.data as TaskData).rewriteOf??task.id))throw Error('正式结果引用与任务不一致');
     const row=r.exported.row,value=task.stage==='attribution'?attributionEvaluation(row):task.stage==='instruction-review'?row.instruction_review:row.evaluation;
     if(task.stage==='attribution'&&!validateAttributionOutput(row))throw Error('归因导出元信息契约无效');
     if(task.stage!=='rewrite'&&canonical(value)!==canonical(r.evaluation))throw Error('正式结果正文与已接受收据不一致');}

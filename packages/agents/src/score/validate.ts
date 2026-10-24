@@ -3,13 +3,22 @@ import { canonical, schemaIssues, ValidationError, type AgentRequest, type ToolA
 import { reviewSources } from "@eval/tools";
 import { scoreDirectory } from "@eval/prompts";
 import schema from "../../../../schemas/score/result.schema.json" with {type:"json"};
-import type { ScoreResult, ScoreException, Judgment, Rating, Applicability } from "./types.js";
+import type { ScoreResult, ScoreException, Judgment, Rating, Applicability, ScoreAxisResult, ScoreAxis } from "./types.js";
 const validateShape = new Ajv2020({allErrors:true,strict:false}).compile(schema);
 const directory = scoreDirectory as {units:Record<string,string>;diagnostics:Record<string,string>;parents:Record<string,string>;core_grades:Record<string,string>;final_grades:Record<string,string>;always_units:string[];always_diagnostics:string[]};
 const known = new Set(["task_requirement","observed_behavior","both"]);
 export function validateScore(request: AgentRequest, result: unknown, audit: ToolAudit) {
   if (!validateShape(result)) throw new ValidationError(schemaIssues(validateShape.errors,result));
-  const value=result as ScoreResult|ScoreException, material=request.sources.case.value as unknown as ReviewCase, issues:ValidationIssue[]=[];
+  validateScoreBody(request,result as ScoreResult|ScoreException,audit);
+}
+export function validateScoreAxis(request:AgentRequest,result:ScoreAxisResult,audit:ToolAudit,axis:ScoreAxis){
+  validateScoreBody(request,result,audit,[axis+'1',axis+'2']);
+}
+export function validateScoreJudgments(request:AgentRequest,result:ScoreAxisResult,audit:ToolAudit,axes:ScoreAxis[]){
+  validateScoreBody(request,result,audit,axes.flatMap(axis=>[axis+'1',axis+'2']));
+}
+function validateScoreBody(request:AgentRequest,value:ScoreResult|ScoreException|ScoreAxisResult,audit:ToolAudit,expectedUnits=Object.keys(directory.units)){
+  const material=request.sources.case.value as unknown as ReviewCase, issues:ValidationIssue[]=[];
   const bad=(path:string,message:string)=>issues.push({category:"decision",code:"score_contract",path,message});
   if(value.case_id!==material.case_id)bad('/case_id','必须使用执行器提供的本题ID。');
   const sources=reviewSources(material,audit.review),answer=sources[material.candidate_output_id];
@@ -35,7 +44,7 @@ export function validateScore(request: AgentRequest, result: unknown, audit: Too
     if(!row.evidence_ids.length&&(row.status==='met'||row.status==='violated'||!row.host_basis?.length))bad(path,'确定判断需要原文证据；无证据的待核或不适用需要真实host_basis。');
     for(const host of row.host_basis??[]){
       const allowed=row.status==='not_applicable'?['no_public_or_observed_trigger']:row.status==='unverified'?['unknown_trigger','missing_observation']:[];
-      if(!allowed.includes(host.rule_id)||!(host.pointer.startsWith('/availability/')||host.pointer==='/public_requirements'||host.pointer.startsWith('/public_requirements/')))bad(path+'/host_basis','元信息只能支持待核或不适用，且仅引用availability/public_requirements。');
+      if(!allowed.includes(host.rule_id)||!(host.pointer.startsWith('/availability/')||host.pointer==='/public_requirements'||host.pointer.startsWith('/public_requirements/')))bad(path+'/host_basis','元信息只能支持待核或不适用；pointer须以/开头，如/public_requirements或/availability/analysis。');
       try{let actual:any=material;for(const key of host.pointer.split('/').slice(1))actual=actual[key.replaceAll('~1','/').replaceAll('~0','~')];if(canonical(actual)!==canonical(host.value))throw Error();
         if(host.rule_id==='missing_observation'&&(!host.pointer.startsWith('/availability/')||!['partial','not_collected','unavailable'].includes(actual)))throw Error();
       }catch{bad(path+'/host_basis','元信息值必须与本题实际记录一致。');}
@@ -51,15 +60,15 @@ export function validateScore(request: AgentRequest, result: unknown, audit: Too
   const app=(row:Judgment&{applicability:Applicability},path:string,always:boolean)=>{
     if((row.status==='met'||row.status==='violated'||always)&&!known.has(row.applicability)||row.status==='not_applicable'&&row.applicability!=='not_triggered'||row.status==='unverified'&&row.applicability==='not_triggered'||row.applicability==='undetermined'&&row.status!=='unverified')bad(path+'/applicability','适用依据与状态不符；必要义务不能因漏做被记不适用。');
   };
-  const items=new Map(value.evaluations.map(row=>[row.item_id,row])),diagnostics=new Map(value.evaluations.flatMap(row=>row.diagnostics.map(d=>[d.diagnostic_id,d] as const)));
-  if(items.size!==12||Object.keys(directory.units).some(id=>!items.has(id)))bad('/evaluations','固定12项必须各出现一次。');
-  if(diagnostics.size!==24||value.evaluations.reduce((n,r)=>n+r.diagnostics.length,0)!==24)bad('/evaluations','固定24项诊断必须各出现一次。');
+  const items=new Map(value.evaluations.map(row=>[row.item_id,row])),diagnostics=new Map(value.diagnostics.map(d=>[d.diagnostic_id,d]));
+  if(items.size!==expectedUnits.length||value.evaluations.length!==expectedUnits.length||expectedUnits.some(id=>!items.has(id)))bad('/evaluations','本阶段固定核心单元必须各出现一次。');
+  const expectedDiagnostics=Object.keys(directory.parents).filter(id=>expectedUnits.includes(directory.parents[id]));
+  if(diagnostics.size!==expectedDiagnostics.length||value.diagnostics.length!==expectedDiagnostics.length||expectedDiagnostics.some(id=>!diagnostics.has(id)))bad('/diagnostics','本阶段固定诊断必须各出现一次。');
   for(const [i,row] of value.evaluations.entries()){
     const path=`/evaluations/${i}`;rating(row,path);app(row,path,directory.always_units.includes(row.item_id));
     if(row.item_name!==directory.units[row.item_id])bad(path+'/item_name','固定单元名称不匹配。');
     const expected=Object.keys(directory.parents).filter(id=>directory.parents[id]===row.item_id);
-    if(expected.length!==row.diagnostics.length||expected.some(id=>!row.diagnostics.some(d=>d.diagnostic_id===id)))bad(path+'/diagnostics','诊断必须保留原固定父子关系。');
-    for(const d of row.diagnostics){basis(d,path+'/'+d.diagnostic_id);app(d,path+'/'+d.diagnostic_id,directory.always_diagnostics.includes(d.diagnostic_id));
+    for(const d of value.diagnostics.filter(d=>expected.includes(d.diagnostic_id))){basis(d,path+'/'+d.diagnostic_id);app(d,path+'/'+d.diagnostic_id,directory.always_diagnostics.includes(d.diagnostic_id));
       if(d.diagnostic_name!==directory.diagnostics[d.diagnostic_id])bad(path,'固定诊断名称不匹配。');
       if(known.has(d.applicability)&&!known.has(row.applicability)||row.status==='not_applicable'&&d.status!=='not_applicable'||d.status==='violated'&&row.status!=='violated'||row.status==='met'&&!['met','not_applicable'].includes(d.status))bad(path,'父子项状态不一致，不能以一个正确细项抹去其他缺陷或待核。');
     }
@@ -76,7 +85,8 @@ export function validateScore(request: AgentRequest, result: unknown, audit: Too
     else{if(!f.diagnostic_ids.includes(f.primary_diagnostic_id)||f.unmapped_reason!=null)bad(path,'主诊断应在关联目录中。');
       for(const id of f.diagnostic_ids){if(!f.affected_item_ids.includes(directory.parents[id])||!diagnostics.has(id)||!publicRule&&!['violated','unverified'].includes(diagnostics.get(id)!.status))bad(path,'问题与诊断及其父单元必须对应。');if(confirmed)confirmedDiagnostics.add(id);}}
   }
-  for(const row of value.evaluations){if(row.status==='violated'&&(!confirmedItems.has(row.item_id)||!unmapped.has(row.item_id)&&!row.diagnostics.some(d=>d.status==='violated')))bad('/evaluations','违反单元需要已确认的非题目问题和受影响诊断。');for(const d of row.diagnostics)if(d.status==='violated'&&!confirmedDiagnostics.has(d.diagnostic_id)&&!unmapped.has(row.item_id))bad('/evaluations','违反诊断缺少已确认问题。');}
+  for(const row of value.evaluations){if(row.status==='violated'&&(!confirmedItems.has(row.item_id)||!unmapped.has(row.item_id)&&!value.diagnostics.some(d=>directory.parents[d.diagnostic_id]===row.item_id&&d.status==='violated')))bad('/evaluations','违反单元需要已确认的非题目问题和受影响诊断。');for(const d of value.diagnostics.filter(d=>directory.parents[d.diagnostic_id]===row.item_id))if(d.status==='violated'&&!confirmedDiagnostics.has(d.diagnostic_id)&&!unmapped.has(row.item_id))bad('/evaluations','违反诊断缺少已确认问题。');}
+  if(!('final_answer_score' in value)){if(issues.length)throw new ValidationError(issues);return;}
   const final=value.final_answer_score;rating(final,'/final_answer_score',true);
   if(final.finding_ids.some(id=>!findings.has(id)))bad('/final_answer_score/finding_ids','总分引用不存在的问题。');
   const defects=final.finding_ids.flatMap(id=>{const f=findings.get(id);return f&&f.attribution==='established'&&f.component!=='public_rule'?[f]:[];});

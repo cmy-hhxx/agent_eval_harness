@@ -37,3 +37,5 @@
 测试检查资源来源、工具覆盖、实际装配、材料隔离与预算，不逐句锁定文风。语义变化用[真实模型复核](../../docs/quality.md#真实模型复核)验证；测试 fixture 不进入模型上下文。
 
 Eris 通过 `erisPrompt(toolNames)` 和 [createEris](../../agent/src/core/profile.ts)装配；能力与维护入口见 [Eris](../../agent/README.md#修改-eris)。
+
+Score的evidence、dimensions、default分别负责统一取证、六轴联合评分与独立总分，正常3次会话；axis-t/e/l/a/u/d用于单轴定向重评，dimensions按score_axes覆盖多轴子集。机械字段由Score组装，最终总分不接收六轴数值分数。取证只输出事实引用与缺口，正文按需通过score_material读取；score_calculate用EV引用复算并自动登记结果，score_external使用Score专用代理传输。补查只重评新增事实影响的轴，影响无法隔离时才全量重评。

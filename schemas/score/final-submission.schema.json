@@ -1,0 +1,225 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "oneOf": [
+    {
+      "type": "object",
+      "properties": {
+        "final_answer_score": {
+          "$ref": "#/$defs/final_score"
+        },
+        "finding_groups": {
+          "type": "array",
+          "items": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1
+            },
+            "minItems": 1,
+            "uniqueItems": true
+          },
+          "minItems": 0
+        },
+        "explicit_probability": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "minimum": 0,
+          "maximum": 1
+        },
+        "probability_evidence_ids": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          },
+          "minItems": 0,
+          "uniqueItems": true
+        }
+      },
+      "required": [
+        "final_answer_score",
+        "finding_groups",
+        "explicit_probability",
+        "probability_evidence_ids"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "action": {
+          "const": "repair"
+        },
+        "reason": {
+          "type": "string",
+          "minLength": 1
+        },
+        "axis_ids": {
+          "type": "array",
+          "items": {
+            "enum": [
+              "T",
+              "E",
+              "L",
+              "A",
+              "U",
+              "D"
+            ]
+          },
+          "uniqueItems": true
+        },
+        "verification_requests": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "claim": {
+                "type": "string",
+                "minLength": 1
+              },
+              "affected_item_ids": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "minLength": 1,
+                  "enum": [
+                    "T1",
+                    "T2",
+                    "E1",
+                    "E2",
+                    "L1",
+                    "L2",
+                    "A1",
+                    "A2",
+                    "U1",
+                    "U2",
+                    "D1",
+                    "D2"
+                  ]
+                },
+                "minItems": 1,
+                "uniqueItems": true
+              }
+            },
+            "required": [
+              "claim",
+              "affected_item_ids"
+            ],
+            "additionalProperties": false
+          },
+          "minItems": 0
+        }
+      },
+      "required": [
+        "action",
+        "reason",
+        "axis_ids",
+        "verification_requests"
+      ],
+      "additionalProperties": false
+    }
+  ],
+  "$defs": {
+    "final_score": {
+      "type": "object",
+      "properties": {
+        "status": {
+          "enum": [
+            "met",
+            "not_applicable",
+            "unverified",
+            "violated"
+          ]
+        },
+        "score": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0,
+          "maximum": 10
+        },
+        "score_range": {
+          "oneOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "array",
+              "items": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 10
+              },
+              "minItems": 2,
+              "maxItems": 2
+            }
+          ]
+        },
+        "reason": {
+          "type": "string",
+          "minLength": 1
+        },
+        "evidence_ids": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          },
+          "uniqueItems": true
+        },
+        "finding_ids": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          },
+          "uniqueItems": true
+        },
+        "host_basis": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/host_basis"
+          },
+          "minItems": 1
+        }
+      },
+      "required": [
+        "status",
+        "score",
+        "score_range",
+        "reason",
+        "evidence_ids",
+        "finding_ids"
+      ],
+      "additionalProperties": false
+    },
+    "host_basis": {
+      "type": "object",
+      "properties": {
+        "pointer": {
+          "type": "string",
+          "minLength": 1,
+          "pattern": "^/(availability/|public_requirements($|/))",
+          "description": "Absolute JSON Pointer, such as /public_requirements or /availability/analysis."
+        },
+        "value": {},
+        "rule_id": {
+          "enum": [
+            "no_public_or_observed_trigger",
+            "unknown_trigger",
+            "missing_observation"
+          ]
+        }
+      },
+      "required": [
+        "pointer",
+        "value",
+        "rule_id"
+      ],
+      "additionalProperties": false
+    }
+  }
+}
