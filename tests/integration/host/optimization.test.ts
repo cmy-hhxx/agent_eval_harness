@@ -198,7 +198,7 @@ test("attribution and comparison workers receive blind prompts and tool views wh
     };
     assert.equal(row.ground_truth.value, "4 来自 secret-model", "formal results keep the original reference");
     assert(row.evaluations.a_fast!.summary.includes("a_fast"), "attribution receipts are not blinded on export");
-    assert.deepEqual(stages.sort(), ["attribution", "attribution", "comparison", "criteria"]);
+    assert.deepEqual(stages.sort(), ["attribution", "attribution", "comparison", "criteria", "instruction-review", "instruction-review"]);
   } finally {
     await worker.close();
     await rm(directory, { recursive: true, force: true });
@@ -489,8 +489,10 @@ test("resume skips accepted cases after edits and evaluates only unfinished and 
           async run() {
             await inspectFor(options);
             const input = await readJson<RawInput>(path.join(options.workdir, `inputs/${options.spec.inputs[0]!.name}.json`));
-            if (options.spec.evaluation.id === "attribution") calls.push(input.case_id!);
-            if (options.spec.evaluation.id === "attribution" && input.case_id === "todo" && !resumed) throw new Error("stop before submission");
+            const state=await readRunState(path.join(config.output.path,"test"));
+            const business=(state.manifest.tasks.find(task=>task.id===options.spec.taskId)!.data as TaskData).candidates.A;
+            if (options.spec.evaluation.id === "attribution") {assert(!Object.hasOwn(input,"case_id"));calls.push(business.case_id);}
+            if (options.spec.evaluation.id === "attribution" && business.case_id === "todo" && !resumed) throw new Error("stop before submission");
             await submitFor(options, draftFor(options.spec, taskResult(options.spec)));
           },
           async abort() {},
@@ -761,7 +763,7 @@ test("normal runs persist drafts before cleanup, carry them to one repair attemp
   );
   try {
     const stats = await runEvaluation(optionsFor(config, modelForStage, await buildPlan(config), [worker.url]));
-    assert.equal(calls, 5);
+    assert.equal(calls, 7);
     assert.equal(stats.completed_comparisons, 1);
     const state = await readRunState(path.join(config.output.path, "test"));
     assert.equal(state.manifest.states[firstTask!].failure?.draft, undefined);

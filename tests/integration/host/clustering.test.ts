@@ -233,7 +233,7 @@ test("clustering builds a bounded per-model library and recalls classes across r
       config: { ...config, clustering: { ...config.clustering, enabled: false } },
       plan: { tasks: [], inputs: {}, summary: {} },
     });
-    assert.equal(calls.value, 10, "resume preserves all accepted evaluation receipts");
+    assert.equal(calls.value, 14, "resume preserves all accepted evaluation receipts");
     assert.equal((resumed.problem_library as Record<string, { occurrences: number }>).a_fast?.occurrences, 2);
 
     // A new run recalls the existing class instead of creating another one.
@@ -337,7 +337,7 @@ test("a model over the library cap cannot partially commit another model", async
     const modelA = (first.data as { scope: { version: string } }).scope.version;
     const modelB = (second.data as { scope: { version: string } }).scope.version;
     const previous = emptyLibrary(modelB);
-    previous.components.c1 = { id: "c1", label: "模型自身推理", definition: "", aliases: [], first_seen: null };
+    previous.components.c1 = { id: "c1", label: "模型推断与生成/事实关系推导", definition: "", aliases: [], first_seen: null };
     previous.classes.k1 = { id: "k1", component_id: "c1", label: "其他问题", definition: "d", aliases: [], status: "active", merged_into: null, first_seen: null };
     await writeJson(path.join(config.problemLibrary.path, `${modelB}.json`), previous);
     const receipts: Record<string, unknown> = {};

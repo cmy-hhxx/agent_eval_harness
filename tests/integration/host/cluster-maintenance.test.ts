@@ -41,7 +41,7 @@ async function fixture(caseCount = 2, components?: string[], uniqueProblems = fa
         result.task_analysis = criteriaResultForTask(task, plan.inputs);
         if (uniqueProblems) result.findings[0].problem!.label += " " + candidate.batch_id + " " + candidate.case_id;
         if (components) result.findings = components.map((component, index) => ({ ...structuredClone(result.findings[0]),
-          finding_id: "f" + index, problem: { ...result.findings[0].problem!, component: [responsibilityFixture(component, {evidence_ids: []})] } }));
+          finding_id: "f" + index, problem: { ...result.findings[0].problem!, component: [responsibilityFixture(component, {evidence_ids: result.findings[0].evidence.map(item=>item.evidence_id)})] } }));
         result.findings.forEach(finding => { finding.problem!.definition += candidate.case_id; });
       }
       receipts[task.id] = { taskId: task.id, attemptId: randomUUID(), submissionId: randomUUID(),

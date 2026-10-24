@@ -50,7 +50,7 @@ test('Score and unified Attribution run independently, omit SYS/DEV, and rewrite
    }
    const accepted=await submitFor(options,draft);assert.notEqual(accepted.isError,true,JSON.stringify(accepted));return;
   }
-  if(id==='instruction-review'){const result=await submitFor(options,{});assert.notEqual(result.isError,true,JSON.stringify(result));return;}
+  if(id==='instruction-review'){const result=await submitFor(options,taskResult(options.spec));assert.notEqual(result.isError,true,JSON.stringify(result));return;}
   const inspect=await options.execute('review_material',{action:'inspect'}),info=inspect.details as {case_id:string};
   const read=async(source_id:string)=>{const r=await options.execute('review_material',{action:'read',source_id});return (r.details as {content:string}).content;};
   const q=await read('Q'),a=await read('A');
@@ -179,10 +179,10 @@ test('main attribution and independent reviews share one concurrency limit of si
    const result=await submitFor(options,draftFor(options.spec,taskResult(options.spec)));assert.notEqual(result.isError,true,JSON.stringify(result));
   }finally{active--;}
  },async abort(){release();},async dispose(){}};}};
- const worker=await startWorker(backend,path.join(f.directory,'worker'));t.after(()=>worker.close());
+ const workers=await Promise.all(Array.from({length:16},(_,index)=>startWorker(backend,path.join(f.directory,'worker-'+index))));t.after(()=>Promise.all(workers.map(worker=>worker.close())));
  await runEvaluation({...services,taskSource:answerReviewWorkflow,repository:answerReviewRepository,report:reportAnswerReview,
   runId:'concurrency',output:config.output,config,plan,engine:'pi',identity:fakeIdentity,evaluatorVersion:fakeEvaluatorVersion,
-  modelForStage:f.modelForStage,policy:config.execution,concurrency:16,retries:0,retryDelaySeconds:0,workerUrls:[worker.url]});
+  modelForStage:f.modelForStage,policy:config.execution,concurrency:16,retries:0,retryDelaySeconds:0,workerUrls:workers.map(worker=>worker.url)});
  assert.equal(peak,16);assert.equal(started,18);assert.equal(checks,18);
  const state=await answerReviewRepository.readRun(path.join(config.output.path,'concurrency'));
  assert.equal(Object.keys(state.receipts).length,36);assert.equal(active,0);

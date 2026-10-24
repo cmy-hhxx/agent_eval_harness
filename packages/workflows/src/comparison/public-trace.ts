@@ -39,7 +39,10 @@ export function validateOriginalAttributionEvidence(value: unknown, originals: R
       const point = parseEvidenceCoordinates(row.evidence_id);
       if (!point || point.kind === "image") return;
       const original = originals[point.input_id];
-      if (!original || resolveEvidence(original, { evidence_id: row.evidence_id }, String(row.source ?? "answer"), audit, path, point.input_id).quote !== row.quote)
+      let matches = false;
+      try { matches = !!original && resolveEvidence(original, { evidence_id: row.evidence_id }, String(row.source ?? "answer"), audit, path, point.input_id).quote === row.quote; }
+      catch { /* Original private text must never enter model-facing repair details. */ }
+      if (!matches)
         throw new ValidationError([{ category: "evidence", code: "evidence_original_scope", path,
           message: "证据须与原始数据源完全一致；含内部规范的父级 JSON 已被裁去私密内容，请改选未改写的具体事实叶子。" }]);
       return;

@@ -497,7 +497,7 @@ for (const modelCount of [4, 6, 2]) test(`automation resumes mixed flat and sess
     }
     assert.deepEqual(interrupted, new Set(["rewrite/attribution", "rewrite/comparison"]));
     const saved = await readRunState(run), counts = summarize([comparisonCodec.encode(saved)]);
-    assert.deepEqual(Object.keys(counts.stages).sort(), ["attribution", "comparison", "criteria", "rewrite"]);
+    assert.deepEqual(Object.keys(counts.stages).sort(), ["attribution", "comparison", "criteria", "instruction-review", "rewrite"]);
     for (const stage of Object.values(counts.stages)) {
       assert(stage.total > 0);
       assert.equal(stage.completed, stage.total);

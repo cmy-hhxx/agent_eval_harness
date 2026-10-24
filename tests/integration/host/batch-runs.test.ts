@@ -107,7 +107,7 @@ test("scoped failure retry and interrupted resume preserve accepted results, coo
   await runEvaluation({ ...options,discoverInputs:true,plan:{ tasks:[],inputs:{},summary:{} } });
   const completed = await readRunState(run);
   assert((completed.manifest.inputCatalog as Candidate[]).every(row => row.case_id !== 'outside'));
-  assert.equal(Object.keys(completed.receipts).length,plan.tasks.length);
+  assert.equal(Object.keys(completed.receipts).length,completed.manifest.tasks.length);
   assert.equal(calls.filter(id => id === failed.id).length,2);
   assert.equal((await errors.read(run,new URLSearchParams())).unresolved_count,0);
   assert.equal((await readJson<any>(path.join(run,'state.json'))).runId,'batch-recovery');

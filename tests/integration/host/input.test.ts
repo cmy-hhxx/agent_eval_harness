@@ -534,6 +534,7 @@ test("image observations require an actual image tool audit", async () => {
     });
     result.findings[0].evidence[0] = { evidence_id: evidenceId(task.inputIds.answer!, 1, "image"), message_index: 1, quote: "[图像观察]图片呈现结果" };
     result.findings[0].evidence.push(canonicalEvidence(task.inputIds.answer!, 0, "计算2+2"));
+    for(const cause of result.findings[0].problem?.component??[])cause.evidence_ids=result.findings[0].evidence.map(item=>item.evidence_id);
     assert.throws(() => validateEvaluation(task, plan.inputs, result, audit, {}), /未查看/);
     const runtime = new ToolRuntime(
       {
@@ -782,11 +783,11 @@ test("subjective inputs still run attribution and direct evidence needs no force
     forged.findings[0] = {
       ...forged.findings[0],
       type: "problem",
-      problem: { component: [responsibilityFixture("组件", {evidence_ids: []})], label: "问题", definition: "描述" },
+      problem: { component: [responsibilityFixture("组件", {evidence_ids: forged.findings[0].evidence.map(item=>item.evidence_id)})], label: "问题", definition: "描述" },
     } as (typeof forged.findings)[number];
     assert.throws(
       () => validateEvaluation(task, plan.inputs, forged, emptyAudit(), {}),
-      /problem\.component|上下文组装与传递|模型自身推理/,
+      /责任组件须选择/,
     );
   } finally {
     await rm(directory, { recursive: true, force: true });

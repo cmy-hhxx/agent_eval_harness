@@ -57,7 +57,7 @@ test("slot repairs preview without mutation, preserve every other field and excl
     }
     const resume = { ...options, plan: { tasks: [], inputs: {}, summary: {} } };
     await runEvaluation(resume);
-    assert.equal(calls, 9, "eight original judgments plus one selected rewrite");
+    assert.equal(calls, 13, "eight original judgments, four instruction reviews and one selected rewrite");
     let after = await readRunState(run);
     assert.equal((await prepareClusteringJob([run], config)).config.clusteringJob.sources.length, 4,
       "a completed comparison rewrite scope does not hide any accepted attribution from clustering");

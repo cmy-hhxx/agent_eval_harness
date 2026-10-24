@@ -323,7 +323,7 @@ function buildModels(source: ConfigObject, configuration: ApplicationSettings): 
   return { models, bindings, channels: configuration.channels };
 }
 
-const DASHBOARD_STAGES = ["criteria", "attribution", "comparison", "rewrite", "clustering"] as const;
+const DASHBOARD_STAGES = ["criteria", "attribution", "instruction-review", "comparison", "rewrite", "clustering"] as const;
 const DASHBOARD_EXECUTION = ["concurrency", "timeoutSeconds", "maxToolCalls", "retries"] as const;
 const DASHBOARD_BINDING = ["channel", "model", "thinking"] as const;
 

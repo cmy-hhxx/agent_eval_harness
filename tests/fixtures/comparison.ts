@@ -382,7 +382,7 @@ export function inspectionDraft(spec: { prompt: string }): unknown {
 
 /** Mock backends use the current profile transport; every queued file owns distinct bytes. */
 export async function submitFor(options: Parameters<AgentBackend["createSession"]>[0], value: unknown) {
-  if(options.spec.evaluation.id === "instruction-review") {
+  if(options.spec.evaluation.id === "instruction-review" && value && typeof value === "object" && "checks" in value) {
     const material=parsedMaterial(options.spec) as {norm_catalog:{source_id:string}[]};
     const checks=[];
     for(const norm of material.norm_catalog.slice(0,1)){

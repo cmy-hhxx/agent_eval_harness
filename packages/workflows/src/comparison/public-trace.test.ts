@@ -35,6 +35,9 @@ test("main attribution excludes private rules from both prompt and readable sour
   const parent = selectEvidenceSource(evidenceSources(view.messages[5]), "/input_messages")!;
   const projected = cite(id, 5, parent.source, parent.start, parent.end);
   assert.throws(() => validateOriginalAttributionEvidence({evidence:projected}, {[id]:raw}, emptyAudit()), /原始数据源|原文/);
+  const omitted = evidenceSources(view.messages[0]).find(source => source.path === "/type")!;
+  assert.throws(() => validateOriginalAttributionEvidence(cite(id,0,omitted,0,omitted.text.length), {[id]:raw}, emptyAudit()),
+    error => error instanceof Error && /原始数据源/u.test(error.message) && !error.message.includes("SYS_PRIVATE_SENTINEL"));
   const check = bindInstructionReview(candidate, raw);
   const text = JSON.stringify(check.request);
   for (const secret of ["SYS_PRIVATE_SENTINEL", "DEV_PRIVATE_SENTINEL", "SKILL_PRIVATE_SENTINEL"]) assert(text.includes(secret));

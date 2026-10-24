@@ -108,7 +108,7 @@ for (const confirmed of [false, true]) test(`standard conflict review ${confirme
     const evaluationFor = (task: PlannedTask) => {
       const evaluation = attributionResult(false, "2+2=4", true, task.inputIds.answer);
       const question = (task.data as TaskData).candidates.A.question;
-      evaluation.criterion_assessments[0].evidence[1] = {
+      for(const assessment of evaluation.criterion_assessments)assessment.evidence[1] = {
         evidence_id: evidenceId(task.inputIds.answer, 0, "text", "/content", 0, question.length), message_index: 0, quote: question,
       };
       return evaluation;

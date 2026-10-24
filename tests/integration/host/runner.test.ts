@@ -53,7 +53,7 @@ test("repository defaults give criteria, each attribution and comparison three i
       concurrency: 1, retries: 0, retryDelaySeconds: 0, workerUrls: [worker.url] };
     await runEvaluation(options);
     const before = await readRunState(path.join(config.output.path, options.runId));
-    assert.deepEqual(new Set(plan.tasks.map(task => task.stage)), new Set(["criteria", "attribution", "comparison"]));
+    assert.deepEqual(new Set(plan.tasks.map(task => task.stage)), new Set(["criteria", "attribution", "comparison", "instruction-review"]));
     for (const task of plan.tasks) {
       assert.equal(before.manifest.states[task.id].status, "succeeded", task.stage);
       assert.equal(before.receipts[task.id].submissionStats?.contentSubmissions, 4);
@@ -171,29 +171,29 @@ test("two workers execute dependency graph, archive receipts and reuse only same
     await assert.rejects(runEvaluation({ ...options, evaluatorVersion: " " }), /evaluatorVersion/);
     const summary = await runEvaluation(options);
     assert.equal(summary.completed_comparisons, 2);
-    assert.equal(calls, 7);
+    assert.equal(calls, 11);
     const businessLog = path.join(directory, "log/evaluation.log");
     const logged = (await readFile(businessLog, "utf8"))
       .trim()
       .split("\n")
       .map((line) => JSON.parse(line));
-    assert.equal(logged.length, 7);
+    assert.equal(logged.length, 11);
     assert.equal(logged.filter((row) => row.stage === "criteria").length, 1);
     assert.equal(logged.filter((row) => row.stage === "attribution").length, 4);
     assert.equal(logged.filter((row) => row.stage === "comparison").length, 2);
     assert.equal(await readFile(path.join(directory, "log/runtime.log"), "utf8"), "");
     assert.deepEqual(summary.tokens, {
-      input: 70,
-      output: 35,
-      cacheRead: 210,
-      cacheWrite: 70,
-      totalTokens: 385,
+      input: 110,
+      output: 55,
+      cacheRead: 330,
+      cacheWrite: 110,
+      totalTokens: 605,
     });
     assert.deepEqual(summary.cache, {
       model_input: { hit_rate: 0.6 },
     });
     assert.deepEqual(summary.evaluator_versions, [fakeEvaluatorVersion]);
-    assert.deepEqual(summary.judge_models, { criteria: ["fixture"], attribution: ["fixture"], comparison: ["fixture"] });
+    assert.deepEqual(summary.judge_models, { criteria: ["fixture"], attribution: ["fixture"], comparison: ["fixture"], "instruction-review":["fixture"] });
     const run = path.join(config.output.path, "first");
     assert.deepEqual(await readJson(path.join(run, "stats.json")), summary);
     const checkpoint = await readJson(path.join(run, "state.json"));
@@ -260,15 +260,15 @@ test("two workers execute dependency graph, archive receipts and reuse only same
     assert.equal((await readJson(path.join(run, "stats.json"))).validation, undefined);
     assert.match(await readFile(path.join(run, "report.md"), "utf8"), /离线校验：尚未校验/);
     await runEvaluation(options);
-    assert.equal(calls, 7, "same-run resume repeats none of the accepted evaluation tasks");
-    assert.equal((await readFile(businessLog, "utf8")).trim().split("\n").length, 7);
+    assert.equal(calls, 11, "same-run resume repeats none of the accepted evaluation tasks");
+    assert.equal((await readFile(businessLog, "utf8")).trim().split("\n").length, 11);
     const cached = await runEvaluation({ ...options, runId: "second" });
-    assert.equal(calls, 14, "a new run must evaluate independently");
+    assert.equal(calls, 22, "a new run must evaluate independently");
     assert.equal((await readFile(businessLog, "utf8")).trim().split("\n").length, 14);
     assert.deepEqual(cached.cache, {
       model_input: { hit_rate: 0.6 },
     });
-    assert.equal((cached.tokens as { totalTokens: number }).totalTokens, 385);
+    assert.equal((cached.tokens as { totalTokens: number }).totalTokens, 605);
     assert.equal((await validateRun(path.join(config.output.path, "second"))).valid, true);
   } finally {
     await Promise.all(workers.map((w) => w.close()));
@@ -321,7 +321,7 @@ test("different runs and batches evaluate independently", async () => {
         plan: await buildPlan(config),
       });
       assert.equal(stats.completed_comparisons, 1);
-      assert.equal(calls, (index + 1) * 4, "another batch must invoke the evaluator even for the same question");
+      assert.equal(calls, (index + 1) * 6, "another batch must invoke the evaluator even for the same question");
     }
     config.inputs.batches = days;
     const combined = await runEvaluation({
@@ -329,7 +329,7 @@ test("different runs and batches evaluate independently", async () => {
       runId: "combined",
       plan: await buildPlan(config),
     });
-    assert.equal(calls, 16);
+    assert.equal(calls, 24);
     assert.equal(combined.completed_comparisons, 2);
     assert.deepEqual(Object.keys(combined.by_batch as object), days);
     assert.equal((await validateRun(path.join(config.output.path, "combined"))).valid, true);
@@ -503,7 +503,7 @@ test("one host routes tasks to both engines without sharing sessions or workspac
       workerUrls: workers.map((w) => w.url),
     });
     assert.equal(summary.completed_comparisons, 2);
-    assert.deepEqual(calls, { pi: 3, prime: 4 });
+    assert.deepEqual(calls, { pi: 5, prime: 6 });
     assert.equal(workdirs.size, 7);
     const run = path.join(config.output.path, "mixed");
     assert.deepEqual((await readdir(run)).sort(), [
@@ -1109,9 +1109,10 @@ for (const debug of [false, true])
       assert.deepEqual(complete.evaluator_versions, [fakeEvaluatorVersion, "fixture-2"].sort());
       assert.deepEqual(complete.judge_models, {
         criteria: ["changed-model", "fixture"], attribution: ["changed-model"], comparison: ["changed-model"],
+        "instruction-review": ["changed-model"],
       });
       assert.equal(await exists(failureFile), false, "a successful resume has no failure export");
-      assert.deepEqual(Object.values(calls).sort(), [1, 1, 1, 1, 1, 1, 1, 2]);
+      assert.deepEqual(Object.values(calls).sort(), [1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 2]);
       assert.equal((await validateRun(path.join(config.output.path, "resume"))).valid, true);
       assert.equal(await exists(internalPath(run)), debug);
       const completedState = await readRunState(run);

@@ -24,7 +24,7 @@ for (const clustering of [false, true]) test(`rewrite embeds named text in stage
     clustering ? Array.from({ length: 4 }, () => [raw("q1", "4", "2+2=5")]) : undefined, true, clustering,
   );
   const initialRewrites = clustering ? 5 : 3;
-  const expectedCalls = clustering ? 15 : 11;
+  const expectedCalls = clustering ? 17 : 13;
   const expectedRewrites = clustering ? 9 : 7;
   let calls = 0;
   const logged: EvaluationLog[] = [];
