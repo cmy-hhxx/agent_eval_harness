@@ -13,7 +13,12 @@ export function businessChains(raw: RawInput, inputId: string, finalIndex: numbe
   const generation = getAnswerGeneration(raw, inputId, finalIndex);
   const at = (index: number, path: string, limit = 4800): Evidence[] => {
     const range = selectEvidenceSource(evidenceSources(raw.messages[index]), path);
-    return range ? [cite(inputId, index, range.source, range.start, Math.min(range.end, range.start + limit))] : [];
+    if (!range) return [];
+    const key = path.slice(path.lastIndexOf("/") + 1).replaceAll("~1", "/").replaceAll("~0", "~");
+    const prefix = JSON.stringify(key) + ":";
+    const start = range.source.kind === "json" && range.source.text.slice(range.start - prefix.length, range.start) === prefix
+      ? range.start - prefix.length : range.start;
+    return [cite(inputId, index, range.source, start, Math.min(range.end, range.start + limit))];
   };
   const outputs = (index: number): Evidence[] => evidenceSources(raw.messages[index])
     .filter(source => source.kind === "text" && /^\/output\/\d+\/content(?:\/|$)/u.test(source.path))
@@ -43,10 +48,12 @@ export function businessChains(raw: RawInput, inputId: string, finalIndex: numbe
       const output = object(object(raw.messages[i]).output ?? object(raw.messages[i]).result);
       const prefix = Object.hasOwn(object(raw.messages[i]), "output") ? "/output" : "/result";
       // Financial row identity, field units and values stay at their own original coordinates.
-      if (Array.isArray(output.columns) && Array.isArray(output.datas)) return [
-        ...output.columns.slice(0, 3).flatMap((_, c) => at(i, `${prefix}/columns/${c}`)),
-        ...at(i, `${prefix}/datas/0`, 2400), ...at(i, `${prefix}/query`),
-      ];
+      if (Array.isArray(output.columns) && Array.isArray(output.datas)) {
+        const fields = output.columns.slice(0, 3).flatMap(column => typeof object(column).key === "string" ? [String(object(column).key)] : []);
+        return [...output.columns.slice(0, 3).flatMap((_, c) => at(i, `${prefix}/columns/${c}`)),
+          ...(fields.length ? fields.flatMap(field => at(i, `${prefix}/datas/0/${field.replaceAll("~", "~0").replaceAll("/", "~1")}`))
+            : at(i, `${prefix}/datas/0`, 2400)), ...at(i, `${prefix}/query`)];
+      }
       return ["/output", "/result", "/content"].flatMap(path => at(i, path));
     });
     const planner = exchange.planner_index === null ? [] : outputs(exchange.planner_index);

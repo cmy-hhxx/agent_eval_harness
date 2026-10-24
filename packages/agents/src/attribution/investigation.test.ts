@@ -106,3 +106,14 @@ test("a readable retrieved Goldman target cannot become an absent-source allegat
   assert(investigationIssues(binding.request, f.problem, proof, { ...f.audit, traceReads: [] }, "/problem")
     .some(issue => issue.code === "source_absence_contradicted"));
 });
+
+test("wide financial rows navigate identity and the declared latest price field instead of an arbitrary serialized prefix", () => {
+  const f = businessChainFixture(), returned = f.raw.messages[3].output as any;
+  Object.assign(returned.datas[0], Object.fromEntries(Array.from({ length: 500 }, (_, index) => [`A-padding-${index}`, index])));
+  const binding = bindAttributionMaterial(f.candidate, f.raw);
+  const chain = (binding.request.input.answer as any).business_chains[0];
+  const proof = chain.checkpoints.find((point: any) => point.step === "原始返回及字段含义").evidence;
+  assert(proof.some((item: any) => item.quote === "GLD.P"));
+  assert(proof.some((item: any) => item.quote === "SPDR Gold Shares"));
+  assert(proof.some((item: any) => item.quote.includes('"Closing Price[20261022]":369')));
+});
