@@ -13,7 +13,6 @@
 .problem-refresh svg { width: 15px; height: 15px; }
 .problem-models { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); margin-bottom: 24px; border-bottom: 1px solid var(--line); }
 .problem-model-tab { position: relative; display: flex; flex-direction: column; align-items: flex-start; justify-content: center; gap: 8px; min-width: 0; min-height: 86px; padding: 16px 18px 17px; color: var(--muted); background: transparent; border: 0; border-radius: 7px 7px 0 0; text-align: left; transition: background 160ms ease, color 160ms ease; }
-.problem-model-tab + .problem-model-tab::before { content: ""; position: absolute; left: 0; top: 18px; bottom: 18px; width: 1px; background: var(--line); }
 .problem-model-tab::after { content: ""; position: absolute; right: 18px; bottom: -1px; left: 18px; height: 3px; border-radius: 3px 3px 0 0; background: transparent; transition: background 160ms ease; }
 .problem-model-tab:hover { background: var(--soft); color: var(--text); }
 .problem-model-tab[aria-selected="true"] { color: var(--text); background: var(--model-soft); }
@@ -40,15 +39,13 @@
 .problem-tree { padding: 10px 8px; max-height: calc(100vh - 290px); min-height: 150px; overflow: auto; scrollbar-width: thin; scrollbar-color: #b8c8cf transparent; }
 .problem-tree ul { margin: 0; padding: 0; list-style: none; }
 .problem-tree [role="group"] { position: relative; margin-left: 17px; padding-left: 12px; }
-.problem-tree [role="group"]::before { content: ""; position: absolute; top: 0; bottom: 9px; left: 0; width: 1px; background: var(--line); }
 .problem-tree [role="treeitem"] { position: relative; display: flex; align-items: center; gap: 8px; width: 100%; min-height: 38px; padding: 8px 9px; color: var(--text); background: transparent; border: 1px solid transparent; border-radius: 5px; text-align: left; font-size: 12px; line-height: 1.55; transition: background 120ms ease; }
 .problem-tree [role="treeitem"]:hover { background: var(--soft); }
 .problem-tree [role="treeitem"]:focus-visible { z-index: 1; outline: 2px solid var(--model-color); outline-offset: -2px; }
 .problem-tree [aria-level="1"] { margin-bottom: 6px; font-size: 13px; font-weight: 650; }
 .problem-tree [aria-level="2"] { margin-top: 3px; font-weight: 600; }
 .problem-tree [aria-level="3"] { align-items: flex-start; margin: 2px 0; }
-.problem-tree [aria-level="3"]::before { content: ""; position: absolute; top: 20px; left: -12px; width: 10px; height: 1px; background: var(--line); }
-.problem-tree [aria-selected="true"] { color: var(--model-color); background: var(--model-soft); border-color: var(--model-soft); box-shadow: inset 2px 0 0 var(--model-color); }
+.problem-tree [aria-selected="true"] { color: var(--model-color); background: var(--model-soft); border-color: var(--model-soft); text-decoration: underline; text-underline-offset: 3px; font-weight: 600; }
 .problem-tree [aria-selected="true"]:hover { background: var(--model-soft); }
 .tree-label { flex: 1; min-width: 0; overflow-wrap: anywhere; }
 .tree-count { flex: none; color: var(--muted); font: 11px/1.7 var(--mono); font-variant-numeric: tabular-nums; }
@@ -147,8 +144,6 @@
 @container problem-page (max-width: 660px) {
   .problem-models { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 2px; margin-bottom: 18px; border: 1px solid var(--line); border-radius: 8px; overflow: clip; }
   .problem-model-tab { min-height: 76px; border-radius: 0; padding: 12px 14px; }
-  .problem-model-tab + .problem-model-tab::before { display: none; }
-  .problem-model-tab:nth-child(even) { border-left: 1px solid var(--line); }
   .problem-model-tab:nth-child(n+3) { border-top: 1px solid var(--line); }
   .problem-model-tab::after { left: 14px; right: 14px; bottom: 0; height: 2px; }
   .problem-workspace { grid-template-columns: 1fr; gap: 16px; }

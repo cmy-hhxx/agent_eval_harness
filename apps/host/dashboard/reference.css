@@ -39,7 +39,6 @@
 
 .flow-sequence { margin: 0; padding: 0; list-style: none; }
 .flow-sequence > li { position: relative; display: grid; grid-template-columns: 30px minmax(0, 1fr); gap: 16px; padding-bottom: 18px; }
-.flow-sequence > li:not(:last-child)::before { content: ""; position: absolute; top: 28px; bottom: 0; left: 14px; width: 1px; background: var(--line); }
 .flow-sequence > li:last-child { padding-bottom: 0; }
 .flow-number { position: relative; display: grid; place-items: center; width: 30px; height: 30px; border: 1px solid var(--accent-line); border-radius: 50%; color: var(--accent); background: var(--surface); font: 12px var(--mono); }
 .flow-step { min-width: 0; padding: 3px 0 16px; border-bottom: 1px solid var(--line); }
@@ -50,7 +49,7 @@
 .flow-step-data dt { min-width: 24px; font-weight: 500; }
 .flow-step-data dd { min-width: 0; margin: 0; color: var(--text); }
 .flow-branch-list { display: grid; gap: 14px; margin-top: 24px; }
-.flow-branch { min-width: 0; padding: 14px 16px; border-left: 2px solid var(--accent-line); background: var(--surface); }
+.flow-branch { min-width: 0; padding: 14px 16px; background: var(--surface); }
 .flow-branch-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px 12px; }
 .flow-branch h3 { margin: 0; color: var(--text); font-size: 13px; font-weight: 600; }
 .flow-branch-condition { color: var(--muted); font-size: 12px; overflow-wrap: anywhere; }

@@ -20,6 +20,16 @@ test("saved settings remain visible while active executions retain their frozen 
     const saved = await saveDailySettings(source, { engine: "prime", debug: true, execution: { timeoutSeconds: 123 },
       bindings: { attribution: { channel: "evaluation-gateway", model: "next", thinking: "high" } } });
     assert.equal(saved.engine, "prime"); assert.equal(saved.bindings.attribution.model, "next"); assert.equal(saved.execution.timeoutSeconds, 123);
+    const capped = await saveDailySettings(source, { execution: { maxTaskAttempts: 8, maxToolCalls: 17 } });
+    assert.equal(capped.execution.maxTaskAttempts, 8); assert.equal(capped.bindings.attribution.model, "next");
+    const request = { execution: { maxTaskAttempts: null } };
+    const cleared = await saveDailySettings(source, request);
+    assert.equal(cleared.execution.maxTaskAttempts, config.execution.maxTaskAttempts, "clearing an override inherits the configured budget");
+    assert.equal(cleared.execution.timeoutSeconds, 123); assert.equal(cleared.execution.maxToolCalls, 17);
+    assert.equal(cleared.bindings.attribution.model, "next"); assert.equal(cleared.engine, "prime"); assert.equal(cleared.debug, true);
+    assert.equal(Object.hasOwn((await readDailySettings(source)).settings.execution as object, "maxTaskAttempts"), false);
+    assert.equal(request.execution.maxTaskAttempts, null, "normalization does not mutate the request");
+    await assert.rejects(saveDailySettings(source, { execution: { timeoutSeconds: null } }), /timeoutSeconds/);
     const active = await loadDailyHost(source);
     assert.equal(active.engine, "pi"); assert.equal(active.host.evaluation.execution.timeoutSeconds, config.execution.timeoutSeconds);
     assert.equal(active.host.models.bindings.attribution.model, undefined);

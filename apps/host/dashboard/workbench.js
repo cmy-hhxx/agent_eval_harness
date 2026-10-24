@@ -156,7 +156,7 @@ async function showResults(source = resultSource, runId) {
     const host = `${source}-results-content`;
     const pending = attempt(host, async () => {
       const root = await region(host,source === 'aime' ? 'aime-results.html' : 'index.html',[]);
-      const controller = source === 'aime' ? mountAimeResults(root) : mountRuns(root,{apiRoot,resultsOnly:true});
+      const controller = source === 'aime' ? mountAimeResults(root,{async onEvaluate() { await loadModule('evaluate'); activate('evaluate'); daily?.select('aime'); }}) : mountRuns(root,{apiRoot,resultsOnly:true});
       await controller.ready;
       document.getElementById(host).hidden = resultSource !== source;
       resultControllers.set(source,Promise.resolve(controller));

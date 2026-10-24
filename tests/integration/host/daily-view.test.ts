@@ -34,7 +34,7 @@ test('daily sources control independently and preserve configuration drafts, pac
   const wait = async (condition:()=>boolean) => { for (let n=0;n<100;n++) { if(condition()) return; await new Promise(resolve=>setTimeout(resolve,5)); } assert.fail('daily UI did not update'); };
   dom.window.eval(compiled.outputFiles[0].text+'\nglobalThis.Daily=Daily;');
   const controller = dom.window.Daily.mountDaily(dom.window.document,{fetch:fetcher});
-  const el = (id:string) => dom.window.document.getElementById(id), row = (id:string) => el('daily-source-rows').querySelector(`[data-source="${id}"]`);
+  const el = (id:string) => dom.window.document.getElementById(id), row = (id:string) => el('daily-sources').querySelector(`[data-source="${id}"]`);
   const click = (id:string,label:string) => [...row(id).querySelectorAll('button')].find((item:any)=>item.textContent===label).click();
   try {
     await controller.ready; assert.equal(el('daily-requests-total').textContent,'LLM 5 · 排队 2');
@@ -46,8 +46,8 @@ test('daily sources control independently and preserve configuration drafts, pac
     assert.equal(el('daily-aime-coverage').hidden,true);
     assert.equal(row('wencai').querySelector('[data-cell=pending]').textContent,'3'); assert.equal(row('wencai').querySelector('[data-cell=completed]').textContent,'5');
     assert.equal(el('daily-settings-heading').textContent,'下次执行配置'); assert.equal(el('daily-settings-heading').classList.contains('visually-hidden'),false); assert.match(el('daily-active-values').textContent,/judge-model.*600/s);
-    click('wencai','评测'); await wait(()=>row('wencai').textContent.includes('运行中'));
-    assert.equal(sources[1].status,'idle'); click('aime','评测'); await wait(()=>sources[1].status==='running');
+    click('wencai','开始评测'); await wait(()=>row('wencai').textContent.includes('运行中'));
+    assert.equal(sources[1].status,'idle'); click('aime','开始评测'); await wait(()=>sources[1].status==='running');
     click('wencai','暂停'); await wait(()=>row('wencai').textContent.includes('已暂停')); assert.equal(sources[1].status,'running');
     click('wencai','继续'); await wait(()=>sources[0].status==='running');
     click('aime','立即停止'); await wait(()=>sources[1].status==='idle' && !row('aime').querySelector('input').disabled); assert.equal(sources[0].status,'running');
@@ -59,7 +59,7 @@ test('daily sources control independently and preserve configuration drafts, pac
     assert.equal(el('daily-aime-coverage').hidden,false); assert.match(el('daily-aime-counts').textContent,/问句 7.*回答 10.*完整回答 0.*部分完成回答 5.*阶段任务 5 \/ 10/);
     assert.deepEqual([...el('daily-aime-model-rows').querySelectorAll('tr')].map((row:any)=>[...row.children].map((cell:any)=>cell.textContent)),[['Fast','6','0','1','5'],['Expert','4','0','0','4']]);
     const aimeSource = sources[1] as Record<string,any>; delete aimeSource.models; delete aimeSource.questions; delete aimeSource.answers; delete aimeSource.completedAnswers; delete aimeSource.answerCounts; delete aimeSource.partialAnswers;
-    await controller.refresh(); assert.equal(el('daily-aime-model-table').hidden,true); assert.equal(el('daily-aime-counts').textContent,'阶段任务 5 / 10'); assert.equal(row('aime').querySelector('[data-cell=completed]').textContent,'');
+    await controller.refresh(); assert.equal(el('daily-aime-model-table').hidden,true); assert.equal(el('daily-aime-counts').textContent,'阶段任务 5 / 10'); assert.equal(row('aime').querySelector('[data-cell=completed]').textContent,'—');
     el('daily-settings-form').dispatchEvent(new dom.window.Event('submit',{cancelable:true})); await wait(()=>el('daily-settings-status').textContent.includes('已保存'));
     assert.equal(Object.hasOwn(calls.find(call=>call.url.endsWith('/aime/settings'))!.body,'rewrite'),false);
     controller.select('wencai'); assert.equal(el('daily-timeout').value,'901'); assert.equal(el('daily-mongo').hidden,false);
@@ -69,8 +69,35 @@ test('daily sources control independently and preserve configuration drafts, pac
     el('daily-settings-form').dispatchEvent(new dom.window.Event('submit',{cancelable:true})); await wait(()=>el('daily-settings-status').textContent.includes('已保存'));
     assert.equal(calls.find(call=>call.url.endsWith('/wencai/settings'))!.body.execution.timeoutSeconds,901);
     assert.equal(calls.find(call=>call.url.endsWith('/wencai/settings'))!.body.execution.maxTaskAttempts,4);
-    offline = true; await controller.refresh(); assert.match(el('daily-error').textContent,/离线/); assert.match(row('wencai').textContent,/问财日常四路/); assert([...row('wencai').querySelectorAll('button')].every((item:any)=>item.disabled));
+    offline = true; await controller.refresh(); assert.match(el('daily-error').textContent,/离线/); assert.match(row('wencai').textContent,/问财日常四路/); assert([...row('wencai').querySelectorAll('button:not(.daily-source-select)')].every((item:any)=>item.disabled)); assert.equal(row('wencai').querySelector('.daily-source-select').disabled,false); row('aime').querySelector('.daily-source-select').click(); assert.equal(el('daily-title').textContent,'AIME 日常全量');
   } finally { controller.destroy(); dom.window.close(); }
+});
+
+test('source cards expose selection, preserve drafts and block controls owned by an independent process', async () => {
+  const directory=path.join(ROOT,'apps/host/dashboard');
+  const dom=new JSDOM(await readFile(path.join(directory,'daily.html'),'utf8'),{url:'http://fixture/',runScripts:'outside-only'});enableDialogs(dom);
+  const compiled=await build({entryPoints:[path.join(directory,'daily.js')],bundle:true,write:false,format:'iife',globalName:'Daily',platform:'browser'});
+  dom.window.setTimeout=()=>0;
+  let externalOwner=true,readError=false;const writes:{url:string;body:unknown}[]=[];
+  const snapshot=()=>({sources:['wencai','aime'].map(id=>({id,name:id,status:'idle',concurrency:id==='aime'?64:32,settings:{execution:{},bindings:{}},stages:{},runs:[],packages:{items:[],total:0,page:1,pageSize:10},
+    ...(id==='aime'?{externalOwner,readError,error:externalOwner?'AIME正由另一个进程运行，请先停止原aime-auto或CLI进程':readError?'规范输入索引缺失':null}:{})})),requests:[]});
+  const fetcher=async(url:string,init?:RequestInit)=>{if(init?.method==='POST'){writes.push({url,body:JSON.parse(String(init.body))});return Response.json({});}return Response.json(snapshot());};
+  dom.window.eval(compiled.outputFiles[0].text+'\nglobalThis.Daily=Daily;');const controller=dom.window.Daily.mountDaily(dom.window.document,{fetch:fetcher});
+  const el=(id:string)=>dom.window.document.getElementById(id),card=(id:string)=>el('daily-sources').querySelector(`[data-source="${id}"]`);
+  try {
+    await controller.ready;assert.equal(el('daily-sources').querySelector('table'),null);assert.equal(card('aime').tagName,'ARTICLE');
+    assert.equal(card('wencai').querySelector('.daily-source-select').getAttribute('aria-pressed'),'true');assert.equal(card('aime').querySelector('[data-cell=selection]').textContent,'查看');
+    const field=card('aime').querySelector('input');field.value='48';field.dispatchEvent(new dom.window.Event('input'));
+    card('aime').querySelector('.daily-source-select').click();assert.equal(card('aime').querySelector('.daily-source-select').getAttribute('aria-pressed'),'true');assert.equal(card('aime').querySelector('[data-cell=selection]').textContent,'当前');
+    assert.equal(card('aime').querySelector('[data-cell=status]').textContent,'独立进程占用');assert.equal(card('aime').querySelector('[data-cell=completed]').textContent,'—');
+    const start=card('aime').querySelector('[data-cell=actions] button');assert.equal(start.textContent,'开始评测');assert.equal(start.disabled,true);start.click();assert.deepEqual(writes,[]);
+    assert.equal(field.disabled,false,'future Workbench concurrency remains editable without touching the external runner');
+    assert.equal(el('daily-source-error').hidden,false);assert.equal(el('daily-source-error').open,false);assert.equal(el('daily-source-error-summary').textContent,'占用详情');assert.match(el('daily-source-error-text').textContent,/原aime-auto或CLI进程/);
+    card('wencai').querySelector('.daily-source-select').click();card('aime').querySelector('.daily-source-select').click();assert.equal(field.value,'48');
+    externalOwner=false;readError=true;await controller.refresh();assert.equal(card('aime').querySelector('[data-cell=status]').textContent,'读取失败');assert.equal(card('aime').querySelector('[data-cell=actions] button').disabled,true);
+    assert.equal(el('daily-source-error').open,true);assert.equal(el('daily-source-error-summary').textContent,'来源异常');assert.equal(el('daily-source-error-text').textContent,'规范输入索引缺失');
+    readError=false;await controller.refresh();assert.equal(card('aime').querySelector('[data-cell=actions] button').disabled,false);assert.equal(el('daily-source-error').hidden,true);
+  }finally{controller.destroy();dom.window.close();}
 });
 
 test('package reports show exact exclusions and per-answer evaluation coverage with pagination and result recall', async () => {
@@ -125,7 +152,7 @@ test('a delayed configuration failure stays with its source and preserves its dr
     await controller.ready;el('daily-timeout').value='777';el('daily-timeout').dispatchEvent(new dom.window.Event('input',{bubbles:true}));
     el('daily-settings-form').dispatchEvent(new dom.window.Event('submit',{cancelable:true}));await wait(()=>started);controller.select('aime');
     assert.equal(el('daily-timeout').value,'600');assert.equal(el('daily-settings-status').textContent,'');
-    const aime=el('daily-source-rows').querySelector('[data-source=aime]');assert.equal([...aime.querySelectorAll('button')].find((button:any)=>button.textContent==='评测').disabled,false);
+    const aime=el('daily-sources').querySelector('[data-source=aime]');assert.equal([...aime.querySelectorAll('button')].find((button:any)=>button.textContent==='开始评测').disabled,false);
     release();await wait(()=>!el('daily-timeout').disabled);assert.equal(el('daily-settings-status').textContent,'');
     controller.select('wencai');assert.equal(el('daily-timeout').value,'777');assert.equal(el('daily-settings-status').textContent,'问财预算无效');assert.match(el('daily-active-values').textContent,/超时 600 秒/);
   } finally {release();controller.destroy();dom.window.close();}

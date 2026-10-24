@@ -21,6 +21,15 @@ export function mountDaily(root, options = {}) {
   for (const id of ['daily-settings','daily-package-report']) $(id).addEventListener('close',() => { const target = dialogFocus.get(id); if (target?.isConnected) target.focus(); else $('daily-settings-open').focus(); });
   root.querySelectorAll('[data-daily-close]').forEach(item => { item.onclick = () => $(item.dataset.dailyClose).close(); });
   $('daily-settings-open').onclick = () => openDialog('daily-settings');
+  const settingsTabs = new Map(), settingsButtons = [...root.querySelectorAll('[data-settings-tab]')];
+  function selectSettingsTab(tab) {
+    settingsTabs.set(selected,tab);
+    settingsButtons.forEach(button => { const active = button.dataset.settingsTab === tab; button.setAttribute('aria-selected',String(active)); button.tabIndex = active ? 0 : -1; button.classList.toggle('active',active); $(`daily-settings-panel-${button.dataset.settingsTab}`).hidden = !active; });
+  }
+  settingsButtons.forEach((button,index) => {
+    button.onclick = () => selectSettingsTab(button.dataset.settingsTab);
+    button.onkeydown = event => { const next = event.key === 'Home' ? 0 : event.key === 'End' ? settingsButtons.length - 1 : event.key === 'ArrowRight' ? (index + 1) % settingsButtons.length : event.key === 'ArrowLeft' ? (index + settingsButtons.length - 1) % settingsButtons.length : undefined; if (next === undefined) return; event.preventDefault(); selectSettingsTab(settingsButtons[next].dataset.settingsTab); settingsButtons[next].focus(); };
+  });
   function renderTab() {
     const current = view().tab;
     root.querySelectorAll('[data-daily-tab]').forEach(button => { const active = button.dataset.dailyTab === current; button.setAttribute('aria-selected',String(active)); button.tabIndex = active ? 0 : -1; button.classList.toggle('active',active); $(`daily-panel-${button.dataset.dailyTab}`).hidden = !active; });
@@ -56,51 +65,81 @@ export function mountDaily(root, options = {}) {
   function renderSources() {
     if (!data || disposed) return;
     for (const source of data.sources) {
-      let row = $('daily-source-rows').querySelector(`[data-source="${source.id}"]`);
-      if (!row) {
-        row = doc.createElement('tr'); row.dataset.source = source.id;
-        const name = doc.createElement('td'); name.append(button(sourceLabels[source.id] || source.name, () => select(source.id)));
-        const state = doc.createElement('td'), pending = doc.createElement('td'), completed = doc.createElement('td'), failed = doc.createElement('td'), requests = doc.createElement('td'), allocation = doc.createElement('td'), actions = doc.createElement('td');
-        pending.dataset.cell = 'pending'; completed.dataset.cell = 'completed'; failed.dataset.cell = 'failed'; pending.className = completed.className = failed.className = 'daily-number';
-        state.dataset.cell = 'status'; requests.dataset.cell = 'requests'; actions.dataset.cell = 'actions';
+      let card = $('daily-sources').querySelector(`[data-source="${source.id}"]`);
+      if (!card) {
+        card = doc.createElement('article'); card.className = 'card card-sm daily-source-card'; card.dataset.source = source.id;
+        const header = node('header'), name = button('',() => select(source.id)), nameText = node('span',sourceLabels[source.id] || source.name), selection = node('span'), state = node('span'), actions = node('div');
+        header.className = 'daily-source-header'; name.classList.add('daily-source-select'); name.id = `daily-source-${source.id}`;
+        name.setAttribute('aria-label',`${sourceLabels[source.id] || source.name}，查看来源`); card.setAttribute('aria-labelledby',name.id);
+        selection.className = 'daily-source-select-action'; selection.dataset.cell = 'selection'; selection.setAttribute('aria-hidden','true'); name.append(nameText,selection);
+        state.className = 'daily-source-state'; state.dataset.cell = 'status'; actions.className = 'daily-source-actions'; actions.dataset.cell = 'actions'; header.append(name,state,actions);
+        const counts = node('dl'); counts.className = 'daily-source-counts';
+        for (const [key,label] of [['pending','未完成'],['completed','已完成'],['failed','失败']]) {
+          const item = node('div'), value = node('dd'); value.dataset.cell = key; value.className = 'daily-number'; item.append(node('dt',label),value); counts.append(item);
+        }
+        const footer = node('footer'), requests = node('span'); footer.className = 'daily-source-footer'; requests.className = 'daily-source-requests'; requests.dataset.cell = 'requests';
         const form = doc.createElement('form'), input = doc.createElement('input'), output = doc.createElement('output');
         form.className = 'daily-concurrency'; input.type = 'number'; input.min = '1'; input.required = true; input.setAttribute('aria-label',`${sourceLabels[source.id] || source.name} LLM 并发`);
-        input.oninput = () => { input.dataset.dirty = 'true'; }; const apply = node('button','应用'); apply.className = 'button'; apply.type = 'submit'; form.append(input,apply,output);
-        form.onsubmit = event => { event.preventDefault(); void concurrency(source.id,input,output); }; allocation.append(form); row.append(name,state,pending,completed,failed,requests,allocation,actions); $('daily-source-rows').append(row);
+        input.oninput = () => { input.dataset.dirty = 'true'; }; const label = node('label','并发'), apply = node('button','应用'); label.append(input); apply.className = 'button'; apply.type = 'submit'; form.append(label,apply,output);
+        form.onsubmit = event => { event.preventDefault(); void concurrency(source.id,input,output); }; footer.append(requests,form); card.append(header,counts,footer); $('daily-sources').append(card);
       }
-      row.classList.toggle('selected',source.id === selected); row.querySelector('td:first-child button').setAttribute('aria-pressed',String(source.id === selected));
-      row.querySelector('[data-cell=status]').textContent = textStatus(source.status);
+      card.classList.toggle('selected',source.id === selected); card.querySelector('.daily-source-select').setAttribute('aria-pressed',String(source.id === selected));
+      card.querySelector('[data-cell=selection]').textContent = source.id === selected ? '当前' : '查看';
+      card.querySelector('[data-cell=status]').textContent = source.externalOwner ? '独立进程占用' : source.readError ? '读取失败' : textStatus(source.status);
+      card.querySelector('[data-cell=status]').title = source.externalOwner || source.readError ? source.error || '' : '';
       const counts = source.id === 'aime' ? source.answerCounts : source.comparisonCounts;
       for (const key of ['pending','completed','failed']) {
         const count = key === 'pending' ? counts && ['pending','partial','running'].every(part => numeric(counts[part])) ? counts.pending + counts.partial + counts.running : undefined : counts?.[key];
-        const cell = row.querySelector(`[data-cell=${key}]`); cell.textContent = numeric(count) ? count : '';
+        const cell = card.querySelector(`[data-cell=${key}]`); cell.textContent = numeric(count) ? count : '—';
         cell.title = key === 'pending' && counts ? `待评 ${counts.pending} · 部分完成 ${counts.partial} · 进行中 ${counts.running}` : source.id === 'aime' ? '回答' : '对局';
       }
-      row.querySelector('[data-cell=requests]').textContent = `${source.activeRequests || 0} / ${source.waitingRequests || 0}`;
-      const input = row.querySelector('input'); if (!input.dataset.dirty && root.activeElement !== input) input.value = source.concurrency;
-      row.querySelectorAll('input,button').forEach(item => { item.disabled = !connected || sourceBusy.has(source.id); });
-      const disabled = !connected || sourceBusy.has(source.id), actions = row.querySelector('[data-cell=actions]');
-      const actionButton = (label,action) => { const item = button(label,() => control(source.id,action),disabled || action === 'stop' && source.status === 'stopping'); if (action === 'run' || action === 'resume') item.classList.add('button-primary'); if (action === 'stop') item.classList.add('button-danger'); return item; };
+      card.querySelector('[data-cell=requests]').textContent = `请求 ${source.activeRequests || 0} · 排队 ${source.waitingRequests || 0}`;
+      const input = card.querySelector('input'); if (!input.dataset.dirty && root.activeElement !== input) input.value = source.concurrency;
+      card.querySelectorAll('input,button').forEach(item => { item.disabled = !connected || sourceBusy.has(source.id); });
+      card.querySelector('.daily-source-select').disabled = false;
+      const disabled = !connected || sourceBusy.has(source.id) || source.externalOwner === true || source.readError === true, actions = card.querySelector('[data-cell=actions]');
+      const actionButton = (label,action) => { const item = button(label,() => control(source.id,action),disabled || action === 'stop' && source.status === 'stopping'); if (action === 'run' || action === 'resume') item.classList.add('button-primary'); if (action === 'stop') item.classList.add('button-danger'); if (source.externalOwner || source.readError) item.title = source.error || '来源状态不可用'; return item; };
       actions.replaceChildren();
       if (source.status === 'paused') actions.append(actionButton('继续','resume'));
-      else if (!live(source.status)) actions.append(actionButton('评测','run'));
+      else if (!live(source.status)) actions.append(actionButton('开始评测','run'));
       if (source.status === 'running') actions.append(actionButton('暂停','pause'));
       if (live(source.status) || source.status === 'paused') actions.append(actionButton('立即停止','stop'));
     }
     $('daily-requests-total').textContent = `LLM ${data.sources.reduce((sum,source) => sum + (source.activeRequests || 0),0)} · 排队 ${data.sources.reduce((sum,source) => sum + (source.waitingRequests || 0),0)}`;
   }
+  async function copyDirectory(value,copy) {
+    let copied = false;
+    try { if (doc.defaultView?.navigator.clipboard?.writeText) { await doc.defaultView.navigator.clipboard.writeText(value); copied = true; } } catch { /* Use selection copying when the browser rejects the clipboard API. */ }
+    if (!copied) {
+      const previous = root.activeElement || doc.activeElement, text = doc.createElement('textarea'); text.value = value; text.readOnly = true; text.className = 'visually-hidden'; $('daily-settings').append(text); text.select();
+      try { copied = doc.execCommand?.('copy') === true; } catch { /* The result is reported on the action. */ }
+      text.remove(); previous?.focus();
+    }
+    copy.textContent = copied ? '已复制' : '复制失败';
+    setTimeout(() => { if (!disposed && copy.isConnected) copy.textContent = '复制'; },2000);
+  }
   function renderSettings(source) {
     if (formSource === source.id) return;
     formSource = source.id; const settings = drafts.get(source.id) || source.settings || {}, execution = settings.execution || {};
+    $('daily-settings-title').textContent = `${sourceLabels[source.id] || source.name} · 配置`;
+    selectSettingsTab(settingsTabs.get(source.id) || 'models');
+    $('daily-settings-advanced').open = false; $('daily-active-settings').open = false;
     $('daily-settings-status').textContent = settingsMessages.get(source.id) || (drafts.has(source.id) ? '未保存' : '');
     $('daily-engine').value = settings.engine || 'pi'; $('daily-timeout').value = execution.timeoutSeconds ?? 3600; $('daily-tools').value = execution.maxToolCalls ?? 20; $('daily-retries').value = execution.retries ?? 1; $('daily-debug').checked = settings.debug === true;
     $('daily-repairs').value = execution.repairAttempts ?? 1; $('daily-attempts').value = execution.maxTaskAttempts ?? ''; $('daily-retry-delay').value = execution.retryDelaySeconds ?? 10;
     const catalog = source.modelCatalog || [];
     $('daily-bindings').replaceChildren(...Object.entries(settings.bindings || {}).filter(([stage]) => stage !== 'clustering').map(([stage,binding]) => {
-      const field = doc.createElement('div'); field.className = 'daily-binding'; const label = node('label',stageLabels[stage] || stage), select = doc.createElement('select'); select.dataset.stage = stage;
-      select.setAttribute('aria-label',`${stageLabels[stage] || stage}评测模型`); select.append(new Option('未选模型',''),...catalog.map(model => new Option(model.name || model.id,JSON.stringify([model.channel,model.id]))));
-      select.value = JSON.stringify([binding.channel,binding.model]); label.append(select); const thinkingLabel = node('label','推理档位'), thinking = doc.createElement('select'); thinking.dataset.thinking = stage;
-      thinking.append(...['off','minimal','low','medium','high','xhigh','max'].map(value => new Option(value,value))); thinking.value = binding.thinking || 'medium'; thinkingLabel.append(thinking); field.append(label,thinkingLabel); return field;
+      const field = doc.createElement('tr'); field.className = 'daily-binding'; const label = node('th',stageLabels[stage] || stage), modelCell = doc.createElement('td'), select = doc.createElement('select'); select.dataset.stage = stage; label.scope = 'row'; select.required = true;
+      const modelLabel = (model,channel) => `${model}${channel ? ` · ${channel}` : ''}`;
+      select.setAttribute('aria-label',`${stageLabels[stage] || stage}评测模型`); select.append(new Option('选择模型',''),...catalog.map(model => new Option(modelLabel(model.id,model.channel),JSON.stringify([model.channel,model.id]))));
+      const current = JSON.stringify([binding.channel,binding.model]);
+      if (binding.model && ![...select.options].some(option => option.value === current)) select.append(new Option(modelLabel(binding.model,binding.channel),current));
+      select.value = current; select.title = select.selectedOptions[0]?.textContent || '';
+      select.addEventListener('change',() => { select.title = select.selectedOptions[0]?.textContent || ''; });
+      const modelLabelNode = node('label'), modelCaption = node('span','评测模型'); modelCaption.className = 'settings-cell-label'; modelLabelNode.append(modelCaption,select); modelCell.append(modelLabelNode);
+      const thinkingCell = doc.createElement('td'), thinking = doc.createElement('select'); thinking.dataset.thinking = stage; thinking.setAttribute('aria-label',`${stageLabels[stage] || stage}推理档位`);
+      thinking.append(...['off','minimal','low','medium','high','xhigh','max'].map(value => new Option(value,value))); thinking.value = binding.thinking || 'medium';
+      const thinkingLabelNode = node('label'), thinkingCaption = node('span','推理档位'); thinkingCaption.className = 'settings-cell-label'; thinkingLabelNode.append(thinkingCaption,thinking); thinkingCell.append(thinkingLabelNode); field.append(label,modelCell,thinkingCell); return field;
     }));
     $('daily-rewrites').replaceChildren(...Object.entries(settings.rewrite || {}).filter(([stage]) => ['attribution','comparison'].includes(stage)).map(([stage,enabled]) => {
       const label = doc.createElement('label'), check = doc.createElement('input'); check.type = 'checkbox'; check.dataset.rewrite = stage; check.checked = enabled === true; label.append(check,doc.createTextNode(` 改写${stageLabels[stage] || stage}评语`)); return label;
@@ -111,9 +150,14 @@ export function mountDaily(root, options = {}) {
     const source = data?.sources.find(item => item.id === selected); $('daily-detail').hidden = !source; if (!source) return;
     renderTab();
     $('daily-title').textContent = sourceLabels[source.id] || source.name;
-    $('daily-paths').replaceChildren(...[['收包目录',source.archiveDirectory],['结果目录',source.outputDirectory]].map(([label,value]) => { const item = doc.createElement('div'); item.append(node('dt',label),node('dd',value)); return item; }));
+    $('daily-paths').replaceChildren(...[['收包目录',source.archiveDirectory],['结果目录',source.outputDirectory]].map(([label,value]) => {
+      const item = doc.createElement('div'), directory = node('dd'), path = node('code',value || '—'), copy = button('复制',() => copyDirectory(value,copy),!value); copy.setAttribute('aria-label',`复制${label}`); directory.append(path,copy); item.append(node('dt',label),directory); return item;
+    }));
     const sourceError = [source.error,source.packageError,source.modelCatalogError].filter(Boolean).join('\n');
-    $('daily-source-error').textContent = sourceError; $('daily-source-error').hidden = !sourceError; renderSettings(source);
+    const sourceIssue = $('daily-source-error'), sourceIssueText = $('daily-source-error-text');
+    if (sourceIssue.dataset.source !== source.id || sourceIssueText.textContent !== sourceError) sourceIssue.open = !source.externalOwner;
+    sourceIssue.dataset.source = source.id; sourceIssue.hidden = !sourceError; sourceIssueText.textContent = sourceError;
+    $('daily-source-error-summary').textContent = source.externalOwner ? '占用详情' : '来源异常'; renderSettings(source);
     const stageCounts = Object.values(source.stages || {}), taskTotal = numeric(source.taskTotal) ? source.taskTotal : stageCounts.length && stageCounts.every(counts => numeric(counts.total)) ? stageCounts.reduce((sum,counts) => sum + counts.total,0) : undefined;
     const taskCompleted = numeric(source.taskCompleted) ? source.taskCompleted : stageCounts.length && stageCounts.every(counts => numeric(counts.completed)) ? stageCounts.reduce((sum,counts) => sum + counts.completed,0) : undefined;
     const counts = [['问句',source.questions],['回答',source.answers],['完整回答',source.completedAnswers],['部分完成回答',source.partialAnswers]].filter(([,value]) => numeric(value)).map(([label,value]) => `${label} ${value}`);
@@ -131,6 +175,7 @@ export function mountDaily(root, options = {}) {
       $('daily-active-values').replaceChildren(...[['引擎',current.engine],...Object.entries(current.bindings || {}).filter(([stage]) => stage !== 'clustering').map(([stage,binding]) => [stageLabels[stage] || stage,`${binding.model} · ${binding.thinking}`]),['执行预算',`超时 ${execution.timeoutSeconds} 秒 · 工具 ${execution.maxToolCalls} · 传输重试 ${execution.retries} · 修正 ${execution.repairAttempts} · 尝试 ${execution.maxTaskAttempts ?? '按当前预算'} · 间隔 ${execution.retryDelaySeconds} 秒`],['Debug',current.debug ? '开启' : '关闭']].map(([label,value]) => { const item = doc.createElement('div'); item.append(node('dt',label),node('dd',value)); return item; }));
     }
     $('daily-settings').querySelectorAll('input,select,button[type=submit]').forEach(item => { item.disabled = !connected || busy; });
+    $('daily-settings-save').textContent = busy ? '保存中…' : '保存配置'; $('daily-settings-form').setAttribute('aria-busy',String(busy)); $('daily-settings-reset').disabled = !connected || busy || !drafts.has(source.id);
     $('daily-stages').replaceChildren(...Object.entries(source.stages || {}).map(([stage,counts]) => stageProgress(doc,stageLabels[stage] || stage,counts)));
     $('daily-mongo').hidden = !source.mongo; $('daily-mongo-status').textContent = source.mongo ? `${textStatus(source.mongo.status)} · 输入 ${source.mongo.inputs || 0} · 结果 ${source.mongo.outputs || 0}${source.mongo.error ? '\n' + source.mongo.error : ''}` : '';
     const current = view(), packages = packageViews.get(source.id) || source.packages || {items:[],total:0,page:1,pageSize:50}, pages = Math.max(1,Math.ceil(packages.total / current.packageSize)); current.packagePage = Math.min(current.packagePage,pages);
@@ -217,14 +262,17 @@ export function mountDaily(root, options = {}) {
     const bindings = {}, rewrite = {};
     $('daily-bindings').querySelectorAll('[data-stage]').forEach(input => { const choice = input.value ? JSON.parse(input.value) : []; bindings[input.dataset.stage] = {channel:choice[0] || '',model:choice[1] || '',thinking:$('daily-bindings').querySelector(`[data-thinking="${input.dataset.stage}"]`).value}; });
     $('daily-rewrites').querySelectorAll('input').forEach(input => { rewrite[input.dataset.rewrite] = input.checked; });
-    const execution = {timeoutSeconds:Number($('daily-timeout').value),maxToolCalls:Number($('daily-tools').value),retries:Number($('daily-retries').value),repairAttempts:Number($('daily-repairs').value),retryDelaySeconds:Number($('daily-retry-delay').value)};
-    if ($('daily-attempts').value) execution.maxTaskAttempts = Number($('daily-attempts').value);
+    const execution = {timeoutSeconds:Number($('daily-timeout').value),maxToolCalls:Number($('daily-tools').value),retries:Number($('daily-retries').value),repairAttempts:Number($('daily-repairs').value),retryDelaySeconds:Number($('daily-retry-delay').value),maxTaskAttempts:$('daily-attempts').value ? Number($('daily-attempts').value) : null};
     return {engine:$('daily-engine').value,bindings,execution,...(data?.sources.find(source => source.id === selected)?.workflow === 'answer-review' ? {} : {rewrite}),debug:$('daily-debug').checked};
   }
-  $('daily-settings-form').oninput = $('daily-settings-form').onchange = () => { drafts.set(selected,settingsValue()); settingsMessages.set(selected,'未保存'); $('daily-settings-status').textContent = '未保存'; };
+  $('daily-settings-form').oninput = $('daily-settings-form').onchange = () => { drafts.set(selected,settingsValue()); settingsMessages.set(selected,'未保存'); $('daily-settings-status').textContent = '未保存'; $('daily-settings-reset').disabled = !connected || busy; };
+  $('daily-settings-reset').onclick = () => { drafts.delete(selected); settingsMessages.delete(selected); formSource = undefined; renderDetail(); };
   $('daily-settings-form').onsubmit = async event => {
-    event.preventDefault(); if (busy || !connected) return; const id = selected, settings = settingsValue(); busy = true; renderDetail();
-    try { await api(`/${id}/settings`,settings); drafts.delete(id); settingsMessages.set(id,'已保存 · 下次评测或继续时生效'); await refresh(); if (!disposed && selected === id) $('daily-settings-status').textContent = settingsMessages.get(id); }
+    event.preventDefault(); if (busy || !connected) return;
+    const invalid = $('daily-settings-form').querySelector(':invalid');
+    if (invalid) { const panel = invalid.closest('[data-settings-panel]'); if (panel) selectSettingsTab(panel.dataset.settingsPanel); const advanced = invalid.closest('details'); if (advanced) advanced.open = true; invalid.focus(); invalid.reportValidity(); return; }
+    const id = selected, settings = settingsValue(); busy = true; renderDetail();
+    try { await api(`/${id}/settings`,settings); drafts.delete(id); settingsMessages.set(id,'已保存 · 下次运行生效'); await refresh(); if (!disposed && selected === id) $('daily-settings-status').textContent = settingsMessages.get(id); }
     catch (cause) { settingsMessages.set(id,cause.message); if (!disposed && selected === id) $('daily-settings-status').textContent = cause.message; }
     finally { busy = false; renderDetail(); }
   };

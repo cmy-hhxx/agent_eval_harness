@@ -23,6 +23,15 @@ test('AIME Workbench persists independent settings and refuses an existing CLI o
   const restored=await loadAimeWorkbench(file),snapshot=await restored.snapshot();
   assert.equal(snapshot.settings.engine,'prime');assert.equal(snapshot.settings.debug,true);assert.equal(snapshot.settings.execution.repairAttempts,2);
   assert.equal(snapshot.settings.bindings.score.thinking,'high');assert.equal(snapshot.concurrency,16);
+  assert.equal(snapshot.settings.execution.maxTaskAttempts,8,'a concurrency-only patch retains the existing task cap');
+  const cleared=await aime.setSettings({execution:{maxTaskAttempts:null}});
+  assert.equal(cleared.settings.execution.maxTaskAttempts,initial.settings.execution.maxTaskAttempts);
+  assert.equal(cleared.settings.execution.repairAttempts,2);assert.equal(cleared.settings.execution.retryDelaySeconds,3);
+  assert.equal(cleared.settings.bindings.score.thinking,'high');assert.equal(cleared.settings.engine,'prime');assert.equal(cleared.settings.debug,true);assert.equal(cleared.concurrency,16);
+  const persisted=JSON.parse(await readFile(path.join(stateDirectory,'workbench-settings.json'),'utf8'));
+  assert.equal(Object.hasOwn(persisted.execution,'maxTaskAttempts'),false,'null is a wire clear operation, never a saved budget');
+  const reloaded=await loadAimeWorkbench(file);assert.equal((await reloaded.snapshot()).settings.execution.maxTaskAttempts,initial.settings.execution.maxTaskAttempts);
+  await assert.rejects(aime.setSettings({execution:{timeoutSeconds:null}}),/timeoutSeconds/);
   await assert.rejects(aime.setSettings({bindings:{comparison:{thinking:'high'}}}),/Score与Attribution/);
   const release=await runLock(stateDirectory);
   await assert.rejects(aime.run(new AbortController().signal),/另一个进程.*aime-auto/);

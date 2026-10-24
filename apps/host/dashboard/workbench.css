@@ -10,13 +10,13 @@
 body { min-width:320px; }
 [hidden] { display:none!important; }
 .page { --tblr-sidebar-width:176px; }
-.workbench-sidebar { background:var(--tblr-bg-surface); }
+.workbench-sidebar.navbar { border:0; box-shadow:none; background:var(--tblr-bg-surface); }
 .workbench-sidebar .container-fluid { align-items:stretch; }
 .workbench-sidebar.navbar .navbar-brand { justify-content:flex-start; padding:16px 12px; font-size:16px; }
 .module-nav { padding-inline:12px; }
 .module-nav { gap:6px; width:100%; flex-direction:column; }
 .module-nav .nav-link { min-height:36px; justify-content:flex-start; padding:7px 12px; text-align:left; }
-.module-nav .nav-link.active { background:transparent; color:var(--tblr-body-color); font-weight:700; box-shadow:inset 2px 0 currentColor; }
+.module-nav .nav-link.active { background:transparent; color:var(--tblr-body-color); font-weight:700; text-decoration:underline; text-underline-offset:5px; }
 .sidebar-footer { display:flex; align-items:center; justify-content:space-between; gap:12px; margin-top:auto; padding:24px 12px; }
 #service-status { color:var(--tblr-secondary-color); font-size:13px; }
 #service-status.error,.mount-error { color:var(--tblr-danger); }

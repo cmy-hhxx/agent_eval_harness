@@ -35,9 +35,10 @@ export async function dailySettingsView(config: AutomationConfig) {
 }
 export async function saveDailySettings(config: AutomationConfig, value: unknown) {
   if (!value || typeof value !== "object" || Array.isArray(value)) throw new HttpError(400, "运行设置必须是对象");
-  const { engine = config.engine, debug = false, ...settings } = value as Record<string, unknown>;
+  const previous = await readDailySettings(config);
+  const { engine = previous.engine, debug = previous.debug, ...settings } = value as Record<string, unknown>;
   if (engine !== "pi" && engine !== "prime" || typeof debug !== "boolean") throw new HttpError(400, "引擎或 debug 设置无效");
-  const patch = dashboardSettings(settings);
+  const patch = dashboardSettings(settings, previous.settings);
   if (patch.clustering || patch.versions) throw new HttpError(400, "日常来源范围由收包目录决定，聚类单独启动");
   const host = await loadConfig(config.hostConfigs, undefined, patch);
   const resolve = createModelResolver(host.models);

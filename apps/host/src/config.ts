@@ -369,7 +369,7 @@ export function editableDashboardSettings(source: Record<string, unknown>) {
 }
 
 /** Only these non-secret, run-scoped settings may cross the dashboard launch seam. */
-export function dashboardSettings(value: unknown): ConfigObject {
+export function dashboardSettings(value: unknown, previous: ConfigObject = {}): ConfigObject {
   if (!isObject(value)) throw new Error("运行设置必须是对象");
   if (Object.keys(value).some((key) => !["execution", "bindings", "rewrite", "clustering", "versions"].includes(key)))
     throw new Error("运行设置包含不允许修改的字段");
@@ -383,7 +383,7 @@ export function dashboardSettings(value: unknown): ConfigObject {
     if (!isObject(value.execution) ||
         Object.keys(value.execution).some((key) => !DASHBOARD_EXECUTION.includes(key as typeof DASHBOARD_EXECUTION[number])))
       throw new Error("运行预算包含不允许修改的字段");
-    patch.execution = value.execution;
+    patch.execution = { ...value.execution };
   }
   if (value.bindings !== undefined) {
     if (!isObject(value.bindings) ||
@@ -408,7 +408,10 @@ export function dashboardSettings(value: unknown): ConfigObject {
       throw new Error("聚类设置包含不允许修改的字段");
     patch.clustering = value.clustering;
   }
-  return patch;
+  const result = mergeConfig(previous, patch);
+  if (isObject(value.execution) && value.execution.maxTaskAttempts === null && isObject(result.execution))
+    delete result.execution.maxTaskAttempts;
+  return result;
 }
 
 async function mergedSource(

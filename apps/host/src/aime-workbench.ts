@@ -8,9 +8,6 @@ import {readSettings} from './settings.js';
 import {loadAimeConfiguration,runAimeEvaluation,type AimeRunOptions} from './aime-execution.js';
 
 interface AimeSettingsPatch {engine?:'pi'|'prime';debug?:boolean;bindings?:Record<string,unknown>;execution?:Record<string,unknown>}
-const merge=(previous:AimeSettingsPatch,patch:AimeSettingsPatch):AimeSettingsPatch=>({...previous,...patch,
-  execution:{...previous.execution,...patch.execution},bindings:Object.fromEntries([...new Set([...Object.keys(previous.bindings??{}),...Object.keys(patch.bindings??{})])].map(stage=>
-    [stage,{...(previous.bindings?.[stage] as object??{}),...(patch.bindings?.[stage] as object??{})}]))});
 
 export async function loadAimeWorkbench(file:string,options:{id?:string;name?:string}={}){
   const configuration=await loadAimeConfiguration(file),id=options.id??'aime',name=options.name??'AIME日常',settingsFile=path.join(configuration.stateDirectory,'workbench-settings.json');
@@ -75,8 +72,9 @@ export async function loadAimeWorkbench(file:string,options:{id?:string;name?:st
     if(raw.engine!==undefined&&!['pi','prime'].includes(String(raw.engine)))throw new HttpError(400,'未知Worker引擎');
     if(raw.debug!==undefined&&typeof raw.debug!=='boolean')throw new HttpError(400,'debug必须是布尔值');
     if(raw.bindings&&Object.keys(raw.bindings as object).some(stage=>!['score','attribution'].includes(stage)))throw new HttpError(400,'AIME只配置Score与Attribution');
-    const {engine,debug,...modelSettings}=raw;dashboardSettings(modelSettings);
-    const patch=merge(overlay,raw as AimeSettingsPatch),validated=await host(patch),resolver=createModelResolver(validated.models);
+    const {engine,debug,...modelSettings}=raw,{engine:previousEngine,debug:previousDebug,...previous}=overlay;
+    const patch={...dashboardSettings(modelSettings,previous),engine:engine??previousEngine,debug:debug??previousDebug} as AimeSettingsPatch;
+    const validated=await host(patch),resolver=createModelResolver(validated.models);
     resolver('score');resolver('attribution');
     await writeJson(settingsFile,patch);overlay=patch;
     configuration.concurrency=Number(overlay.execution?.concurrency??configuration.concurrency);settings.concurrency=configuration.concurrency;
