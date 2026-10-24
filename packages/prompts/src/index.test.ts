@@ -41,6 +41,10 @@ test('all Score phases share the public-material boundary without changing other
     assert(prompt.instructions.includes(boundary));assert(prompt.systemPrompt.includes(boundary));
   }
   for(const stage of stages)assert(!agentPrompt(stage,[]).instructions.includes(boundary));
+  const calculation=readFileSync(new URL('../resources/tools/review_calculate.md',import.meta.url),'utf8').trim();
+  const scoreCalculation=readFileSync(new URL('../resources/score/evidence/calculate.md',import.meta.url),'utf8').trim();
+  assert.equal(agentPrompt('score',['review_calculate'],'evidence').toolDescriptions.review_calculate,calculation+'\n'+scoreCalculation);
+  assert.equal(agentPrompt('attribution',['review_calculate'],'direct').toolDescriptions.review_calculate,calculation);
 });
 
 test("submission-only stages expose only their direct submission tool", () => {

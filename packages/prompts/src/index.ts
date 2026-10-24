@@ -54,7 +54,7 @@ export function agentPrompt(stage: PromptStage, toolNames: string[], profile = "
   const toolDescriptions = Object.fromEntries(names.map((name) => {
     const description = descriptions.get(name);
     if (!description) throw new Error(`Missing tool description: ${name}`);
-    return [name, description];
+    return [name, description + (stage === 'score' && name === 'review_calculate' ? '\n' + resource('score/evidence/calculate.md') : '')];
   }));
   return {
     systemPrompt,
