@@ -200,23 +200,19 @@ interface ConnectionOwner {
 }
 
 interface BrowserNetworkTarget {
-  readonly navigator?: { readonly onLine?: boolean }
-  addEventListener(type: 'online' | 'offline', listener: () => void): void
-  removeEventListener(type: 'online' | 'offline', listener: () => void): void
+  addEventListener(type: 'online', listener: () => void): void
+  removeEventListener(type: 'online', listener: () => void): void
 }
 
-function watchBrowserNetwork(controller: ConnectionController): () => void {
+function watchBrowserNetwork(controller: ConnectionController, isConnected: () => boolean): () => void {
   const browser = (globalThis as { readonly window?: BrowserNetworkTarget }).window
-  const initiallyAvailable = browser?.navigator?.onLine
-  if (browser === undefined || initiallyAvailable === undefined) return () => {}
-  const online = (): void => { controller.setNetworkAvailable(true) }
-  const offline = (): void => { controller.setNetworkAvailable(false) }
-  controller.setNetworkAvailable(initiallyAvailable)
+  if (browser === undefined) return () => {}
+  // Browser network hints do not establish Host reachability (for example on
+  // VPNs). Let the transport decide; an online hint only accelerates recovery.
+  const online = (): void => { if (!isConnected()) controller.reconnect() }
   browser.addEventListener('online', online)
-  browser.addEventListener('offline', offline)
   return () => {
     browser.removeEventListener('online', online)
-    browser.removeEventListener('offline', offline)
   }
 }
 
@@ -325,7 +321,7 @@ export function installConnection(ctx: Context, options: ConnectionInstallOption
           sinks.onStateChange?.(state)
         },
       }, { ...recovery, ...config })
-      const current = { token, source, controller, stopNetworkWatch: watchBrowserNetwork(controller) }
+      const current = { token, source, controller, stopNetworkWatch: watchBrowserNetwork(controller, () => state === 'connected') }
       owner = current
       controller.start()
       return {

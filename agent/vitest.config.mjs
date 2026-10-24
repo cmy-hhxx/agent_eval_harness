@@ -10,7 +10,7 @@ export default defineConfig({
   esbuild: { jsx: "automatic", tsconfigRaw: { compilerOptions: { experimentalDecorators: false } } },
   test: { environment: "node", setupFiles: [path.join(root, "agent/tests/setup-dom.mjs")], include: [
     "packages/api/gateway/tests/{stream-protocol.host,stream-server.host,journal-stream.client,control-retry.client,authenticated-node.client}.spec.ts",
-    "packages/client/connection/tests/socket.client.spec.ts",
+    "packages/client/connection/tests/{socket,client-apply,connection}.client.spec.ts",
     "packages/api/remote-access/tests/client-access.client.spec.ts",
     "packages/api/session-controller/tests/{assistant-stream.client,notifier.client,history-records.client,manager.client,sessions-service.client,session.client}.spec.ts",
     "packages/client/ui-conversation/tests/{conversation-assembler.client,conversation-routing.client,conversation-store.client,draft-document.client,draft-hub.client,input-reference-submit.client,service-orchestration.client}.spec.ts",

@@ -263,7 +263,25 @@ describe('connection client apply', () => {
     }
   })
 
-  it('feeds browser offline and online events into the owned retry loop', async () => {
+  it('connects on page load even when the browser reports offline', async () => {
+    vi.useFakeTimers()
+    const browser = new BrowserNetworkProbe()
+    browser.setOnline(false)
+    vi.stubGlobal('window', browser)
+    ;(globalThis as Win).location = { hostname: 'localhost' }
+    const handle = await mount()
+    installGeneration(handle)
+    const loop = handle.start({})
+    try {
+      await vi.advanceTimersByTimeAsync(0)
+      expect(handle.state.getSnapshot()).toBe('connected')
+      expect(handle.generation.getSnapshot()?.host.home).toBe('/h')
+    } finally {
+      loop.stop()
+    }
+  })
+
+  it('keeps a reachable generation through browser network hints', async () => {
     vi.useFakeTimers()
     const randomSpy = vi.spyOn(Math, 'random').mockReturnValue(0)
     const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
@@ -292,20 +310,64 @@ describe('connection client apply', () => {
       expect(calls).toBe(1)
 
       browser.setOnline(false)
-      expect(handle.state.getSnapshot()).toBe('disconnected')
+      expect(handle.state.getSnapshot()).toBe('connected')
       await vi.advanceTimersByTimeAsync(10_000)
       expect(calls).toBe(1)
 
       browser.setOnline(true)
-      expect(handle.state.getSnapshot()).toBe('connecting')
-      await vi.advanceTimersByTimeAsync(49)
+      await vi.advanceTimersByTimeAsync(1_000)
       expect(calls).toBe(1)
-      await vi.advanceTimersByTimeAsync(1)
-      expect(calls).toBe(2)
       expect(handle.state.getSnapshot()).toBe('connected')
-      expect(states).toEqual(['connected', 'disconnected', 'connecting', 'connected'])
+      expect(states).toEqual(['connected'])
     } finally {
       unsubscribe()
+      loop.stop()
+      randomSpy.mockRestore()
+      warnSpy.mockRestore()
+    }
+  })
+
+  it.each(['retry timer', 'online hint'])('recovers from transport failure through the %s', async (recovery) => {
+    vi.useFakeTimers()
+    const randomSpy = vi.spyOn(Math, 'random').mockReturnValue(0)
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+    const browser = new BrowserNetworkProbe()
+    browser.setOnline(false)
+    vi.stubGlobal('window', browser)
+    const removeListener = vi.spyOn(browser, 'removeEventListener')
+    const handle = await mount()
+    const generation = new GenerationProbe()
+    let reachable = true
+    const source = vi.fn<ConnectionGenerationSource>((signal, ready) => {
+      if (!reachable) return Promise.reject(new Error('transport unavailable'))
+      return generation.source(signal, ready)
+    })
+    handle.registerGenerationSource(source)
+    const loop = handle.start({}, {
+      backoffBaseMs: 100, backoffFactor: 2, backoffMaxMs: 1_000,
+      generationReadyTimeoutMs: 500,
+    })
+    try {
+      await vi.advanceTimersByTimeAsync(0)
+      expect(handle.state.getSnapshot()).toBe('connected')
+      reachable = false
+      generation.end()
+      await vi.advanceTimersByTimeAsync(1_250)
+      expect(handle.state.getSnapshot()).toBe('connecting')
+      expect(handle.generation.getSnapshot()).toBeUndefined()
+      expect(source).toHaveBeenCalledTimes(6)
+      reachable = true
+      if (recovery === 'online hint') browser.setOnline(true)
+      await vi.advanceTimersByTimeAsync(recovery === 'online hint' ? 0 : 500)
+      expect(handle.state.getSnapshot()).toBe('connected')
+      expect(handle.generation.getSnapshot()?.id).toBe(2)
+      expect(source).toHaveBeenCalledTimes(7)
+      loop.stop()
+      expect(removeListener).toHaveBeenCalledWith('online', expect.any(Function))
+      browser.setOnline(true)
+      await vi.advanceTimersByTimeAsync(10_000)
+      expect(source).toHaveBeenCalledTimes(7)
+    } finally {
       loop.stop()
       randomSpy.mockRestore()
       warnSpy.mockRestore()

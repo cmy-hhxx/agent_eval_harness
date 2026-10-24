@@ -37,7 +37,11 @@ try{
  const page=await browser.newPage({viewport:{width:1440,height:960},colorScheme:'dark',locale:'zh-CN'}),errors=[],assetRequests=[];
  page.on('pageerror',e=>errors.push(String(e)));
  page.on('request',request=>{if(request.method()==='POST'&&/upload/i.test(request.url()))assetRequests.push(request.url());});
+ // Exercise fresh loads and the history reload with a false browser offline hint.
+ // The local HTTP/WebSocket transport remains reachable throughout this test.
+ await page.addInitScript(()=>Object.defineProperty(Navigator.prototype,'onLine',{configurable:true,get:()=>false}));
  await page.goto(server.url);const input=page.locator('[contenteditable=true]');await input.waitFor();
+ assert.equal(await page.evaluate(()=>navigator.onLine),false);
  await input.evaluate(element=>{
   const transfer=new DataTransfer();transfer.items.add(new File(['synthetic source'],'eris-intake-check.png',{type:'image/png'}));
   element.dispatchEvent(new ClipboardEvent('paste',{clipboardData:transfer,bubbles:true,cancelable:true}));
@@ -72,6 +76,8 @@ try{
  await page.emulateMedia({colorScheme:'light'});await page.emulateMedia({colorScheme:'dark'});
  assert.equal(await page.locator('body').getAttribute('data-ds-dark-theme'),null);
  const before=executions;await page.reload();await page.getByRole('heading',{name:'分析结果',exact:true}).waitFor();assert.equal(executions,before);
+ assert.equal(await page.evaluate(()=>navigator.onLine),false);
+ assert.equal(await page.getByRole('button',{name:/连接异常|连接中断/}).count(),0,'history reload reconnects without a manual reconnect');
  assert.equal(await strong.innerText(),quoted,'history preserves quoted Chinese strong emphasis');
  assert.equal(await page.getByRole('table').getByRole('cell',{name:'62.20%',exact:true}).count(),1,'history preserves the statistics table');
  await page.screenshot({path:shots+'/assistant-light.png',fullPage:true,animations:'disabled',caret:'hide'});
