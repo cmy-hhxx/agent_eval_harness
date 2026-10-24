@@ -131,3 +131,13 @@ test("a nameless tool keeps its catalog identity gap instead of displaying an in
   answer.business_chains[0].tool_component = "finquery";
   assert(businessChainDirectoryIssues(binding.request).length);
 });
+
+test("an explicitly empty return remains readable process evidence instead of an invalid zero-length mandatory range", () => {
+  const f = businessChainFixture(); f.raw.messages[3].output = "";
+  const binding = bindAttributionMaterial(f.candidate, f.raw), chain = (binding.request.input.answer as any).business_chains[0];
+  const returned = chain.checkpoints.find((point: any) => point.step === "原始返回及字段含义");
+  assert.equal(returned.availability, "available");
+  assert(returned.evidence.some((item: any) => /"output":\s*""/u.test(item.quote)));
+  assert(attributionAgent.profiles.default.requiredReads!(binding.request).every(read => read.end > read.start));
+  assert.deepEqual(businessChainDirectoryIssues(binding.request), []);
+});

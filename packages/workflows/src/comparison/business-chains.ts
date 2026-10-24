@@ -13,15 +13,17 @@ export function businessChains(raw: RawInput, inputId: string, finalIndex: numbe
   const actors = traceComponentIdentities(raw, inputId, finalIndex);
   const generation = getAnswerGeneration(raw, inputId, finalIndex);
   const at = (index: number, path: string, limit = 4800): Evidence[] => {
-    const range = selectEvidenceSource(evidenceSources(raw.messages[index]), path);
+    const sources = evidenceSources(raw.messages[index]);
+    let range = selectEvidenceSource(sources, path);
+    if (range && range.start === range.end) range = selectEvidenceSource(sources.filter(source => source.kind === "json"), path);
     if (!range) return [];
     return [cite(inputId, index, range.source, range.start, Math.min(range.end, range.start + limit))];
   };
   const outputs = (index: number): Evidence[] => evidenceSources(raw.messages[index])
     .filter(source => source.kind === "text" && /^\/output\/\d+\/content(?:\/|$)/u.test(source.path))
-    .map(source => cite(inputId, index, source, 0, Math.min(source.text.length, 4800)));
+    .flatMap(source => at(index, source.path));
   const goalIndex = raw.messages.findIndex(message => message.type === "user_question" || message.role === "user");
-  const goals = goalIndex < 0 ? [] : messageContentSources(raw.messages[goalIndex]).map(source => cite(inputId, goalIndex, source, 0, source.text.length));
+  const goals = goalIndex < 0 ? [] : messageContentSources(raw.messages[goalIndex]).flatMap(source => at(goalIndex, source.path, source.text.length || 4800));
   const exchanges = traceExchanges(raw.messages);
   return exchanges.map((exchange, index) => {
     const call = object(raw.messages[exchange.request_index]), query = object(call.input ?? call.arguments).query;
@@ -39,7 +41,7 @@ export function businessChains(raw: RawInput, inputId: string, finalIndex: numbe
     // This is navigation only; presence does not certify that a particular source was passed.
     const fallbackInput = contexts.flatMap(context => evidenceSources(raw.messages[context.message_index])
       .filter(source => source.kind === "text" && source.path.startsWith(context.path + "/") && /\/content(?:\/|$)/u.test(source.path))
-      .map(source => cite(inputId, context.message_index, source, 0, source.text.length)));
+      .flatMap(source => at(context.message_index, source.path, source.text.length || 4800)));
     const actualInput: Evidence[] = actual.length ? actual : fallbackInput;
     const returns = exchange.return_indices.flatMap(i => {
       const output = object(object(raw.messages[i]).output ?? object(raw.messages[i]).result);
