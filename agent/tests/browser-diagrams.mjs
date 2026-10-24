@@ -55,7 +55,7 @@ const server = await serveAssistant({ port: 0, userId: 'local', webDirectory: pr
         const example = examples.find(example => example.title === name) ?? (failed || revision ? examples[0] : null);
         assert(example, 'the fake driver receives a known comparison request');
         const callId = `comparison-${++executions}`;
-        const args = { reference: { runId: 'fixture', taskId: callId }, title: name,
+        const args = { reference: { collectionId: "0_wencai/0_daily_eval", runId: 'fixture', taskId: callId }, title: name,
           candidates: example.candidates.map(({ model, summary, paths }) => ({ model, summary, paths })), reason: example.reason,
           ...(example.reasonHighlight ? { reasonHighlight: example.reasonHighlight } : {}) };
         await event({ type: 'agent_start' }); await event({ type: 'turn_start' });

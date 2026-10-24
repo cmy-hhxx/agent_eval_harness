@@ -17,7 +17,7 @@ for (const scenario of ["complete", "continue", "repair", "mixed", "counterevide
   const scope = { userId: "alice", sessionId: crypto.randomUUID() };
   const previous = process.env.ERIS_COMPLETION_TEST_KEY;
   process.env.ERIS_COMPLETION_TEST_KEY = "fixture";
-  const reference = { runId: "run", taskId: "comparison" };
+  const reference = { collectionId: "0_wencai/0_daily_eval", runId: "run", taskId: "comparison" };
   const args = { reference, title: "核对计算依据", reason: "B保留了计算依据，A只有结论。", complete: scenario !== "continue",
     candidates: ["a", "b"].map(model => ({ model, summary: `${model}的答案`, paths: [{ title: "依据", evidence: "已读取原文。", counterEvidence: null, impact: "可核对。", assessment: "strength" }] })) };
   const counterEvidence = "本轮已生成K线资源；最终引用异常，图表内容尚未核验。";
@@ -28,9 +28,9 @@ for (const scenario of ["complete", "continue", "repair", "mixed", "counterevide
     result: "win", resultLabel: "B胜", models: [{ model: "a", modelName: "A", result: "loss" }, { model: "b", modelName: "B", result: "win" }],
   }] } };
   const currentCase = { kind: "case", reference, question: "请核对计算依据", formal,
-    answers: ["a", "b"].map(model => ({ model, reference: { runId: reference.runId, inputId: model }, answer: { text: `${model}的完整回答`, complete: true } })) };
+    answers: ["a", "b"].map(model => ({ model, reference: { collectionId: "0_wencai/0_daily_eval", runId: reference.runId, inputId: model }, answer: { text: `${model}的完整回答`, complete: true } })) };
   const unexpected = async (): Promise<never> => { throw new Error("Unexpected dependency call"); };
-  const eris = createEris({ code: { execute: unexpected, read: unexpected }, specialists: { invoke: unexpected, read: unexpected },
+  const eris = createEris({
     search: { search: unexpected }, web: { read: unexpected }, data: { list: unexpected, search: unexpected, image: unexpected,
       async read(ref, options) { assert.deepEqual(ref, reference); assert.deepEqual(options, { view: "case" }); return currentCase; },
     } });

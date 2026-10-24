@@ -1,6 +1,6 @@
 import path from "node:path";
 import { randomInt } from "node:crypto";
-import { errorText, safeId, type AnalysisDataSource, type AnalysisReference, type AnalysisCaseLookup, type AnalysisQuery, type AnalysisReadOptions, type JsonObject } from "@eval/contracts";
+import { errorText, safeId, type AnalysisDataSource, type RunReference, type AnalysisQuery, type AnalysisReadOptions, type JsonObject } from "@eval/contracts";
 import { readJson, readRunOverviews } from "@eval/data";
 import { analysisComparisonScope, analysisProgress, analysisTaskPurpose, assertComparableGroups, locateAnalysisInput, readAnalysisAnswer, readAnalysisComparisonStats, readAnalysisInput, readRunTasks, type AnalysisRunOverview, type Checkpoint, type EvalConfig } from "@eval/workflows/comparison";
 import { cite, evidenceSources, images } from "@eval/tools";
@@ -17,7 +17,7 @@ function messageMaterial(message: Awaited<ReturnType<typeof readAnalysisInput>>[
   return { sources, full: sources.map((item) => item.text).join("\n"), format };
 }
 
-function messagePage({ sources, full, format }: ReturnType<typeof messageMaterial>, reference: AnalysisReference, options?: { offset?: number; limit?: number }) {
+function messagePage({ sources, full, format }: ReturnType<typeof messageMaterial>, reference: RunReference, options?: { offset?: number; limit?: number }) {
   const offset = options?.offset ?? 0, limit = Math.min(options?.limit ?? 8000, 16000);
   let position = 0;
   const evidence = sources.flatMap((source) => {
@@ -158,7 +158,7 @@ export class LocalAnalysisData implements AnalysisDataSource {
         ...(selection ? { selection } : {}),
         evaluatorVersion: saved.evaluatorVersion, summaryScope: "run" as const, summary: { ...summary, formalComparisonStats } };
     }
-    const tasksByInput = new Map<string, { reference: AnalysisReference; taskId: string; stage: string; purpose: string; status: string }[]>();
+    const tasksByInput = new Map<string, { reference: RunReference; taskId: string; stage: string; purpose: string; status: string }[]>();
     for (const [taskId, task] of Object.entries(saved.tasks)) {
       const entry = { reference: { runId: query.runId!, taskId }, taskId, stage: task.stage, purpose: analysisTaskPurpose(task), status: task.status };
       for (const inputId of new Set(Object.values(task.inputIds))) {
@@ -172,12 +172,12 @@ export class LocalAnalysisData implements AnalysisDataSource {
     return { kind: "inputs" as const, runId: query.runId, ...page(filtered.length, offset, limit, "items"), items: filtered.slice(offset, offset + limit), comparisonGroups, evaluatorVersion: saved.evaluatorVersion,
       summaryScope: "run" as const, summary: { ...summary, formalComparisonStats } };
   }
-  async raw(reference: AnalysisReference) {
+  async raw(reference: RunReference) {
     if (!reference.inputId) throw new Error("inputId is required");
     const locator = await locateAnalysisInput(this.run(reference.runId), reference.inputId);
     return readAnalysisInput(locator);
   }
-  async read(reference: AnalysisReference | AnalysisCaseLookup, options?: AnalysisReadOptions): Promise<JsonObject> {
+  async read(reference: (RunReference & { collectionId?: string }) | (RunReference & { collectionId?: string; query: string; comparisonTier?: string }), options?: AnalysisReadOptions): Promise<JsonObject> {
     if ("query" in reference) {
       const saved = await readJson<Checkpoint>(path.join(this.run(reference.runId), "state.json"));
       const summary = analysisProgress(saved);
@@ -212,7 +212,7 @@ export class LocalAnalysisData implements AnalysisDataSource {
         throw new Error('taskId 未登记；这不是结果尚未完成。请用 read_case({reference:{runId,query:原问关键词,comparisonTier:档位}}) 按题目定位，不猜改 ID；范围未知时用 list_data。');
       }
       const receipt = state.receipts[reference.taskId];
-      if (!receipt) throw new Error("该 taskId 没有已接受的正式结果；原始消息仍可使用 read_data({reference:{runId,inputId}}) 读取。本会话独立任务请用 read_specialist(operationId)。");
+      if (!receipt) throw new Error("该 taskId 没有已接受的正式结果；原始消息仍可使用 read_data({reference:{runId,inputId}}) 读取。");
       const result = receipt.exported?.row ?? receipt.evaluation;
       const comparisonScope = receipt.exported ? analysisComparisonScope(receipt.exported.row, state.manifest.config as EvalConfig) : null;
       return { kind: "accepted-result", reference, ...(comparisonScope ? { comparisonScope } : {}), result, evaluatorVersion: receipt.evaluatorVersion };
@@ -227,7 +227,7 @@ export class LocalAnalysisData implements AnalysisDataSource {
     }
     return messagePage(messageMaterial(raw.messages[reference.messageIndex]), reference, options);
   }
-  private async case(reference: AnalysisReference, audience?: "user"): Promise<JsonObject> {
+  private async case(reference: RunReference, audience?: "user"): Promise<JsonObject> {
     if (reference.messageIndex !== undefined || Boolean(reference.inputId) === Boolean(reference.taskId))
       throw new Error("案例使用 runId + taskId 或 runId + inputId，不接受消息坐标。");
     const run = this.run(reference.runId);
@@ -242,7 +242,7 @@ export class LocalAnalysisData implements AnalysisDataSource {
     return { kind: "case", reference, case: { batchId: input.batch_id, caseId: input.case_id }, question,
       answers: answers.map(({ question: _question, ...answer }) => answer), ...(formal ? { formal } : {}) };
   }
-  async search(reference: AnalysisReference, query: string | string[], options?: { offset?: number; limit?: number; scope?: "evidence" | "all" }): Promise<JsonObject> {
+  async search(reference: RunReference, query: string | string[], options?: { offset?: number; limit?: number; scope?: "evidence" | "all" }): Promise<JsonObject> {
     const queries = typeof query === "string" ? [query] : query;
     if (!queries.length || queries.some(query => !query.trim())) throw new Error("Search query required");
     const totals = new Map(queries.map(query => [query, 0]));
@@ -336,7 +336,7 @@ export class LocalAnalysisData implements AnalysisDataSource {
     const offset = options?.offset ?? 0, limit = Math.min(options?.limit ?? 20, 100);
     return { kind: "matches", scope, ...page(items.length, offset, limit, "items"), queries: queries.map(query => ({ query, total: totals.get(query)! })), matches: items.slice(offset, offset + limit) };
   }
-  async image(reference: AnalysisReference) {
+  async image(reference: RunReference) {
     if (reference.messageIndex === undefined) throw new Error("messageIndex is required");
     const raw = await this.raw(reference), message = raw.messages[reference.messageIndex];
     if (!message) throw new Error("Message index out of range");

@@ -1,129 +1,69 @@
 # Eris
 
-[返回首页](../README.md) · [产品规范](../PRODUCT.md#eris-评测助手)
+[返回首页](../README.md) · [产品规范](../PRODUCT.md#eris-评测助手) · [部署](../docs/deployment.md#eris-只读分析助手)
 
-Eris 是本机 Web 评测分析助手，使用 Pi 对话，专业评测复用 Host。启动依赖项目 POSIX 工具链，不提供独立桌面安装。
+Eris 是部署在评测服务器的小团队只读分析助手。浏览器入口为 `http://117.50.195.94:3928`，映射服务器 `0.0.0.0:5004`。本机仅用于开发与模拟测试。
+
+## 启动与配置
 
 ```bash
-bash agent/run.sh
-bash agent/run.sh --port 4181 --user alice --no-open
+bash agent/run.sh --config /mnt/aigc_team/user_workspace/chenmingyang/eval_harness/runtime/config/eris.json
 ```
 
-默认 127.0.0.1:4180、用户 local。脚本会终止目标端口的旧监听进程，准备依赖和构建，再打开浏览器；--port 0 使用动态端口，--debug 显示构建诊断。Ctrl+C 停止。
-
-入口 /u/alice/ 或 ?user=alice 指定用户。本机副本共享 data/assistant，userId 只表示数据归属，不是鉴权。
+[配置 Schema](../schemas/eris/server.schema.json)指定监听地址、外部来源、数据根目录、外置运行目录和模型 INI。端口占用或实例锁冲突直接失败，不终止其他进程，不自动打开浏览器。代码在独立 `eris-code` checkout，启动进程在 `eris` tmux 中前台运行。
 
 ## 模型与设置
 
-渠道格式见[配置指南](../docs/usage.md#环境与配置)。Eris 选择器只提供渠道中的 **GPT Luna** 系列；默认继承 Attribution 绑定，可用 INI 的 agent 段覆盖 channel、model、thinking、context_window 和 max_output_tokens，默认模型也须为 Luna。
+INI 的 `[agent]` 必须指定渠道；模型使用本段或该渠道的显式默认值，不继承评测阶段绑定。模型选择器只展示配置渠道允许且实际可用的模型，已有会话选择不可用时明确报错。上下文和输出上限遵从渠道能力。
 
-渠道目录独立加载，故障只影响本渠道；全部不可用才阻断请求。重试重新加载，已有会话选择不被静默替换。常用模型只影响排序与新会话默认，不过滤其他可用 Luna 模型。
+服务器使用现有 Responses 渠道的 `deepseek-v4.1-flash`，上下文 524288、输出上限 32768。集群网关自动绕过继承的 HTTP 代理。密钥只留在服务器。
 
-上下文容量统一取 agent 配置；每次模型请求前检查，超阈值先持久化压缩摘要再继续。模型切换不打断当前轮次，下次请求生效；取消后的准备工作不会再触发该轮模型调用。
+语言、字号、工作步骤、用量、排队/插话和常用模型按账号保存。上下文接近容量时先持久化压缩摘要；取消后不启动新的模型请求。下一问预测复用会话模型，无工具，每轮一次；失败不阻断主回复。
 
-语言、字号、工作步骤、用量、繁忙时排队/插话和常用模型按用户保存。排队消息可编辑、移除或转为插话。视觉与交互规则只维护在 [PRODUCT](../PRODUCT.md#eris-评测助手)。
+外部搜索使用服务器 INI `[environment].SEARCH_API_KEY`，不读取本机 `.env`。未配置或检索失败时报告错误。
 
-外部搜索需 SEARCH_API_KEY。Eris 启动时 .env 仅补充未设置变量，INI 的 environment 随后覆盖；评测入口不读 .env。未配置或失败时报告错误，不伪装检索成功。
+## 用户与会话
 
-## 下一问补全
+管理员创建、停用和重置成员密码；不开放注册。普通用户只能修改自己的密码。账号入口在侧栏「账号」，管理员在该页面管理成员，不能浏览成员聊天。最后一位管理员不能停用。
 
-完成回答且输入为空时显示一句灰色短追问；Tab 填入草稿，Enter 发送，Esc 隐藏。切换会话、输入法组合或改写为其他内容不误采纳。
+账号使用持久化 UUID；聊天、分页、设置、图表和原材料展开均校验登录身份，URL 不授予权限。共享评测数据不按账号重复保存。
 
-预测复用会话模型、无工具，每轮一次，失败不阻塞输入、不写入正式评测。语义与长度规则见[预测提示词](../packages/prompts/resources/eris/prediction.md)，执行限制见 [assistant-prediction.ts](../packages/runtime/src/assistant-prediction.ts)。
+登录使用独立 HttpOnly、SameSite=Strict Cookie，绝对有效期 7 天，服务重启后仍有效。支持单设备退出、退出全部设备；改密、重置、停用撤销登录和现有连接，停用还取消正在执行的模型请求。当前 HTTP 入口缺少传输加密。
 
-## 能力与数据
-
-Eris 可读本地运行与正式判词、定位原始回答与证据、搜索、查看图片、复算、查公开网页，以及调用专业归因与对比。专业任务先固定 Criteria，同档两两比较，结果经 Host 校验保存；不因普通分析改写历史判词。
-
-工具参数以 [schemas/eris/tools.json](../schemas/eris/tools.json) 为准，工作规则以 [Eris 提示词](../packages/prompts/resources/eris/) 为准。文档不另维护工具字段或调查顺序。
-
-## 自主代码核验
-
-execute_code 使用公共 Python / Shell 执行器，在会话工作目录复算与生成中间产物；取消回收所属进程组，环境不继承网关密钥。工作区不是操作系统沙箱。
-
-输出截断时通过 read_code_output 续读，不为翻页重跑代码。正式结果默认返回保留完整结论、过滤证据的 summary；details 或分页参数读取原结果，nextRead 提供真实续读入口，读取不改落盘结果。
-
-### 外部查证
-
-search_data 搜本地输入，search_web 搜网页/新闻，read_web 读公开 HTML、PDF 和文本。搜索计划可并发，但来源与分页存在依赖时先取得真实引用。原文请求校验公共地址，页面不执行脚本；PDF 不做 OCR，表格须核对表头、单位和脚注。
-
-精确数字与冲突须读原文。搜索日期只是过滤，不能证明历史可得性；页面声明时间、检索时间与事件时间分开。未命中不等于反证，截断或访问失败保持未知。外部事实与原始评测分开，不写回正式判决。
-
-同轮独立只读工具有界并行，含专业调用的批次按序执行；每个结果先持久化再进入下轮。相同工具参数连续失败达到限制时停止调用并总结已知结果，不盲目扩展重试。
-
-### 图表与来源
-
-show_chart 的本地 statistics 引用由程序读取正式战绩，保留真实模型、日期、单位与来源；外部数据须说明来源和口径。未知不补零，区间来自真实上下界，不虚构显著性。
-
-show_comparison 的原问、双方回答、身份和胜负绑定正式引用。展示前独立核对完整回答及会话已读证据，发现实质矛盾或材料不完整则返回草稿错误，不展示；核对不重评专业任务，也不复用旧核对结论。
-
-图稿完整回答请求时 complete=true 可结束回复，否则继续。成功回执先落盘，刷新可恢复。统计图模板、视觉及辅助阅读见 [PRODUCT](../PRODUCT.md#eris-评测助手)，参数见工具 Schema。
-
-### 本地运行与结果
-
-| 入口 | 读取范围 |
-|---|---|
-| list_data | 轻量运行目录；指定 inputs / comparisons 后分页 |
-| view:statistics | 最近成功发布的累计快照，运行中批次单列，不能相加 |
-| read_case | 原问、回答与正式对战；review:true 用于不预载旧评语的复核 |
-| read_data / read_specialist | 原结果 summary 或 details |
-| read_evidence / search_data | 按原始引用读取、定位与续页 |
-
-currentRun 优先有输入的活动运行，否则选最近开始的有输入运行；指定 run 后不自动换范围。查询与分页不改变 run 统计分母。原材料用 runId + inputId，正式结果用 runId + taskId，专业调用用 operationId，引用不能混用。
-
-运行目录只读 overview.json；索引缺失、损坏或过期明确报告，不自动全量重扫。停止相关运行后可用 `node scripts/rebuild-run-overviews.mjs [运行根目录]` 重建，原状态和结果不变。
-
-自主选例可用 sample=true，先随机候选再按完整原问语义筛选；不读旧输赢决定题目质量，不改总体统计。空候选只代表本次范围，筛选结果不作为总体质量样本。
-
-本地搜索返回原文位置与续读边界；多词同节点命中不证明同句关系。截断、未知字段与原始引用保留。会话只保存原材料定位引用，恢复时按来源重读，不复制原始输入。
-
-“链路小现场”展开才读对应原材料，不触发模型或专业重评；详情可复制业务引用追问。呈现规则见产品规范。
+账号及登录保存于 `runtime/secrets/eris/accounts.json`，权限 600。初始管理员为 `cmy`，首次通过 `ERIS_ADMIN_PASSWORD` 初始化；不在代码或日志中保存明文。
 
 ### 会话与恢复
 
-权威记录为 `data/assistant/users/<user>/sessions/<id>/events.jsonl`；state.json 仅保存索引、进度和请求状态。Pi 内存会话由追加记录重建，模型与工具执行前先持久化相关请求。
+权威聊天记录为 `runtime/data/assistant/users/<用户UUID>/sessions/<聊天UUID>/events.jsonl`；`state.json` 只保存索引、进度和请求状态。新建服务器聊天，不导入旧记录。
 
-同一 Session 单进程持锁，其他副本转发，确认 owner 退出后才接管。请求 UUID 去重，冲突内容拒绝。未开始的调用可重试；已开始而结果未落盘的调用保留未知，先核对副作用；已保存结果不重放。专业任务按原 operationId 恢复接受结果和剩余工作。
+请求 UUID 去重，刷新和断线只重建订阅，不重发轮次。服务重启保留聊天并将未完成轮次标记为中断。每个聊天由持锁执行者运行；其他进程经回环 HTTP/WS 认证转发，内部授权不进入 owner 文件或浏览器。
 
-专业产物在 operations/<operationId>/execution/，日志仍使用根 runtime.log / evaluation.log；debug 才保存专业 Worker 排查材料。
+## 数据与只读工具
 
-## 模块与上游
+覆盖 wencai、AIME、ifind 的日常和专项结果，测试目录须显式 `includeTests:true`。运行目录只读元数据，正式正文按引用按需读取，不复制输入、不补写索引、不新增跨 run 结果缓存。
 
-Eris 的 core 定义能力，server 提供产品操作，client 装配界面；Runtime 负责 Pi 与 Deepseek 传输，Data 管追加记录，应用 Host 注入数据和专业网关。完整入口见[模块地图](../docs/modules/README.md)。
+Comparison 使用既有 overview；AIME Answer-review 使用当前 checkpoint 的只读投影，没有 overview 属于正常布局。后者展示归因、Score 和进度，没有两两胜负，不能生成比较图。
 
-界面复用选定 Deepseek 源码，固定浅色，品牌见[素材说明](src/client/brand/README.md)。来源与变更由 [upstream.json](../vendor/upstream.json)、[sources.json](../vendor/deepseek/sources.json)和 [local.patch](../vendor/deepseek/local.patch)记录，保留 [MIT 许可](../vendor/deepseek/LICENSE)。同步与构建见[开发指南](../docs/development.md#构建与依赖)。
+引用必须保留 `collectionId + runId`；collectionId 是来源、类别、任务的业务坐标，不是任意文件路径。相同 runId 在不同来源下互不混用。AIME 证据沿 `taskId + sourceId` 定位，偏移单位为 Unicode 码点，包含已保存的外部核验来源。
 
-## 修改 Eris
+保留读取回答、正式判词、证据、数据搜索、公开网页搜索/读取、图片、精确计算、统计图和比较图。工具不执行代码、不创建专业评测，也不修改原判词。工具参数与工作规则分别维护在 [Schema](../schemas/eris/tools.json) 和 [提示词](../packages/prompts/resources/eris/)。
 
-| 修改 | 入口 |
-|---|---|
-| 目标、调查、恢复、预测与核对规则 | [resources/eris/](../packages/prompts/resources/eris/) |
-| 工具参数 | [tools.json](../schemas/eris/tools.json) |
-| 工具注册与执行 | [core/tools.ts](src/core/tools.ts) |
-| 完整定义 | [core/profile.ts](src/core/profile.ts) 的 createEris |
-| 品牌 | [brand.js](src/client/brand.js)、[素材](src/client/brand/README.md) |
-| 网关与模型选择 | [assistant-models.ts](../apps/host/src/assistant-models.ts) |
-
-同步当前调用方与测试，构建并重启后生效。不要在 Host 另拼提示词。
+图表引用程序读取的正式统计，未知不补零；比较图展示前核对原问、完整回答和已读证据。单独分析和图稿核对只生成聊天内容，不形成新的评测结果。
 
 ## 验证
 
-基础检查见[开发指南](../docs/development.md#验证)，按变化追加：
-
-| 范围 | 命令 |
-|---|---|
-| 上游组件与协议 | npm run test:agent:upstream |
-| 浏览器与全部图形模板 | npm run test:agent:browser |
-| 长历史与增量性能 | npm run test:agent:performance |
-| 单独图表布局 | node agent/tests/chart-layout.mjs |
-
-浏览器用 CHROME_PATH，默认本机 Google Chrome；布局检查多个桌面及手机宽度。视觉对照先运行 build-agent-reference.mjs，再以 AGENT_VISUAL_REFERENCE=1 运行浏览器测试，产物在 .artifacts/agent-browser/。它验证明确保留的上游区域，不把品牌与受限功能差异当错误。
-
-### 外部搜索查证基准
+基础检查见[开发指南](../docs/development.md#验证)。涉及上游和界面时运行：
 
 ```bash
-npm run build:app
-node scripts/search-audit.mjs --live --output .artifacts/search-audit
+npm run test:agent:upstream
+npm run test:agent:browser
+npm run test:agent:performance
 ```
 
-基准使用[固定查询](../tests/fixtures/search-audit.json)，消耗真实 Serper 额度，不纳入离线测试。Hit@k、字面锚点与耗时不等于开放互联网召回率或事实正确性；相关性、口径、历史可得性及 Eris 实际引用须人工复核。
+本机测试使用模拟服务和临时合成数据；真实 DeepSeek 对话与评测材料验收只在服务器执行。浏览器测试使用 `CHROME_PATH`，默认本机 Google Chrome。
+
+## 修改 Eris
+
+提示词与工具文案在 [packages/prompts](../packages/prompts/README.md)，工具参数在 [Schema](../schemas/eris/tools.json)，工具注册在 [core/tools.ts](src/core/tools.ts)。
+
+应用 Host 注入数据、模型和账户；Runtime 提供会话与认证传输，Data 维护账号和追加记录。跨包使用公开导出，修改后同步当前调用方、测试和文档，不维护旧引用格式。

@@ -15,14 +15,13 @@ function pool(questions: string[], remaining = 7) {
     selection: { mode: "random", availableCaseCount: questions.length + remaining, remainingCaseCount: remaining },
     summaryScope: "run", summary: { caseCount: 100, formalComparisonStats: { comparisonCount: 200, records: [], tiers: [] } },
     items: questions.map((question, index) => ({ question, case: { batchId: "batch", caseId: `q${index}` },
-      reference: { runId: "run", taskId: `comparison-${index}` }, comparisonTier: "Expert", inputs: [],
+      reference: { collectionId: "0_wencai/0_daily_eval", runId: "run", taskId: `comparison-${index}` }, comparisonTier: "Expert", inputs: [],
       assessments: [{ model: "A", summary: "完整评语" }], tradeoff: "完整取舍",
       outcomes: [{ result: "win", winnerModel: "A", reason: "正式胜负理由，不是选题理由" }] })) };
 }
 function tool(result: JsonObject) {
   const queries: AnalysisQuery[] = [];
-  const eris = createEris({ data: { async list(query) { queries.push(query); return result; }, read: unexpected, search: unexpected, image: unexpected },
-    code: { execute: unexpected, read: unexpected }, specialists: { invoke: unexpected, read: unexpected }, search: { search: unexpected }, web: { read: unexpected } });
+  const eris = createEris({ data: { async list(query) { queries.push(query); return result; }, read: unexpected, search: unexpected, image: unexpected }, search: { search: unexpected }, web: { read: unexpected } });
   return { execute: eris.tools.find(item => item.name === "list_data")!.execute, queries };
 }
 
@@ -31,7 +30,7 @@ test("sampled cases require semantic approval of complete questions, without rev
     "在写入延迟不能增加且允许最多丢一秒数据的约束下，如何设计跨机房故障切换？"];
   const source = pool(questions), before = structuredClone(source), sample = tool(source);
   let checks = 0;
-  const query: AnalysisQuery = { runId: "run", view: "comparisons", sample: true, limit: 1, comparisonTier: "Expert", outcome: "all",
+  const query: AnalysisQuery = { collectionId: "0_wencai/0_daily_eval", runId: "run", view: "comparisons", sample: true, limit: 1, comparisonTier: "Expert", outcome: "all",
     query: "范围", excludeCases: [{ batchId: "batch", caseId: "seen" }] };
   const result = await sample.execute(query, { ...context, async complete(request) {
     checks++;
@@ -102,7 +101,7 @@ test("empty pools need no model while invalid or unavailable checks cannot relea
 
 test("ordinary directories and explicit question lookups retain simple questions without a quality call", async () => {
   const source = pool(["计算2+2"]), sample = tool(source);
-  const query = { runId: "run", view: "comparisons", query: "计算2+2", includeAnalysis: true };
+  const query = { collectionId: "0_wencai/0_daily_eval", runId: "run", view: "comparisons", query: "计算2+2", includeAnalysis: true };
   const output = JSON.parse((await sample.execute(query, { ...context, complete: unexpected })).content[0].text!);
   assert.deepEqual(output.items, source.items);
   assert.deepEqual(sample.queries, [query]);

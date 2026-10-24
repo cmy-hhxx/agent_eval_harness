@@ -2,9 +2,9 @@ import path from "node:path";
 import {Ajv2020} from 'ajv/dist/2020.js';
 import {randomUUID} from "node:crypto";
 import {isDeepStrictEqual} from "node:util";
-import {canonical,type AgentBinding,type PlannedTask,type RunState,type RunManifest,type WorkflowDefinition,type JsonObject,type SubmissionReceipt,type TaskPlan} from "@eval/contracts";
+import {canonical,type AgentBinding,type PlannedTask,type RunState,type RunManifest,type WorkflowDefinition,type JsonObject,type SubmissionReceipt,type TaskPlan,type RunReference} from "@eval/contracts";
 import {createRunRepository,writeJson,atomicWrite,runLock,type RunCodec} from "@eval/data";
-import {buildPlan,loadRunInputs,normalizeInput,pendingTaskProgress,type EvalConfig,type Candidate,type RawInput} from "@eval/workflows/comparison";
+import {buildPlan,loadRunInputs,normalizeInput,pendingTaskProgress,analysisTraceMap,contentText,locateRecordStream,type EvalConfig,type Candidate,type RawInput} from "@eval/workflows/comparison";
 import {directAttributionProfile,type DirectAttribution} from "@eval/agents/attribution";
 import attributionOutputSchema from '../../../../schemas/workflow/answer-review-attribution.schema.json' with {type:'json'};
 import type {ScoreResult} from "@eval/agents/score";
@@ -234,4 +234,62 @@ export function validateAnswerReview(state:RunState){
     if(task.stage==='attribution'&&!validateAttributionOutput(row))throw Error('归因导出元信息契约无效');
     if(task.stage!=='rewrite'&&canonical(value)!==canonical(r.evaluation))throw Error('正式结果正文与已接受收据不一致');}
   return {valid:true,receipts:Object.keys(state.receipts).length};
+}
+
+/** Current answer-review checkpoints have no overview file. Reading metadata never opens result JSONL. */
+export async function readAnswerReviewAnalysis(run: string, taskIds: string[] = []) {
+  const state = await answerReviewRepository.readTasks(run, taskIds);
+  const candidates = state.manifest.inputCatalog as Candidate[];
+  const stages: Record<string, Record<string, number>> = {};
+  for (const task of state.manifest.tasks) {
+    const status = state.manifest.states[task.id].status;
+    const stage = stages[task.stage] ??= {};
+    stage[status] = (stage[status] ?? 0) + 1;
+  }
+  return { state, candidates, summary: {
+    workflow: "answer-review", status: state.manifest.status, startedAt: state.manifest.startedAt,
+    ...(state.manifest.finishedAt === undefined ? {} : { finishedAt: state.manifest.finishedAt }),
+    inputCount: candidates.length, caseCount: new Set(candidates.map(candidate => JSON.stringify([candidate.batch_id, candidate.case_id]))).size,
+    stages, formalComparisonStats: null,
+  } };
+}
+
+export async function readAnswerReviewInput(run: string, inputId: string) {
+  const { state, candidates } = await readAnswerReviewAnalysis(run);
+  const candidate = candidates.find(candidate => candidate.input_id === inputId);
+  if (!candidate) throw new Error("输入未登记");
+  const config = state.manifest.config as AnswerReviewConfig;
+  const version = config.inputs.versions.find(version => version.id === candidate.version);
+  if (!version) throw new Error("输入版本未登记");
+  const { raw, record } = await locateRecordStream(candidate.source, candidate, version, config.inputs.default_batch_id);
+  return { raw, candidate: record, version };
+}
+
+export function answerReviewAnswer(raw: RawInput, candidate: Candidate, reference: RunReference, audience?: "user") {
+  const text = contentText(raw.messages[candidate.final_index]?.content);
+  return { reference, model: candidate.version, modelName: candidate.name, question: candidate.question,
+    answer: { reference: { ...reference, messageIndex: candidate.final_index }, chars: text.length,
+      complete: text.length <= 16000, ...(text.length <= 16000 ? { text } : { preview: text.slice(0, 400) }) },
+    trace: analysisTraceMap(raw, reference, candidate.final_index, audience) };
+}
+
+/** Resolve task-local source IDs against saved material, including accepted verification sources. */
+export async function readAnswerReviewSources(run: string, taskId: string) {
+  const { state, candidates } = await readAnswerReviewAnalysis(run, [taskId]);
+  const task = state.manifest.tasks.find(task => task.id === taskId);
+  const receipt = state.receipts[taskId];
+  if (!task || !receipt || !["score", "attribution"].includes(task.stage)) throw new Error("没有该任务的正式结果");
+  const candidate = candidates.find(candidate => candidate.input_id === task.inputIds.case);
+  if (!candidate) throw new Error("任务输入未登记");
+  const { raw, candidate: current } = await readAnswerReviewInput(run, candidate.input_id);
+  const material = answerReviewMaterial(current, raw, candidate.input_id);
+  const sources = { ...material.material.evidence };
+  for (const source of receipt.audit.review?.sources ?? []) {
+    if (Object.hasOwn(sources, source.id) && sources[source.id] !== source.content) throw new Error("任务证据来源冲突");
+    sources[source.id] = source.content;
+  }
+  for (const quote of (receipt.evaluation as { evidence?: import("@eval/contracts").ReviewQuote[] }).evidence ?? []) {
+    if (!sources[quote.source_id] || Array.from(sources[quote.source_id]).slice(quote.start, quote.end).join("") !== quote.quote) throw new Error("正式证据与来源坐标不一致");
+  }
+  return { sources, receipt, candidate };
 }

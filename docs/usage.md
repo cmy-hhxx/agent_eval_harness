@@ -30,7 +30,7 @@ api = openai-responses
 
 Pi / Prime 评测入口只接受 `openai-responses`，不自动降级协议。URL 保留网关要求的路径；`models = model-a,model-b` 声明静态目录，适合没有 `/models` 的自部署服务。未声明时才发现远程目录；一个渠道发现失败不隐藏其他渠道，错误在看板按渠道呈现。重复或未知字段报错，支持整行注释和引号字符串，不支持行尾注释或变量插值。完整字段以模板和 [settings.ts](../apps/host/src/settings.ts) 为准。
 
-`[environment]` 保存搜索、Mongo、代理等服务端变量，覆盖同名进程变量。代理配置须让 localhost、127.0.0.1、::1 直连。评测入口不读取 .env，Eris 的补充加载见 [Agent 配置](../agent/README.md#模型与设置)。测试或独立部署可用 `EVAL_CONFIG_FILE` 指定 INI。
+`[environment]` 保存搜索、Mongo、代理等服务端变量，覆盖同名进程变量。代理配置须让 localhost、127.0.0.1、::1 直连。评测和服务器 Eris 均不读取本机 .env，Eris 独立配置见 [Agent 配置](../agent/README.md#模型与设置)。测试或独立部署可用 `EVAL_CONFIG_FILE` 指定 INI。
 
 JSON 配置的 `models.<profile>.channel` 引用渠道。`--config` 可重复，按顺序深度合并；数组整体覆盖，相对路径按各自文件目录解析。共享配置在 [host.json](../configs/host.json)，本机模型填入 `configs/local/models.json`。
 
@@ -402,4 +402,4 @@ npm run eval -- run --engine pi --worker http://127.0.0.1:4101 --run-id external
 
 ## 独立评测分析 Agent
 
-`bash agent/run.sh` 启动 Eris，配置、数据、会话和验证见 [Agent 说明](../agent/README.md)。
+在服务器使用 `bash agent/run.sh --config <eris.json>` 启动 Eris，配置、数据、会话和验证见 [Agent 说明](../agent/README.md)。

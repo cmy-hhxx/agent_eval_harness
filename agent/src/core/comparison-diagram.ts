@@ -2,7 +2,7 @@ import type { AnalysisCaseLookup, JsonObject } from "@eval/contracts";
 
 export interface ComparisonDiagramInput {
   complete?: boolean;
-  reference: { runId: string; taskId: string } | AnalysisCaseLookup;
+  reference: { collectionId: string; runId: string; taskId: string } | AnalysisCaseLookup;
   title: string;
   candidates: {
     model: string;

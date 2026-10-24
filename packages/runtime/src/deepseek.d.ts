@@ -13,7 +13,7 @@ export class RemoteStreamMuxServer {
   close(): Promise<void>;
 }
 export class RemoteStreamMuxClient {
-  constructor(endpointUrl?: string);
+  constructor(endpointUrl?: string, socketFactory?: (url: string) => WebSocket);
   start(): void;
   close(): Promise<void>;
   open(endpoint: string, payload: unknown, signal: AbortSignal): AsyncIterable<unknown>;

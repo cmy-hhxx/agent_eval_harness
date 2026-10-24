@@ -53,3 +53,9 @@ ctx.inject(["layout", "uiWorkspace", "uiConversation", "uiSession", "sessions", 
   ctx.uiRenderer.mount(document.getElementById("root"));
 });
 window.addEventListener("pagehide", () => { void ctx.fiber.dispose(); }, { once: true });
+
+if (document.querySelector('meta[name="eris-auth"]')) {
+  const check = async () => { try { const response = await fetch('/auth/me'); if (response.status === 401) location.replace('/auth/login'); } catch {} };
+  const timer = setInterval(check, 10000);
+  window.addEventListener('pagehide', () => clearInterval(timer), { once: true });
+}

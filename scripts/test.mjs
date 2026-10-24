@@ -39,5 +39,6 @@ await run("node", [
   "scripts/benchmark.test.mjs",
   "scripts/publish.test.mjs",
   "scripts/deploy-workbench.test.mjs",
+  "scripts/deploy-eris.test.mjs",
   "server_dashboard_ths/dashboard.test.mjs",
 ]);

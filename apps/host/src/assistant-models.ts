@@ -12,23 +12,22 @@ export interface AssistantGateway {
   efforts?: readonly ModelConfig['thinking'][];
 }
 
-export function assistantModelConfiguration(gatewayModel: ModelConfig, configuration: ApplicationSettings) {
+export function assistantModelConfiguration(configuration: ApplicationSettings) {
   const selected = configuration.agent;
   const gateways: AssistantGateway[] = Object.values(configuration.channels).map(channel => ({
     name: channel.name,
     model: { ...channel, model: channel.model ?? "", thinking: channel.thinking ?? DEFAULT_THINKING,
       maxOutputTokens: channel.maxOutputTokens ?? 8192,
-      ...(channel.provider === gatewayModel.provider ? gatewayModel : {}),
-      contextWindow: selected.contextWindow ?? 1048576 },
+      contextWindow: channel.contextWindow ?? 524288 },
     models: channel.models?.map(id => ({ id, name: id })), efforts: channel.efforts,
   }));
-  const gateway = gateways.find(item => item.model.provider === (selected.channel ?? gatewayModel.provider));
+  const gateway = gateways.find(item => item.model.provider === selected.channel);
   if (!gateway) throw new Error('Eris 默认渠道未在 config.ini 中配置');
   const model: ModelConfig = { ...gateway.model,
     model: selected.model ?? gateway.model.model,
     thinking: selected.thinking ?? gateway.model.thinking,
-    contextWindow: selected.contextWindow ?? gateway.model.contextWindow,
-    maxOutputTokens: selected.maxOutputTokens ?? gateway.model.maxOutputTokens };
+    contextWindow: Math.min(selected.contextWindow ?? gateway.model.contextWindow, gateway.model.contextWindow),
+    maxOutputTokens: Math.min(selected.maxOutputTokens ?? gateway.model.maxOutputTokens, gateway.model.maxOutputTokens) };
   if (!model.model) throw new Error('请配置 config.ini [agent].model 或该渠道的 model');
   if (gateway.efforts && !gateway.efforts.includes(model.thinking)) throw new Error('Eris 默认推理等级不受渠道支持');
   gateway.model = model;
@@ -51,9 +50,9 @@ export class GatewayAssistantModels implements AssistantModelDirectory {
       const rows = await this.discover(gateway.model);
       const expected = new Set([...(gateway.models?.map(model=>model.id) ?? []),
         ...(gateway.model.provider===this.model.provider ? [this.model.model] : [])]);
-      const models = rows.filter(row=>/^gpt-\d+(?:\.\d+)?-luna(?:-|$)/i.test(row.id)
-        && (!gateway.models || gateway.models.some(model=>model.id===row.id))).map(row=>({...row,
+      const models = rows.filter(row=>(!gateway.models || gateway.models.some(model=>model.id===row.id))).map(row=>({...row,
         contextWindow: gateway.model.contextWindow,
+        maxTokens:Math.min(row.maxTokens ?? gateway.model.maxOutputTokens,gateway.model.maxOutputTokens),
         name:gateway.models?.find(model=>model.id===row.id)?.name ?? row.name,
         provider:gateway.model.provider,providerName:gateway.name,
         reasoning:{defaultEffort:gateway.model.thinking,efforts:(gateway.efforts ?? THINKING_LEVELS).map(id=>({id,name:id}))},
@@ -61,7 +60,7 @@ export class GatewayAssistantModels implements AssistantModelDirectory {
       if (new Set(models.map(model=>model.id)).size !== models.length) throw new Error('渠道返回了重复的模型 ID');
       const missing = [...expected].filter(id=>!models.some(model=>model.id===id));
       const message = missing.length ? `缺少可用的配置模型：${missing.join('、')}` : undefined;
-      if (!models.length) throw new Error(message ?? '未返回可用的 GPT Luna 模型');
+      if (!models.length) throw new Error(message ?? '未返回可用的配置模型');
       return {models,message};
     })).then(groups=>{
       const catalog: AssistantModelCatalog = {models:[],failures:[]};
@@ -109,7 +108,7 @@ export class GatewayAssistantModels implements AssistantModelDirectory {
     const contextWindow=selected.contextWindow??gateway.model.contextWindow;
     const maxOutputTokens=selected.maxTokens??gateway.model.maxOutputTokens;
     return {...gateway.model,model:selected.id,thinking:selection.reasoningEffort??gateway.model.thinking,
-      contextWindow:gateway.models?Math.min(contextWindow,gateway.model.contextWindow):contextWindow,
-      maxOutputTokens:gateway.models?Math.min(maxOutputTokens,gateway.model.maxOutputTokens):maxOutputTokens};
+      contextWindow:Math.min(contextWindow,gateway.model.contextWindow),
+      maxOutputTokens:Math.min(maxOutputTokens,gateway.model.maxOutputTokens)};
   }
 }

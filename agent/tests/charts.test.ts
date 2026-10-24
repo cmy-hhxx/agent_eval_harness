@@ -425,15 +425,15 @@ test('a corrected statistical chart replaces the earlier snapshot in the same re
       { name: 'A组胜', values: [29, 39] }, { name: 'B组胜', values: [29, 30] },
       { name: '双方都好', values: [45, 34] }, { name: '双方都差', values: [6, 8] },
     ] };
-  const references = ['Fast', 'Expert'].map(comparisonTier => ({ statistics: { runId: 'daily-2026-10-12', comparisonTier },
-    references: [{ runId: 'daily-2026-10-12', taskId: `${comparisonTier}-first` }] }));
+  const references = ['Fast', 'Expert'].map(comparisonTier => ({ statistics: { collectionId: "0_wencai/0_daily_eval", runId: 'daily-2026-10-12', comparisonTier },
+    references: [{ collectionId: "0_wencai/0_daily_eval", runId: 'daily-2026-10-12', taskId: `${comparisonTier}-first` }] }));
   const first = { kind: 'tool-result', callId: 'first-chart', call: { name: 'show_chart' }, isError: false,
     content: [{ type: 'text', text: receipt(chart) }], meta: { references }, subCalls: [] };
   const updated = { ...chart, title: '当前批次：Fast持平，Expert A组领先8场', scope: '2026-10-12 · Fast 110场、Expert 112场', series: [
     chart.series[0], { name: 'B组胜', values: [29, 31] }, { name: '双方都好', values: [46, 34] }, chart.series[3],
   ] };
   const second = { ...first, callId: 'updated-chart', content: [{ type: 'text', text: receipt(updated) }],
-    meta: { references: references.toReversed().map(ref => ({ ...ref, references: [...ref.references, { runId: 'daily-2026-10-12', taskId: 'new-result' }] })) } };
+    meta: { references: references.toReversed().map(ref => ({ ...ref, references: [...ref.references, { collectionId: "0_wencai/0_daily_eval", runId: 'daily-2026-10-12', taskId: 'new-result' }] })) } };
   const data = [first, second, { ...second, callId: 'failed-revision', isError: true }].map(root => ({ root }));
   const restoredData = structuredClone(data);
   const nodes = { turnDataSource: (_turn: number, kind: string) => ({
@@ -454,7 +454,7 @@ test('a corrected statistical chart replaces the earlier snapshot in the same re
     { ...second, content: [{ type: 'text', text: receipt({ ...updated, series: [{ name: '问题数', values: [10, 20] }] }) }] },
     { ...second, content: [{ type: 'text', text: receipt({ ...updated, unit: '%' }) }] },
     { ...second, content: [{ type: 'text', text: receipt({ ...updated, type: 'bubble_matrix' }) }] },
-    { ...second, meta: { references: [{ runId: 'daily-2026-10-12' }] } },
+    { ...second, meta: { references: [{ collectionId: "0_wencai/0_daily_eval", runId: 'daily-2026-10-12' }] } },
     { ...second, meta: {} },
   ]) assert.equal(chartsFromToolData([{ root: first }, { root: independent }]).length, 2, 'different statistical views remain separate');
   const corrupt = chartsFromToolData([{ root: first }, { root: { ...second, content: [{ type: 'text', text: 'broken' }] } }]);

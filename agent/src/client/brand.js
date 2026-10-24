@@ -31,4 +31,7 @@ export function apply(ctx) {
     ctx.slots.inject(name, () => ctx.slots.register({ name }, ErisMark));
   }
   ctx.slots.inject('sidebar.brand.name', () => ctx.slots.register({ name: 'sidebar.brand.name' }, () => 'Eris'));
+  ctx.slots.inject('sidebar.footer.action', () => ctx.slots.register({ name: 'sidebar.footer.action', id: 'eris-account' }, () => createElement('a', {
+    href: '/account', title: '账号', 'aria-label': '账号', style: { display: 'block', padding: '10px 12px', color: 'inherit', textDecoration: 'none', borderRadius: 8 },
+  }, '账号')));
 }

@@ -32,7 +32,8 @@ try {
  await page.getByRole('button',{name:/gpt-5.6-luna/}).click();
  await page.getByRole('menuitem',{name:/^模型/}).click();
  await page.getByText('OpenAI',{exact:true}).waitFor();
- assert.equal(await page.getByRole('menuitemradio').count(),6,'favorites from one channel must not hide another channel');
+ assert.equal(await page.getByRole('menuitemradio').count(),10,'favorites from one channel must not hide another channel');
+ assert.equal(await page.getByRole('menuitemradio',{name:'deepseek-chat',exact:true}).count(),2,'configured DeepSeek models remain selectable');
  assert.equal((await page.getByRole('menuitemradio').allTextContents())[0],'gpt-5.6-luna','favorites stay first within their channel');
  await page.getByRole('searchbox',{name:'搜索模型…',exact:true}).fill('gpt-6-luna');
  assert.equal(await page.getByRole('menuitemradio',{name:'gpt-6-luna',exact:true}).count(),2,'identical model IDs remain independently selectable among fuzzy matches');

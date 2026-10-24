@@ -133,7 +133,30 @@ npm run report:relay -- --resolve <traceId> --outcome retry
 
 手动启动来源后，流水线从 `http://127.0.0.1:8081/data/wencai` 读取日常四路，并把进度直接上报同一数据服务。
 
-## 日常检查
+## Eris 只读分析助手
+
+Eris 使用独立代码目录 `/mnt/aigc_team/user_workspace/chenmingyang/eval_harness/eris-code`，持久目录仍为既有 `runtime/`；不会更新正在评测的 checkout 或 AIME 配置。
+
+本地提交并推送分支后部署：
+
+```bash
+read -rs ERIS_ADMIN_PASSWORD
+export ERIS_ADMIN_PASSWORD
+npm run deploy:eris -- --config <本机.servers.conf> --branch codex/eris-server-readonly --start
+unset ERIS_ADMIN_PASSWORD
+```
+
+密码应通过私密环境输入提供，不写入命令历史。部署脚本通过 SSH stdin 传递初始化密码，代码由服务器从集群 Git 读取；复用既有只读 Git 凭据，不传输本机输入、结果、聊天或 checkout。
+
+初始化只在缺失时创建 `runtime/config/eris.ini`、`runtime/config/eris.json` 和 `runtime/secrets/eris/accounts.json`。渠道取服务器 `post-training.ini`，独立绑定实际模型 `deepseek-v4.1-flash`；不会改写原配置。已有账号不重置密码。后续更新可不传初始化密码。
+
+`eris` tmux 会话内前台运行 `bash agent/run.sh --config <runtime/config/eris.json>`；内部 `0.0.0.0:5004`，外部既有映射为 `http://117.50.195.94:3928`。启动使用实例锁，端口冲突直接报错。部署不自动关闭旧 `eris` 会话，更新前应只停止该会话中的 Eris。
+
+验证 `/health`、未登录拒绝、管理员登录、账户停用/重置、流式回复与重连，并读取 Wencai Comparison 和无 overview 的 AIME Answer-review。真实模型验证仅在服务器执行。回退只切换 Eris checkout 并重启该服务，保留账号、聊天和所有评测数据。
+
+账号管理、只读能力和恢复见 [Eris](../agent/README.md)。当前 HTTP 入口不提供传输加密。
+
+## 工作台健康检查
 
 ```bash
 curl -fsS http://127.0.0.1:5001/health

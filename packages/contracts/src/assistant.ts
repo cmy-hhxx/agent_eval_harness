@@ -6,10 +6,11 @@ export interface AssistantOwnership {
   locate(scope: AssistantScope): Promise<AssistantExecutor | undefined>;
   claim(scope: AssistantScope, executor: AssistantExecutor): Promise<() => Promise<void>>;
 }
-export interface AnalysisReference { runId: string; inputId?: string; taskId?: string; messageIndex?: number }
-export interface AnalysisCaseLookup { runId: string; query: string; comparisonTier?: string }
+export interface RunReference { runId: string; inputId?: string; taskId?: string; messageIndex?: number }
+export interface AnalysisReference extends RunReference { collectionId: string; sourceId?: string }
+export interface AnalysisCaseLookup { collectionId: string; runId: string; query: string; comparisonTier?: string }
 export interface AnalysisQuery {
-  runId?: string; view?: "inputs" | "comparisons" | "statistics"; query?: string; offset?: number; limit?: number;
+  collectionId?: string; includeTests?: boolean; runId?: string; view?: "inputs" | "comparisons" | "statistics"; query?: string; offset?: number; limit?: number;
   sample?: boolean; excludeCases?: { batchId: string; caseId: string }[];
   comparisonTier?: string; outcome?: "win" | "both_good" | "both_bad" | "all"; includeAnalysis?: boolean;
 }
@@ -120,25 +121,6 @@ export interface WebReadResult {
 }
 export interface WebReader {
   read(request: WebReadRequest, signal: AbortSignal): Promise<WebReadResult>;
-}
-export interface SpecialistRequest {
-  operationId: string;
-  kind: "attribution" | "comparison";
-  inputs: AnalysisReference[];
-  attributions?: { inputId: string; operationId?: string; runId?: string; taskId?: string }[];
-}
-export interface SpecialistResult {
-  operationId: string;
-  kind: "attribution" | "comparison";
-  state: "running" | "succeeded" | "failed" | "cancelled";
-  evaluatorVersion: string;
-  result?: unknown;
-  reference?: AnalysisReference;
-  error?: string;
-}
-export interface SpecialistGateway {
-  invoke(scope: AssistantScope, request: SpecialistRequest, signal: AbortSignal, progress?: (value: unknown) => void): Promise<SpecialistResult>;
-  read(scope: AssistantScope, operationId: string): Promise<SpecialistResult>;
 }
 export interface AssistantSource { tool: string; content: ToolResult["content"] }
 export interface AssistantTool {

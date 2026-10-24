@@ -1,3 +1,4 @@
+import WebSocket from "ws";
 import { randomUUID } from "node:crypto";
 import { setTimeout as delay } from "node:timers/promises";
 import { object, errorText, type AssistantModelSelection, type AssistantModelDirectory, type AssistantScope, type AssistantPrompt, type AssistantSessionState, type AssistantEvent, type AssistantModelOptions, type AssistantOwnership, type AssistantSessionRuntime, type JsonObject, type ToolResult } from "@eval/contracts";
@@ -61,6 +62,7 @@ export interface AssistantRuntimeOptions extends AssistantModelOptions {
   driver?: ConversationDriverFactory;
   predictor?: (options: PredictionOptions) => Promise<string | null>;
   ownership?: AssistantOwnership;
+  internalAuthorization?(userId: string): string;
   onError?(error: unknown): void;
 }
 function sessionProjections(state: AssistantSessionState, journal?: AssistantJournal, metrics?: ReturnType<typeof createAssistantMetrics>) {
@@ -539,7 +541,7 @@ export class AssistantSessions implements AssistantSessionRuntime {
     if ("url" in value) {
       const base = `${value.url}/u/${scope.userId}/`;
       let relay = this.relays.get(base);
-      if (!relay) { relay = new RemoteStreamMuxClient(new URL("api/remote.mux", base).href.replace(/^http/, "ws")); this.relays.set(base, relay); }
+      if (!relay) { relay = new RemoteStreamMuxClient(new URL("api/remote.mux", base).href.replace(/^http/, "ws"), this.options.internalAuthorization ? (url) => new WebSocket(url, { headers: { authorization: this.options.internalAuthorization!(scope.userId) } }) as unknown as globalThis.WebSocket : undefined); this.relays.set(base, relay); }
       relay.start();
       yield* relay.open("session/follow", { args: { request: { address: { kind: "session", sessionId: scope.sessionId }, assistantStream: true } } }, signal);
       return;
@@ -580,7 +582,7 @@ export class AssistantSessions implements AssistantSessionRuntime {
     }
   }
   private async forward(owner: AssistantOwner, userId: string, method: string, args: unknown, signal?: AbortSignal) {
-    const response = await fetch(`${owner.url}/u/${userId}/api/${method}`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ type: "client-request", rpcId: randomUUID(), method, payload: { args } }), signal: AbortSignal.any([AbortSignal.timeout(30000), ...(signal ? [signal] : [])]) });
+    const response = await fetch(`${owner.url}/u/${userId}/api/${method}`, { method: "POST", headers: { "content-type": "application/json", ...(this.options.internalAuthorization ? { authorization: await this.options.internalAuthorization(userId) } : {}) }, body: JSON.stringify({ type: "client-request", rpcId: randomUUID(), method, payload: { args } }), signal: AbortSignal.any([AbortSignal.timeout(30000), ...(signal ? [signal] : [])]) });
     if (!response.ok) throw new Error(`Session owner returned ${response.status}`);
     const envelope = await response.json() as { result: { ok: boolean; value?: JsonObject; error?: { message: string } } };
     if (!envelope.result.ok) throw new Error(envelope.result.error?.message ?? "Session owner failed");

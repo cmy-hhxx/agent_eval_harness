@@ -20,7 +20,7 @@ for (const { thinking, maxThinking, expected, supportsExplicitPromptCaching } of
   const previous = process.env.ERIS_CHECK_TEST_KEY;
   process.env.ERIS_CHECK_TEST_KEY = "fixture";
   const checks: JsonObject[] = [], main: JsonObject[] = [], results: unknown[] = [];
-  const material = { reference: { runId: "run", inputId: "a", messageIndex: 2 }, text: '原文支持结论\n但存在 "限定条件"。',
+  const material = { reference: { collectionId: "0_wencai/0_daily_eval", runId: "run", inputId: "a", messageIndex: 2 }, text: '原文支持结论\n但存在 "限定条件"。',
     offset: 0, hasMore: true, nextOffset: 20 };
   const schema = { type: "object", properties: { issues: { type: "array", items: { type: "string" } } }, required: ["issues"], additionalProperties: false };
   const gateway = await listen(async (req, res) => {

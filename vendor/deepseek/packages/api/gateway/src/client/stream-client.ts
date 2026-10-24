@@ -49,7 +49,7 @@ const UPLINK_DONE: IteratorReturnResult<undefined> = { value: undefined, done: t
  * starts one.
  */
 export class RemoteStreamMuxClient {
-  constructor(private readonly endpointUrl?: string) {}
+  constructor(private readonly endpointUrl?: string, private readonly socketFactory?: (url: string) => WebSocket) {}
 
   private socket: WebSocket | undefined
   private cancelCandidate: ((error: Error) => void) | undefined
@@ -226,7 +226,7 @@ export class RemoteStreamMuxClient {
   }
 
   private connect(): Promise<WebSocket> {
-    const socket = new WebSocket(this.endpointUrl ?? remoteStreamUrl())
+    const socket = this.socketFactory ? this.socketFactory(this.endpointUrl ?? remoteStreamUrl()) : new WebSocket(this.endpointUrl ?? remoteStreamUrl())
     const connecting = new Promise<WebSocket>((resolve, reject) => {
       let settled = false
       const rejectCandidate = (error: Error): void => {

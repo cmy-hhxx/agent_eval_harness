@@ -29,10 +29,9 @@ test("Eris Responses requests preserve optional tool arguments through Pi", { ti
   const previousSecret = process.env.ASSISTANT_TEST_KEY;
   process.env.ASSISTANT_TEST_KEY = "fixture-secret";
   const unexpected = async (): Promise<never> => { throw new Error("Unexpected dependency call"); };
-  const eris = createEris({ code: { execute: unexpected, read: unexpected },
-    data: { list: async query => { queries.push(query); return { kind: "runs", total: 1, items: [{ runId: "fixture-run" }] }; },
-      read: unexpected, search: unexpected, image: unexpected },
-    specialists: { invoke: unexpected, read: unexpected }, search: { search: unexpected }, web: { read: unexpected },
+  const eris = createEris({
+    data: { list: async query => { queries.push(query); return { kind: "runs", total: 1, items: [{ collectionId: "0_wencai/0_daily_eval", runId: "fixture-run" }] }; },
+      read: unexpected, search: unexpected, image: unexpected }, search: { search: unexpected }, web: { read: unexpected },
   });
   const gateway = await listen(async (req, res) => {
     assert.equal(req.url, "/v1/responses");
@@ -139,7 +138,7 @@ test("stopping during conversation preparation never starts a model turn", { tim
 test("Eris cross-checks financial sources, answers inline and restores search and raw evidence without re-querying", { timeout: 30000 }, async () => {
   const directory = await mkdtemp(path.join(tmpdir(), "assistant-search-"));
   const scope = { userId: "alice", sessionId: randomUUID() };
-  const reference = { runId: "finance-run", taskId: "finance-comparison" };
+  const reference = { collectionId: "0_wencai/0_daily_eval", runId: "finance-run", taskId: "finance-comparison" };
   const sourceUrl = "https://www.pbc.gov.cn/announcement.html";
   const query = "人民银行 2026年9月 利率 公告";
   const markdown = `正式结果：模型 A 缺少利率口径。\n\n外部核对：[央行公告](${sourceUrl})，发布日期 2026-09-20。`;
@@ -149,12 +148,11 @@ test("Eris cross-checks financial sources, answers inline and restores search an
   const unexpected = async (): Promise<never> => { throw new Error("Unexpected dependency call"); };
   const previousSecret = process.env.ASSISTANT_TEST_KEY;
   process.env.ASSISTANT_TEST_KEY = "fixture-model-secret";
-  const eris = createEris({ code: { execute: unexpected, read: unexpected },
+  const eris = createEris({
     data: {
       list: unexpected, search: unexpected, image: unexpected,
       async read(ref) { assert.deepEqual(ref, reference); return { result: accepted, evaluatorVersion: "fixture" }; },
     },
-    specialists: { invoke: unexpected, read: unexpected },
     search: createSerperSearch({ apiKey: "fixture-serper-secret", async fetch(endpoint, init) {
       searches++;
       assert.equal(endpoint, "https://google.serper.dev/search");

@@ -1,9 +1,8 @@
 // Business data binding for the upstream ToolRow / ToolDetails components.
 const parse=value=>{try{return JSON.parse(value??'null');}catch{return null;}};
-const label={runId:'运行',inputId:'输入',taskId:'任务',operationId:'专业任务',evaluatorVersion:'评测器',status:'状态',state:'状态',model:'模型',batchId:'批次',caseId:'样本',messageIndex:'消息',offset:'起点',total:'总数',accepted:'已接受',name:'文件',bytes:'字节',role:'角色',chars:'字符数',nextOffset:'下一页',hasMore:'还有内容'};
+const label={runId:'运行',inputId:'输入',taskId:'任务',collectionId:'来源与任务',sourceId:'证据来源',evaluatorVersion:'评测器',status:'状态',state:'状态',model:'模型',batchId:'批次',caseId:'样本',messageIndex:'消息',offset:'起点',total:'总数',accepted:'已接受',name:'文件',bytes:'字节',role:'角色',chars:'字符数',nextOffset:'下一页',hasMore:'还有内容'};
 const fields=value=>Object.entries(value??{}).filter(([key,v])=>label[key]&&['string','number','boolean'].includes(typeof v)).map(([key,value])=>({label:label[key],value:String(value)}));
-const referenceText=value=>[value?.runId,value?.inputId,value?.taskId,value?.messageIndex===undefined?null:`消息 ${value.messageIndex}`].filter(Boolean).join(' · ');
-const specialistLabel={attribution:'归因评测',comparison:'对比评测'};
+const referenceText=value=>[value?.collectionId,value?.runId,value?.inputId,value?.taskId,value?.messageIndex===undefined?null:`消息 ${value.messageIndex}`].filter(Boolean).join(' · ');
 const operationLabel={add:'加法',subtract:'减法',multiply:'乘法',divide:'除法'};
 const operationSymbol={add:' + ',subtract:' − ',multiply:' × ',divide:' ÷ '};
 const statusText=(model,output)=>output?.error==='interrupted'?'已中断':({succeeded:'已完成',running:'进行中',cancelled:'已取消',failed:'未完成'}[output?.state]??{preparing:'准备中',running:'进行中',ok:'已完成',error:'未完成',stopped:'已停止'}[model.state]??'准备中');
@@ -131,29 +130,22 @@ export function analysisToolModel(name,model){
  if(name==='read_data')summary=[reference.taskId?'读取正式结论':'读取原始对话',output?.kind==='messages'?`${output.total} 条消息`:status].join(' · ');
  if(name==='read_case')summary=['读取案例',output?.answers?`${output.answers.length} 条回答`:null,status].filter(Boolean).join(' · ');
  if(name==='search_data')summary=[args.query===undefined?'搜索对话':Array.isArray(args.query)?`搜索 ${args.query.length} 个关键词`:`搜索“${args.query}”`,output?.total===undefined?status:`${output.total} 处匹配`].join(' · ');
- if(name==='execute_code')summary=`${args.language==='shell'?'Shell':'Python'} 代码核验 · ${status}`;
- if(name==='read_code_output')summary=`读取代码输出 · ${status}`;
  if(name==='view_image')summary=`查看对话图片 · ${status}`;
  if(name==='calculate'){
   const result=model.state==='ok'?(output?.result??(typeof output==='string'||typeof output==='number'?output:null)):null;
   const expression=(Array.isArray(args.operands)?args.operands:[]).join(operationSymbol[args.operation]??', ');
   summary=[operationLabel[args.operation]??'计算',...(result===null?[expression,status]:[`${expression} = ${result}`])].filter(Boolean).join(' · ');
  }
- if(name==='call_specialist')summary=`${specialistLabel[args.kind]??'专业评测'} · ${status}`;
- if(name==='read_specialist')summary=`读取专业结论 · ${status}`;
- if(name==='specialist_output')summary='实时专业分析';
  if(model.state==='error'||!model.output)return {summary};
  if(output?.sourceRead){const ref=output.sourceRead.args?.reference;return {summary,details:{items:[{title:referenceText(ref),fields:fields(ref)}]}};}
  if(name==='read_case'&&output?.kind==='case')return {summary,details:caseDetails(output)};
- if(name==='execute_code'&&output)return {summary,details:{items:[{fields:searchFields({'退出码':output.exit_code,'超时':output.timed_out,'已取消':output.cancelled,'耗时（秒）':output.duration_seconds})},...['stdout','stderr'].filter(key=>output[key]).map(key=>({title:key,fields:[],code:{text:output[key],language:'text'}})),...rows(output.artifacts).map(item=>({title:item.name,fields:fields(item)}))]}};
- if(name==='specialist_output')return {summary,details:{items:[{title:'专业任务输出',fields:[],markdown:model.output}]}};
  if(name==='list_data'&&output?.kind==='comparisons')return {summary,details:{items:rows(output.items).map(row=>({
   title:string(row.question??row.questionPreview),description:rows(row.outcomes).map(outcome=>outcome.resultLabel).filter(Boolean).join(' · '),
   fields:fields({...row.reference,...row.case}),groups:[{label:'回答',items:rows(row.inputs).map(input=>({title:string(input.modelName),fields:fields(input.reference)}))}],
  })).concat(runErrors(output)),empty:'没有匹配的正式对战'}};
  if(output&&typeof output==='object'){
   const rows=output.items??output.matches??output.messages;
-  const items=Array.isArray(rows)?rows.map((row)=>({title:referenceText(row.reference??row)||row.role,fields:fields(row),...(row.text||row.preview?{code:{text:row.text??row.preview,language:'text'}}:{}),...(row.tasks?{groups:[{label:'任务',items:row.tasks.map(task=>({title:task.taskId,fields:fields(task)}))}]}:{})})):[{title:output.operationId??output.name,fields:fields({...output.reference,...output}),...(typeof output.text==='string'?{code:{text:output.text,language:'text'}}:{}),...(Array.isArray(output.evidence)&&output.evidence.length?{groups:[{label:'证据',items:output.evidence.map(entry=>({title:entry.evidence_id,fields:fields(entry),code:{text:entry.quote,language:'text'}}))}]}:{}),...(output.result?{code:{text:JSON.stringify(output.result,null,2),language:'json'}}:{})}];
+  const items=Array.isArray(rows)?rows.map((row)=>({title:referenceText(row.reference??row)||row.role,fields:fields(row),...(row.text||row.preview?{code:{text:row.text??row.preview,language:'text'}}:{}),...(row.tasks?{groups:[{label:'任务',items:row.tasks.map(task=>({title:task.taskId,fields:fields(task)}))}]}:{})})):[{title:output.name,fields:fields({...output.reference,...output}),...(typeof output.text==='string'?{code:{text:output.text,language:'text'}}:{}),...(Array.isArray(output.evidence)&&output.evidence.length?{groups:[{label:'证据',items:output.evidence.map(entry=>({title:entry.evidence_id,fields:fields(entry),code:{text:entry.quote,language:'text'}}))}]}:{}),...(output.result?{code:{text:JSON.stringify(output.result,null,2),language:'json'}}:{})}];
   if(name==='list_data')items.push(...runErrors(output));
   return {summary,details:{items,empty:'没有匹配的结果'}};
  }

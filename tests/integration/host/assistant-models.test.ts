@@ -14,10 +14,15 @@ const configuration = () => parseSettings(`
 [channel.evaluation-gateway]
 name = 评测网关
 base_url = https://example.com/v1
+model = gpt-6-luna
+models = gpt-6-luna,gpt-5.6-luna
+context_window = 131072
 api_key = first-secret
 [channel.openai]
 name = OpenAI
 base_url = https://openai.example/v1
+models = gpt-6-luna,gpt-5.6-luna
+context_window = 131072
 api_key = second-secret
 model = gpt-6-luna
 [agent]
@@ -27,22 +32,21 @@ thinking = high
 max_output_tokens = 4096
 `);
 
-test('Eris inherits Attribution unless an explicit channel and model are selected',()=>{
+test('Eris requires an explicit independent channel and uses its capacity',()=>{
   const settings=configuration();
-  const configured=assistantModelConfiguration(gateway,settings);
+  const configured=assistantModelConfiguration(settings);
   assert.equal(configured.model.provider,'openai');
   assert.equal(configured.model.model,'gpt-6-luna');
   assert.equal(configured.model.apiKeyEnv,'EVAL_CHANNEL_KEY_openai');
   assert.equal(configured.model.thinking,'high');
   assert.equal(configured.model.maxOutputTokens,4096);
   settings.agent={};
-  assert.equal(assistantModelConfiguration(gateway,settings).model.provider,'evaluation-gateway');
-  assert.equal(assistantModelConfiguration(gateway,settings).model.contextWindow,1048576);
+  assert.throws(()=>assistantModelConfiguration(settings), /默认渠道/);
 });
 
 test('same model IDs across channels retain independent routing, scoped favorites and defaults',async()=>{
   const directory=await mkdtemp(tmpdir()+'/eris-model-routing-');
-  const {model,gateways}=assistantModelConfiguration(gateway,configuration());
+  const {model,gateways}=assistantModelConfiguration(configuration());
   const discovered:string[]=[];
   const models=new GatewayAssistantModels(directory,model,gateways,async config=>{
     discovered.push(config.apiKeyEnv);
@@ -51,7 +55,7 @@ test('same model IDs across channels retain independent routing, scoped favorite
   try {
     const catalog=await models.list('alice');
     assert.equal(catalog.models.length,4);
-    assert(catalog.models.every(model=>model.contextWindow===1048576));
+    assert(catalog.models.every(model=>model.contextWindow===131072));
     await assert.rejects(models.resolve({provider:'openai',model:'gpt-6-sol'}),/网关列表/);
     assert.deepEqual(catalog.favorites,[modelIdentity('openai','gpt-6-luna'),modelIdentity('evaluation-gateway','gpt-6-luna')]);
     assert.deepEqual(catalog.default,{provider:'openai',model:'gpt-6-luna',reasoningEffort:'high'});
@@ -59,7 +63,7 @@ test('same model IDs across channels retain independent routing, scoped favorite
     assert(!JSON.stringify(catalog).includes('https://'));
     for(const provider of ['evaluation-gateway','openai']) {
       const resolved=await models.resolve({provider,model:'gpt-6-luna',reasoningEffort:'max'});
-      assert.equal(resolved.contextWindow,1048576);
+      assert.equal(resolved.contextWindow,131072);
       assert.equal(resolved.apiKeyEnv,configuration().channels[provider].apiKeyEnv);
       assert.equal(resolved.baseUrl,configuration().channels[provider].baseUrl);
     }
@@ -77,7 +81,7 @@ test('same model IDs across channels retain independent routing, scoped favorite
 test('channel whitelist, efforts and token limits are respected and missing configured models fail',async()=>{
   const settings=configuration();
   Object.assign(settings.channels.openai,{models:['gpt-6-luna'],efforts:['off','high','max']});
-  const {model,gateways}=assistantModelConfiguration(gateway,settings);
+  const {model,gateways}=assistantModelConfiguration(settings);
   const models=new GatewayAssistantModels('/unused',model,gateways,async()=>[
     {id:'gpt-6-luna',name:'Shared',maxTokens:32768},{id:'gpt-5.6-luna',name:'Other'},
   ]);
@@ -91,13 +95,13 @@ test('channel whitelist, efforts and token limits are respected and missing conf
 test('a failed channel leaves the other channel selectable and catalog retries restore it',async(t)=>{
   for(const failed of ['openai','evaluation-gateway']) await t.test(failed,async()=>{
     const directory=await mkdtemp(tmpdir()+'/eris-channel-failure-');
-    const {model,gateways}=assistantModelConfiguration(gateway,configuration());
+    const {model,gateways}=assistantModelConfiguration(configuration());
     let offline=true;
     const discoveries:string[]=[];
     const models=new GatewayAssistantModels(directory,model,gateways,async config=>{
       discoveries.push(config.provider);
       if(offline&&config.provider===failed)throw new TypeError('fetch failed');
-      return [{id:'gpt-6-luna',name:'Shared'}];
+      return [{id:'gpt-6-luna',name:'Shared'},{id:'gpt-5.6-luna',name:'Other'}];
     });
     const sessions=new AssistantSessions({directory,url:'http://127.0.0.1:1',model,models,systemPrompt:'test',tools:[]});
     const endpoints=assistantEndpoints(sessions);
@@ -151,7 +155,7 @@ test('a missing configured or default model leaves available models on the same 
 test('unavailable favorites fall back to the same model on a healthy channel without overwriting preferences',async()=>{
   const directory=await mkdtemp(tmpdir()+'/eris-favorite-fallback-');
   const settings=configuration();delete settings.channels['evaluation-gateway'].model;
-  const {model,gateways}=assistantModelConfiguration(gateway,settings);
+  const {model,gateways}=assistantModelConfiguration(settings);
   let offline=false;
   const models=new GatewayAssistantModels(directory,model,gateways,async config=>{
     if(offline&&config.provider==='openai')throw new TypeError('fetch failed');
@@ -175,7 +179,7 @@ test('unavailable favorites fall back to the same model on a healthy channel wit
 
 test('all failed channels report their names and can recover; concurrent loads share discovery',async()=>{
   const directory=await mkdtemp(tmpdir()+'/eris-catalog-retry-');
-  const {model,gateways}=assistantModelConfiguration(gateway,configuration());
+  const {model,gateways}=assistantModelConfiguration(configuration());
   let offline=true,discoveries=0;
   const models=new GatewayAssistantModels(directory,model,gateways,async()=>{
     discoveries++;
@@ -197,9 +201,9 @@ test('all failed channels report their names and can recover; concurrent loads s
 
 test('the conversation picker keeps every channel visible when favorites only contain the original gateway',async()=>{
   const directory=await mkdtemp(tmpdir()+'/eris-channel-picker-');
-  const settings=configuration(); settings.agent={};
+  const settings=configuration(); settings.agent={channel:"evaluation-gateway",model:"gpt-6-luna"};
   delete settings.channels.openai.model;
-  const {model,gateways}=assistantModelConfiguration(gateway,settings);
+  const {model,gateways}=assistantModelConfiguration(settings);
   const models=new GatewayAssistantModels(directory,model,gateways,async()=>[
     {id:'gpt-6-luna',name:'Shared model'},{id:'gpt-5.6-luna',name:'Other model'},
   ]);
@@ -220,7 +224,7 @@ test('the conversation picker keeps every channel visible when favorites only co
     await sessions.selectModel({userId:'alice',sessionId:session.sessionId},{provider:'openai',model:'gpt-6-luna',reasoningEffort:'high'});
     assert.equal((await sessions.list('alice'))[0].modelSelection?.provider,'openai');
     const projections=await sessions.projections({userId:'alice',sessionId:session.sessionId}) as {values:{contextPressure:{contextWindow:number}}};
-    assert.equal(projections.values.contextPressure.contextWindow,1048576,'the selected model refreshes capacity without requiring a model request');
+    assert.equal(projections.values.contextPressure.contextWindow,131072,'the selected model refreshes capacity without requiring a model request');
     await models.favorites('alice',[modelIdentity('openai','gpt-6-luna')]);
     assert((await catalog()).groups.every(group=>group.models.length===2),'changing favorites must never hide other channels');
     assert(!JSON.stringify(result).includes('secret'));

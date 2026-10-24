@@ -80,6 +80,15 @@
             }
           }
         }
+      },
+      "collectionId": {
+        "type": "string",
+        "minLength": 1,
+        "description": "沿用目录返回的来源/类别/任务业务坐标。"
+      },
+      "includeTests": {
+        "type": "boolean",
+        "description": "显式为 true 时纳入 test_eval；默认仅正式运行。"
       }
     },
     "required": [],
@@ -210,6 +219,18 @@
             ]
           }
         }
+      },
+      {
+        "if": {
+          "required": [
+            "runId"
+          ]
+        },
+        "then": {
+          "required": [
+            "collectionId"
+          ]
+        }
       }
     ]
   },
@@ -240,11 +261,17 @@
                 "type": "string",
                 "minLength": 1,
                 "description": "可选档位，如 Fast 或 Expert。省略时须由原问唯一定位，多场匹配会返回候选引用，不猜选。"
+              },
+              "collectionId": {
+                "type": "string",
+                "minLength": 1,
+                "description": "沿用目录返回的来源/类别/任务业务坐标。"
               }
             },
             "required": [
               "runId",
-              "query"
+              "query",
+              "collectionId"
             ]
           },
           {
@@ -265,10 +292,16 @@
               "taskId": {
                 "type": "string",
                 "minLength": 1
+              },
+              "collectionId": {
+                "type": "string",
+                "minLength": 1,
+                "description": "沿用目录返回的来源/类别/任务业务坐标。"
               }
             },
             "required": [
-              "runId"
+              "runId",
+              "collectionId"
             ],
             "oneOf": [
               {
@@ -309,29 +342,67 @@
     "additionalProperties": false,
     "properties": {
       "reference": {
-        "type": "object",
-        "additionalProperties": false,
-        "properties": {
-          "runId": {
-            "type": "string",
-            "minLength": 1,
-            "maxLength": 181,
-            "pattern": "^[a-zA-Z0-9](?:[a-zA-Z0-9_-]|\\.[a-zA-Z0-9_-])*\\.?$",
-            "description": "真实运行标识，可来自用户或 list_data 目录，不是文件路径。"
+        "oneOf": [
+          {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "runId": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 181,
+                "pattern": "^[a-zA-Z0-9](?:[a-zA-Z0-9_-]|\\.[a-zA-Z0-9_-])*\\.?$",
+                "description": "真实运行标识，可来自用户或 list_data 目录，不是文件路径。"
+              },
+              "inputId": {
+                "type": "string",
+                "minLength": 1
+              },
+              "messageIndex": {
+                "type": "integer",
+                "minimum": 0,
+                "description": "读取单节点时直接沿用节点引用，省略 messages。"
+              },
+              "collectionId": {
+                "type": "string",
+                "minLength": 1,
+                "description": "沿用目录返回的来源/类别/任务业务坐标。"
+              }
+            },
+            "required": [
+              "runId",
+              "inputId",
+              "collectionId"
+            ]
           },
-          "inputId": {
-            "type": "string",
-            "minLength": 1
-          },
-          "messageIndex": {
-            "type": "integer",
-            "minimum": 0,
-            "description": "读取单节点时直接沿用节点引用，省略 messages。"
+          {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "collectionId": {
+                "type": "string",
+                "minLength": 1
+              },
+              "runId": {
+                "type": "string",
+                "minLength": 1
+              },
+              "taskId": {
+                "type": "string",
+                "minLength": 1
+              },
+              "sourceId": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            "required": [
+              "collectionId",
+              "runId",
+              "taskId",
+              "sourceId"
+            ]
           }
-        },
-        "required": [
-          "runId",
-          "inputId"
         ]
       },
       "messages": {
@@ -397,8 +468,17 @@
     "if": {
       "properties": {
         "reference": {
-          "required": [
-            "messageIndex"
+          "anyOf": [
+            {
+              "required": [
+                "messageIndex"
+              ]
+            },
+            {
+              "required": [
+                "sourceId"
+              ]
+            }
           ]
         }
       },
@@ -453,10 +533,16 @@
           "messageIndex": {
             "type": "integer",
             "minimum": 0
+          },
+          "collectionId": {
+            "type": "string",
+            "minLength": 1,
+            "description": "沿用目录返回的来源/类别/任务业务坐标。"
           }
         },
         "required": [
-          "runId"
+          "runId",
+          "collectionId"
         ],
         "oneOf": [
           {
@@ -595,11 +681,17 @@
             "type": "integer",
             "minimum": 0,
             "description": "可选，直接沿用节点引用，只搜索该节点。省略时搜索整条回答。"
+          },
+          "collectionId": {
+            "type": "string",
+            "minLength": 1,
+            "description": "沿用目录返回的来源/类别/任务业务坐标。"
           }
         },
         "required": [
           "runId",
-          "inputId"
+          "inputId",
+          "collectionId"
         ]
       },
       "query": {
@@ -803,12 +895,18 @@
           "messageIndex": {
             "type": "integer",
             "minimum": 0
+          },
+          "collectionId": {
+            "type": "string",
+            "minLength": 1,
+            "description": "沿用目录返回的来源/类别/任务业务坐标。"
           }
         },
         "required": [
           "runId",
           "inputId",
-          "messageIndex"
+          "messageIndex",
+          "collectionId"
         ]
       }
     },
@@ -842,205 +940,6 @@
       "operation",
       "operands"
     ]
-  },
-  "call_specialist": {
-    "type": "object",
-    "additionalProperties": false,
-    "properties": {
-      "operationId": {
-        "type": "string",
-        "minLength": 1,
-        "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"
-      },
-      "kind": {
-        "enum": [
-          "attribution",
-          "comparison"
-        ]
-      },
-      "inputs": {
-        "type": "array",
-        "items": {
-          "type": "object",
-          "additionalProperties": false,
-          "properties": {
-            "runId": {
-              "type": "string",
-              "minLength": 1,
-              "maxLength": 181,
-              "pattern": "^[a-zA-Z0-9](?:[a-zA-Z0-9_-]|\\.[a-zA-Z0-9_-])*\\.?$",
-              "description": "真实运行标识，可来自用户或 list_data 目录，不是文件路径。"
-            },
-            "inputId": {
-              "type": "string",
-              "minLength": 1
-            }
-          },
-          "required": [
-            "runId",
-            "inputId"
-          ]
-        },
-        "minItems": 1,
-        "maxItems": 3
-      },
-      "attributions": {
-        "type": "array",
-        "items": {
-          "type": "object",
-          "additionalProperties": false,
-          "properties": {
-            "inputId": {
-              "type": "string",
-              "minLength": 1
-            },
-            "operationId": {
-              "type": "string",
-              "minLength": 1,
-              "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"
-            },
-            "runId": {
-              "type": "string",
-              "minLength": 1,
-              "maxLength": 181,
-              "pattern": "^[a-zA-Z0-9](?:[a-zA-Z0-9_-]|\\.[a-zA-Z0-9_-])*\\.?$",
-              "description": "真实运行标识，可来自用户或 list_data 目录，不是文件路径。"
-            },
-            "taskId": {
-              "type": "string",
-              "minLength": 1
-            }
-          },
-          "required": [
-            "inputId"
-          ],
-          "oneOf": [
-            {
-              "required": [
-                "operationId"
-              ],
-              "not": {
-                "anyOf": [
-                  {
-                    "required": [
-                      "runId"
-                    ]
-                  },
-                  {
-                    "required": [
-                      "taskId"
-                    ]
-                  }
-                ]
-              }
-            },
-            {
-              "required": [
-                "runId",
-                "taskId"
-              ],
-              "not": {
-                "required": [
-                  "operationId"
-                ]
-              }
-            }
-          ]
-        },
-        "maxItems": 3
-      }
-    },
-    "required": [
-      "operationId",
-      "kind",
-      "inputs"
-    ],
-    "allOf": [
-      {
-        "if": {
-          "properties": {
-            "kind": {
-              "const": "attribution"
-            }
-          }
-        },
-        "then": {
-          "properties": {
-            "inputs": {
-              "minItems": 1,
-              "maxItems": 1
-            }
-          },
-          "not": {
-            "required": [
-              "attributions"
-            ]
-          }
-        },
-        "else": {
-          "properties": {
-            "inputs": {
-              "minItems": 2,
-              "maxItems": 3
-            }
-          }
-        }
-      }
-    ]
-  },
-  "read_specialist": {
-    "type": "object",
-    "additionalProperties": false,
-    "properties": {
-      "view": {
-        "type": "string",
-        "enum": [
-          "summary",
-          "details"
-        ],
-        "description": "不分页时默认 summary，保留点评、判决与归因；传 offset 或 limit 时默认 details，按字符读取完整结果。"
-      },
-      "operationId": {
-        "type": "string",
-        "minLength": 1,
-        "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"
-      },
-      "offset": {
-        "type": "integer",
-        "minimum": 0,
-        "description": "仅 details 使用；字符偏移从0开始，续页使用返回的 nextOffset。"
-      },
-      "limit": {
-        "type": "integer",
-        "minimum": 1,
-        "maximum": 16000,
-        "description": "仅 details 使用；每页 UTF-16 字符数，默认8000，最多16000。"
-      }
-    },
-    "required": [
-      "operationId"
-    ],
-    "if": {
-      "anyOf": [
-        {
-          "required": [
-            "offset"
-          ]
-        },
-        {
-          "required": [
-            "limit"
-          ]
-        }
-      ]
-    },
-    "then": {
-      "properties": {
-        "view": {
-          "const": "details"
-        }
-      }
-    }
   },
   "read_web": {
     "type": "object",
@@ -1117,11 +1016,17 @@
                 "type": "string",
                 "minLength": 1,
                 "description": "可选档位，如 Fast 或 Expert。省略时须由原问唯一定位，多场匹配会返回候选引用，不猜选。"
+              },
+              "collectionId": {
+                "type": "string",
+                "minLength": 1,
+                "description": "沿用目录返回的来源/类别/任务业务坐标。"
               }
             },
             "required": [
               "runId",
-              "query"
+              "query",
+              "collectionId"
             ]
           },
           {
@@ -1138,11 +1043,17 @@
                 "type": "string",
                 "minLength": 1,
                 "pattern": "\\S"
+              },
+              "collectionId": {
+                "type": "string",
+                "minLength": 1,
+                "description": "沿用目录返回的来源/类别/任务业务坐标。"
               }
             },
             "required": [
               "runId",
-              "taskId"
+              "taskId",
+              "collectionId"
             ]
           }
         ]
@@ -1221,18 +1132,27 @@
                     "description": "本项对用户任务或判断的具体影响，结论与已知证据范围相称。"
                   },
                   "highlights": {
-                    "type": ["object", "null"],
+                    "type": [
+                      "object",
+                      "null"
+                    ],
                     "minProperties": 0,
                     "maxProperties": 2,
                     "additionalProperties": false,
                     "description": "可省略或填null；最多选择一个字段中的唯一连续短语，整图含顶部理由最多2处，不填写HTML或样式。空格、加粗标记和全半角差异由程序定位回原文；无法唯一定位时只省略高亮。",
                     "properties": {
                       "evidence": {
-                        "type": ["string", "null"],
+                        "type": [
+                          "string",
+                          "null"
+                        ],
                         "maxLength": 600
                       },
                       "impact": {
-                        "type": ["string", "null"],
+                        "type": [
+                          "string",
+                          "null"
+                        ],
                         "maxLength": 600
                       }
                     }
@@ -1263,7 +1183,10 @@
         "description": "本次分析的结论、主要依据与必要边界。"
       },
       "reasonHighlight": {
-        "type": ["string", "null"],
+        "type": [
+          "string",
+          "null"
+        ],
         "maxLength": 600,
         "description": "可省略或填null；仅突出reason中唯一出现的决定性短语，整图含分支高亮最多2处，不填写HTML或样式。空格、加粗标记和全半角差异由程序定位回原文；无法唯一定位时只省略高亮。"
       },
@@ -1429,11 +1352,6 @@
               "pattern": "^[a-zA-Z0-9](?:[a-zA-Z0-9_-]|\\.[a-zA-Z0-9_-])*\\.?$",
               "description": "真实运行标识，可来自用户或 list_data 目录，不是文件路径。"
             },
-            "operationId": {
-              "type": "string",
-              "minLength": 1,
-              "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"
-            },
             "reference": {
               "type": "object",
               "additionalProperties": false,
@@ -1456,10 +1374,16 @@
                 "messageIndex": {
                   "type": "integer",
                   "minimum": 0
+                },
+                "collectionId": {
+                  "type": "string",
+                  "minLength": 1,
+                  "description": "沿用目录返回的来源/类别/任务业务坐标。"
                 }
               },
               "required": [
-                "runId"
+                "runId",
+                "collectionId"
               ],
               "oneOf": [
                 {
@@ -1508,13 +1432,24 @@
                   "type": "string",
                   "minLength": 1,
                   "pattern": "\\S"
+                },
+                "collectionId": {
+                  "type": "string",
+                  "minLength": 1,
+                  "description": "沿用目录返回的来源/类别/任务业务坐标。"
                 }
               },
               "required": [
                 "runId",
-                "comparisonTier"
+                "comparisonTier",
+                "collectionId"
               ],
               "description": "正式战绩引用，使用 list_data 返回的运行与档位，程序核验并保存该档全部正式结果来源。"
+            },
+            "collectionId": {
+              "type": "string",
+              "minLength": 1,
+              "description": "沿用目录返回的来源/类别/任务业务坐标。"
             }
           },
           "oneOf": [
@@ -1524,35 +1459,6 @@
               ],
               "not": {
                 "anyOf": [
-                  {
-                    "required": [
-                      "operationId"
-                    ]
-                  },
-                  {
-                    "required": [
-                      "reference"
-                    ]
-                  },
-                  {
-                    "required": [
-                      "statistics"
-                    ]
-                  }
-                ]
-              }
-            },
-            {
-              "required": [
-                "operationId"
-              ],
-              "not": {
-                "anyOf": [
-                  {
-                    "required": [
-                      "runId"
-                    ]
-                  },
                   {
                     "required": [
                       "reference"
@@ -1579,11 +1485,6 @@
                   },
                   {
                     "required": [
-                      "operationId"
-                    ]
-                  },
-                  {
-                    "required": [
                       "statistics"
                     ]
                   }
@@ -1599,11 +1500,6 @@
                   {
                     "required": [
                       "runId"
-                    ]
-                  },
-                  {
-                    "required": [
-                      "operationId"
                     ]
                   },
                   {
@@ -1726,11 +1622,17 @@
             "type": "string",
             "minLength": 1,
             "pattern": "\\S"
+          },
+          "collectionId": {
+            "type": "string",
+            "minLength": 1,
+            "description": "沿用目录返回的来源/类别/任务业务坐标。"
           }
         },
         "required": [
           "runId",
-          "comparisonTier"
+          "comparisonTier",
+          "collectionId"
         ],
         "description": "直接绘制该运行与档位的正式战绩；程序填入模型名称、胜负及双方均好/均差计数、单位和来源，不再填写 categories、series、unit、scope、source 或 references。"
       }
@@ -2657,68 +2559,5 @@
         }
       }
     ]
-  },
-  "execute_code": {
-    "type": "object",
-    "additionalProperties": false,
-    "required": [
-      "language",
-      "code"
-    ],
-    "properties": {
-      "language": {
-        "enum": [
-          "python",
-          "shell"
-        ],
-        "description": "python 使用项目 Python 标准库环境；shell 使用 Bash。"
-      },
-      "code": {
-        "type": "string",
-        "minLength": 1,
-        "maxLength": 200000,
-        "description": "完整可执行脚本；print 或 stdout 输出需要核对的数字、断言、样本，避免打印全量原文。"
-      },
-      "timeout_seconds": {
-        "type": "integer",
-        "minimum": 1,
-        "maximum": 60,
-        "description": "单次执行超时，默认60秒。"
-      },
-      "outputs": {
-        "type": "array",
-        "maxItems": 20,
-        "items": {
-          "type": "string",
-          "minLength": 1
-        },
-        "description": "需要保留为可读产物的相对文件路径。"
-      }
-    }
-  },
-  "read_code_output": {
-    "type": "object",
-    "additionalProperties": false,
-    "required": [
-      "id"
-    ],
-    "properties": {
-      "id": {
-        "type": "string",
-        "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$",
-        "description": "execute_code 返回 artifacts[].id，不能传文件名或路径。"
-      },
-      "offset": {
-        "type": "integer",
-        "minimum": 0,
-        "description": "字符偏移，从0开始；续页使用返回的 nextOffset。"
-      },
-      "limit": {
-        "type": "integer",
-        "minimum": 1,
-        "maximum": 16000,
-        "description": "每页 UTF-16 字符数，默认8000，最多16000。"
-      }
-    }
   }
 }

@@ -68,7 +68,7 @@ test("an unavailable historical index cannot block valid runs or an explicit run
     assert(selected.kind === "inputs");
     assert.equal(selected.runId, "source");
     assert("runDirectory" in selected && !selected.runDirectory.complete);
-    const explicit = await source.list({ runId: "broken" });
+    const explicit = await source.list({ collectionId: "0_wencai/0_daily_eval", runId: "broken" });
     assert.equal(explicit.kind, "inputs", "an explicit query reads the checkpoint, not its optional directory index");
     await fs.writeFile(path.join(fixture.config.output.path, "broken/state.json"), "{");
     await writeRunOverview(path.join(fixture.config.output.path, "broken"), analysisRunOverview({ ...saved, runId: "broken" }));
@@ -76,7 +76,7 @@ test("an unavailable historical index cannot block valid runs or an explicit run
     assert(partial.kind === "statistics");
     assert.deepEqual(partial.currentRuns.map(run => run.runId), ["source"]);
     assert.equal(partial.runDirectory.complete, false);
-    await assert.rejects(source.list({ runId: "broken" }), /JSON|position|property/i);
+    await assert.rejects(source.list({ collectionId: "0_wencai/0_daily_eval", runId: "broken" }), /JSON|position|property/i);
   } finally { await rm(fixture.directory, { recursive: true, force: true }); }
 });
 
@@ -101,17 +101,17 @@ test("random case selection samples distinct questions and exhausts them across 
   try {
     fixture.config.comparisons = [["a_fast", "b_fast"], ["a_expert", "b_expert"]];
     const { source } = await registerAccepted(fixture.config);
-    const sample = await source.list({ runId: "source", view: "comparisons", outcome: "all", sample: true, limit: 2 });
+    const sample = await source.list({ collectionId: "0_wencai/0_daily_eval", runId: "source", view: "comparisons", outcome: "all", sample: true, limit: 2 });
     assert(sample.kind === "comparisons");
     assert.equal(new Set(sample.items.map(item => item.case.caseId)).size, 2);
     assert.deepEqual(sample.selection, { mode: "random", availableCaseCount: 3, remainingCaseCount: 1 });
     assert.equal(sample.nextOffset, null, "a random sample cannot be resumed with a page offset");
     const excludeCases = sample.items.map(item => item.case);
-    const next = await source.list({ runId: "source", view: "comparisons", outcome: "all", sample: true, limit: 1, excludeCases });
+    const next = await source.list({ collectionId: "0_wencai/0_daily_eval", runId: "source", view: "comparisons", outcome: "all", sample: true, limit: 1, excludeCases });
     assert(next.kind === "comparisons");
     assert.equal(next.items.length, 1);
     assert(!excludeCases.some(item => item.caseId === next.items[0]!.case.caseId));
-    const empty = await source.list({ runId: "source", view: "comparisons", outcome: "all", sample: true, excludeCases: [...excludeCases, next.items[0]!.case] });
+    const empty = await source.list({ collectionId: "0_wencai/0_daily_eval", runId: "source", view: "comparisons", outcome: "all", sample: true, excludeCases: [...excludeCases, next.items[0]!.case] });
     assert(empty.kind === "comparisons");
     assert.equal(empty.items.length, 0);
   } finally { await rm(fixture.directory, { recursive: true, force: true }); }
@@ -129,8 +129,7 @@ test("Eris samples a comparison without a preliminary run lookup and returns the
       return result;
     });
     const unexpected = async (): Promise<never> => { throw new Error("Unexpected dependency call"); };
-    const eris = createEris({ code: { execute: unexpected, read: unexpected }, data: source,
-      specialists: { invoke: unexpected, read: unexpected }, search: { search: unexpected }, web: { read: unexpected } });
+    const eris = createEris({ data: source, search: { search: unexpected }, web: { read: unexpected } });
     const result = await eris.tools.find(tool => tool.name === "list_data")!.execute(
       { view: "comparisons", sample: true, limit: 1, includeAnalysis: true },
       { scope: { userId: "test", sessionId: "test" }, callId: "sample", signal: new AbortController().signal, progress() {}, async complete(request) {
@@ -146,7 +145,7 @@ test("Eris samples a comparison without a preliminary run lookup and returns the
     assert.equal(sample.items[0].reference.runId, sample.runId);
     assert(sample.items[0].question.length > 0);
     assert(sample.items[0].outcomes[0].reason.length > 0);
-    const material = await source.read({ runId: sample.runId, query: sample.items[0].question }, { view: "case" });
+    const material = await source.read({ collectionId: "0_wencai/0_daily_eval", runId: sample.runId, query: sample.items[0].question }, { view: "case" });
     assert.deepEqual(material.reference, sample.items[0].reference, "a unique question does not need a redundant tier argument");
   } finally { await rm(fixture.directory, { recursive: true, force: true }); }
 });
@@ -162,15 +161,15 @@ test("comparison summaries filter exact tiers and outcomes without loading raw a
       if (caseId === "winner") result.ranking = labels.map(label => [label]);
       return result;
     });
-    const defaults = await source.list({ runId: "source", view: "comparisons" });
+    const defaults = await source.list({ collectionId: "0_wencai/0_daily_eval", runId: "source", view: "comparisons" });
     assert(defaults.kind === "comparisons");
     assert.equal(defaults.total, 4);
     assert(defaults.items.every(item => item.outcomes.every(pair => pair.result !== "both_good")));
-    const sample = await source.list({ runId: "source", view: "comparisons", sample: true, limit: 20 });
+    const sample = await source.list({ collectionId: "0_wencai/0_daily_eval", runId: "source", view: "comparisons", sample: true, limit: 20 });
     assert(sample.kind === "comparisons");
     assert.equal(sample.selection?.availableCaseCount, 2);
     assert(sample.items.every(item => item.case.caseId !== "good"));
-    const batch = await source.list({ runId: "source", view: "comparisons", comparisonTier: "Fast", outcome: "both_bad", includeAnalysis: true, limit: 20 });
+    const batch = await source.list({ collectionId: "0_wencai/0_daily_eval", runId: "source", view: "comparisons", comparisonTier: "Fast", outcome: "both_bad", includeAnalysis: true, limit: 20 });
     assert(batch.kind === "comparisons");
     assert.equal(batch.total, 1);
     const item = batch.items[0]!, record = batch.summary.formalComparisonStats!.records.find(record => record.reference.taskId === item.reference.taskId)!;
@@ -181,13 +180,13 @@ test("comparison summaries filter exact tiers and outcomes without loading raw a
     assert.equal(item.outcomes[0]!.reason, record.scope.comparisons[0]!.reason);
     assert.deepEqual(batch.summary, defaults.summary);
     assert.equal(batch.summary.formalComparisonStats!.comparisonCount, 6);
-    const good = await source.list({ runId: "source", view: "comparisons", outcome: "both_good" });
+    const good = await source.list({ collectionId: "0_wencai/0_daily_eval", runId: "source", view: "comparisons", outcome: "both_good" });
     assert(good.kind === "comparisons");
     assert.equal(good.total, 2);
-    const first = await source.list({ runId: "source", view: "comparisons", outcome: "all", includeAnalysis: true, limit: 2 });
+    const first = await source.list({ collectionId: "0_wencai/0_daily_eval", runId: "source", view: "comparisons", outcome: "all", includeAnalysis: true, limit: 2 });
     assert(first.kind === "comparisons");
     assert.equal(first.total, 6);
-    const rest = await source.list({ runId: "source", view: "comparisons", outcome: "all", includeAnalysis: true, offset: first.nextOffset!, limit: 20 });
+    const rest = await source.list({ collectionId: "0_wencai/0_daily_eval", runId: "source", view: "comparisons", outcome: "all", includeAnalysis: true, offset: first.nextOffset!, limit: 20 });
     assert(rest.kind === "comparisons");
     assert.equal(rest.items.length, 4);
     assert.equal(rest.hasMore, false);
@@ -196,7 +195,7 @@ test("comparison summaries filter exact tiers and outcomes without loading raw a
 });
 
 test("batch evidence parses one input and preserves exact per-node slices, citations and missing-node errors", async () => {
-  const source = new LocalAnalysisData("unused"), reference = { runId: "run", inputId: "11111111-1111-4111-8111-111111111111" };
+  const source = new LocalAnalysisData("unused"), reference = { collectionId: "0_wencai/0_daily_eval", runId: "run", inputId: "11111111-1111-4111-8111-111111111111" };
   let loads = 0;
   source.raw = async () => { loads++; return { messages: [
     { role: "assistant", content: "查询口径：前50名" },
@@ -222,7 +221,7 @@ test("batch evidence parses one input and preserves exact per-node slices, citat
   const whole = await source.read({ ...reference, messageIndex: 1 });
   assert.equal(items[0].text + (next.items as { text: string }[])[0].text, (whole.text as string).slice(5));
   const unexpected = async (): Promise<never> => { throw new Error("Unexpected dependency"); };
-  const tools = createEris({ data: source, code: { execute: unexpected, read: unexpected }, specialists: { invoke: unexpected, read: unexpected },
+  const tools = createEris({ data: source,
     search: { search: unexpected }, web: { read: unexpected } }).tools;
   const context = { scope: { userId: "test", sessionId: "test" }, callId: "read", signal: new AbortController().signal, progress() {} };
   const batchArgs = { reference, messages: [{ messageIndex: 1, offset: 5, limit: 8 }, { messageIndex: 99 }, { messageIndex: 0 }, { messageIndex: 2, offset: 2, limit: 4 }] };
@@ -250,7 +249,7 @@ test("batch evidence parses one input and preserves exact per-node slices, citat
 });
 
 test("batch evidence preserves decisive text beyond 8000 characters and exact continuation boundaries", async () => {
-  const source = new LocalAnalysisData("unused"), reference = { runId: "run", inputId: "11111111-1111-4111-8111-111111111111" };
+  const source = new LocalAnalysisData("unused"), reference = { collectionId: "0_wencai/0_daily_eval", runId: "run", inputId: "11111111-1111-4111-8111-111111111111" };
   const medium = "甲".repeat(9000) + "决定性反例：已给期现分类说明", long = "乙".repeat(18000);
   source.raw = async () => ({ messages: [{ content: medium }, { content: long }] });
   const batch = await source.read(reference, { view: "evidence", messages: [{ messageIndex: 0 }, { messageIndex: 1 }] });
@@ -267,7 +266,7 @@ test("batch evidence preserves decisive text beyond 8000 characters and exact co
 });
 
 test("search hits supply a directly readable window around long queries and the source node type", async () => {
-  const source = new LocalAnalysisData("unused"), reference = { runId: "run", inputId: "11111111-1111-4111-8111-111111111111" };
+  const source = new LocalAnalysisData("unused"), reference = { collectionId: "0_wencai/0_daily_eval", runId: "run", inputId: "11111111-1111-4111-8111-111111111111" };
   source.raw = async () => ({ messages: [
     { type: "tool_result", name: "Search", output: "前".repeat(10000) + "目标条件" + "后".repeat(9000) },
     { type: "reasoning", content: "目标条件的另一次提及" },
@@ -285,7 +284,7 @@ test("search hits supply a directly readable window around long queries and the 
 });
 
 test("local search keeps instructions identifiable and behind evidence without losing paginated hits", async () => {
-  const source = new LocalAnalysisData("unused"), reference = { runId: "run", inputId: "11111111-1111-4111-8111-111111111111" };
+  const source = new LocalAnalysisData("unused"), reference = { collectionId: "0_wencai/0_daily_eval", runId: "run", inputId: "11111111-1111-4111-8111-111111111111" };
   source.raw = async () => ({ messages: [
     { role: "system", content: "扣非是检索指令" },
     { role: "developer", content: "扣非是指令示例" },
@@ -306,7 +305,7 @@ test("local search keeps instructions identifiable and behind evidence without l
 });
 
 test("search ranks original tool evidence before replayed history without dropping either", async () => {
-  const source = new LocalAnalysisData("unused"), reference = { runId: "run", inputId: "11111111-1111-4111-8111-111111111111" };
+  const source = new LocalAnalysisData("unused"), reference = { collectionId: "0_wencai/0_daily_eval", runId: "run", inputId: "11111111-1111-4111-8111-111111111111" };
   source.raw = async () => ({ messages: [
     { type: "llm_turn", input_messages: [{ content: "关键词：复制的历史" }], output: "另一次关键词判断" },
     { role: "assistant", content: "关键词结论" },
@@ -328,7 +327,7 @@ test("search ranks original tool evidence before replayed history without droppi
 });
 
 test("space-separated search terms match together in one node and retain exact term locations", async () => {
-  const source = new LocalAnalysisData("unused"), reference = { runId: "run", inputId: "11111111-1111-4111-8111-111111111111" };
+  const source = new LocalAnalysisData("unused"), reference = { collectionId: "0_wencai/0_daily_eval", runId: "run", inputId: "11111111-1111-4111-8111-111111111111" };
   source.raw = async () => ({ messages: [
     { type: "tool_result", output: "甲公司提供清洗设备，也有湿法刻蚀设备，目标用途待核验。" },
     { type: "tool_result", output: "甲公司仅列清洗" },
@@ -346,7 +345,7 @@ test("space-separated search terms match together in one node and retain exact t
 });
 
 test("compound search exposes every term's original context without repeating overlapping windows", async () => {
-  const source = new LocalAnalysisData("unused"), reference = { runId: "run", inputId: "11111111-1111-4111-8111-111111111111" };
+  const source = new LocalAnalysisData("unused"), reference = { collectionId: "0_wencai/0_daily_eval", runId: "run", inputId: "11111111-1111-4111-8111-111111111111" };
   const text = "甲公司清洗设备\n" + "填充".repeat(800) + "TSV深孔清洗，也有多种介质层湿法刻蚀工艺。" + "余文".repeat(400);
   source.raw = async () => ({ messages: [{ type: "tool_result", output: text }] });
   const result = await source.search(reference, "甲公司 TSV 深孔清洗");
@@ -361,7 +360,7 @@ test("compound search exposes every term's original context without repeating ov
 });
 
 test("search separates retrieved documents from query metadata and prefers the entity's own source", async () => {
-  const source = new LocalAnalysisData("unused"), reference = { runId: "run", inputId: "11111111-1111-4111-8111-111111111111" };
+  const source = new LocalAnalysisData("unused"), reference = { collectionId: "0_wencai/0_daily_eval", runId: "run", inputId: "11111111-1111-4111-8111-111111111111" };
   source.raw = async () => ({ messages: [{ type: "tool_result", output: "甲公司 TSV 行业表格" }, { type: "tool_result", output: { items: [
     { summary: "乙公司收购甲公司，并推出自己的TSV全流程设备", title: "乙公司新闻", query: "甲公司 TSV 目标能力" },
     { summary: "介绍".repeat(500) + "TSV深孔清洗，以及多种介质层湿法刻蚀工艺。", title: "甲公司年度报告", query: "甲公司 TSV 目标能力" },
@@ -379,7 +378,7 @@ test("search separates retrieved documents from query metadata and prefers the e
 });
 
 test("multiple evidence pages share source extraction inside a batch and observe fresh content on the next call", async () => {
-  const source = new LocalAnalysisData("unused"), reference = { runId: "run", inputId: "11111111-1111-4111-8111-111111111111" };
+  const source = new LocalAnalysisData("unused"), reference = { collectionId: "0_wencai/0_daily_eval", runId: "run", inputId: "11111111-1111-4111-8111-111111111111" };
   let accesses = 0, text = "完整证据".repeat(10000);
   source.raw = async () => ({ messages: [{ get content() { accesses++; return text; } }] });
   await source.read({ ...reference, messageIndex: 0 });
@@ -397,14 +396,14 @@ test("multiple evidence pages share source extraction inside a batch and observe
 });
 
 test("batched search loads an answer once and preserves every single-query hit, empty query result and readable offset", async () => {
-  const source = new LocalAnalysisData("unused"), reference = { runId: "run", inputId: "11111111-1111-4111-8111-111111111111" };
+  const source = new LocalAnalysisData("unused"), reference = { collectionId: "0_wencai/0_daily_eval", runId: "run", inputId: "11111111-1111-4111-8111-111111111111" };
   let loads = 0;
   source.raw = async () => { loads++; return { messages: [
     { type: "tool_result", output: "前".repeat(10000) + "PCB送样，高速铜缆已投产" },
     { type: "tool_result", output: { margin: -2.268431, valid: false } },
   ] }; };
   const unexpected = async (): Promise<never> => { throw new Error("Unexpected dependency"); };
-  const eris = createEris({ data: source, code: { execute: unexpected, read: unexpected }, specialists: { invoke: unexpected, read: unexpected }, search: { search: unexpected }, web: { read: unexpected } });
+  const eris = createEris({ data: source, search: { search: unexpected }, web: { read: unexpected } });
   const tool = eris.tools.find(tool => tool.name === "search_data")!;
   const context = { scope: { userId: "test", sessionId: "test" }, callId: "search", signal: new AbortController().signal, progress() {} };
   const terms = ["PCB", "高速铜缆", "-2.268431", "不存在"];
@@ -429,11 +428,10 @@ test("batched search loads an answer once and preserves every single-query hit, 
 });
 
 test("local search accepts node references and never expands an explicit node to the entire answer", async () => {
-  const source = new LocalAnalysisData("unused"), reference = { runId: "run", inputId: "input", messageIndex: 1 };
+  const source = new LocalAnalysisData("unused"), reference = { collectionId: "0_wencai/0_daily_eval", runId: "run", inputId: "input", messageIndex: 1 };
   source.raw = async () => ({ messages: [{ role: "tool", content: "原始数据" }, { role: "assistant", content: "原始数据的解释" }] });
   const unexpected = async (): Promise<never> => { throw new Error("Unexpected dependency"); };
-  const tool = createEris({ data: source, code: { execute: unexpected, read: unexpected },
-    specialists: { invoke: unexpected, read: unexpected }, search: { search: unexpected }, web: { read: unexpected } }).tools.find(tool => tool.name === "search_data")!;
+  const tool = createEris({ data: source, search: { search: unexpected }, web: { read: unexpected } }).tools.find(tool => tool.name === "search_data")!;
   const context = { scope: { userId: "test", sessionId: "test" }, callId: "node-search", signal: new AbortController().signal, progress() {} };
   const found = JSON.parse((await tool.execute({ reference, query: "原始数据" }, context)).content[0].text!);
   assert.equal(found.scope, "all");
@@ -445,7 +443,7 @@ test("local search accepts node references and never expands an explicit node to
 });
 
 test("structured evidence preserves native numbers, booleans and row relationships with exact JSON coordinates", async () => {
-  const source = new LocalAnalysisData("unused"), reference = { runId: "run", inputId: "11111111-1111-4111-8111-111111111111" };
+  const source = new LocalAnalysisData("unused"), reference = { collectionId: "0_wencai/0_daily_eval", runId: "run", inputId: "11111111-1111-4111-8111-111111111111" };
   const message = { type: "tool_result", output: { rows: [{ name: "甲", price: -2.268431, valid: false }, { name: "乙", price: 0, valid: true }] } };
   source.raw = async () => ({ messages: [message] });
   const result = await source.read(reference, { view: "evidence", messages: [{ messageIndex: 0, ...{ format: "json" as const } }] });
@@ -468,9 +466,9 @@ test("Eris's paginated directory exposes persisted display names, tiers and conf
     fixture.config.comparisons = [["a_fast", "b_fast"], ["a_expert", "b_expert"]];
     fixture.config.inputs.versions.find((version) => version.id === "a_fast")!.display_name = "A组极速";
     const source = await register(fixture.config);
-    const first = await source.list({ runId: "source", limit: 1 });
+    const first = await source.list({ collectionId: "0_wencai/0_daily_eval", runId: "source", limit: 1 });
     assert(first.kind === "inputs");
-    const rest = await source.list({ runId: "source", offset: first.nextOffset!, limit: 100 });
+    const rest = await source.list({ collectionId: "0_wencai/0_daily_eval", runId: "source", offset: first.nextOffset!, limit: 100 });
     assert(first.kind === "inputs" && rest.kind === "inputs");
     assert.equal(first.total, 4);
     assert.equal(first.hasMore, true);
@@ -496,15 +494,15 @@ test("Eris's paginated directory exposes persisted display names, tiers and conf
     assert(items.every((item) => item.reference.runId === "source" && item.reference.inputId === item.inputId));
     assert(items.every((item) => item.tasks.every((task) => task.status === "pending")), "configured groups do not imply completed results");
     assert.equal(new Set(items.flatMap(item => item.tasks).filter(task => task.purpose === "comparison_formal").map(task => task.taskId)).size, 2);
-    const found = await source.list({ runId: "source", query: "A组极速" });
+    const found = await source.list({ collectionId: "0_wencai/0_daily_eval", runId: "source", query: "A组极速" });
     assert(found.kind === "inputs");
     assert.equal(found.total, 1);
     assert.equal(found.items[0].model, "a_fast");
-    const filteredEmpty = await source.list({ runId: "source", query: "inputs" });
+    const filteredEmpty = await source.list({ collectionId: "0_wencai/0_daily_eval", runId: "source", query: "inputs" });
     assert(filteredEmpty.kind === "inputs");
     assert.equal(filteredEmpty.total, 0, "query is a text filter, even when it happens to name the returned kind");
     assert.deepEqual(filteredEmpty.summary, first.summary, "a zero-match text filter cannot erase whole-run statistics");
-    const unfiltered = await source.list({ runId: "source" });
+    const unfiltered = await source.list({ collectionId: "0_wencai/0_daily_eval", runId: "source" });
     assert(unfiltered.kind === "inputs");
     assert.equal(unfiltered.total, 4, "a filtered empty page does not mean the run has no input data");
     assert.equal(new Set(unfiltered.items.map((item) => JSON.stringify([item.batchId, item.caseId]))).size, 1,
@@ -520,14 +518,14 @@ test("unknown task IDs direct Eris to question lookup without pretending the res
     const taskId = Object.keys(saved.tasks)[0]!;
     const mistyped = taskId.slice(0, 9) + (taskId[9] === "a" ? "b" : "a") + taskId.slice(10);
     for (const options of [undefined, { view: "case" as const }]) {
-      await assert.rejects(source.read({ runId: "source", taskId: mistyped }, options), (error: Error) => {
+      await assert.rejects(source.read({ collectionId: "0_wencai/0_daily_eval", runId: "source", taskId: mistyped }, options), (error: Error) => {
         assert.match(error.message, /taskId 未登记/);
         assert.match(error.message, /原问关键词/);
         assert.doesNotMatch(error.message, /没有已接受|read_data|read_specialist/);
         return true;
       });
-      await assert.rejects(source.read({ runId: "source", taskId: "unknown" }, options), /taskId 未登记.*list_data/);
-      await assert.rejects(source.read({ runId: "source", taskId }, options), /没有已接受的正式结果/);
+      await assert.rejects(source.read({ collectionId: "0_wencai/0_daily_eval", runId: "source", taskId: "unknown" }, options), /taskId 未登记.*list_data/);
+      await assert.rejects(source.read({ collectionId: "0_wencai/0_daily_eval", runId: "source", taskId }, options), /没有已接受的正式结果/);
     }
   } finally { await rm(fixture.directory, { recursive: true, force: true }); }
 });
@@ -542,7 +540,7 @@ test("Eris exposes whole-run formal standings and read scopes from recorded resu
     const formal = Object.values(saved.tasks).find((task) => task.receipt?.exported?.comparisonId)!;
     delete formal.receipt!.exported!.file;
     await saveCheckpoint(checkpointPath, saved);
-    const directory = await source.list({ runId: "source", limit: 1, query: "a_fast" });
+    const directory = await source.list({ collectionId: "0_wencai/0_daily_eval", runId: "source", limit: 1, query: "a_fast" });
     assert(directory.kind === "inputs");
     const stats = directory.summary.formalComparisonStats;
     assert(stats);
@@ -553,10 +551,10 @@ test("Eris exposes whole-run formal standings and read scopes from recorded resu
       { comparisonTier: "Expert", comparisonCount: 1, outcomes: { win: 0, both_good: 1, both_bad: 0 } },
     ]);
     assert(stats.tiers.every((tier) => tier.models.length === 2 && tier.models.every((model) => model.both_good === 1 && model.comparisonCount === 1)));
-    const defaults = await source.list({ runId: "source", view: "comparisons" });
+    const defaults = await source.list({ collectionId: "0_wencai/0_daily_eval", runId: "source", view: "comparisons" });
     assert(defaults.kind === "comparisons");
     assert.equal(defaults.total, 0, "both-good cases are excluded from default example retrieval");
-    const first = await source.list({ runId: "source", view: "comparisons", outcome: "all", query: "计算2+2", limit: 1 });
+    const first = await source.list({ collectionId: "0_wencai/0_daily_eval", runId: "source", view: "comparisons", outcome: "all", query: "计算2+2", limit: 1 });
     assert(first.kind === "comparisons");
     assert.equal(first.total, 2, "question search must find accepted battles without reading raw messages");
     assert.equal(first.items.length, 1);
@@ -569,22 +567,22 @@ test("Eris exposes whole-run formal standings and read scopes from recorded resu
       assert.equal(saved.inputs[input.reference.inputId]!.version, input.model);
       assert.equal(input.comparisonTier, first.items[0].comparisonTier);
     }
-    const next = await source.list({ runId: "source", view: "comparisons", outcome: "all", offset: first.nextOffset!, limit: 1 });
+    const next = await source.list({ collectionId: "0_wencai/0_daily_eval", runId: "source", view: "comparisons", outcome: "all", offset: first.nextOffset!, limit: 1 });
     assert(next.kind === "comparisons");
     assert.equal(next.hasMore, false);
     assert.notDeepEqual(next.items[0].reference, first.items[0].reference);
-    const different = await source.list({ runId: "source", view: "comparisons", outcome: "all", sample: true, limit: 1,
+    const different = await source.list({ collectionId: "0_wencai/0_daily_eval", runId: "source", view: "comparisons", outcome: "all", sample: true, limit: 1,
       excludeCases: [first.items[0].case] });
     assert(different.kind === "comparisons");
     assert.equal(different.items.length, 0, "another example excludes every tier of the already viewed case");
-    const empty = await source.list({ runId: "source", view: "comparisons", outcome: "all", query: "不存在的原问" });
+    const empty = await source.list({ collectionId: "0_wencai/0_daily_eval", runId: "source", view: "comparisons", outcome: "all", query: "不存在的原问" });
     assert(empty.kind === "comparisons");
     assert.equal(empty.total, 0);
     assert.deepEqual(empty.summary.formalComparisonStats, stats, "case search must not change aggregate denominators");
     const runs = await source.list({ query: "no-match" });
     assert(runs.kind === "runs");
     assert.deepEqual(runs.currentRun!.summary.formalComparisonStats, stats, "history filtering cannot change current formal standings");
-    await assert.rejects(source.read({ runId: "source", query: "计算2+2" }), (error: Error) => {
+    await assert.rejects(source.read({ collectionId: "0_wencai/0_daily_eval", runId: "source", query: "计算2+2" }), (error: Error) => {
       assert.match(error.message, /匹配到 2 场/);
       assert.match(error.message, /"reference".*"taskId"/);
       assert.match(error.message, /"comparisonTier":"Fast"/);
@@ -596,7 +594,7 @@ test("Eris exposes whole-run formal standings and read scopes from recorded resu
       assert.deepEqual(result.comparisonScope, record.scope);
       assert.deepEqual(result.result, accepted[record.reference.taskId]!.exported!.row, "read_data keeps the complete formal row alongside its scope");
       const material = await source.read(record.reference, { view: "case" });
-      const lookup = { runId: "source", query: "计算2+2", comparisonTier: record.scope.comparisonTier! };
+      const lookup = { collectionId: "0_wencai/0_daily_eval", runId: "source", query: "计算2+2", comparisonTier: record.scope.comparisonTier! };
       assert.deepEqual(await source.read(lookup), result, "question and tier resolve the exact accepted receipt without copying an ID");
       assert.deepEqual(await source.read(lookup, { view: "case" }), material);
       assert.equal(material.kind, "case");
@@ -613,22 +611,22 @@ test("Eris exposes whole-run formal standings and read scopes from recorded resu
         assert.equal(single.formal, undefined);
       }
     }
-    await assert.rejects(source.read({ runId: "source", query: "不存在的题目", comparisonTier: "Fast" }), /没有匹配/);
-    await assert.rejects(source.read({ runId: "source", query: "计算2+2", comparisonTier: "Other" }), /没有匹配/);
-    await assert.rejects(source.read({ runId: "source", query: " ", comparisonTier: "Fast" }), /不能为空/);
+    await assert.rejects(source.read({ collectionId: "0_wencai/0_daily_eval", runId: "source", query: "不存在的题目", comparisonTier: "Fast" }), /没有匹配/);
+    await assert.rejects(source.read({ collectionId: "0_wencai/0_daily_eval", runId: "source", query: "计算2+2", comparisonTier: "Other" }), /没有匹配/);
+    await assert.rejects(source.read({ collectionId: "0_wencai/0_daily_eval", runId: "source", query: " ", comparisonTier: "Fast" }), /不能为空/);
     const duplicate = structuredClone(saved.tasks[stats.records[0]!.reference.taskId]!);
     saved.tasks[randomUUID()] = duplicate;
     await saveCheckpoint(checkpointPath, saved);
-    await assert.rejects(source.read({ runId: "source", query: "计算2+2", comparisonTier: stats.records[0]!.scope.comparisonTier! }), /匹配到 2 场/);
+    await assert.rejects(source.read({ collectionId: "0_wencai/0_daily_eval", runId: "source", query: "计算2+2", comparisonTier: stats.records[0]!.scope.comparisonTier! }), /匹配到 2 场/);
     const broken = structuredClone(accepted[stats.records[0]!.reference.taskId]!.exported!.row);
     broken.verdicts = {};
     await writeJsonl(path.join(fixture.config.output.path, "source/results/comparison.jsonl"), [broken]);
-    const usable = await source.list({ runId: "source", limit: 1 });
+    const usable = await source.list({ collectionId: "0_wencai/0_daily_eval", runId: "source", limit: 1 });
     assert(usable.kind === "inputs");
     assert.equal(usable.items.length, 1, "comparison corruption cannot make the input directory unreadable");
     assert.equal(usable.summary.formalComparisonStats, null);
     assert.equal(usable.summary.statisticsError?.retryable, false);
-    await assert.rejects(source.list({ runId: "source", view: "comparisons" }), /comparison_statistics_unavailable/);
+    await assert.rejects(source.list({ collectionId: "0_wencai/0_daily_eval", runId: "source", view: "comparisons" }), /comparison_statistics_unavailable/);
     const partial = await source.list({ view: "statistics" });
     assert(partial.kind === "statistics");
     assert.equal(partial.currentRuns.length, 1);
@@ -661,10 +659,10 @@ test("Eris chooses a recorded running data run before recent finished runs, excl
     assert.equal(inputs.runId, "source");
     assert.equal(inputs.selectionReason, "running_with_inputs");
     assert.equal(inputs.total, 0, "no matches must not silently switch to another run");
-    const explicit = await source.list({ runId: "later", view: "inputs" });
+    const explicit = await source.list({ collectionId: "0_wencai/0_daily_eval", runId: "later", view: "inputs" });
     assert(explicit.kind === "inputs");
     assert.equal(explicit.runId, "later");
-    await assert.rejects(source.list({ runId: "missing", view: "comparisons" }), /ENOENT/);
+    await assert.rejects(source.list({ collectionId: "0_wencai/0_daily_eval", runId: "missing", view: "comparisons" }), /ENOENT/);
     await saveCheckpoint(path.join(fixture.config.output.path, "source/state.json"), { ...saved, status: "interrupted" });
     const fallback = await source.list({ query: "source" });
     assert(fallback.kind === "runs");
@@ -689,7 +687,7 @@ test("Eris's directory keeps undeclared tiers unknown even when model names cont
     const version = fixture.config.inputs.versions.find((item) => item.id === "a_fast")!;
     delete version.display_name;
     const source = await register(fixture.config);
-    const directory = await source.list({ runId: "source" });
+    const directory = await source.list({ collectionId: "0_wencai/0_daily_eval", runId: "source" });
     assert(directory.kind === "inputs");
     assert(directory.items.every((item) => item.comparisonTier === null));
     assert.equal(directory.items.find((item) => item.model === "a_fast")!.modelName, "A Fast");
@@ -701,7 +699,7 @@ test("Eris's directory keeps undeclared tiers unknown even when model names cont
 
 
 test("entity searches expose the source body rather than just its trailing title in either scope", async () => {
-  const source = new LocalAnalysisData("unused"), reference = { runId: "run", inputId: "11111111-1111-4111-8111-111111111111" };
+  const source = new LocalAnalysisData("unused"), reference = { collectionId: "0_wencai/0_daily_eval", runId: "run", inputId: "11111111-1111-4111-8111-111111111111" };
   const body = "公司拥有通用清洗及湿法刻蚀设备；本记录未确认目标用途。";
   source.raw = async () => ({ messages: [{ type: "tool_result", output: { items: [
     { summary: "乙公司只有清洗设备", title: "乙公司新闻", query: "甲公司 TSV" },
@@ -721,7 +719,7 @@ test("entity searches expose the source body rather than just its trailing title
 
 
 test("batched entities share one complete document without dropping matched queries or read coordinates", async () => {
-  const source = new LocalAnalysisData("unused"), reference = { runId: "run", inputId: "11111111-1111-4111-8111-111111111111" };
+  const source = new LocalAnalysisData("unused"), reference = { collectionId: "0_wencai/0_daily_eval", runId: "run", inputId: "11111111-1111-4111-8111-111111111111" };
   const summary = "甲公司具有清洗、湿法刻蚀能力，乙公司从事CMP；两者目标用途仍需核验。";
   source.raw = async () => ({ messages: [{ type: "tool_result", output: {items:[{title:"甲公司与乙公司能力",summary}]}}] });
   const result = await source.search(reference, ["甲公司", "乙公司", "湿法刻蚀"]);
