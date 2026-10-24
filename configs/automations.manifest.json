@@ -1,8 +1,14 @@
 {
   "sources": [
     {
-      "name": "普通四路",
-      "config": "automations.json"
+      "name": "问财日常四路",
+      "config": "automations.json",
+      "workflow": "comparison"
+    },
+    {
+      "name": "AIME日常全量",
+      "config": "aime-ingest-and-attribute.json",
+      "workflow": "answer-review"
     }
   ]
 }

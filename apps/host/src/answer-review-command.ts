@@ -1,4 +1,4 @@
-import { runEvaluation } from "@eval/host";
+import { runEvaluation, type ModelRequestControl } from "@eval/host";
 import { exists, runLayout } from "@eval/data";
 import {
   answerReviewWorkflow, answerReviewRepository, answerReviewPilotTaskIds, planAnswerReview,
@@ -29,6 +29,9 @@ interface AnswerReviewOptions {
   resumeStages?: string[];
   pilotCases?: number;
   balanceChannels?: boolean;
+  modelRequests?: ModelRequestControl;
+  pauseSignal?: AbortSignal;
+  resumeTaskIds?: string[];
 }
 
 export async function runAnswerReviewCommand(host: HostConfig, options: AnswerReviewOptions) {
@@ -36,6 +39,7 @@ export async function runAnswerReviewCommand(host: HostConfig, options: AnswerRe
   if (!["pi", "prime"].includes(options.engine)) throw Error("engine必须为pi或prime");
   const config: AnswerReviewConfig = { ...host.evaluation, workflow: "answer-review", comparisons: [],
     clustering: { ...host.evaluation.clustering, enabled: false },
+    ...(options.resumeTaskIds&&{reviewTaskIds:options.resumeTaskIds}),
     reviewStages: options.stage ? [options.stage as "score" | "attribution"] : ["score", "attribution"] };
   if (options.command === "preflight") {
     const plan = await planAnswerReview(config);
@@ -68,6 +72,7 @@ export async function runAnswerReviewCommand(host: HostConfig, options: AnswerRe
       retries: config.execution.retries, retryDelaySeconds: config.execution.retryDelaySeconds,
       skipFailed: options.skipFailed, discoverInputs: options.discoverInputs, resumeStages: options.resumeStages,
       workerUrls: options.workers, failureGuard: config.execution.failureGuard, signal: controller.signal,
+      modelRequests: options.modelRequests, pauseSignal: options.pauseSignal,
       debug: options.debug, onProgress: console.log });
     console.log(JSON.stringify(result, null, 2));
     return controller.signal.aborted ? 130 : result.paused_stages.length ||

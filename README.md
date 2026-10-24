@@ -6,7 +6,7 @@ TypeScript Host 编排评测任务，Pi / Prime Worker 执行模型与工具调�
 
 ## 远程工作台
 
-工作台入口为 `workbench.sh`；AIME 独立增量归因使用下方的专用脚本。服务器代码与运行数据分离：
+工作台入口为 `workbench.sh`，统一控制问财日常四路与 AIME 日常两阶段评测。服务器代码与运行数据分离：
 
 - checkout：`/mnt/aigc_team/user_workspace/chenmingyang/eval_harness/code`
 - 持久目录：`/mnt/aigc_team/user_workspace/chenmingyang/eval_harness/runtime`
@@ -14,8 +14,9 @@ TypeScript Host 编排评测任务，Pi / Prime Worker 执行模型与工具调�
 - 评测产物：`/mnt/fin_bench/eval_data/{source}/eval_output/`；日常、专项分别在 `0_daily_eval/`、`1_task_eval/<任务>/`，所有真实模型测试在 `test_eval/`，不得写到其他位置。
 - 内部监听：工作台 `5001`；数据服务 `127.0.0.1:8081`；自动化看板 `127.0.0.1:4174`；运行实例看板 `127.0.0.1:4173`
 - 外部映射：`http://117.50.195.94:3309/`
-- 页面：`/` 单页工作台，Tabler 一级模块导航原位切换运行监控、数据与任务、评测运行、错误日志、聚类与问题库和流程定义；模块内定位、筛选与分页均在当前页面完成
-- 默认进入数据与任务：创建日常或专项任务、发现压缩包批次、归属、清洗和查看逐条报告；wencai、AIME、ifind 独立于任务类型。清洗后可选择同一任务的批次预检并启动评测，运行页关联错误定位、定向重试与同 run 续跑。结果支持按任务、批次和运行选择范围、单文件查看与归档，聚类手动预检启动，展示已纳入和未完成回答，重复范围由服务端阻止。日常与专项均手动清洗；已登记来源在运行监控点击「运行」后才持续取数与评测。操作见[数据服务](server_dashboard_ths/README.md)。
+- 页面：`/` 单页工作台，一级入口为评测、结果、更多；默认进入评测，问财和 AIME 同时可见、分别控制，可同时运行。
+- 问财收包：`0_wencai/1_7z_data/A_AA_comparision_data`；AIME 收包：`1_aime/1_7z_data/online_data`。点击来源「评测」后自动发现、清洗并持续评测全部有效未评数据。问财执行标准、归因、比较和改写并交付 MongoDB；AIME 执行独立 Score 与 Attribution，正式结果落盘供页面查看。
+- 支持暂停收尾、立即停止、同 run 继续、失败重试与独立并发。关闭浏览器不影响运行，服务重启后等待手动继续。来源配置和阶段有效值可在工作台修改，统计日志上报默认关闭。专项、手动范围、聚类和问题库位于「更多」。操作见[工作台契约](docs/workbench.md)。
 
 代码通过 Git 分发：本地提交并推送 `main`，`eval_agent_server` 从集群内的 `http://interactive-n01laf763gwn:8080/chenmingyang2/agent_eval_harness.git` 拉取。服务器使用独立的仓库只读凭据；不上传本地 checkout 或 Git bundle。
 
@@ -39,7 +40,7 @@ bash workbench.sh
 
 工具链或依赖有变更时，在服务器运行 `npm run deploy:workbench -- --on-server` 准备工具链，随后 `npm run bootstrap && npm run build`。已有管理员配置时无需再提供密码。认证、代理与更新约束见[部署指南](docs/deployment.md)。
 
-手动启动来源后，服务器侧每四小时生成统计记录并追加到 `runtime/log/comparison-statistics-log.jsonl`。本地只运行轻量 relay，不下载输入、运行状态或评测正文：
+日常来源默认关闭统计日志生成与上报。显式启用统计交付的专项来源仍使用原 relay：
 
 ```bash
 export WORKBENCH_SERVER_URL=http://117.50.195.94:3309
@@ -82,7 +83,7 @@ npm run automations -- run --once
 | 模块、生命周期与扩展 | [架构](docs/architecture.md) · [模块地图](docs/modules/README.md) |
 | 修改、测试与文档维护 | [开发指南](docs/development.md) |
 | 独立Score、归因与AIME单模型评测 | [独立回答评测](docs/answer-review.md) |
-| AIME 新包自动清洗与增量归因、启动和停止 | [AIME 增量归因](docs/aime-incremental.md) |
+| AIME 新包清洗、增量评分与归因、启动和停止 | [AIME 增量归因](docs/aime-incremental.md) |
 | 人工复核与评测实验 | [评测质量](docs/quality.md) |
 | 提示词与工具描述 | [Prompts](packages/prompts/README.md) |
 | 界面规则 | [PRODUCT.md](PRODUCT.md) |

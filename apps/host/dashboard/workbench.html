@@ -1,50 +1,22 @@
 <!doctype html>
-<html lang="zh-CN" data-bs-theme="light">
-<head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width,initial-scale=1">
-  <title>评测工作台</title>
-  <link rel="stylesheet" href="/workbench-assets/tabler.css">
-  <link rel="stylesheet" href="/workbench-assets/workbench.css">
-  <script type="module" src="/workbench-assets/workbench.bundle.js"></script>
-</head>
-<body>
-  <div class="page">
-    <aside class="navbar navbar-vertical navbar-expand-md workbench-sidebar" aria-label="工作台">
-      <div class="container-fluid">
-        <div class="navbar-brand">评测工作台</div>
-        <nav class="nav nav-pills module-nav" role="tablist" aria-label="模块" aria-orientation="vertical">
-          <button class="nav-link" id="nav-monitor" role="tab" data-module="monitor" data-bs-target="#monitor" aria-controls="monitor" aria-selected="false">运行监控</button>
-          <button class="nav-link active" id="nav-data" role="tab" data-module="data" data-bs-target="#data" aria-controls="data" aria-selected="true">数据与任务</button>
-          <button class="nav-link" id="nav-runs" role="tab" data-module="runs" data-bs-target="#runs" aria-controls="runs" aria-selected="false">评测运行</button>
-          <button class="nav-link" id="nav-errors" role="tab" data-module="errors" data-bs-target="#errors" aria-controls="errors" aria-selected="false">错误日志</button>
-          <button class="nav-link" id="nav-problems" role="tab" data-module="problems" data-bs-target="#problems" aria-controls="problems" aria-selected="false">聚类与问题库</button>
-          <button class="nav-link" id="nav-reference" role="tab" data-module="reference" data-bs-target="#reference" aria-controls="reference" aria-selected="false">流程定义</button>
-        </nav>
-        <div class="sidebar-footer"><span id="service-status" role="status">连接中</span><a class="btn btn-sm" href="/logout">退出</a></div>
-      </div>
-    </aside>
-    <main class="page-wrapper" id="workspace">
-      <div class="container-fluid tab-content workbench-content">
-        <section class="tab-pane" id="monitor" role="tabpanel" aria-labelledby="nav-monitor" tabindex="0" hidden>
-          <header class="page-header"><h1 class="page-title">运行监控</h1></header>
-          <nav class="module-shortcuts" aria-label="运行监控定位"><button class="btn btn-sm" data-jump="monitor-content:llm-allocations">并发与请求</button><button class="btn btn-sm" data-jump="monitor-content:dates">日期进度</button><button class="btn btn-sm" data-jump="monitor-content:activity">时段完成量</button><button class="btn btn-sm" data-jump="monitor-content:mongo-deliveries">MongoDB 交付</button><button class="btn btn-sm" data-jump="monitor-content:deliveries">统计日志</button></nav>
-          <div id="monitor-content" class="mount" hidden></div>
-        </section>
-        <section class="tab-pane active show" id="data" role="tabpanel" aria-labelledby="nav-data" tabindex="0">
-          <header class="page-header"><h1 class="page-title">数据与任务</h1></header>
-          <div id="data-content" class="mount" hidden></div><div id="catalog-content" class="mount" hidden></div><div id="samples-content" class="mount" hidden></div>
-        </section>
-        <section class="tab-pane" id="runs" role="tabpanel" aria-labelledby="nav-runs" tabindex="0" hidden>
-          <header class="page-header"><h1 class="page-title">评测运行</h1></header>
-          <nav class="module-shortcuts" aria-label="评测运行定位"><button class="btn btn-sm" data-jump="runs-content:run-list">运行列表</button><button class="btn btn-sm" data-jump="runs-content:config">新建评测</button><button class="btn btn-sm" data-jump="runs-content:run-overview">当前运行</button><button class="btn btn-sm" data-jump="runs-content:explorer">样本结果</button></nav>
-          <div id="batch-runs-content" class="mount" hidden></div><div id="runs-content" class="mount" hidden></div>
-        </section>
-        <section class="tab-pane" id="errors" role="tabpanel" aria-labelledby="nav-errors" tabindex="0" hidden><header class="page-header"><h1 class="page-title">错误日志</h1></header><div id="batch-errors-content" class="mount" hidden></div><div id="errors-content" class="mount" hidden></div></section>
-        <section class="tab-pane" id="problems" role="tabpanel" aria-labelledby="nav-problems" tabindex="0" hidden><header class="page-header"><h1 class="page-title">聚类与问题库</h1></header><div id="analysis-content" class="mount" hidden></div><div id="problems-content" class="mount" hidden></div></section>
-        <section class="tab-pane" id="reference" role="tabpanel" aria-labelledby="nav-reference" tabindex="0" hidden><header class="page-header"><h1 class="page-title">流程定义</h1></header><div id="definitions-content" class="mount" hidden></div></section>
-      </div>
-    </main>
-  </div>
-</body>
-</html>
+<html lang="zh-CN" data-bs-theme="light"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>评测工作台</title><link rel="stylesheet" href="/workbench-assets/tabler.css"><link rel="stylesheet" href="/workbench-assets/workbench.css"><script type="module" src="/workbench-assets/workbench.bundle.js"></script></head>
+<body><div class="page">
+  <aside class="navbar navbar-vertical navbar-expand-md workbench-sidebar" aria-label="工作台"><div class="container-fluid">
+    <div class="navbar-brand">评测工作台</div><nav class="nav nav-pills module-nav" role="tablist" aria-label="模块" aria-orientation="vertical">
+      <button class="nav-link active" id="nav-evaluate" role="tab" data-module="evaluate" data-bs-target="#evaluate" aria-controls="evaluate" aria-selected="true">评测</button>
+      <button class="nav-link" id="nav-results" role="tab" data-module="results" data-bs-target="#results" aria-controls="results" aria-selected="false">结果</button>
+      <button class="nav-link" id="nav-more" role="tab" data-module="more" data-bs-target="#more" aria-controls="more" aria-selected="false">更多</button>
+    </nav><div class="sidebar-footer"><span id="service-status" role="status">连接中</span><a class="btn btn-sm" href="/logout">退出</a></div>
+  </div></aside>
+  <main class="page-wrapper" id="workspace"><div class="container-fluid tab-content workbench-content">
+    <section class="tab-pane active show" id="evaluate" role="tabpanel" aria-labelledby="nav-evaluate" tabindex="0"><header class="page-header"><h1 class="page-title">评测</h1></header><div id="daily-content" class="mount" hidden></div></section>
+    <section class="tab-pane" id="results" role="tabpanel" aria-labelledby="nav-results" tabindex="0" hidden><header class="page-header"><h1 class="page-title">结果</h1><div class="source-controls" role="group" aria-label="结果来源"><button class="btn btn-sm active" data-results-source="wencai" aria-pressed="true">问财日常四路</button><button class="btn btn-sm" data-results-source="aime" aria-pressed="false">AIME 日常全量</button><button class="btn btn-sm" id="results-quarantine" type="button">隔离记录</button></div></header><div id="wencai-results-content" class="mount" hidden></div><div id="aime-results-content" class="mount" hidden></div></section>
+    <section class="tab-pane" id="more" role="tabpanel" aria-labelledby="nav-more" tabindex="0" hidden><header class="page-header"><h1 class="page-title">更多</h1><label class="dataset-field">操作<select id="more-section" class="form-select"><option value="data">数据与任务</option><option value="runs">批次与独立评测</option><option value="errors">错误历史</option><option value="problems">聚类与问题库</option><option value="monitor">其他来源运行</option></select></label></header>
+      <div data-more="data"><div id="data-content" class="mount" hidden></div><div id="catalog-content" class="mount" hidden></div><div id="samples-content" class="mount" hidden></div></div>
+      <div data-more="runs" hidden><div id="batch-runs-content" class="mount" hidden></div><div id="runs-content" class="mount" hidden></div></div>
+      <div data-more="errors" hidden><div id="batch-errors-content" class="mount" hidden></div><div id="errors-content" class="mount" hidden></div></div>
+      <div data-more="problems" hidden><div id="analysis-content" class="mount" hidden></div><div id="problems-content" class="mount" hidden></div></div>
+      <div data-more="monitor" hidden><div id="monitor-content" class="mount" hidden></div></div>
+    </section>
+  </div></main>
+</div></body></html>

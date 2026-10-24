@@ -6,7 +6,7 @@ import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
-import { replaceInputSnapshot } from "@eval/data";
+import { replaceInputSnapshot, runLock } from "@eval/data";
 import { RemoteInputs } from "@eval/runtime/client";
 import { RemoteInputNotReadyError } from "@eval/contracts";
 import type { AutomationJob } from "@eval/automations";
@@ -123,7 +123,7 @@ for (const mode of ["headers", "persistent", "not-ready", "unauthorized", "inval
   });
 }
 
-test("a growing three-model source downloads during evaluation and promotes after evaluation and Mongo finish", async () => {
+test("a growing three-model source promotes after evaluation while Mongo continues its pinned delivery", async () => {
   const directory = await mkdtemp(path.join(tmpdir(), "automation-growing-download-"));
   const models = ["a_fast", "b_fast", "b_post_train_fast"];
   const old = '{"id":"one"}\n', body = Buffer.from(old + '{"id":"two"}\n');
@@ -152,11 +152,9 @@ test("a growing three-model source downloads during evaluation and promotes afte
     assert.equal(promoted, false);
     for (const model of models) assert.equal(await readFile(path.join(directory, model + ".jsonl"), "utf8"), old);
     job.evaluation = "completed";
-    await delay(150);
-    assert.equal(promoted, false, "ongoing Mongo delivery still pins the old inputs");
-    job.mongo!.status = "completed";
     const result = await work;
     assert.equal(promoted, true);
+    assert.equal(job.mongo!.status, "running", "delivery does not hold the input promotion lock");
     assert.equal(requests, 3, "catalog growth does not discard or redownload validated files");
     assert.deepEqual(result.rows, Object.fromEntries(models.map(model => [model, 2])));
     for (const model of models) assert.deepEqual(await readFile(path.join(directory, model + ".jsonl")), body);
@@ -165,4 +163,24 @@ test("a growing three-model source downloads during evaluation and promotes afte
     server.closeAllConnections(); await new Promise<void>(resolve => server.close(() => resolve()));
     await rm(directory, { recursive: true, force: true });
   }
+});
+
+test("promotion retries a short publication capture lock instead of failing the input download", async t => {
+  const directory = await mkdtemp(path.join(tmpdir(), "automation-promotion-lock-"));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  const old = '{"id":"old"}\n', body = Buffer.from('{"id":"new"}\n');
+  await writeFile(path.join(directory, "a_fast.jsonl"), old);
+  const release = await runLock(path.join(directory, ".snapshot"));
+  const remote = new RemoteInputs("http://127.0.0.1:1", 1000, ["a_fast"]);
+  t.mock.method(remote, "download", async () => ({ name: "a_fast.jsonl", size: body.length, rows: 1,
+    chunks: (async function* () { yield body; })(), close: async () => {} }));
+  const day = { date: "2026-10-24", rows: { a_fast: 1 } };
+  const job = { runIds: [], evaluation: "completed" } as unknown as AutomationJob;
+  const work = syncRemoteInputs(remote, directory, directory, job, day, t.signal, async () => {});
+  await Promise.all([work, (async () => {
+    await delay(75);
+    try { assert.equal(await readFile(path.join(directory, "a_fast.jsonl"), "utf8"), old); }
+    finally { await release(); }
+  })()]);
+  assert.deepEqual(await readFile(path.join(directory, "a_fast.jsonl")), body);
 });

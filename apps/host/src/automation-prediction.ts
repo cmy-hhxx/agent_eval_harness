@@ -52,7 +52,7 @@ export async function discoverPrediction(config: AutomationConfig, output: strin
   const days = new Map<string, PredictionDay>(), checkpoints = new Map<string, Checkpoint | undefined>();
   const diagnostics: { questionId: string; date: string; reason: string; targetId?: string }[] = [];
   for (const answer of answers.values()) {
-    if (answer.batch_id < config.fromDate || config.throughDate && answer.batch_id > config.throughDate) continue;
+    if (config.fromDate && answer.batch_id < config.fromDate || config.throughDate && answer.batch_id > config.throughDate) continue;
     const date = answer.batch_id, runId = origin.runPrefix + date;
     if (!checkpoints.has(runId)) checkpoints.set(runId, await sourceCheckpoint(output, runId));
     const state = checkpoints.get(runId);

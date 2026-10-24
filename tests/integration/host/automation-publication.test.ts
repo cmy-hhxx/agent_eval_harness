@@ -1,16 +1,16 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { readFile, rm } from "node:fs/promises";
+import { appendFile, readFile, readdir, rm } from "node:fs/promises";
 import path from "node:path";
 import { MongoClient, type Document } from "mongodb";
 import { fileSourceReader, readJson, writeJson, writeJsonl } from "@eval/data";
-import { publishMongo, readMongoLabels } from "@eval/runtime/client";
+import { publishMongo, readMongoLabels, RemoteInputs } from "@eval/runtime/client";
 import { emptyUsage, type JsonObject, type RunState, type PublicationInput, type PublicationResult } from "@eval/contracts";
 import { PublicationStatistics, publishableComparisons, comparisonCodec, buildPlan, bindTask, assertStatisticsLog, assertCompleteComparisonRewrite } from "@eval/workflows/comparison";
 import type { RewriteItem } from "@eval/agents/rewrite";
 import type { AutomationJob, AutomationState } from "@eval/automations";
 import { generateStatisticsSnapshot, publicationSnapshot, syncMongoDay, statisticsSnapshot } from "../../../apps/host/src/automation-publication.js";
-import { syncMongoReadyResults } from "../../../apps/host/src/automation-result-publication.js";
+import { syncRemoteInputs } from "../../../apps/host/src/automation-download.js";
 import { loadAutomationConfig, type AutomationConfig } from "../../../apps/host/src/automation-config.js";
 import { automationMongoTarget, automationSourceFiles } from "../../../apps/host/src/automation-sources.js";
 import { StatisticsDeliveryStore } from "../../../apps/host/src/statistics-delivery.js";
@@ -110,40 +110,6 @@ const result: PublicationResult = { evaluatedAt: 10, row: { case: { batch_id: da
 } };
 async function* rows<T>(data: T[]) { yield* data; }
 
-test("incremental result delivery replaces the same comparison after rewrite and verifies Mongo before acknowledging", async t => {
-  const fixture = await fixtureConfig();
-  t.after(() => rm(fixture.directory, { recursive: true, force: true }));
-  const config = await loadAutomationConfig("configs/automations-post-training.json");
-  config.hostConfigs = [path.join(ROOT, "configs/host.json")];
-  config.stateDirectory = fixture.directory; config.publication.mongoUriEnv = "PATH";
-  const polished = structuredClone(result);
-  polished.row.comparison_id = "same-comparison";
-  polished.row.rewritten = { evaluator_version: "fixture", rewrites: [{ id: "tradeoff", text: "改写完成" }] };
-  let stored: JsonObject | undefined, writes = 0;
-  const dependencies: Parameters<typeof syncMongoReadyResults>[3] = {
-    snapshot: async () => {
-      return { comparisons: configuredGroups, inputs: async function* () { throw new Error("Validated raw inputs must not be uploaded again"); },
-        results: () => rows([polished]) };
-    },
-    inventory: async () => ({ inputs,
-      comparisons: [{ id: "same-comparison", rewritten: stored }] }),
-    mongo: async (settings, _date, incoming, results) => {
-      assert.equal(settings.inputsUnchanged, true); assert.equal(settings.topic, config.publication.topic);
-      assert.equal((await collect(incoming)).length, 2);
-      const items = await collect(results);
-      assert.equal(items.length, 1); stored = items[0].row.rewritten as JsonObject; writes++;
-      return { inputs: 2, comparisons: 1, inserted: 0, updated: 1 };
-    },
-  };
-  const job = { date } as AutomationJob;
-  assert.equal((await syncMongoReadyResults(config, job, t.signal, dependencies)).updated, 1);
-  assert.equal((await syncMongoReadyResults(config, job, t.signal, dependencies)).comparisons, 0);
-  assert.equal(writes, 1, "the comparison ID stays the same and unchanged rewrites are not resent");
-  stored = undefined;
-  await assert.rejects(syncMongoReadyResults(config, job, t.signal, {
-    ...dependencies, mongo: async () => ({ inputs: 2, comparisons: 1, inserted: 0, updated: 1 }),
-  }), /verification failed/);
-});
 async function collect<T>(rows: AsyncIterable<T>): Promise<T[]> {
   const result: T[] = [];
   for await (const row of rows) result.push(row);
@@ -159,7 +125,7 @@ test("Mongo sync forwards the configured topic for both input and result publica
   config.publication.mongoUriEnv = key;
   let called = false;
   await syncMongoDay(config, { date } as AutomationJob, t.signal, {
-    snapshot: async () => ({ comparisons: configuredGroups, inputs: () => rows(inputs), results: () => rows([result]) }),
+    snapshot: async () => ({ close: async () => {}, comparisons: configuredGroups, inputs: () => rows(inputs), results: () => rows([result]) }),
     mongo: async (settings, batch, sourceInputs, sourceResults) => {
       called = true;
       assert.equal(settings.topic, config.publication.topic);
@@ -173,33 +139,56 @@ test("Mongo sync forwards the configured topic for both input and result publica
   assert(called);
 });
 
-test("completed file receipts avoid retransmitting inputs only while their source revision matches", async t => {
-  const { directory } = await fixtureConfig();
+test("Mongo failure releases pinned inputs after a newer snapshot installs without waiting for delivery", async t => {
+  const { directory, config: evaluation } = await fixtureConfig();
   t.after(() => rm(directory, { recursive: true, force: true }));
-  const config = await loadAutomationConfig("configs/automations-post-training.json");
+  const config = await loadAutomationConfig("configs/automations.json");
   config.sourceDirectory = path.join(directory, "sources");
   config.stateDirectory = path.join(directory, "state");
   config.remoteModels = ["a_fast", "b_fast"];
+  evaluation.inputs.versions = evaluation.inputs.versions.filter(version => config.remoteModels.includes(version.id));
+  const hostFile = path.join(directory, "host.json");
+  await writeJson(hostFile, { ...await readJson(path.join(ROOT, "configs/host.json")), ...evaluation });
+  config.hostConfigs = [hostFile];
   config.publication.mongoUriEnv = "PATH";
   for (const model of config.remoteModels) {
     const file = path.join(config.sourceDirectory, date, model + ".jsonl");
-    await writeJsonl(file, [inputs.find(input => input.versionId === model)!.trace]);
-    await writeJson(path.join(config.stateDirectory, "input-publications", date, model + ".json"), {
-      revision: await fileSourceReader.revision(file),
-    });
+    await writeJsonl(file, [{ ...raw("old"), batch_id: date }]);
   }
-  const flags: (boolean | undefined)[] = [];
-  const dependencies = {
-    snapshot: async () => ({ comparisons: configuredGroups, inputs: () => rows(inputs), results: () => rows([result]) }),
-    mongo: async (settings: Parameters<typeof publishMongo>[0]) => {
-      flags.push(settings.inputsUnchanged);
-      return { inputs: 2, comparisons: 1, inserted: 0, updated: 0 };
+  const day = { date, rows: { a_fast: 1, b_fast: 1 } };
+  const job: AutomationJob = { date, runIds: [], adopted: false, download: "ready", evaluation: "completed", observed: day.rows,
+    checkedAt: 0, downloadAttempts: 0, evaluationAttempts: 0, nextDownloadAt: 0, nextEvaluationAt: 0,
+    mongo: { status: "running", attempts: 1, nextAt: 0 } };
+  let ready!: () => void, release!: () => void;
+  const started = new Promise<void>(resolve => { ready = resolve; });
+  const waiting = new Promise<void>(resolve => { release = resolve; });
+  let delivered: PublicationInput[] = [];
+  const work = syncMongoDay(config, job, t.signal, {
+    snapshot: publicationSnapshot,
+    mongo: async (_settings, _date, inputRows) => {
+      assert.equal((await fileSourceReader.files([{ kind: "directory", path: path.join(config.sourceDirectory, date) }])).length, 2,
+        "temporary publication pins must not become evaluator inputs");
+      ready(); await waiting;
+      delivered = await collect(inputRows);
+      throw new Error("Mongo network timeout");
     },
-  };
-  await syncMongoDay(config, { date } as AutomationJob, t.signal, dependencies);
-  await writeJsonl(path.join(config.sourceDirectory, date, "a_fast.jsonl"), [...inputs, ...inputs]);
-  await syncMongoDay(config, { date } as AutomationJob, t.signal, dependencies);
-  assert.deepEqual(flags, [true, false]);
+  });
+  const failed = assert.rejects(work, /Mongo network timeout/);
+  try {
+    await Promise.race([started, work]);
+    const body = Buffer.from(JSON.stringify({ ...raw("new"), batch_id: date }) + "\n");
+    const remote = new RemoteInputs("http://127.0.0.1:1", 1000, config.remoteModels);
+    t.mock.method(remote, "download", async (_day: unknown, model: string) => ({
+      name: model + ".jsonl", size: body.length, rows: 1, chunks: (async function* () { yield body; })(),
+      close: async () => {},
+    }));
+    await syncRemoteInputs(remote, path.join(config.sourceDirectory, date), evaluation.output.path, job, day, t.signal, async () => {});
+    assert.equal(job.mongo!.status, "running");
+    const current = await readFile(path.join(config.sourceDirectory, date, "a_fast.jsonl"), "utf8");
+    assert.equal(JSON.parse(current).case_id, "new");
+  } finally { release(); await failed; }
+  assert.deepEqual(delivered.map(input => input.trace.case_id), ["old", "old"]);
+  assert.equal((await readdir(path.join(config.sourceDirectory, date))).some(file => file.startsWith(".publication-")), false);
 });
 
 test("daily and independent experiments sharing a collection keep answers, verdicts and statistics separate", async t => {
@@ -241,7 +230,7 @@ test("daily and independent experiments sharing a collection keep answers, verdi
     const winner = config.id === "remote-six-model-evaluation" ? "a_fast" : "b_fast";
     const sourceInputs = inputs.map(input => ({ ...input, trace: { ...input.trace,
       messages: [{ role: "assistant", content: config.id }] } }));
-    return { comparisons: configuredGroups, inputs: () => rows(sourceInputs), results: () => rows([{ ...result, row: { ...result.row, tradeoff: config.id,
+    return { close: async () => {}, comparisons: configuredGroups, inputs: () => rows(sourceInputs), results: () => rows([{ ...result, row: { ...result.row, tradeoff: config.id,
       assessments: { a_fast: { meets_core: winner === "a_fast" }, b_fast: { meets_core: winner === "b_fast" } },
       verdicts: { a_fast__vs__b_fast: { result: "win", winner_version: winner } },
     } }]) };
@@ -341,6 +330,11 @@ for (const reversed of [false, true]) test(`publication keeps rewrite ownership 
   }
   assert.equal(await readFile(resultFile, "utf8"), before, "publication must preserve accepted local rewrite slots");
   assert.deepEqual(await collect(snapshot.results()), delivered, "retries must not swap already mapped text again");
+  await appendFile(resultFile, '{"unfinished_append":');
+  assert.deepEqual(await collect(snapshot.results()), delivered, "new appends cannot expand the captured accepted scope");
+  await writeJsonl(resultFile, output.map(row => ({ ...row, tradeoff: "later accepted presentation" })));
+  assert.deepEqual(await collect(snapshot.results()), delivered, "publication keeps the captured result rows across an atomic rewrite");
+  await snapshot.close();
 });
 
 test("publication quarantines every duplicate input and only its affected battles without modifying accepted work", async (t) => {
@@ -417,23 +411,6 @@ test("publication quarantines every duplicate input and only its affected battle
       },
     });
     assert.equal(delivered.comparisons, 3);
-    settings.stateDirectory = path.join(directory, "automation-state");
-    const inventoryInputs = config.inputs.versions.flatMap(version => originals.map(trace => ({ versionId: version.id,
-      trace: { ...trace, version: version.name } })));
-    let uploaded: PublicationResult[] = [];
-    const independent = await syncMongoReadyResults(settings, job, t.signal, {
-      snapshot: publicationSnapshot,
-      inventory: async () => ({ inputs: inventoryInputs, comparisons: uploaded.map(({ row }) => ({
-        id: String(row.comparison_id), rewritten: row.rewritten as JsonObject,
-      })) }),
-      mongo: async (_settings, _date, _inputs, results) => {
-        uploaded = await collect(results);
-        assert.deepEqual(uploaded.map(result => result.row), expected,
-          "existing Mongo inputs must not bypass the current snapshot's duplicate quarantine");
-        return { inputs: 0, comparisons: uploaded.length, inserted: 0, updated: uploaded.length };
-      },
-    });
-    assert.equal(independent.comparisons, 3);
     const snapshot = await publicationSnapshot(settings, job, t.signal);
     assert.deepEqual(await collect(snapshot.results()), expected.map(row => ({ row, evaluatedAt: 10 })),
       "result-first reads isolate only the conflicting model pair, retaining the healthy Expert pair");
@@ -449,12 +426,14 @@ test("publication quarantines every duplicate input and only its affected battle
     assert.equal(await readFile(resultFile, "utf8"), acceptedResults, "formal results are untouched");
 
     await writeJsonl(source, originals);
-    await assert.rejects(collect(snapshot.inputs()), /输入文件发生变化/, "a changed file invalidates the pinned snapshot");
-    await assert.rejects(collect(snapshot.results()), /输入文件发生变化/, "independent result reads also validate the pinned input revision");
+    assert.equal((await collect(snapshot.inputs())).length, 7, "an atomic source promotion leaves the pinned input group readable");
+    assert.deepEqual((await collect(snapshot.results())).map(row => row.row), expected, "the captured duplicate quarantine survives input promotion");
+    await snapshot.close();
     const repaired = await publicationSnapshot(settings, job, t.signal);
     assert.equal((await collect(repaired.inputs())).length, 8);
     assert.deepEqual((await collect(repaired.results())).map(row => row.row), output,
       "fixing the source releases the original accepted results without evaluating them again");
+    await repaired.close();
     await t.test("accepted receipts define delivery scope and partial polish cannot hide a missing slot", async () => {
       const rewrites = Object.values(saved.tasks).filter(task => task.data.rewriteOf?.stage === "comparison");
       for (const task of rewrites) task.receipt!.rewriteIds!.pop();
@@ -464,13 +443,15 @@ test("publication quarantines every duplicate input and only its affected battle
       const accepted = await publicationSnapshot(settings, job, t.signal);
       assert.equal((await collect(accepted.results())).length, output.length,
         "accepted work does not acquire extra rewrite slots at delivery time");
+      await accepted.close();
       const full = rewrites[0];
       full.receipt!.rewriteIds!.push("tradeoff");
       saved.tasks["partial-rewrite"] = { ...full, data: { ...full.data, comparisonRewriteScope: "verdicts" },
         receipt: { ...full.receipt!, rewriteIds: ["verdict.A__vs__B.reason"] } };
       await writeJson(stateFile, saved);
       const incomplete = await publicationSnapshot(settings, job, t.signal);
-      await assert.rejects(collect(incomplete.results()), /Comparison rewrite incomplete.*tradeoff/);
+      try { await assert.rejects(collect(incomplete.results()), /Comparison rewrite incomplete.*tradeoff/); }
+      finally { await incomplete.close(); }
     });
   } finally { await rm(directory, { recursive: true, force: true }); }
 });
@@ -496,6 +477,7 @@ test("publication detects duplicate identities across adopted source files and r
     const discoveryScans = scans;
     assert.deepEqual((await collect(snapshot.inputs())).map(input => input.trace.case_id), ["healthy"]);
     assert.equal(scans, discoveryScans, "validation and upload reuse pinned coordinates instead of rescanning all input files");
+    await snapshot.close();
     await writeJsonl(second, [{ ...duplicate, messages: "invalid" }]);
     await assert.rejects(publicationSnapshot(settings, job, t.signal), /messages must be an array/);
     await writeJsonl(second, [{ ...duplicate, version: "wrong-model" }]);
@@ -525,6 +507,7 @@ test("pinned statistics input reads yield to pending Host requests between recor
     assert(hostRequestRan, "a synchronous coordinate scan must not starve the Host event loop");
     const remaining = await collect(iterator);
     assert.deepEqual([first.value, second.value, ...remaining].map(row => row!.trace.case_id), expected);
+    await snapshot.close();
   } finally { await rm(directory, { recursive: true, force: true }); }
 });
 
@@ -548,6 +531,7 @@ test("statistics scan answer bodies once while retaining labels, metrics and dup
     const normal = await publicationSnapshot(settings, job, t.signal);
     const expected = new PublicationStatistics(normal.comparisons);
     for await (const input of normal.inputs()) expected.addInput(input);
+    await normal.close();
     t.mock.method(fileSourceReader, "record", () => assert.fail("statistics must not reread complete answer bodies"));
     const snapshot = await publicationSnapshot(settings, job, t.signal, "statistics");
     const actual = new PublicationStatistics(snapshot.comparisons);
@@ -558,7 +542,8 @@ test("statistics scan answer bodies once while retaining labels, metrics and dup
     projected.forEach(input => actual.addInput(input));
     assert.deepEqual(actual.record("same", 1000), expected.record("same", 1000));
     await writeJsonl(file, [healthy]);
-    await assert.rejects(collect(snapshot.results("statistics")), /输入文件发生变化/);
+    assert.deepEqual(await collect(snapshot.results("statistics")), [], "statistics retain their fixed input view after promotion");
+    await snapshot.close();
   } finally { await rm(directory, { recursive: true, force: true }); }
 });
 
@@ -854,7 +839,7 @@ test("historical statistics supplements are task scoped and current Mongo diffic
   const state = { jobs: { [date]: { date, download: "ready" } } } as unknown as AutomationState;
   const dependencies: Parameters<typeof statisticsSnapshot>[3] = {
     labels: async () => [{ batchId: date, caseId: "one", difficulty: "复杂" }],
-    snapshot: async () => ({ comparisons: configuredGroups,
+    snapshot: async () => ({ close: async () => {}, comparisons: configuredGroups,
       inputs: () => rows(inputs.map(input => ({ ...input, trace: { ...input.trace, meta: {} } }))),
       results: () => rows([result]) }),
   };
@@ -894,7 +879,7 @@ test("latest Mongo difficulty replaces old labels across models without losing b
   const state = { jobs: Object.fromEntries([[date, { date, download: "ready" }]]) } as AutomationState;
   const snapshot = await statisticsSnapshot(config, state, AbortSignal.timeout(5000), {
     labels: async () => ["简单", "复杂"].map(difficulty => ({ batchId: date, caseId: "one", difficulty })),
-    snapshot: async () => ({ comparisons: configuredGroups, inputs: () => rows(localInputs), results: () => rows([result]) }),
+    snapshot: async () => ({ close: async () => {}, comparisons: configuredGroups, inputs: () => rows(localInputs), results: () => rows([result]) }),
   });
   assert.deepEqual(snapshot.record("latest", Date.now()).data, latest,
     "local input labels must not overwrite the latest Mongo difficulty");
@@ -942,7 +927,7 @@ test("statistics load case labels from Mongo and retain them across models and d
       return [{ batchId: days[0], caseId: "one", task: "数据查询类", difficulty: "简单" }];
     },
     snapshot: async (_config, job) => ({
-      comparisons: configuredGroups,
+      close: async () => {}, comparisons: configuredGroups,
       inputs: () => rows(inputs.map((input) => ({ ...input, trace: { ...input.trace, batch_id: job.date,
         request_time: `${job.date} 12:00:00`, meta: job.date === days[0] ? {} : input.trace.meta } }))),
       results: () => rows([{ ...result, row: { ...result.row, case: { batch_id: job.date, case_id: "one" } } }]),
@@ -967,7 +952,7 @@ test("statistics use installed inputs and accepted results while refreshed input
     evaluation: "evaluating" } } } as unknown as AutomationState;
   const statistics = await statisticsSnapshot(config, state, AbortSignal.timeout(1000), {
     labels: async () => [{ batchId: date, caseId: "one", task: "数据查询类", difficulty: "中等" }],
-    snapshot: async () => ({ comparisons: configuredGroups,
+    snapshot: async () => ({ close: async () => {}, comparisons: configuredGroups,
       inputs: () => rows(inputs.map(input => ({ ...input, trace: { ...input.trace, meta: {} } }))),
       results: () => rows([result]),
     }),
@@ -1039,7 +1024,7 @@ test("Mongo delivery streams ready inputs and results independently of the log s
     let ready: PublicationResult[] = [];
     const delivered: { inputs: PublicationInput[]; results: PublicationResult[] }[] = [];
     const dependencies: Parameters<typeof syncMongoDay>[3] = {
-      snapshot: async () => ({ comparisons: configuredGroups, inputs: () => rows(inputs), results: () => rows(ready) }),
+      snapshot: async () => ({ close: async () => {}, comparisons: configuredGroups, inputs: () => rows(inputs), results: () => rows(ready) }),
       mongo: async (settings, batch, inputRows, resultRows) => {
         assert.equal(batch, date);
         assert.equal(settings.evaluationTaskId, config.id);

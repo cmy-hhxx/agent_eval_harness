@@ -47,6 +47,28 @@ class MultiAgentTest(unittest.TestCase):
     def read(self, data, model, day="2026-10-14"):
         return [json.loads(line) for line in (data.output_dir / model / (day + ".jsonl")).read_text().splitlines()]
 
+    def test_recovery_never_removes_another_state_scopes_active_staging(self):
+        other = worker.AgentDataset(self.root / "another-source", self.root / "another-state", "aime", "/data/aime")
+        other.archive_dir.mkdir(parents=True)
+        other.state_dir.mkdir(parents=True)
+        process = worker.app.Dataset.process_archives
+        active_paths = []
+        def recover_other(dataset, signature, **kwargs):
+            self.assertTrue(dataset.staging.is_relative_to(dataset.state_dir))
+            active_paths.append(dataset.staging)
+            if dataset is self.aime:
+                normalized = dataset.staging / "normalized.jsonl"
+                normalized.write_text('{"active":true}\n')
+                with other.archive_lock():
+                    other.recover()
+                self.assertEqual(normalized.read_text(), '{"active":true}\n')
+            else:
+                process(dataset, signature, **kwargs)
+        with self.aime.archive_lock(), patch.object(worker.app.Dataset, "process_archives", recover_other):
+            self.aime.process_archives([])
+        self.assertEqual(len(active_paths), 2)
+        self.assertTrue(all(not path.exists() for path in active_paths))
+
     def test_local_start_keeps_all_dataset_directories_in_eval_data_and_state_roots(self):
         root = self.root / "local-data"
         factory = worker.app.make_datasets

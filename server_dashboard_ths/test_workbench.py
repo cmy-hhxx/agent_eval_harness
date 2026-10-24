@@ -226,6 +226,99 @@ class WorkbenchTest(unittest.TestCase):
         restarted = WorkbenchCatalog(app.make_datasets(self.root / "data", self.root / "state"), self.root / "state", app)
         self.assertEqual(len(restarted.snapshot({})["batches"]), 2)
 
+    def test_daily_sources_bind_real_directories_and_keep_task_identity(self):
+        before = self.catalog.snapshot({})
+        for source, suffix in (("wencai", "0_wencai/1_7z_data/A_AA_comparision_data"), ("aime", "1_aime/1_7z_data/online_data")):
+            task = next(task for task in before["tasks"] if task["dataset"] == "/data/" + source)
+            self.assertEqual(task["category"], "daily")
+            self.assertEqual(task["archive_dir"], str(self.root / "data" / suffix))
+        restarted = WorkbenchCatalog(self.datasets, self.root / "state", app)
+        self.assertEqual([task["id"] for task in before["tasks"]], [task["id"] for task in restarted.snapshot({})["tasks"]])
+
+    def test_ready_filter_and_task_clean_use_a_finite_scope(self):
+        self.package("first.7z", [archive_row("b_fast", "first")])
+        batch = self.batches()[0]
+        task_id = batch["task_id"]
+        query = {"source": ["wencai"], "task": [task_id], "status": ["ready"]}
+        self.assertEqual(self.catalog.snapshot(query)["total"], 1)
+        process = self.datasets[batch["origin"]].process_archives
+        def receive_later(signature, **kwargs):
+            process(signature, **kwargs)
+            if signature:
+                self.package("later.7z", [archive_row("b_fast", "later")])
+        with patch.object(self.datasets[batch["origin"]], "process_archives", side_effect=receive_later):
+            result = self.catalog.start_task_clean(task_id, {}, background=False)
+        self.assertEqual((result["status"], result["completed"], result["remaining"]), ("finished", 1, 0))
+        self.assertEqual(result["batch_ids"], [batch["id"]])
+        self.assertEqual([row["name"] for row in self.catalog.snapshot(query)["batches"]], ["later.7z"])
+
+    def test_task_clean_stop_finishes_current_package_and_leaves_later_packages_ready(self):
+        self.package("first.7z", [archive_row("b_fast", "first")])
+        self.package("second.7z", [archive_row("b_fast", "second")])
+        task_id = self.batches()[0]["task_id"]
+        dataset = self.datasets["/data/post_training_model"]
+        process = dataset.process_archives
+        def stop_after_current(signature, **kwargs):
+            process(signature, **kwargs)
+            if signature:
+                self.assertEqual(self.catalog.start_task_clean(task_id, {})["status"], "running")
+                self.assertEqual(self.catalog.stop_task_clean(task_id, {})["status"], "stopping")
+        with patch.object(dataset, "process_archives", side_effect=stop_after_current):
+            result = self.catalog.start_task_clean(task_id, {}, background=False)
+        self.assertEqual((result["status"], result["completed"], result["remaining"]), ("stopped", 1, 1))
+        self.assertEqual(sorted(batch["status"] for batch in self.batches()), ["cleaned", "ready"])
+
+    def test_task_cancel_before_commit_rolls_back_stages_and_can_resume(self):
+        self.package("first.7z", [archive_row("b_fast", "first")])
+        self.package("second.7z", [archive_row("b_fast", "second")])
+        task_id = self.batches()[0]["task_id"]
+        dataset = self.datasets["/data/post_training_model"]
+        prepare = dataset.prepare_archive_files
+        def cancel_before_commit(changes):
+            result = prepare(changes)
+            self.assertEqual(self.catalog.stop_task_clean(task_id, {}, cancel=True)["status"], "cancelling")
+            return result
+        with patch.object(dataset, "prepare_archive_files", side_effect=cancel_before_commit):
+            result = self.catalog.start_task_clean(task_id, {}, background=False)
+        self.assertEqual((result["status"], result["completed"], result["remaining"]), ("cancelled", 0, 2))
+        self.assertEqual(sorted(batch["status"] for batch in self.batches()), ["interrupted", "ready"])
+        self.assertEqual(dataset.known_days(), [])
+        self.assertEqual(list(dataset.output_dir.rglob("*.tmp")), [])
+        result = self.catalog.start_task_clean(task_id, {}, background=False)
+        self.assertEqual((result["status"], result["completed"]), ("finished", 2))
+        self.assertEqual({batch["status"] for batch in self.batches()}, {"cleaned"})
+
+    def test_discovery_observes_external_aime_publication_without_cleaning_again(self):
+        dataset = self.datasets["/data/aime"]
+        row = archive_row("a_fast", "aime-case", meta_fields={"agent_mode": "fast", "trace_id": "aime-trace"})
+        (dataset.archive_dir / "aime.7z").write_text(json.dumps({"answers.jsonl": json.dumps(row)}))
+        batch = next(batch for batch in self.batches() if batch["origin"] == "/data/aime")
+        self.assertEqual(batch["status"], "ready")
+        with dataset.archive_lock(), patch("multi_agent_inputs.app.SevenZipFile", FakeArchive):
+            dataset.process_archives(app.archive_signature(dataset.archive_dir))
+        with patch.object(dataset, "process_archives", side_effect=AssertionError("discovery must only observe")):
+            current = next(item for item in self.batches() if item["id"] == batch["id"])
+        self.assertEqual(current["status"], "cleaned")
+        report = self.catalog.report(batch["id"], {"section": ["records"]})
+        self.assertEqual(report["items"][0]["original_file"], "aime.7z/answers.jsonl")
+
+    def test_discovery_never_adopts_an_unfinished_external_publication(self):
+        self.package()
+        batch = self.batches()[0]
+        dataset = self.datasets[batch["origin"]]
+        with dataset.archive_lock():
+            dataset.process_archives(app.archive_signature(dataset.archive_dir))
+        source = dataset.open_archive_index()
+        try:
+            with source:
+                source.execute("INSERT INTO pending VALUES (1, '{}')")
+            self.assertEqual(self.batches()[0]["status"], "ready")
+            with source:
+                source.execute("DELETE FROM pending")
+            self.assertEqual(self.batches()[0]["status"], "cleaned")
+        finally:
+            source.close()
+
     def test_missing_identity_index_cannot_silently_replace_a_published_answer(self):
         self.package("0123456789abcdef_20261019_010000.7z")
         self.clean([self.batches()[0]["id"]])
@@ -279,6 +372,20 @@ class WorkbenchTest(unittest.TestCase):
         base = f"http://127.0.0.1:{server.server_port}/data/workbench/"
         with urlopen(base + "catalog") as response:
             data = json.load(response)
+        task_id = next(task["id"] for task in data["tasks"] if task["source"] == "aime")
+        clean_path = f"tasks/{task_id}/clean"
+        with urlopen(base + clean_path) as response:
+            self.assertEqual(json.load(response)["status"], "idle")
+        for action in ("", "/stop", "/cancel"):
+            with urlopen(Request(base + clean_path + action, data=b'{}', headers={"Content-Type": "application/json"})) as response:
+                self.assertEqual(response.status, 202)
+                self.assertEqual(json.load(response)["task_id"], task_id)
+        with self.assertRaises(HTTPError) as invalid:
+            urlopen(Request(base + clean_path, data=b'{"input_path":"/arbitrary"}', headers={"Content-Type": "application/json"}))
+        self.assertEqual(invalid.exception.code, 400)
+        invalid.exception.close()
+        with urlopen(base + "catalog?source=wencai&status=ready") as response:
+            self.assertEqual(json.load(response)["total"], 0)
         batch = next(item for item in data["batches"] if item["name"] == "batch.7z")
         with urlopen(base + f"batches/{batch['id']}/report?page=2") as response:
             self.assertEqual(len(json.load(response)["items"]), 5)

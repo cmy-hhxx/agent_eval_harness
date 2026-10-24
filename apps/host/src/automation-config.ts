@@ -23,6 +23,8 @@ export interface AutomationConfig extends PipelineOptions {
   publishProgress: boolean;
   publishMongo: boolean;
   publishStatisticsLog: boolean;
+  autoClean?: boolean;
+  runtimeSettings?: { engine: "pi" | "prime"; debug: boolean; settings: Record<string, unknown> };
   prediction?: { answersFile: string; sourceConfig: string };
   /** Accepted prediction replacements applied to this source's publication and statistics. */
   predictionResults?: string;
@@ -43,7 +45,7 @@ export async function loadAutomationConfig(file: string): Promise<AutomationConf
   const keys = ["id", "sourceUrl", "remoteModels", "fromDate", "throughDate", "completedDates", "hostConfigs", "stateDirectory",
     "sourceDirectory", "runPrefix", "engine", "pollMs", "refreshMs", "retryMs", "maxEvaluationAttempts",
     "requestTimeoutMs", "dailyComparisonLimitPerTier", "channelConcurrency", "publishProgress", "publishMongo", "publishStatisticsLog", "publication",
-    "prediction", "predictionResults"];
+    "prediction", "predictionResults", "autoClean"];
   for (const key of Object.keys(raw)) if (!keys.includes(key)) throw new Error(`Unknown automation setting: ${key}`);
   const string = (key: string): string => {
     if (typeof raw[key] !== "string" || !raw[key]) throw new Error(`Invalid automations.${key}`);
@@ -71,10 +73,12 @@ export async function loadAutomationConfig(file: string): Promise<AutomationConf
   const source = prediction ? pathToFileURL(prediction.answersFile) : new URL(string("sourceUrl"));
   if (!prediction && (!["http:", "https:"].includes(source.protocol) || source.username || source.password || source.search || source.hash))
     throw new Error("sourceUrl must be an HTTP(S) service URL without credentials/query/fragment");
-  const fromDate = string("fromDate"), throughDate = raw.throughDate === undefined ? undefined : string("throughDate");
+  const fromDate = raw.fromDate === null ? null : string("fromDate");
+  const throughDate = raw.throughDate === null ? null : raw.throughDate === undefined ? undefined : string("throughDate");
   const completedDates = strings("completedDates");
-  if (![fromDate, ...(throughDate ? [throughDate] : []), ...completedDates].every(validInputDate) ||
-      (throughDate && throughDate < fromDate)) throw new Error("Invalid automation date range");
+  if (![...(fromDate ? [fromDate] : []), ...(throughDate ? [throughDate] : []), ...completedDates].every(validInputDate) ||
+      (throughDate && fromDate && throughDate < fromDate)) throw new Error("Invalid automation date range");
+  if (raw.autoClean !== undefined && typeof raw.autoClean !== "boolean") throw new Error("Invalid automations.autoClean");
   const engine = string("engine");
   if (engine !== "pi" && engine !== "prime") throw new Error("Invalid automation engine");
   if (typeof raw.publishProgress !== "boolean") throw new Error("Invalid automations.publishProgress");
@@ -116,6 +120,7 @@ export async function loadAutomationConfig(file: string): Promise<AutomationConf
     publishProgress: raw.publishProgress,
     publishMongo: raw.publishMongo,
     publishStatisticsLog: raw.publishStatisticsLog,
+    autoClean: raw.autoClean as boolean | undefined,
     ...(prediction ? { prediction } : {}),
     ...(predictionResults ? { predictionResults } : {}),
     publication: { ...publication, logFile: path.resolve(directory, publication.logFile), logUrl: logUrl.href },
@@ -137,7 +142,7 @@ export function automationEvaluationConfig(base: EvalConfig, sourceDirectory: st
       batches: [date],
     },
     comparisons: base.comparisons,
-    rewrite: { comparison: true, comparisonItems: true, attribution: true, clustering: true },
+    rewrite: base.rewrite,
     clustering: { ...base.clustering, enabled: false },
   };
 }

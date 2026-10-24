@@ -1,137 +1,67 @@
-import test from "node:test";
-import assert from "node:assert/strict";
-import { readFile } from "node:fs/promises";
-import path from "node:path";
-import { createRequire } from "node:module";
-import { build } from "esbuild";
-import { ROOT } from "../../fixtures/services.js";
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import { readFile } from 'node:fs/promises';
+import path from 'node:path';
+import { createRequire } from 'node:module';
+import { build } from 'esbuild';
+import { ROOT } from '../../fixtures/services.js';
+const { JSDOM } = createRequire(import.meta.url)('jsdom');
 
-const { JSDOM } = createRequire(import.meta.url)("jsdom");
-
-test("Tabler workbench switches modules in place, preserves state and isolates unavailable services", async () => {
-  const directory = path.join(ROOT, "apps/host/dashboard");
-  const dom = new JSDOM(await readFile(path.join(directory, "workbench.html"), "utf8"), { url:"http://fixture/", runScripts:"outside-only" });
-  const stylesheet = dom.window.document.createElement("style");
-  stylesheet.textContent = await readFile(path.join(directory, "workbench.css"), "utf8");
-  dom.window.document.head.append(stylesheet);
-  const compiled = await build({ entryPoints:[path.join(directory, "workbench.js")], bundle:true, write:false, format:"esm", platform:"browser" });
-  const requests: string[] = [], faults: unknown[] = [];
-  let failProblems = true;
-  const json = (value: unknown, status = 200) => new Response(JSON.stringify(value), { status });
+test('three-module workbench defaults to both daily sources and keeps results and lower-frequency work in place', async () => {
+  const directory = path.join(ROOT,'apps/host/dashboard');
+  const dom = new JSDOM(await readFile(path.join(directory,'workbench.html'),'utf8'),{url:'http://fixture/',runScripts:'outside-only'});
+  const stylesheet = dom.window.document.createElement('style'); stylesheet.textContent = await readFile(path.join(directory,'workbench.css'),'utf8'); dom.window.document.head.append(stylesheet);
+  const compiled = await build({entryPoints:[path.join(directory,'workbench.js')],bundle:true,write:false,format:'esm',platform:'browser'});
+  const requests:string[] = [], faults:unknown[] = []; let failProblems = true;
   dom.window.setInterval = dom.window.setTimeout = () => 0;
-  dom.window.scrollTo = ({ top }: { top: number }) => { dom.window.scrollY = top; };
-  dom.window.HTMLElement.prototype.scrollIntoView = () => {};
-  const waitFor = async (condition: () => boolean) => {
-    for (let i=0; i<100; i++) { if (condition()) return; await new Promise(resolve => setTimeout(resolve, 10)); }
-    assert.fail("module did not finish loading");
-  };
-  const select = async (id: string) => {
-    dom.window.document.getElementById(`nav-${id}`).click();
-    await waitFor(() => dom.window.document.getElementById(id).getAttribute("aria-busy") === "false");
-    await new Promise(setImmediate);
-    assert.equal(dom.window.document.querySelectorAll('[role=tabpanel]:not([hidden])').length, 1);
-    assert.equal(dom.window.document.getElementById(id).hidden, false);
-    assert.equal(dom.window.document.getElementById(`nav-${id}`).getAttribute("aria-selected"), "true");
-  };
-  dom.window.addEventListener("error", (event: ErrorEvent) => faults.push(event.error));
-  dom.window.fetch = async (url: string) => {
+  dom.window.scrollTo = ({top}:{top:number}) => {dom.window.scrollY=top;}; dom.window.HTMLElement.prototype.scrollIntoView = () => {};
+  const wait = async (condition:()=>boolean) => {for(let n=0;n<100;n++){if(condition())return;await new Promise(resolve=>setTimeout(resolve,10));}assert.fail('module did not load');};
+  dom.window.addEventListener('error',(event:ErrorEvent)=>faults.push(event.error));
+  const json = (value:unknown,status=200) => new Response(JSON.stringify(value),{status});
+  dom.window.fetch = async (url:string) => {
     requests.push(url);
-    if (url.startsWith("/workbench-assets/")) {
-      const file = url.split("/").at(-1)!;
-      if (file === "problems.html" && failProblems) { failProblems = false; return new Response("Unavailable", { status:503 }); }
-      if (file === "tabler.css") return new Response(await readFile(path.join(ROOT, "node_modules/@tabler/core/dist/css/tabler.min.css"), "utf8"));
-      const dataFiles: Record<string,string> = { "data.html":"dashboard.html", "data.css":"dashboard.css", "records.html":"records.html" };
-      return new Response(await readFile(Object.hasOwn(dataFiles,file) ? path.join(ROOT,"server_dashboard_ths",dataFiles[file]) : path.join(directory,file),"utf8"));
+    if(url.startsWith('/workbench-assets/')) {
+      const file=url.split('/').at(-1)!;
+      if(file==='problems.html'&&failProblems){failProblems=false;return new Response('Unavailable',{status:503});}
+      if(file==='tabler.css')return new Response(await readFile(path.join(ROOT,'node_modules/@tabler/core/dist/css/tabler.min.css'),'utf8'));
+      const dataFiles:Record<string,string>={'data.html':'dashboard.html','data.css':'dashboard.css','records.html':'records.html'};
+      return new Response(await readFile(Object.hasOwn(dataFiles,file)?path.join(ROOT,'server_dashboard_ths',dataFiles[file]):path.join(directory,file),'utf8'));
     }
-    if (url.startsWith("/data/workbench/catalog")) return json({ tasks:[
-      { id:"daily", name:"问财日常评测", source:"wencai", category:"daily", dataset:"/data/wencai", profile:"wencai" },
-      { id:"post", name:"后训练评测", source:"wencai", category:"task", dataset:"/data/post_training_model", profile:"post_training_model" },
-    ], batches:[], total:0, page:1, page_size:50 });
-    if (url === "/health") return json({ ok:true });
-    if (url.startsWith("/runtime/api/status")) return json({ id:"fixture", sourceName:"普通四路", sources:[{ id:"fixture", name:"普通四路", status:"stopped", dateCount:0 }], status:"stopped", sampledAt:Date.now(), llm:{ sources:[],active:[] }, jobs:[], publishMongo:true, publishStatisticsLog:false });
-    if (url.startsWith("/runtime/api/errors")) return json({ sourceId:"fixture",sourceName:"普通四路",page:1,pageSize:10,total:0,dates:[],records:[],sampledAt:Date.now() });
-    if (url.endsWith("/analysis")) return json({ jobs:[] });
-    if (url.endsWith("/batch-runs")) return json({ runs:[] });
-    if (url.endsWith("/runs")) return json({ runs:[],errors:[] });
-    if (url.endsWith("/inputs")) return json({ status:"ready",dates:[],issues:0 });
-    if (url.endsWith("/library")) return json([]);
-    if (url.endsWith("/config") || url.endsWith("/reference")) return json({ error:"配置不可用" },503);
-    if (url.endsWith("/dashboard-data")) return json({ dates:[],evaluation:{ status:"stopped",dates:[] } });
-    if (url.endsWith("/processing-status")) return json({ pending:0,failed:[],archive:null });
-    throw new Error(`Unexpected request: ${url}`);
+    if(url==='/health')return json({ok:true});
+    if(url==='/runtime/api/daily')return json({sources:['wencai','aime'].map(id=>({id,name:id,status:'idle',concurrency:id==='aime'?64:32,activeRequests:0,waitingRequests:0,settings:{engine:'pi',execution:{timeoutSeconds:600,maxToolCalls:8,retries:1},bindings:{},rewrite:{}},modelCatalog:[],packages:{items:[{id:id+'-package',name:id+'.7z',status:'cleaned',accepted:1,excluded:1}],total:1,page:1,pageSize:40},stages:{},runs:[]})),requests:[]});
+    if(url.includes('/packages/')&&url.includes('/report?'))return json({batch_id:'package',status:'cleaned',summary:{read:2,accepted:1,excluded:1,questions:1},section:'exclusions',page:1,page_size:50,total:1,items:[{model:'model',case_id:'isolated',original_file:'archive.7z/member.jsonl',original_line:2,reason:'invalid_input'}]});
+    if(url==='/runtime/api/daily/aime/runs')return json({runs:[]});
+    if(url.startsWith('/data/workbench/catalog'))return json({tasks:[{id:'daily',name:'问财日常评测',source:'wencai',category:'daily',dataset:'/data/wencai',profile:'wencai'}],batches:[],total:0,page:1,page_size:50});
+    if(url.endsWith('/runs'))return json({runs:[],errors:[]});
+    if(url.endsWith('/batch-runs'))return json({runs:[]});
+    if(url.endsWith('/analysis'))return json({jobs:[]});
+    if(url.endsWith('/inputs'))return json({status:'ready',dates:[],issues:0});
+    if(url.endsWith('/config'))return json({error:'配置不可用'},503);
+    if(url.endsWith('/library'))return json([]);
+    throw new Error('Unexpected request: '+url);
   };
+  const select = async(id:string)=>{dom.window.document.getElementById('nav-'+id).click();await wait(()=>dom.window.document.getElementById(id).getAttribute('aria-busy')==='false');await new Promise(setImmediate);assert.equal(dom.window.document.querySelectorAll('[role=tabpanel]:not([hidden])').length,1);};
   try {
-    await dom.window.eval(`(async () => { ${compiled.outputFiles[0].text}\n })()`);
-    await new Promise(setImmediate);
-    assert.deepEqual(faults, []);
-    assert.equal(dom.window.location.href,"http://fixture/");
-    assert.equal(dom.window.document.querySelector("iframe"),null);
-    assert.equal(dom.window.document.querySelectorAll('[role=tabpanel]:not([hidden])').length, 1);
-    assert.equal(dom.window.document.getElementById("runs-content").shadowRoot, null);
-    assert.equal(dom.window.document.getElementById("runs-content").hidden, true);
-    assert.equal(dom.window.document.getElementById("samples-content").hidden, true);
-    assert.notEqual(dom.window.getComputedStyle(dom.window.document.getElementById("data-content")).display, "none", "mounted shadow content must remain visible");
-    assert.equal(requests.some(url => url.endsWith("/runs")), false);
-    assert.equal(requests.some(url => url.includes("dashboard-data")), false);
-    for (const module of ["monitor", "runs", "errors", "problems"]) await select(module);
-    const failedModule = dom.window.document.getElementById("problems-content");
-    assert.match(failedModule.textContent, /503/);
-    assert.notEqual(dom.window.getComputedStyle(failedModule).display, "none", "load errors must remain visible");
-    assert.equal(dom.window.document.getElementById("monitor-content").shadowRoot.querySelector(".mount-error"), null);
-    failedModule.querySelector("button").click();
-    await waitFor(() => Boolean(failedModule.shadowRoot?.getElementById("problem-tree")));
-    await select("reference");
-    for (const id of ["monitor","data","runs","errors","problems","definitions"]) {
-      const root = dom.window.document.getElementById(`${id}-content`).shadowRoot;
-      assert(root, id);
-      assert.equal(dom.window.document.getElementById(`${id}-content`).hidden, false, id);
-      assert.notEqual(dom.window.getComputedStyle(dom.window.document.getElementById(`${id}-content`)).display, "none", id);
-      assert.equal(root.querySelector("iframe, details, .workspace-nav, .page-tabs"),null,id);
-      assert.equal(root.querySelector(".mount-error"),null,id);
-    }
-    assert(requests.includes("/runtime/api/dashboard/runs"));
-    await select("data");
-    const dataHost = dom.window.document.getElementById("data-content");
-    const intake = dataHost.shadowRoot;
-    const category = intake.getElementById("intake-category");
-    category.value = "task"; category.dispatchEvent(new dom.window.Event("change"));
-    await waitFor(() => requests.some(url => url.includes("catalog?") && url.includes("category=task")));
-    await new Promise(setImmediate);
-    const task = intake.getElementById("intake-task");
-    task.value = "post"; task.dispatchEvent(new dom.window.Event("change"));
-    await waitFor(() => !intake.getElementById("intake-browse").disabled);
-    intake.getElementById("intake-browse").click();
-    await waitFor(() => requests.includes("/data/post_training_model/dashboard-data"));
-    const catalog = dom.window.document.getElementById("catalog-content").shadowRoot;
-    assert.equal(catalog.querySelector(".dataset-range-models").textContent, "2 个模型");
-    assert.match(catalog.querySelector("thead").textContent, /AA-fast.*AA-post_train_fast_V1/);
-    assert.equal(catalog.querySelectorAll("thead th").length, 2);
-    assert.equal(dataHost.shadowRoot, intake, "filters must preserve the task workspace");
-    const monitor = dom.window.document.getElementById("monitor-content").shadowRoot;
-    for (const id of ["dates","activity","mongo-deliveries","deliveries"]) assert.equal(monitor.getElementById(id).hidden,false);
-    assert.match(dom.window.document.getElementById("definitions-content").shadowRoot.textContent,/配置不可用/);
-    await select("runs");
-    const runsRoot = dom.window.document.getElementById("runs-content").shadowRoot;
-    runsRoot.getElementById("sample-seed").value = "73";
-    dom.window.scrollY = 640;
-    const requestCount = requests.filter(url => url.endsWith("/runs")).length;
-    await select("data");
-    await select("runs");
-    assert.equal(dom.window.document.getElementById("runs-content").shadowRoot, runsRoot);
-    assert.equal(runsRoot.getElementById("sample-seed").value, "73");
-    assert.equal(dom.window.scrollY, 640);
-    assert.equal(requests.filter(url => url.endsWith("/runs")).length, requestCount);
-    assert.equal(dom.window.location.pathname, "/");
-    assert.equal(dom.window.location.hash, "#runs");
-    assert.equal(dom.window.sessionStorage.getItem("workbench-module"), "runs");
-    assert.equal(runsRoot.getElementById("sample-seed").classList.contains("form-control"), true);
-    assert.equal(monitor.querySelector("table").classList.contains("table"), true);
-    dom.window.document.getElementById("nav-runs").dispatchEvent(new dom.window.KeyboardEvent("keydown", { key:"ArrowDown", bubbles:true }));
-    assert.equal(dom.window.document.getElementById("errors").hidden, false);
-    dom.window.location.hash = "data";
-    dom.window.dispatchEvent(new dom.window.HashChangeEvent("hashchange"));
-    assert.equal(dom.window.document.getElementById("data").hidden, false);
-    assert.equal(dom.window.document.querySelectorAll('[role=tabpanel]:not([hidden])').length, 1);
-    assert.deepEqual(faults, []);
-  } finally { dom.window.close(); }
+    await dom.window.eval(`(async()=>{${compiled.outputFiles[0].text}\n})()`); await new Promise(setImmediate);
+    assert.deepEqual([...dom.window.document.querySelectorAll('[data-module]')].map((item:any)=>item.textContent),['评测','结果','更多']);
+    const daily=dom.window.document.getElementById('daily-content'); assert.equal(daily.hidden,false); assert.notEqual(dom.window.getComputedStyle(daily).display,'none');
+    assert.match(daily.shadowRoot.textContent,/问财日常四路.*AIME 日常全量/s); assert.equal(dom.window.document.querySelector('iframe'),null);
+    assert.equal(requests.some(url=>url.includes('/dashboard/')),false); assert.equal(requests.some(url=>url.includes('reference')),false);
+    await select('results'); const wencai=dom.window.document.getElementById('wencai-results-content'); assert.equal(wencai.hidden,false); assert.equal(wencai.shadowRoot.getElementById('config').hidden,true);
+    assert.equal(requests.includes('/runtime/api/dashboard/config'),false); assert.equal(requests.includes('/runtime/api/dashboard/inputs'),false);
+    dom.window.document.querySelector('[data-results-source=aime]').click(); await wait(()=>Boolean(dom.window.document.getElementById('aime-results-content').shadowRoot)); assert.equal(wencai.hidden,true);
+    const aime=dom.window.document.getElementById('aime-results-content').shadowRoot; aime.getElementById('aime-query').value='我的草稿';
+    dom.window.document.querySelector('[data-results-source=wencai]').click(); dom.window.document.querySelector('[data-results-source=aime]').click(); assert.equal(aime.getElementById('aime-query').value,'我的草稿');
+    dom.window.document.getElementById('results-quarantine').click(); await wait(()=>requests.some(url=>url.includes('/aime/packages/aime-package/report?section=exclusions')));
+    await wait(()=>daily.shadowRoot.getElementById('daily-report-section').value==='exclusions'); assert.equal(dom.window.document.getElementById('evaluate').hidden,false); assert.equal(daily.shadowRoot.getElementById('daily-title').textContent,'AIME 日常全量');
+    await select('results'); assert.equal(aime.getElementById('aime-query').value,'我的草稿'); dom.window.document.querySelector('[data-results-source=wencai]').click(); dom.window.document.getElementById('results-quarantine').click();
+    await wait(()=>requests.some(url=>url.includes('/wencai/packages/wencai-package/report?section=exclusions'))); assert.equal(daily.shadowRoot.getElementById('daily-title').textContent,'问财日常四路');
+    await select('more'); const intake=dom.window.document.getElementById('data-content').shadowRoot; intake.getElementById('intake-category').value='task';
+    const more=dom.window.document.getElementById('more-section'); more.value='problems'; more.dispatchEvent(new dom.window.Event('change'));
+    const problemHost=dom.window.document.getElementById('problems-content'); await wait(()=>Boolean(problemHost.querySelector('button'))); assert.match(problemHost.textContent,/503/); assert.equal(problemHost.hidden,false);
+    problemHost.querySelector('button').click(); await wait(()=>Boolean(problemHost.shadowRoot?.getElementById('problem-tree')));
+    more.value='data'; more.dispatchEvent(new dom.window.Event('change')); assert.equal(dom.window.document.getElementById('data-content').shadowRoot,intake); assert.equal(intake.getElementById('intake-category').value,'task');
+    dom.window.scrollY=640; await select('evaluate'); await select('more'); assert.equal(dom.window.scrollY,640); assert.equal(dom.window.location.hash,'#more'); assert.equal(dom.window.sessionStorage.getItem('workbench-module'),'more');
+    assert.equal(requests.some(url=>url.includes('reference')),false); assert.deepEqual(faults,[]);
+  } finally {dom.window.close();}
 });

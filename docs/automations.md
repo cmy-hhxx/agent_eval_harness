@@ -2,25 +2,17 @@
 
 [返回首页](../README.md) · [部署](deployment.md) · [远程接口](handoff.md) · [运行与恢复](usage.md#运行与恢复)
 
-工作台自动化服务由 `workbench.sh` 启动，默认等待手动运行，不启动任何来源流水线。在运行监控选中来源并点击「运行」后，该来源才轮询同机数据服务，下载并校验输入快照，调用 Host 完成 Criteria、Attribution、Comparison 和 Rewrite，再增量交付 MongoDB 并生成统计快照。自动化不运行聚类。
+工作台自动化服务由 `workbench.sh` 启动，默认等待手动运行。首页并列问财日常四路与 AIME 日常全量，独立控制、可同时运行。
 
-AIME 单模型归因使用独立的 [增量脚本](aime-incremental.md)：`npm run aime:ingest-and-attribute -- --config <配置文件> --watch`，并发 64，每轮完成后自动扫描新包，主动停止后保留进度。该入口不经过工作台的对比、MongoDB 和统计上传流程。
+问财使用持续比较流水线：自动清洗目录包、安装输入、执行标准／归因／比较／改写，正式结果独立增量交付 MongoDB。AIME 使用[两阶段增量入口](aime-incremental.md)，执行 Score 与 Attribution，只保存正式文件和页面结果。两者默认全量，统计日志生成与上报关闭，聚类另行手动启动。
 
 ## 来源清单
 
-`configs/automations.manifest.json` 是生产来源清单。清单中的每个 `config` 相对 `workbench.json` 的 `runtime.configDirectory` 解析；当前只登记：
-
-```json
-{
-  "sources": [
-    { "name": "普通四路", "config": "automations.json" }
-  ]
-}
-```
+`configs/automations.manifest.json` 是生产来源清单。来源配置相对 `workbench.json` 的 `runtime.configDirectory` 解析。当前登记问财 `comparison` 与 AIME `answer-review`，两者分别组装自己的执行器与正式状态读取器。
 
 增加来源只修改外部自动化配置并登记清单，然后重启工作台；`workbench.sh` 和调度实现不保存来源名称列表。显式 `--config` 只用于开发、测试或单来源 CLI；生产不传 `--config`。
 
-日常评测在手动运行后使用上述持续流水线；数据集经常变化的专项任务独立导入、核对后再按需执行。后训练专项在数据与任务区选择批次清洗，操作见[数据服务](../server_dashboard_ths/README.md)；`automations-post-training.json` 限定 2026-10-19 双模型数据，使用 `task-post-training-` 前缀、DeepSeek（`deepseek-v4.1-flash`）高档（high）推理和并发 32，不登记到日常清单。单独启动时，将工作台的 `runtime.manifest` 指向 checkout 外的专项清单，仅登记该配置并命名为“专项 · 后训练双模型 · 678 对”；看板按独立任务显示进度，点击该来源「运行」后才执行。
+日常评测在手动运行后自动清洗并持续评测；数据集经常变化的专项任务独立导入、核对后再按需执行。后训练专项在数据与任务区选择批次清洗，操作见[数据服务](../server_dashboard_ths/README.md)；`automations-post-training.json` 限定 2026-10-19 双模型数据，使用 `task-post-training-` 前缀、DeepSeek（`deepseek-v4.1-flash`）高档（high）推理和并发 32，不登记到日常清单。单独启动时，将工作台的 `runtime.manifest` 指向 checkout 外的专项清单，仅登记该配置并命名为“专项 · 后训练双模型 · 678 对”；看板按独立任务显示进度，点击该来源「运行」后才执行。
 
 每个来源必须显式配置 `publishMongo`。日常任务为 `true`；后训练专项为 `false`，输入校验和本地评测不依赖 MongoDB，结果与恢复状态仍正常落盘，监控显示“本地保存”。关闭时不执行输入上传、增量结果上传或日期交付，也不要求 MongoDB 凭据；预测替换任务必须启用该项。此开关与 `publishStatisticsLog` 独立，开启交付时仍严格报错，不因权限或连接失败自动切换为本地模式。
 
@@ -50,14 +42,14 @@ npm run automations -- serve --port 4174
 
 ## 数据链路
 
-1. 数据服务检测登记任务的新包并稳定 30 秒；日常与专项均等待选择批次并点击清洗，完成后发布 JSONL 和 ready 状态。
+1. 数据服务检测登记任务的新包并等待稳定；运行中的问财来源自动清洗待处理包，AIME 使用专用增量清洗器。专项仍支持手动清洗。
 2. 手动点击来源「运行」后，流水线轮询 `http://127.0.0.1:8081/data/wencai/dashboard-data`。
-3. 对已就绪日期流式下载各模型 JSONL，校验 `Content-Length`、JSONL 和实际行数。
+3. 对已就绪日期流式安装各模型 JSONL，校验 `Content-Length`、JSONL 和实际行数；安装不依赖 MongoDB。
 4. 完整输入提升为可恢复快照；旧输入的评测与 Mongo 交付结束前不替换。
 5. Host 执行标准、归因、对比和改写，接受结果与 UUID 写入 run 状态。
-6. 比较改写成功的结果增量写入 MongoDB；Mongo 失败不阻塞其他日期。
+6. 交付队列固定一致的输入和已接受结果，先上传输入再上传比较；Mongo 失败不阻塞评测或新快照安装。
 7. 同机 POST 进度到数据服务。
-8. 每四小时生成累计统计快照并进入 relay 待传队列。
+8. 仅显式启用统计日志的来源生成四小时快照；日常来源默认关闭。
 
 输入、恢复和产物的本地路径语义见[使用指南](usage.md)。原始源输入只保留在 `/mnt/fin_bench/eval_data`，不在每个 run 复制正文。
 
@@ -123,7 +115,7 @@ npm run report:relay -- --resolve <traceId> --outcome retry
 
 ## 监控与错误
 
-`/` 单页工作台直接显示自动化状态、来源、日期、阶段任务、实际 LLM 调用、并发分配、Mongo 回执、统计 relay 状态、正式 run、样本结果、错误、问题库和流程定义。通过一级模块导航原位切换，模块内定位、筛选与分页都在当前页完成。
+`/` 通过评测、结果、更多组织两条日常主线。评测页展示来源、日期、阶段、实际请求、并发及问财 Mongo 回执；结果页读取两种 workflow 的正式产物；低频任务、错误历史、问题库和显式统计交付收在更多。
 
 错误进入根 `runtime.log`；正式接受记录进入 `evaluation.log`；统计交付记录进入 `comparison-statistics-log.jsonl`。不新增自动化私有日志、轮转或 daemon。
 

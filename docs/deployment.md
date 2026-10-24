@@ -94,7 +94,7 @@ npm run build
 - 启动前校验固定工具链、配置、持久目录、密钥权限、运行账号权限和全部端口。
 - 端口被其他进程占用时拒绝启动，不自动换端口。
 - 数据服务、自动化看板服务和运行实例看板异常退出后按 `1s, 2s, 4s, 8s, 16s` 退避重启；同一服务在五分钟内超过五次重启、返回配置错误或端口冲突时停止整套服务。
-- 启动与重启只恢复服务，不自动恢复来源流水线。运行监控按来源点击「运行」后持续执行，点击「停止」后等待再次手动运行。
+- 启动与重启只恢复服务，不自动恢复来源流水线。评测页按来源点击「评测」后持续执行；暂停等待在途收尾，立即停止中断在途，之后手动继续。
 - Ctrl+C 或 SIGTERM 先停止公网接入，再依次停止自动化、运行实例看板和数据服务；自动化进程完成 Host 进度保存后退出。
 - supervisor 输出留在 tmux；应用日志只写现有 `runtime.log`、`evaluation.log` 和统计 JSONL，不创建轮转或私有日志。
 
@@ -124,12 +124,12 @@ npm run report:relay -- --resolve <traceId> --outcome retry
 
 `/mnt/fin_bench/eval_data` 当前按来源组织：
 
-- `0_wencai/1_7z_data` 与 `0_wencai/2_daily_eval_input/<model>/<date>.jsonl`
+- `0_wencai/1_7z_data/A_AA_comparision_data` 与 `0_wencai/2_daily_eval_input/<model>/<date>.jsonl`
 - 后训练专项：`0_wencai/1_7z_data/post_train_model` 与 `0_wencai/5_multi_task_eval_input/post_train_model_eval/<model>/<date>.jsonl`；在[数据与任务](../server_dashboard_ths/README.md#任务压缩包批次与清洗)中点击清洗发布，不加入日常自动评测清单。
-- `1_aime/1_7z_data` 与 `1_aime/2_daily_eval_input/<model>/<date>.jsonl`
+- `1_aime/1_7z_data/online_data` 与 `1_aime/2_daily_eval_input/<model>/<date>.jsonl`
 - `2_ifind/1_7z_data` 与 `2_ifind/2_daily_eval_input/<model>/<date>.jsonl`
 
-工作台发现登记目录中的包并保存持久批次；日常与专项均由页面选择批次并手动清洗。已有正式输入文件保留但不自动回填 ready。新任务创建独立收包与输出目录，目录和状态说明见[数据服务](../server_dashboard_ths/README.md)。外部状态位于 `runtime/state/data-service`，SQLite、ready、偏移索引、进度和临时解压目录均不在 checkout。
+工作台发现登记目录中的包并保存持久批次；日常来源手动启动后自动清洗积压并持续接入新包，专项由页面选择批次并手动清洗。AIME 接管时核对已有规范输入与增量收据，分别补齐评分和归因覆盖。新任务创建独立收包与输出目录，目录和状态说明见[数据服务](../server_dashboard_ths/README.md)。外部状态位于 `runtime/state/data-service`，SQLite、ready、偏移索引、进度和临时解压目录均不在 checkout。
 
 手动启动来源后，流水线从 `http://127.0.0.1:8081/data/wencai` 读取日常四路，并把进度直接上报同一数据服务。
 
@@ -143,3 +143,16 @@ curl -fsS http://127.0.0.1:4173/api/health
 ```
 
 `/health` 未登录可见且只返回服务健康；其余页面与 API 需要管理员会话，relay API 只接受 Bearer token。
+
+## 双日常来源配置
+
+首次安装由 `workbench:init` 创建问财与 AIME 的独立配置。已有服务器更新后，先停止工作台与独立 AIME watch，确认进度已保存，再运行：
+
+```bash
+npm run workbench:configure-daily -- --runtime-root /mnt/aigc_team/user_workspace/chenmingyang/eval_harness/runtime
+bash workbench.sh
+```
+
+配置工具登记问财四路和 AIME 两阶段日常，保留 AIME 状态目录、现有模型覆盖和其他专项来源；问财切换为全量、Flash high、并发32，AIME总并发64。当前构建 Host 基底替换旧 checkout 配置引用，密钥继续读取既有网关配置。工具不启动来源，服务起来后由页面点击评测。
+
+问财与 AIME 的运行/结果分别按自己的 workflow 读取，AIME 已接受归因保留，仅补缺少的评分。验收任务使用各来源 `eval_output/test_eval/`。

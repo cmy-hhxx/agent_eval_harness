@@ -149,3 +149,38 @@ class AimeOnceTest(unittest.TestCase):
         self.archive("second.7z", [session("two")]); self.process(["second.7z"])
         self.assertEqual(len(self.rows()), 2)
         self.assertTrue(file.read_bytes().endswith(b"\n"))
+
+    def test_historical_catalog_returns_coordinates_and_quarantines_missing_trace(self):
+        file = self.data.output_dir / "aime_fast/2026-10-23.jsonl"
+        file.parent.mkdir(parents=True)
+        valid = {**session(), "batch_id": "2026-10-23", "case_id": "historical",
+                 "_source": {"original_file": "old.7z/answers.jsonl", "original_line": 8, "original_item": 2}}
+        invalid = {"batch_id": "2026-10-23", "case_id": "invalid", "meta": {}}
+        file.write_text(json.dumps(valid) + "\n" + json.dumps(invalid) + "\n")
+        result = once.existing_records(self.data)
+        self.assertEqual(len(result["records"]), 1)
+        record = result["records"][0]
+        self.assertEqual((record["model"], record["date"], record["trace_id"], record["input_index"]),
+                         ("aime_fast", "2026-10-23", "trace-one", 0))
+        self.assertEqual(record["original_line"], 8)
+        self.assertNotIn("meta", record)
+        self.assertNotIn("traces", record)
+        self.assertEqual(result["exclusions"][0]["reason"], "trace_id_missing")
+
+    def test_pause_finishes_the_current_archive_and_leaves_the_next_unopened(self):
+        self.archive("first.7z", [session("first")])
+        self.archive("second.7z", [session("second")])
+        paused = False
+        process = self.data.process_archives
+        def pause_after_current(signature, **kwargs):
+            nonlocal paused
+            result = process(signature, **kwargs)
+            if signature:
+                paused = True
+            return result
+        with self.data.archive_lock(), patch.object(self.data, "process_archives", side_effect=pause_after_current):
+            result = once.process_snapshot(self.data, ["first.7z", "second.7z"], .001, .1, paused=lambda: paused)
+        self.assertEqual([report["archive"] for report in result["reports"]], ["first.7z"])
+        self.assertEqual(result["deferred"], [{"archive": "second.7z", "reason": "paused"}])
+        self.assertEqual(once.snapshot(self.data)["names"], ["second.7z"])
+        self.assertEqual(len(self.rows()), 1)

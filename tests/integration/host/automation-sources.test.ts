@@ -9,7 +9,6 @@ import { automationMongoTarget, automationSourceFiles, createAutomationMongoLane
 import { loadAutomationConfig } from "../../../apps/host/src/automation-config.js";
 import { automationCommand } from "../../../apps/host/src/automation-command.js";
 import { fixtureConfig, raw } from "../../fixtures/comparison.js";
-import { createMongoResultPublisher } from "../../../apps/host/src/automation-result-publication.js";
 import { ROOT } from "../../fixtures/services.js";
 
 const configuredSources = ["automations.json", "automations-six-models.example.json", "automations-post-training.json", "automations-prediction.json"]
@@ -17,15 +16,18 @@ const configuredSources = ["automations.json", "automations-six-models.example.j
 const configFiles = async (command: string, configured?: string[]) =>
   (await automationSourceFiles({ command, configured })).map(source => source.file);
 
-test("automation defaults to the registered daily source", async () => {
-  for (const command of ["run", "check", "status", "publish-log", "resolve-log", "retry"])
-    assert.deepEqual(await configFiles(command), [configuredSources[0]]);
+test("automation registers both daily workflows", async () => {
+  for (const command of ["run", "check", "status"])
+    assert.deepEqual((await automationSourceFiles({ command })).map(source => source.workflow), ["comparison", "answer-review"]);
+  for (const command of ["publish-log", "resolve-log", "retry"])
+    await assert.rejects(configFiles(command), /one --config/);
 });
 
 test("local-only task installs inputs without Mongo credentials or delivery", { timeout: 15000 }, async () => {
   const { directory, config: host } = await fixtureConfig();
   const config = await loadAutomationConfig(configuredSources[2]);
   const date = config.fromDate, requests: string[] = [];
+  assert(date);
   const server = await listen(async (_req, res, url) => {
     requests.push(url.pathname);
     if (url.pathname.endsWith("/dashboard-data")) return json(res, { dates: [{ date, ready: true,
@@ -55,14 +57,6 @@ test("local-only task installs inputs without Mongo credentials or delivery", { 
     assert.equal(state.jobs[date].download, "ready");
     assert.equal(state.jobs[date].mongo, undefined);
     assert.equal(requests.filter(url => url.endsWith(".jsonl")).length, 2);
-    let deliveries = 0;
-    config.publication.mongoUriEnv = "PATH";
-    const publisher = createMongoResultPublisher(config, async error => { throw error; }, async () => {
-      deliveries++; return { inputs: 0, comparisons: 1, inserted: 1, updated: 0, waitingForInputs: 0 };
-    });
-    publisher.observe({ ...state.jobs[date], summary: { stages: {}, skipped: 0, issues: 0, readyComparisons: 1 } }, AbortSignal.timeout(1000));
-    await publisher.settled();
-    assert.equal(deliveries, 0, "local-only results must not upload even when credentials exist");
     for (const publishMongo of [undefined, "false", 0]) {
       await writeJson(file, { ...config, publishMongo });
       await assert.rejects(loadAutomationConfig(file), /Invalid automations.publishMongo/);
@@ -86,7 +80,7 @@ test("explicit sources retain independent delivery and model allocation", async 
   assert.equal(new URL(four.sourceUrl).pathname, "/data/wencai");
   assert.equal(new URL(gpt.sourceUrl).pathname, "/data/gpt");
   assert.equal(gpt.remoteModels.length, 6);
-  assert.equal(four.publishStatisticsLog, true);
+  assert.equal(four.publishStatisticsLog, false);
   assert.equal(gpt.publishStatisticsLog, false);
   assert.notEqual(four.stateDirectory, gpt.stateDirectory);
   assert.notEqual(four.sourceDirectory, gpt.sourceDirectory);
@@ -109,12 +103,11 @@ test("explicit sources retain independent delivery and model allocation", async 
   assert.equal(new Set([four, gpt, post].map(automationMongoTarget)).size, 3);
   validateAutomationTasks([four, gpt, post, prediction]);
   for (const config of [four, gpt, post, prediction]) {
-    assert.deepEqual(config.channelConcurrency, config === post ? { "evaluation-gateway": 32 } : { openai: 1 });
+    assert.deepEqual(config.channelConcurrency, config === four ? undefined : config === post ? { "evaluation-gateway": 32 } : { openai: 1 });
     const budget = await readJson<{ execution: { concurrency: number } }>(config.hostConfigs.at(-1)!);
-    assert.equal(budget.execution.concurrency, config === post ? 32 : 6);
+    assert.equal(budget.execution.concurrency, 32);
   }
   assert.deepEqual(await configFiles("run", [files[1]]), [files[1]]);
-  assert.deepEqual(await configFiles("publish-log"), [files[0]]);
   await assert.rejects(configFiles("run", [files[0], files[0]]), /Duplicate/);
   await assert.rejects(configFiles("retry", files), /one --config/);
 });
@@ -215,6 +208,7 @@ test("one automation command serves all sources on one dashboard and releases it
       config.sourceDirectory = path.join(directory, `input-${index}`);
       config.hostConfigs = [path.join(ROOT, "configs/host.json"), ...(index ? [path.join(ROOT, index === 1 ? "configs/six-models.json" : "configs/post-training-models.json")] : []), models];
       config.channelConcurrency = undefined;
+      config.autoClean = false;
       config.publication.mongoUriEnv = "PATH";
       config.publication.logFile = path.join(directory, `statistics-${index}.jsonl`);
       await writeJson(file, config); files.push(file); states.push(config.stateDirectory);

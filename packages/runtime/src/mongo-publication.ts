@@ -1,33 +1,12 @@
 import { randomUUID } from "node:crypto";
 import { isDeepStrictEqual } from "node:util";
 import { BSON, MongoClient, type Collection, type Document, type AnyBulkWriteOperation } from "mongodb";
-import { errorText, redact, safeId, type JsonObject, type PublicationInput, type PublicationResult, type PublicationCounts, type PublicationLabels } from "@eval/contracts";
+import { errorText, redact, safeId, type PublicationInput, type PublicationResult, type PublicationCounts, type PublicationLabels } from "@eval/contracts";
 
 export interface MongoPublicationConfig { uri: string; database: string; collection: string; evaluationTaskId: string; tlsCAFile?: string; inputsUnchanged?: boolean; resultsOnly?: boolean; topic?: string }
 type Stored = Document & { _id: string };
 const BATCH_BYTES = 2 * 1024 * 1024;
 const OPERATION_TIMEOUT_MS = 60_000;
-
-/** Small publication inventory: no input messages or original judge prose. */
-export async function readMongoPublicationInventory(config: MongoPublicationConfig, date: string, signal: AbortSignal) {
-  return withMongoPublication(config, signal, async collection => {
-    const documents = await collection.find({ evaluationTaskId: config.evaluationTaskId, batchId: date }, {
-      signal, timeoutMS: OPERATION_TIMEOUT_MS, timeoutMode: "iteration", batchSize: 500,
-      projection: { kind: 1, versionId: 1, "trace.case_id": 1, "trace.meta.case_id": 1,
-        "trace.batch_id": 1, "trace.version": 1, "trace.task": 1, "trace.meta.task": 1, "trace.meta.difficulty": 1, "trace.meta.evaluation_topic": 1,
-        "result.comparison.comparison_id": 1, "result.comparison.rewritten": 1 },
-    }).toArray();
-    return {
-      inputs: documents.filter(doc => doc.kind === "input").map(doc => ({
-        versionId: String(doc.versionId), trace: doc.trace as JsonObject,
-      })),
-      comparisons: documents.filter(doc => doc.kind === "comparison").map(doc => ({
-        id: String(doc.result?.comparison?.comparison_id),
-        rewritten: doc.result?.comparison?.rewritten as JsonObject | undefined,
-      })),
-    };
-  });
-}
 
 /** No collection creation, migrations, deletes or cross-run result cache. */
 export async function publishMongo(

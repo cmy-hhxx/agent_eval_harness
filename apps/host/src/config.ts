@@ -323,8 +323,8 @@ function buildModels(source: ConfigObject, configuration: ApplicationSettings): 
   return { models, bindings, channels: configuration.channels };
 }
 
-const DASHBOARD_STAGES = ["criteria", "attribution", "comparison", "rewrite", "clustering"] as const;
-const DASHBOARD_EXECUTION = ["concurrency", "timeoutSeconds", "maxToolCalls", "retries"] as const;
+const DASHBOARD_STAGES = ["criteria", "score", "attribution", "comparison", "rewrite", "clustering"] as const;
+const DASHBOARD_EXECUTION = ["concurrency", "timeoutSeconds", "maxToolCalls", "retries", "repairAttempts", "maxTaskAttempts", "retryDelaySeconds"] as const;
 const DASHBOARD_BINDING = ["channel", "model", "thinking"] as const;
 
 export function editableDashboardSettings(source: Record<string, unknown>) {
@@ -340,6 +340,9 @@ export function editableDashboardSettings(source: Record<string, unknown>) {
       timeoutSeconds: execution.timeoutSeconds ?? EXECUTION_DEFAULTS.timeoutSeconds,
       maxToolCalls: execution.maxToolCalls ?? EXECUTION_DEFAULTS.maxToolCalls,
       retries: execution.retries ?? EXECUTION_DEFAULTS.retries,
+      repairAttempts: execution.repairAttempts ?? EXECUTION_DEFAULTS.repairAttempts,
+      maxTaskAttempts: execution.maxTaskAttempts,
+      retryDelaySeconds: execution.retryDelaySeconds ?? EXECUTION_DEFAULTS.retryDelaySeconds,
     },
     rewrite: { attribution: rewrite.attribution !== false, comparison: rewrite.comparison !== false, clustering: rewrite.clustering !== false },
     clustering: { enabled: clustering.enabled === true },

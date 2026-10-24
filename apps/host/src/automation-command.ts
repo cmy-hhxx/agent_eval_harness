@@ -6,11 +6,9 @@ import { hasLiveRunOwner, readJson, runLock, writeJson } from "@eval/data";
 import { checkMongoPredictionSources, RemoteInputs } from "@eval/runtime/client";
 import { automationDateSelected, runPipeline, nextPublicationAt, type AutomationState } from "@eval/automations";
 import { syncRemoteInputs } from "./automation-download.js";
-import { syncMongoInputFile } from "./automation-input-publication.js";
-import { createMongoResultPublisher } from "./automation-result-publication.js";
 import { generateStatisticsSnapshot, syncMongoDay } from "./automation-publication.js";
 import { startAutomationDashboard, type AutomationDashboardSource } from "./automation-dashboard.js";
-import { automationEvaluationConfig, loadAutomationConfig, type AutomationConfig } from "./automation-config.js";
+import { loadAutomationConfig, type AutomationConfig } from "./automation-config.js";
 import { evaluateDay, evaluationTargets, recoverEvaluation, remoteProgress } from "./automation-evaluation.js";
 import { createAutomationMonitor } from "./automation-monitor.js";
 import { loadConfig } from "./config.js";
@@ -22,6 +20,10 @@ import { discoverPrediction, predictionOrigin, predictionRemoteDay, syncPredicti
 import { ROOT } from "./paths.js";
 import { StatisticsDeliveryStore } from "./statistics-delivery.js";
 import { createAutomationControl } from "./automation-control.js";
+import { startSourceCleaning, stopSourceCleaning } from "./daily-ingestion.js";
+import { loadDailyHost, readDailySettings } from "./daily-settings.js";
+import { loadAimeWorkbench } from "./aime-workbench.js";
+import { dailyWorkbench } from "./daily-workbench.js";
 
 function automationArguments(args: string[]) {
   return parseArgs({ args, allowPositionals: true, options: {
@@ -58,18 +60,28 @@ SIGINT/SIGTERM: 停止接收任务并等待 Host 保存进度；下次 run 自�
   if (values.manifest && values.config?.length) throw new Error("--manifest and --config cannot be combined");
   const files = await automationSourceFiles({ command, configured: values.config,
     manifestFile: values.manifest, configDirectory: values["config-dir"] });
-  const configs = await Promise.all(files.map(source => loadAutomationConfig(source.file)));
+  const comparisonFiles = files.filter(source => source.workflow !== "answer-review");
+  const aimeFiles = files.filter(source => source.workflow === "answer-review");
+  if (aimeFiles.length > 1) throw new Error("Only one AIME daily source may own the input scope");
+  const aime = aimeFiles[0] ? await loadAimeWorkbench(aimeFiles[0].file, { id: "aime", name: aimeFiles[0].name }) : undefined;
+  const configs = await Promise.all(comparisonFiles.map(source => loadAutomationConfig(source.file)));
   validateAutomationTasks(configs);
   const controller = new AbortController(), interrupt = () => controller.abort(new Error("Automation stopped"));
   const schedulingFile = path.resolve(process.env.EVAL_AUTOMATION_SCHEDULING_FILE || path.join(ROOT, "data/automations/scheduling.json"));
   const statisticsStore = new StatisticsDeliveryStore(path.resolve(process.env.EVAL_STATISTICS_DELIVERY_FILE ||
     path.join(ROOT, "data/automations/statistics-delivery.json")));
-  const sourceNames = new Map(configs.map((config, index) => [config.id, values.config ? config.id : files[index].name]));
-  const llm = ["run", "serve"].includes(command) ? await automationLlm(schedulingFile, Object.fromEntries(await Promise.all(configs.map(async config =>
-    [config.id, (await loadConfig(config.hostConfigs)).evaluation.execution.concurrency] as const)))) : undefined;
+  const sourceNames = new Map(configs.map((config, index) => [config.id, values.config ? config.id : comparisonFiles[index].name]));
+  const defaults = ["run", "serve"].includes(command) ? Object.fromEntries(await Promise.all(configs.map(async config =>
+    [config.id, (await loadConfig(config.hostConfigs)).evaluation.execution.concurrency] as const))) : {};
+  if (aime) defaults[aime.id] = aime.configuration.concurrency ?? 64;
+  const llm = ["run", "serve"].includes(command) ? await automationLlm(schedulingFile, defaults) : undefined;
   const scope = { signal: controller.signal, llm, mongo: createAutomationMongoLane(), sourceNames, statisticsStore,
     exhaustedChannels: new Set<string>(), dashboards: new Map<string, AutomationDashboardSource>() };
   if (command !== "run" && command !== "serve") {
+    if (aime) {
+      if (command === "status" || command === "check") console.log(JSON.stringify(await aime.snapshot(), null, 2));
+      else throw new Error("AIME recovery is managed through Workbench");
+    }
     for (const config of configs) await executeAutomationCommand(command, values, config, scope);
     return;
   }
@@ -93,15 +105,21 @@ SIGINT/SIGTERM: 停止接收任务并等待 Host 保存进度；下次 run 自�
         scope.dashboards.set(config.id, { name: sourceNames.get(config.id)!, config, output: host.evaluation.output.path,
           state: () => state, settings: { evaluatorVersion: host.evaluatorVersion, concurrency: host.evaluation.execution.concurrency } });
       }
-      control = createAutomationControl(configs.map(config => config.id), async (id, signal) => {
-        try { await executeAutomationCommand("run", { ...values, dashboard: true }, configs.find(config => config.id === id)!, { ...scope, signal }); }
+      control = createAutomationControl([...configs.map(config => config.id), ...(aime ? [aime.id] : [])], async (id, signal, pauseSignal) => {
+        if (aime && id === aime.id) {
+          await aime.run(signal, { pauseSignal, modelRequests: { concurrency: () => llm!.concurrency(id),
+            acquire: (context, requestSignal) => llm!.acquire(id, context.runId, context, requestSignal) } });
+          return;
+        }
+        try { await executeAutomationCommand("run", { ...values, dashboard: true }, configs.find(config => config.id === id)!, { ...scope, signal, pauseSignal }); }
         catch (error) {
           await logger.error(error, { component: "automations", event: "source_failed", detail: id });
           throw error;
         }
       });
       dashboard = await startAutomationDashboard({ port, llm: llm!, statistics: statisticsStore, control,
-        sources: () => configs.map(config => scope.dashboards.get(config.id)!) });
+        sources: () => configs.map(config => scope.dashboards.get(config.id)!),
+        daily: dailyWorkbench({ sources: () => configs.map(config => scope.dashboards.get(config.id)!), aime, control, llm: llm! }) });
       console.log(`自动化看板：${dashboard.url} · 等待手动运行`);
       if (!controller.signal.aborted) await new Promise<void>(resolve => controller.signal.addEventListener("abort", () => resolve(), { once: true }));
       return;
@@ -111,9 +129,12 @@ SIGINT/SIGTERM: 停止接收任务并等待 Host 保存进度；下次 run 自�
         sources: () => scope.dashboards.size === configs.length ? configs.map(config => scope.dashboards.get(config.id)!) : [] });
       console.log(`自动化看板：${dashboard.url}`);
     }
-    const results = await Promise.allSettled(configs.map(config =>
-      executeAutomationCommand(command, values, config, scope)
-        .catch(error => { controller.abort(error); throw error; })));
+    const results = await Promise.allSettled([
+      ...configs.map(config => executeAutomationCommand(command, values, config, scope)
+        .catch(error => { controller.abort(error); throw error; })),
+      ...(aime ? [aime.run(controller.signal, { modelRequests: { concurrency: () => llm!.concurrency(aime.id),
+        acquire: (context, signal) => llm!.acquire(aime.id, context.runId, context, signal) } }).then(() => 0)] : []),
+    ]);
     const failure = results.find(result => result.status === "rejected");
     if (failure?.status === "rejected") throw failure.reason;
     process.exitCode = controller.signal.aborted ? 130 : Math.max(0,
@@ -127,10 +148,11 @@ SIGINT/SIGTERM: 停止接收任务并等待 Host 保存进度；下次 run 自�
 
 async function executeAutomationCommand(
   command: string, values: ReturnType<typeof automationArguments>["values"], config: AutomationConfig,
-  scope: { signal: AbortSignal; llm: Awaited<ReturnType<typeof automationLlm>> | undefined;
+  scope: { signal: AbortSignal; pauseSignal?: AbortSignal; llm: Awaited<ReturnType<typeof automationLlm>> | undefined;
     mongo: ReturnType<typeof createAutomationMongoLane>; exhaustedChannels: Set<string>; dashboards: Map<string, AutomationDashboardSource>;
     sourceNames: Map<string, string>; statisticsStore: StatisticsDeliveryStore },
 ): Promise<number | void> {
+  config = { ...config, runtimeSettings: await readDailySettings(config) };
   const file = path.join(config.stateDirectory, "state.json");
   if (["publish-log", "resolve-log"].includes(command) && !config.publishStatisticsLog)
     throw new Error("Statistics log publication is disabled for this automation");
@@ -142,10 +164,11 @@ async function executeAutomationCommand(
   const selected = (date: string) => automationDateSelected(config, date);
   if (command === "retry" && values.date && !selected(values.date))
     throw new Error("Cannot retry a date outside the configured automation range: " + values.date);
-  const host = await loadConfig(config.hostConfigs), output = host.evaluation.output.path;
+  const host = (await loadDailyHost(config)).host, output = host.evaluation.output.path;
   const mongoDestination = automationMongoTarget(config.prediction ? await predictionOrigin(config) : config);
   logger.addSecrets(...configurationSecrets());
-  automationEvaluationConfig(host.evaluation, config.sourceDirectory, config.fromDate, config.remoteModels);
+  for (const id of config.remoteModels)
+    if (!host.evaluation.inputs.versions.some(version => version.id === id)) throw new Error("Missing automation model: " + id);
   const remote = config.prediction ? undefined : new RemoteInputs(config.sourceUrl, config.requestTimeoutMs, config.remoteModels);
   const discover = async (signal: AbortSignal) => {
     signal.throwIfAborted();
@@ -164,7 +187,6 @@ async function executeAutomationCommand(
     return;
   }
   if (command === "run") {
-    if (config.publishMongo && !process.env[config.publication.mongoUriEnv]) throw new Error(`Missing ${config.publication.mongoUriEnv}`);
     if (process.env[config.publication.mongoUriEnv]) logger.addSecrets(process.env[config.publication.mongoUriEnv]!);
     createAutomationModels(host.models, host.automation.channels, undefined, config.channelConcurrency);
   }
@@ -222,8 +244,6 @@ async function executeAutomationCommand(
       if (existing) Object.assign(existing, source);
       else scope.dashboards.set(config.id, source);
     }
-    const resultPublisher = createMongoResultPublisher(config, error =>
-      logger.error(error, { component: "automations", event: "mongo_result_failed" }));
     const observe = async (current: AutomationState, signal: AbortSignal) => {
       const dates = [];
       let available = false;
@@ -233,7 +253,6 @@ async function executeAutomationCommand(
           if (selected(job.date)) job.summary = view.summary;
           available = true;
         }
-        if (selected(job.date)) resultPublisher.observe(job, signal);
         dates.push(view.progress);
       }
       if (config.publishProgress && available)
@@ -241,10 +260,10 @@ async function executeAutomationCommand(
     };
     console.log(`Automations ${config.id}: ${config.fromDate} → ${config.sourceUrl}\n状态：${file}`);
     await runPipeline(state, { ...config, mongoTarget: automationMongoTarget(config), once: values.once }, {
-      discover,
+      discover: async signal => { if (!scope.pauseSignal?.aborted) await startSourceCleaning(config, signal); return discover(signal); },
       initialize: (day) => evaluationTargets(config, output, day),
       recover: async (job) => {
-        const current = (await loadConfig(config.hostConfigs)).evaluation;
+        const current = (await loadDailyHost(config)).host.evaluation;
         return recoverEvaluation(config, output, job, current.execution, current.comparisons);
       },
       save: async (current) => {
@@ -269,25 +288,18 @@ async function executeAutomationCommand(
           }, day.date, selected.selections.map(item => item.sourceComparisonId), signal);
           return { ...await syncPrediction(config, output, day.date, beforeReplace), rows: day.rows };
         }
-        return syncRemoteInputs(remote!, path.join(config.sourceDirectory, day.date), output, job, day, signal, beforeReplace,
-          config.publishMongo ? async (file, model) => {
-            const receipt = await syncMongoInputFile(config, day.date, model, file, signal, scope.mongo, undefined, host);
-            await writeJson(path.join(config.stateDirectory, "input-publications", day.date, model + ".json"), {
-              at: new Date().toISOString(), ...receipt,
-            });
-          } : undefined);
+        return syncRemoteInputs(remote!, path.join(config.sourceDirectory, day.date), output, job, day, signal, beforeReplace);
       },
       evaluationConcurrency: () => scope.llm!.concurrency(config.id),
       evaluate: (job, signal) => evaluateDay(config, job, signal, scope.exhaustedChannels, {
         concurrency: () => Math.ceil(scope.llm!.concurrency(config.id) /
           Math.max(1, Object.values(state.jobs).filter(job => job.evaluation === "evaluating").length)),
         acquire: (context, signal) => scope.llm!.acquire(config.id, job.date, context, signal),
-      }), observe,
+      }, scope.pauseSignal), observe,
       publish: config.publishStatisticsLog ? (current, _save, signal) =>
         generateStatisticsSnapshot(config, current, scope.statisticsStore, signal) : undefined,
       syncMongo: config.publishMongo ? (job, signal) => scope.mongo(() => syncMongoDay(config, job, signal), signal, JSON.stringify([mongoDestination, job.date])) : undefined,
-    }, scope.signal);
-    await resultPublisher.settled();
+    }, scope.signal, scope.pauseSignal);
     try { if (!scope.signal.aborted) await observe(state, AbortSignal.timeout(10_000)); }
     catch (error) {
       state.reportError = errorText(error);
@@ -298,6 +310,7 @@ async function executeAutomationCommand(
       job.download !== "ready" || ["retry", "blocked", "pending"].includes(job.evaluation) ||
       config.publishMongo && job.mongo?.status === "retry") ? 2 : 0;
   } finally {
-    try { await releaseSources?.(); } finally { await release(); }
+    try { if (command === "run") await stopSourceCleaning(config, scope.signal.aborted, true); }
+    finally { try { await releaseSources?.(); } finally { await release(); } }
   }
 }

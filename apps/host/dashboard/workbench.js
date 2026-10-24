@@ -5,7 +5,8 @@ import { mountAutomation } from './automations.js';
 import { mountErrors } from './automation-errors.js';
 import { mountRuns } from './dashboard.js';
 import { createProblemBrowser } from './problems.js';
-import { mountReference } from './reference.js';
+import { mountDaily } from './daily.js';
+import { mountAimeResults } from './aime-results.js';
 import { mountData } from '../../../server_dashboard_ths/dashboard.js';
 import { mountRecords } from '../../../server_dashboard_ths/records.js';
 import { Tab } from '@tabler/core';
@@ -73,7 +74,7 @@ async function attempt(id, action) {
     host.hidden = false;
   }
 }
-let errors, runs, batchRuns, analysis, dataController, datasetRevision = 0, samplesRevision = 0;
+let errors, runs, batchRuns, analysis, daily, dataController, datasetRevision = 0, samplesRevision = 0;
 let currentSource = '';
 async function samples(selection) {
   const revision = ++samplesRevision;
@@ -101,17 +102,17 @@ async function data() {
   await attempt('data-content', async () => {
     const root = await region('data-content', 'intake.html', []);
     await mountIntake(root, { onBrowse:browseTask, async onEvaluate(ids) {
-      await loadModule('runs'); activate('runs'); batchRuns?.select(ids);
+      await showMore('runs'); batchRuns?.select(ids);
     } }).ready;
   });
 }
 async function batchResults(id, location) {
-  await loadModule('runs'); await runs.ready; activate('runs');
+  await showMore('runs'); await runs.ready;
   const params = new URLSearchParams({ run:id });
   if (location) { params.set('batch', location.batch_id); params.set('case', location.case_id); }
   await runs.restoreRecall(params);
 }
-const loaders = {
+const moreLoaders = {
   monitor: () => attempt('monitor-content', async () => mountAutomation(await region('monitor-content', 'automations.html', ['automations.css']), {
     onSource(id) { currentSource = id; errors?.setSource(id); },
   })),
@@ -119,7 +120,7 @@ const loaders = {
     await attempt('batch-errors-content', async () => mountBatchRuns(await region('batch-errors-content', 'batch-runs.html', []), { onResults:batchResults }).ready);
     return attempt('errors-content', async () => { errors = mountErrors(await region('errors-content', 'automation-errors.html', ['automations.css']), { source:currentSource }); }); },
   runs: async () => {
-    await attempt('batch-runs-content', async () => { batchRuns = mountBatchRuns(await region('batch-runs-content','batch-runs.html',[]), { onResults:batchResults, async onAnalysis(id) { await loadModule("problems"); activate("problems"); await analysis.selectRun(id); } }); await batchRuns.ready; });
+    await attempt('batch-runs-content', async () => { batchRuns = mountBatchRuns(await region('batch-runs-content','batch-runs.html',[]), { onResults:batchResults, async onAnalysis(id) { await showMore('problems'); await analysis.selectRun(id); } }); await batchRuns.ready; });
     return attempt('runs-content', async () => { runs = mountRuns(await region('runs-content', 'index.html', []), { apiRoot, onBatchResume: id => batchRuns.showErrors(id) }); });
   },
   problems: async () => {
@@ -127,17 +128,52 @@ const loaders = {
     return attempt('problems-content', async () => {
     const browser = createProblemBrowser(await region('problems-content', 'problems.html', ['problems.css']), fetch, {
       apiRoot, async onRecall(params) {
-        await loadModule('runs');
+        await showMore('runs');
         if (!runs) throw new Error('评测运行尚未加载');
         await runs.ready; await runs.restoreRecall(params);
-        activate('runs');
         document.getElementById('runs-content').shadowRoot.getElementById('explorer').scrollIntoView({ block:'start' });
       },
     });
     await browser.load();
   }); },
-  reference: () => attempt('definitions-content', async () => mountReference(await region('definitions-content', 'reference.html', ['reference.css']), { apiRoot })),
   data,
+};
+const moreLoaded = new Map(), resultControllers = new Map();
+let resultSource = 'wencai';
+async function showMore(id = document.getElementById('more-section').value) {
+  if (!Object.hasOwn(moreLoaders,id)) id = 'data';
+  document.getElementById('more-section').value = id;
+  document.querySelectorAll('[data-more]').forEach(node => { node.hidden = node.dataset.more !== id; });
+  if (!moreLoaded.has(id)) moreLoaded.set(id,Promise.resolve().then(moreLoaders[id]));
+  activate('more'); await moreLoaded.get(id);
+}
+async function showResults(source = resultSource, runId) {
+  resultSource = source;
+  document.querySelectorAll('[data-results-source]').forEach(node => { const selected = node.dataset.resultsSource === source; node.classList.toggle('active',selected); node.setAttribute('aria-pressed',String(selected)); });
+  for (const id of ['wencai','aime']) document.getElementById(`${id}-results-content`).hidden = id !== source;
+  if (!resultControllers.has(source)) {
+    const host = `${source}-results-content`;
+    const pending = attempt(host, async () => {
+      const root = await region(host,source === 'aime' ? 'aime-results.html' : 'index.html',[]);
+      const controller = source === 'aime' ? mountAimeResults(root) : mountRuns(root,{apiRoot,resultsOnly:true});
+      await controller.ready;
+      document.getElementById(host).hidden = resultSource !== source;
+      resultControllers.set(source,Promise.resolve(controller));
+      return controller;
+    });
+    resultControllers.set(source,pending);
+  }
+  activate('results');
+  const controller = await resultControllers.get(source);
+  if (runId && controller) {
+    if (source === 'aime') await controller.selectRun(runId);
+    else await controller.restoreRecall(new URLSearchParams({run:runId}));
+  }
+}
+const loaders = {
+  evaluate: () => attempt('daily-content',async () => { daily = mountDaily(await region('daily-content','daily.html',[]),{onResults:showResults}); await daily.ready; }),
+  results: () => showResults(),
+  more: () => showMore(),
 };
 const loaded = new Map();
 function loadModule(id) {
@@ -150,12 +186,11 @@ function loadModule(id) {
 }
 const buttons = [...document.querySelectorAll('[data-module]')];
 const scrollPositions = new Map();
-let active = 'data';
 function remember(id) {
   try { sessionStorage.setItem('workbench-module', id); } catch { /* Storage can be disabled. */ }
 }
 function activate(id) {
-  if (!Object.hasOwn(loaders, id)) id = 'data';
+  if (!Object.hasOwn(loaders, id)) id = 'evaluate';
   Tab.getOrCreateInstance(document.getElementById(`nav-${id}`)).show();
 }
 for (const button of buttons) {
@@ -164,7 +199,6 @@ for (const button of buttons) {
   button.addEventListener('click', () => activate(id));
   button.addEventListener('hide.bs.tab', () => scrollPositions.set(id, window.scrollY));
   button.addEventListener('shown.bs.tab', () => {
-    active = id;
     for (const item of buttons) document.getElementById(item.dataset.module).hidden = item !== button;
     document.title = `${button.textContent} · 评测工作台`;
     if (location.hash !== `#${id}`) history.pushState(null, '', `#${id}`);
@@ -174,21 +208,12 @@ for (const button of buttons) {
   });
 }
 window.addEventListener('hashchange', () => activate(location.hash.slice(1)));
-document.querySelectorAll('[data-jump]').forEach(button => button.addEventListener('click', async () => {
-  const module = active;
-  await loadModule(module);
-  if (module !== active) return;
-  const [host, target] = button.dataset.jump.split(':');
-  const node = document.getElementById(host).shadowRoot?.getElementById(target);
-  if (node && !node.hidden) {
-    node.setAttribute('tabindex', '-1');
-    node.focus({ preventScroll:true });
-    node.scrollIntoView({ block:'start' });
-  }
-}));
+document.getElementById('more-section').addEventListener('change',event => void showMore(event.target.value));
+document.querySelectorAll('[data-results-source]').forEach(button => button.addEventListener('click',() => void showResults(button.dataset.resultsSource)));
+document.getElementById('results-quarantine').addEventListener('click',async () => { const source = resultSource; await loadModule('evaluate'); activate('evaluate'); await daily?.openExclusions(source); });
 let initial = location.hash.slice(1);
 if (!initial) { try { initial = sessionStorage.getItem('workbench-module'); } catch { /* Storage can be disabled. */ } }
-if (!Object.hasOwn(loaders, initial)) initial = 'data';
+if (!Object.hasOwn(loaders, initial)) initial = 'evaluate';
 activate(initial);
 remember(initial);
 await loadModule(initial);

@@ -75,7 +75,8 @@ class PostTrainingArchiveTest(unittest.TestCase):
         with tempfile.TemporaryDirectory(prefix="post-training-import-") as folder:
             root, state = Path(folder) / "data", Path(folder) / "state"
             datasets = app.make_datasets(root, state)
-            self.assertEqual(datasets["/data/wencai"].archive_dir, root / "0_wencai/1_7z_data")
+            self.assertEqual(datasets["/data/wencai"].archive_dir, root / "0_wencai/1_7z_data/A_AA_comparision_data")
+            self.assertEqual(datasets["/data/aime"].archive_dir, root / "1_aime/1_7z_data/online_data")
             post = datasets["/data/post_training_model"]
             self.assertEqual(post.output_dir, root / "0_wencai/5_multi_task_eval_input/post_train_model_eval")
             self.assertEqual(post.archive_dir, root / "0_wencai/1_7z_data/post_train_model")

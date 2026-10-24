@@ -69,6 +69,8 @@ export interface RunOptions extends EvaluationServices {
   retryDelaySeconds: number;
   debug?: boolean;
   signal?: AbortSignal;
+  /** Drain active tasks without cancelling their model requests or pending work. */
+  pauseSignal?: AbortSignal;
   workerUrls?: string[];
   identity?: EngineIdentity;
   engineForTask?: (task: PlannedTask) => Engine;
@@ -120,6 +122,8 @@ export async function runEvaluation(options: RunOptions): Promise<Record<string,
   let workspace: Awaited<ReturnType<typeof createRunWorkspace>> | undefined;
   let progressTimer: ReturnType<typeof setInterval> | undefined;
   let wake: () => void = () => {};
+  const pause = () => wake();
+  options.pauseSignal?.addEventListener("abort", pause, { once: true });
   let changed = new Promise<void>((resolve) => {
     wake = resolve;
   });
@@ -321,13 +325,13 @@ export async function runEvaluation(options: RunOptions): Promise<Record<string,
       (manifest.states[task.id].nextRetryAt ?? 0) <= Date.now() &&
       Object.values(task.dependencies).every((id) => manifest.states[id]?.status === "succeeded");
     const pending = manifest.tasks.filter(runnable);
-    if (!workerUrls.length && pending.length && taskConcurrency() > 0) {
+    if (!workerUrls.length && pending.length && taskConcurrency() > 0 && !options.pauseSignal?.aborted) {
       // Start incrementally so every successful child remains owned if a later launch fails.
       const engines = [...new Set(pending.map(engineForTask))];
       for (const engine of engines)
         for (
           let i = 0;
-          i <
+          !options.pauseSignal?.aborted && !controller.signal.aborted && i <
           Math.min(
             Math.max(1, Math.floor(taskConcurrency() / engines.length)),
             pending.filter((t) => engineForTask(t) === engine).length,
@@ -353,7 +357,7 @@ export async function runEvaluation(options: RunOptions): Promise<Record<string,
       (w) =>
         canonical(w.health.identity) === canonical(identities[w.health.identity.engine]),
     );
-    if (pending.length && !eligible.length && taskConcurrency() > 0) throw new Error("No worker matches the selected build");
+    if (pending.length && !eligible.length && taskConcurrency() > 0 && !options.pauseSignal?.aborted) throw new Error("No worker matches the selected build");
     const unavailable = new Map<(typeof workers)[number], { since: number; checkAt: number }>();
     const deferWorker = (worker: (typeof workers)[number]) => unavailable.set(worker, {
       since: unavailable.get(worker)?.since ?? Date.now(), checkAt: Date.now() + 1000,
@@ -840,6 +844,10 @@ export async function runEvaluation(options: RunOptions): Promise<Record<string,
     const runningChannels = new Map<string, string>();
     while (true) {
       if (controller.signal.aborted) break;
+      if (options.pauseSignal?.aborted) {
+        await Promise.all(running.values());
+        break;
+      }
       if (executionStopReason(manifest) && running.size === 0) break;
       changed = new Promise<void>((resolve) => {
         wake = resolve;
@@ -857,15 +865,16 @@ export async function runEvaluation(options: RunOptions): Promise<Record<string,
         } catch { /* Retry capacity observation without spending a task attempt. */ }
         deferWorker(worker);
       }));
-      if (!options.workerUrls?.length && running.size < taskConcurrency()) {
+      if (!options.workerUrls?.length && running.size < taskConcurrency() && !options.pauseSignal?.aborted) {
         const waiting = manifest.tasks.filter(runnable);
         let slots = Math.max(0, taskConcurrency() - running.size);
         for (const engine of new Set(waiting.map(engineForTask))) {
+          if (options.pauseSignal?.aborted) break;
           const target = Math.min(slots, waiting.filter((task) => engineForTask(task) === engine).length);
           const idle = eligible.filter(
             (worker) => !busy.has(worker) && worker.health.identity.engine === engine,
           ).length;
-          for (let i = idle; i < target && !controller.signal.aborted; i++) {
+          for (let i = idle; i < target && !controller.signal.aborted && !options.pauseSignal?.aborted; i++) {
             const worker = await launchWorker(
               engine,
               path.join(working, "workers", `${engine}-${randomUUID()}`),
@@ -879,7 +888,7 @@ export async function runEvaluation(options: RunOptions): Promise<Record<string,
       }
       let scheduled = false, blocked = false;
       for (const task of scheduleTasks(manifest.tasks.filter(dispatchable), manifest.states)) {
-        if (controller.signal.aborted || executionStopReason(manifest)) break;
+        if (controller.signal.aborted || options.pauseSignal?.aborted || executionStopReason(manifest)) break;
         if (!dispatchable(task)) continue;
         if (manifest.states[task.id].status !== "pending" || running.has(task.id) ||
             (manifest.states[task.id].nextRetryAt ?? 0) > Date.now()) continue;
@@ -977,7 +986,7 @@ export async function runEvaluation(options: RunOptions): Promise<Record<string,
         if (inScope(task) && manifest.states[task.id].status === "pending") manifest.states[task.id].status = "cancelled";
     if (manifest.tasks.some(task => inScope(task) && manifest.states[task.id].status === "pending"))
       manifest.executionStopReason = executionStopReason(manifest);
-    manifest.status = controller.signal.aborted || manifest.pausedStages.length || manifest.executionStopReason ? "interrupted" : "finished";
+    manifest.status = controller.signal.aborted || options.pauseSignal?.aborted || manifest.pausedStages.length || manifest.executionStopReason ? "interrupted" : "finished";
     manifest.finishedAt = Date.now();
     await current.save();
     const executionTaskStatuses: Record<string, number> = {};
@@ -992,6 +1001,7 @@ export async function runEvaluation(options: RunOptions): Promise<Record<string,
     if (progressTimer) clearInterval(progressTimer);
     controller.abort();
     options.signal?.removeEventListener("abort", abort);
+    options.pauseSignal?.removeEventListener("abort", pause);
     try {
       await Promise.all(owned.map((worker) => worker.close()));
       await Promise.all(workerExitLogs);

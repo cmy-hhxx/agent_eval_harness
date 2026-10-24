@@ -9,6 +9,7 @@ import { safeId, type Artifact, type JsonObject } from "@eval/contracts";
 /** Local filesystem operations used by report and offline maintenance callers. */
 export const localFiles = {
   read: readFile,
+  stream: createReadStream,
   list: readdir,
   stat,
   mkdir,

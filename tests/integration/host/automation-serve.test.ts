@@ -38,7 +38,7 @@ test("serve starts no source work on startup or restart; only the selected run s
     for (const id of ["a", "b"]) await writeJson(path.join(directory, id + ".json"), {
       ...base, id, sourceUrl, hostConfigs: [path.join(ROOT, "configs/host.json"), hostFile],
       stateDirectory: path.join(directory, id, "state"), sourceDirectory: path.join(directory, id, "input"),
-      runPrefix: id + "-", channelConcurrency: {}, pollMs: 20, publishMongo: id === "b", publishProgress: false, publishStatisticsLog: false,
+      runPrefix: id + "-", channelConcurrency: {}, autoClean: false, pollMs: 20, publishMongo: id === "b", publishProgress: false, publishStatisticsLog: false,
       publication: { ...base.publication, mongoUriEnv: "WORKBENCH_TEST_MONGO_MISSING" },
     });
     // A historical running flag must not auto-activate after a crash/restart.
@@ -78,15 +78,17 @@ test("serve starts no source work on startup or restart; only the selected run s
     const stopped = discoveries;
     await delay(150); assert.equal(discoveries, stopped);
     assert.equal((await control("b", "run")).status, 200);
-    await wait(async () => (await snapshot("b")).control.status === "failed");
-    assert.match((await snapshot("b")).control.error!, /Missing WORKBENCH_TEST_MONGO_MISSING/);
+    await wait(async () => (await snapshot("b")).control.status === "running");
+    await wait(() => discoveries > stopped);
     assert.equal((await snapshot()).control.status, "idle");
-    assert.equal(discoveries, stopped);
+    await control("b", "stop");
+    await wait(async () => (await snapshot("b")).control.status === "idle");
+    const afterBoth = discoveries;
     await stop(); launch(); await ready(); await delay(150);
     assert.equal((await snapshot()).control.status, "idle");
-    assert.equal(discoveries, stopped);
+    assert.equal(discoveries, afterBoth);
     assert.equal((await control("a", "run")).status, 200);
-    await wait(() => discoveries > stopped);
+    await wait(() => discoveries > afterBoth);
   } finally {
     await stop(); await new Promise<void>(resolve => remote.close(() => resolve()));
     await rm(directory, { recursive: true, force: true });

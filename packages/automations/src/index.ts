@@ -59,8 +59,8 @@ export interface AutomationState {
   jobs: Record<string, AutomationJob>;
 }
 export interface PipelineOptions {
-  fromDate: string;
-  throughDate?: string;
+  fromDate: string | null;
+  throughDate?: string | null;
   pollMs: number;
   refreshMs: number;
   retryMs: number;
@@ -86,7 +86,7 @@ export const sameRows = (a: RemoteDay["rows"] | undefined, b: RemoteDay["rows"])
   !!a && Object.keys(a).length === Object.keys(b).length && Object.keys(b).every((model) => a[model] === b[model]);
 
 export const automationDateSelected = (options: Pick<PipelineOptions, "fromDate" | "throughDate">, date: string) =>
-  date >= options.fromDate && (!options.throughDate || date <= options.throughDate);
+  (!options.fromDate || date >= options.fromDate) && (!options.throughDate || date <= options.throughDate);
 
 function refreshInterval(job: AutomationJob, now: number, recentInterval: number): number {
   const day = 24 * 60 * 60_000;
@@ -100,6 +100,7 @@ function refreshInterval(job: AutomationJob, now: number, recentInterval: number
  * Polling continues independently; a date's sources never change while it is evaluated. */
 export async function runPipeline(
   state: AutomationState, options: PipelineOptions, services: PipelineServices, signal: AbortSignal,
+  pauseSignal?: AbortSignal,
 ): Promise<void> {
   if (services.syncMongo && !options.mongoTarget) throw new Error("Mongo delivery requires a target identity");
   const controller = new AbortController(), activeSignal = AbortSignal.any([signal, controller.signal]);
@@ -242,7 +243,7 @@ export async function runPipeline(
     await services.event("download_started", job);
     try {
       const result = await services.sync(job, day, activeSignal, async () => {
-        while (job.evaluation === "evaluating" || job.mongo?.status === "running" || publishing)
+        while (job.evaluation === "evaluating" || publishing)
           await delay(100, undefined, { signal: activeSignal });
         replacing = true;
         job.download = "installing";
@@ -378,7 +379,7 @@ export async function runPipeline(
     await save();
     await services.event("mongo_started", job);
     try {
-      delivery.counts = await services.syncMongo!(job, activeSignal);
+      delivery.counts = await services.syncMongo!(structuredClone(job), activeSignal);
       delivery.completedAt = Date.now();
       delivery.synced = source;
       delivery.status = "completed";
@@ -399,6 +400,10 @@ export async function runPipeline(
 
   try {
     while (!activeSignal.aborted) {
+      if (pauseSignal?.aborted) {
+        await Promise.all([polling, downloading, evaluations.settled(), observing, publishing, ...syncingMongo.values()]);
+        break;
+      }
       const now = Date.now();
       if (!polling && now >= nextPoll && (!options.once || polls === 0))
         polling = guarded(poll(), () => { polling = undefined; });

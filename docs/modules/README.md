@@ -35,3 +35,5 @@ Agent 之间不互相导入；Workflow 通过公开入口组合。Host 只接收
 验证先找模块同目录的 .test.ts，跨模块行为看 tests/integration/host；直接 SDK 看 tests/integration。具体命令见[开发指南](../development.md#验证)。
 
 工作台结果与分析入口：`apps/host/src/dashboard-analysis.ts` 登记任务/批次/运行选择和分析占用；`packages/workflows/src/comparison/analysis-scope.ts` 投影已接受归因身份，`clustering-job.ts` 校验冻结来源并复用独立作业。`packages/data/src/run-artifacts.ts` 枚举公开报告与结果，页面不读取 state 或 debug 材料。
+
+双日常来源由 `apps/host/src/daily-workbench.ts` 组合控制与查询：问财调用既有自动化，AIME通过 `aime-workbench.ts` 复用CLI同一执行器。包覆盖只关联清洗坐标和当前正式收据，结果按comparison/answer-review公开入口读取；共享Host通过独立pauseSignal收尾，模型请求额度按来源隔离。

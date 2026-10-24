@@ -5,6 +5,8 @@ export interface WorkbenchProxyTarget { port: number; path: string }
 export function workbenchProxyTarget(pathname: string, ports: WorkbenchProxyPorts): WorkbenchProxyTarget | undefined {
   if (/^\/data\/workbench\/(catalog|tasks|assign|clean|batches\/[a-f0-9-]+\/(report|sample))$/.test(pathname))
     return { port: ports.data, path: pathname };
+  if (/^\/data\/workbench\/tasks\/[a-f0-9-]+\/clean(?:\/(?:stop|cancel))?$/.test(pathname))
+    return { port: ports.data, path: pathname };
   if (/^\/data\/[^/]+\/(dashboard-data|processing-status|records\/[^/]+\/[^/]+)$/.test(pathname))
     return { port: ports.data, path: pathname };
   if (pathname.startsWith("/runtime/api/dashboard"))

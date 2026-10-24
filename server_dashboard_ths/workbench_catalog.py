@@ -22,6 +22,7 @@ class WorkbenchCatalog:
         self.path.parent.mkdir(parents=True, exist_ok=True)
         self.lock = threading.RLock()
         self.cleaning = threading.Lock()
+        self.clean_jobs = {}
         self.observed = {}
         self.stop = threading.Event()
         self.origins = {key: value for key, value in datasets.items() if not key.startswith("/data/task-")}
@@ -41,13 +42,15 @@ class WorkbenchCatalog:
                     UNIQUE(origin, name, size, mtime_ns)
                 );
             ''')
-            labels = {"wencai": "问财日常评测", "post_training_model": "后训练评测", "aime": "AIME 评测", "ifind": "ifind 评测"}
+            labels = {"wencai": "问财日常评测", "post_training_model": "后训练评测", "aime": "AIME 日常评测", "ifind": "ifind 评测"}
             for origin, dataset in self.origins.items():
-                if db.execute("SELECT 1 FROM routes WHERE origin=?", (origin,)).fetchone():
-                    continue
                 key = origin.rsplit("/", 1)[-1]
+                if db.execute("SELECT 1 FROM routes WHERE origin=?", (origin,)).fetchone():
+                    if key in ("wencai", "aime"):
+                        db.execute("UPDATE tasks SET category='daily' WHERE dataset=? AND origin=?", (origin, origin))
+                    continue
                 source = "wencai" if key in ("wencai", "post_training_model") else key
-                task = (str(uuid4()), labels.get(key, key), source, "daily" if key == "wencai" else "task",
+                task = (str(uuid4()), labels.get(key, key), source, "daily" if key in ("wencai", "aime") else "task",
                         "post_training_model" if key == "post_training_model" else source, origin, origin, self.now())
                 db.execute("INSERT INTO tasks VALUES (?,?,?,?,?,?,?,?)", task)
                 db.execute("INSERT INTO routes VALUES (?,?)", (origin, task[0]))
@@ -145,6 +148,42 @@ class WorkbenchCatalog:
                                    (str(uuid4()), *identity, task_id, status, self.now(), self.now(), None, None, old["id"] if old else None))
                     elif row["status"] == "uploading" and stable:
                         db.execute("UPDATE batches SET status='ready',updated_at=? WHERE id=?", (self.now(), row["id"]))
+                    current = db.execute("SELECT * FROM batches WHERE origin=? AND name=? AND size=? AND mtime_ns=?", identity).fetchone()
+                    if current and current["task_id"] and current["status"] in ("uploading", "ready", "interrupted", "failed"):
+                        self.sync_published_batch(db, current)
+
+    def sync_published_batch(self, db, batch):
+        """Observe a specialized ingester's committed receipt without running another cleaner."""
+        if db.execute("SELECT 1 FROM batches WHERE task_id=? AND name=? AND origin<>? LIMIT 1",
+                      (batch["task_id"], batch["name"], batch["origin"])).fetchone():
+            return
+        task = dict(db.execute("SELECT * FROM tasks WHERE id=?", (batch["task_id"],)).fetchone())
+        dataset = self.dataset(task)
+        index = dataset.state_dir / "archive-records.sqlite"
+        if not index.is_file() or not dataset.root_archive_state_file.is_file():
+            return
+        expected = {key: batch[key] for key in ("name", "size", "mtime_ns")}
+        if expected not in dataset.load_archive_state()["archives"]:
+            return
+        source = sqlite3.connect(index.resolve().as_uri() + "?mode=ro", uri=True)
+        try:
+            if source.execute("SELECT 1 FROM pending").fetchone():
+                return
+            saved = source.execute("SELECT report FROM cleaning_reports WHERE name=? AND size=? AND mtime_ns=?",
+                                   (batch["name"], batch["size"], batch["mtime_ns"])).fetchone()
+        finally:
+            source.close()
+        if saved:
+            report = json.loads(saved[0])
+            if any(dataset.ready_state(day) is None for day in {record["date"] for record in report["records"]}):
+                return
+            self.save_report(db, batch["id"], report)
+
+    def save_report(self, db, identifier, report):
+        status = "failed" if report["error"] else "partial" if report["file_errors"] else "cleaned" if report["accepted"] else "empty"
+        summary = {key: value for key, value in report.items() if key not in ("records", "exclusions", "metadata_issues")}
+        db.execute("UPDATE batches SET status=?,report=?,error=?,updated_at=? WHERE id=?",
+                   (status, json.dumps(summary), report["error"], self.now(), identifier))
 
     def assign(self, value):
         if not isinstance(value, dict) or set(value) != {"batch_ids", "task_id"}:
@@ -184,7 +223,7 @@ class WorkbenchCatalog:
         if page < 1:
             raise ValueError("页码无效")
         filters, values = [], []
-        for name, column in (("source", "t.source"), ("category", "t.category"), ("task", "b.task_id")):
+        for name, column in (("source", "t.source"), ("category", "t.category"), ("task", "b.task_id"), ("status", "b.status")):
             value = query.get(name, [""])[0]
             if value:
                 filters.append(column + "=?")
@@ -334,6 +373,61 @@ class WorkbenchCatalog:
             self.clean(identifiers)
         return {"batch_ids": identifiers, "status": "queued"}
 
+    def clean_status(self, task_id):
+        with self.lock, self.db() as db:
+            if not db.execute("SELECT 1 FROM tasks WHERE id=?", (task_id,)).fetchone():
+                raise KeyError("任务不存在")
+            job = self.clean_jobs.get(task_id)
+            if job is None:
+                return {"task_id": task_id, "status": "idle", "batch_ids": [], "current_batch_id": None, "completed": 0, "remaining": 0}
+            return {key: value for key, value in job.items() if not key.startswith("_")}
+
+    def start_task_clean(self, task_id, value, background=True):
+        if not isinstance(value, dict) or value:
+            raise ValueError("任务清洗请求必须为空对象")
+        self.discover()
+        with self.lock:
+            previous = self.clean_jobs.get(task_id)
+            if previous and previous["status"] in ("queued", "running", "stopping", "cancelling"):
+                return self.clean_status(task_id)
+            if not self.cleaning.acquire(blocking=False):
+                raise Conflict("已有清洗正在执行")
+            try:
+                with self.db() as db:
+                    if not db.execute("SELECT 1 FROM tasks WHERE id=?", (task_id,)).fetchone():
+                        raise KeyError("任务不存在")
+                    identifiers = [row[0] for row in db.execute(
+                        "SELECT id FROM batches WHERE task_id=? AND status IN ('ready','interrupted') AND report IS NULL ORDER BY discovered_at,id", (task_id,))]
+                    for identifier in identifiers:
+                        db.execute("UPDATE batches SET status='queued',error=NULL,updated_at=? WHERE id=?", (self.now(), identifier))
+                job = {"task_id": task_id, "status": "queued" if identifiers else "idle", "batch_ids": identifiers,
+                       "current_batch_id": None, "completed": 0, "remaining": len(identifiers),
+                       "_stop": False, "_cancel": threading.Event()}
+                self.clean_jobs[task_id] = job
+            except BaseException:
+                self.cleaning.release()
+                raise
+        if not identifiers:
+            self.cleaning.release()
+        elif background:
+            threading.Thread(target=self.clean, args=(identifiers, job), name="workbench-task-cleaning", daemon=True).start()
+        else:
+            self.clean(identifiers, job)
+        return self.clean_status(task_id)
+
+    def stop_task_clean(self, task_id, value, cancel=False):
+        if not isinstance(value, dict) or value:
+            raise ValueError("停止清洗请求必须为空对象")
+        with self.lock:
+            status = self.clean_status(task_id)
+            job = self.clean_jobs.get(task_id)
+            if job and status["status"] in ("queued", "running", "stopping", "cancelling"):
+                job["_stop"] = True
+                if cancel:
+                    job["_cancel"].set()
+                job["status"] = "cancelling" if job["_cancel"].is_set() else "stopping"
+            return self.clean_status(task_id)
+
     def check_file(self, batch):
         dataset = self.origins[batch["origin"]]
         expected = {key: batch[key] for key in ("name", "size", "mtime_ns")}
@@ -343,9 +437,15 @@ class WorkbenchCatalog:
             raise Conflict("压缩包仍在写入")
         return expected
 
-    def clean(self, identifiers):
+    def clean(self, identifiers, job=None):
         try:
             for identifier in identifiers:
+                with self.lock:
+                    if job and (self.stop.is_set() or job["_stop"]):
+                        break
+                    if job:
+                        job["status"] = "running"
+                        job["current_batch_id"] = identifier
                 try:
                     with self.lock, self.db() as db:
                         batch = dict(db.execute("SELECT * FROM batches WHERE id=?", (identifier,)).fetchone())
@@ -356,12 +456,15 @@ class WorkbenchCatalog:
                             raise Conflict("任务已有来自其他目录的同名包，请使用独立任务区分")
                         db.execute("UPDATE batches SET status='cleaning',updated_at=? WHERE id=?", (self.now(), identifier))
                     dataset = copy(self.dataset(task))
+                    dataset.clean_cancel = job["_cancel"] if job else None
+                    dataset.check_clean_cancelled()
                     info = self.check_file(batch)
                     with dataset.archive_lock():
                         original_archive_dir = dataset.archive_dir
                         try:
                             dataset.archive_dir = self.origins[batch["origin"]].archive_dir
                             dataset.recover()
+                            dataset.check_clean_cancelled()
                             dataset.process_archives([info], retry_failed=True)
                             db = dataset.open_archive_index()
                             try:
@@ -374,16 +477,31 @@ class WorkbenchCatalog:
                     if not saved:
                         raise Conflict("没有本批次清洗报告；输入可能已变化，不能推测处理结果")
                     report = json.loads(saved[0])
-                    status = "failed" if report["error"] else "partial" if report["file_errors"] else "cleaned" if report["accepted"] else "empty"
                     with self.lock, self.db() as db:
-                        db.execute("UPDATE batches SET status=?,report=?,error=?,updated_at=? WHERE id=?",
-                                   (status, json.dumps({k: v for k, v in report.items() if k not in ("records", "exclusions", "metadata_issues")}), report["error"], self.now(), identifier))
+                        self.save_report(db, identifier, report)
+                except InterruptedError:
+                    with self.lock, self.db() as db:
+                        db.execute("UPDATE batches SET status='interrupted',error='清洗已取消',updated_at=? WHERE id=?", (self.now(), identifier))
+                    break
                 except Exception as exc:
                     print(f"cleaning batch {identifier} failed: {exc}", file=sys.stderr, flush=True)
                     with self.lock, self.db() as db:
                         db.execute("UPDATE batches SET status='failed',error=?,updated_at=? WHERE id=?", (str(exc), self.now(), identifier))
+                with self.lock:
+                    if job:
+                        job["completed"] += 1
+                        job["remaining"] -= 1
+                        job["current_batch_id"] = None
         finally:
-            self.cleaning.release()
+            try:
+                with self.lock, self.db() as db:
+                    for identifier in identifiers:
+                        db.execute("UPDATE batches SET status='ready',updated_at=? WHERE id=? AND status='queued'", (self.now(), identifier))
+                    if job:
+                        job["current_batch_id"] = None
+                        job["status"] = "cancelled" if job["_cancel"].is_set() else "stopped" if job["_stop"] or self.stop.is_set() else "finished"
+            finally:
+                self.cleaning.release()
 
     def loop(self):
         while not self.stop.is_set():

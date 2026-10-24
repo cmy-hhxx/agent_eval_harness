@@ -4,11 +4,12 @@ import { hasLiveRunOwner, readJson } from "@eval/data";
 import { runEvaluation, type ModelRequestControl } from "@eval/host";
 import type { AutomationJob, AutomationState, EvaluationOutcome, EvaluationSummary } from "@eval/automations";
 import { comparisonWorkflow, expandComparisonPairs, publishableComparisons, reconcileRun, taskIdentity, type BatchPreflight, type Checkpoint, type EvalConfig, type TaskData } from "@eval/workflows/comparison";
-import { configurationSecrets, loadConfig } from "./config.js";
+import { configurationSecrets } from "./config.js";
 import { createAutomationModels } from "./automation-models.js";
 import { services, logger } from "./composition.js";
 import { automationEvaluationConfig, type AutomationConfig } from "./automation-config.js";
 import { predictionEvaluationConfig } from "./automation-prediction.js";
+import { loadDailyHost } from "./daily-settings.js";
 
 /** A daily run reserves battles separately for each pair; accepted work always survives the cap. */
 function automationSelection(
@@ -351,10 +352,11 @@ export async function evaluationTargets(config: AutomationConfig, output: string
 
 export async function evaluateDay(config: AutomationConfig, job: AutomationJob, signal: AbortSignal, exhaustedChannels: Set<string>,
   modelRequests?: ModelRequestControl,
+  pauseSignal?: AbortSignal,
 ): Promise<EvaluationOutcome> {
   const resumePaused = job.resumePaused;
   delete job.resumePaused;
-  const host = await loadConfig(config.hostConfigs), output = host.evaluation.output.path;
+  const execution = await loadDailyHost(config), host = execution.host, output = host.evaluation.output.path;
   const workflow = createAutomationWorkflow(config.dailyComparisonLimitPerTier);
   const routing = createAutomationModels(host.models, host.automation.channels, exhaustedChannels, config.channelConcurrency);
   logger.addSecrets(...configurationSecrets());
@@ -375,12 +377,12 @@ export async function evaluateDay(config: AutomationConfig, job: AutomationJob, 
       continue;
     }
     await runEvaluation({
-      ...services, runId, output: evaluation.output, engine: config.engine, evaluatorVersion: host.evaluatorVersion,
+      ...services, runId, output: evaluation.output, engine: execution.engine, evaluatorVersion: host.evaluatorVersion,
       taskSource: workflow,
       config: evaluation, plan, policy: evaluation.execution, ...routing,
       concurrency: modelRequests?.concurrency() || evaluation.execution.concurrency, modelRequests, retries: evaluation.execution.retries,
       retryDelaySeconds: evaluation.execution.retryDelaySeconds, failureGuard: evaluation.execution.failureGuard,
-      discoverInputs: true, signal,
+      discoverInputs: true, signal, pauseSignal, debug: execution.debug,
       resumeStages: resumable ? (resumePaused ? automationPauses(resumable).map((pause) => pause.stage) : automaticResumeStages(resumable, evaluation.execution)) : [],
     });
     signal.throwIfAborted();

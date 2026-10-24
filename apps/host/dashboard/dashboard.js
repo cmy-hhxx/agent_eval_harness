@@ -102,6 +102,7 @@ function renderRuns() {
       <span class="run-meta">${escapeHtml(run.engine)} · 评测器 ${escapeHtml(run.evaluator_version)} · ${progress.accepted || 0}/${total}${failures ? ` · ${failures} 失败` : ""}${blocked ? ` · ${blocked} 阻塞` : ""}${cancelled ? ` · ${cancelled} 取消` : ""}</span>
     </button><button class="run-delete" type="button" data-delete="${escapeHtml(run.run_id)}" aria-label="删除运行 ${escapeHtml(runLabel(run))}" title="${canDelete ? "删除运行" : run.status === "running" ? "停止后可删除" : "删除中"}" ${canDelete ? "" : "disabled"}><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 6h18M9 6V3h6v3M5 6l1 15h12l1-15M10 10v7M14 10v7" /></svg></button></div>`;
   }).join("");
+  if (options.resultsOnly) list.querySelectorAll('[data-delete]').forEach(button => button.hidden = true);
 }
 function renderOverview() {
   const run = state.run;
@@ -124,6 +125,7 @@ function renderOverview() {
   $("#run-actions").innerHTML = run.status === "running"
     ? `<form id="concurrency-form" class="inline-form"><label for="live-concurrency">并发</label><input id="live-concurrency" type="number" min="1" value="${Number(progress.concurrency) || 1}" required /><button class="button" type="submit">调整</button></form><button class="button button-danger" type="button" data-stop="${escapeHtml(run.run_id)}">停止</button>`
     : `<button class="button" type="button" data-resume="${escapeHtml(run.run_id)}">续跑此运行</button><button class="button button-danger" type="button" data-delete="${escapeHtml(run.run_id)}">删除运行</button>`;
+  $("#run-actions").hidden = options.resultsOnly === true;
   $("#stage-summary").innerHTML = ["criteria", "attribution", "comparison", "rewrite", "clustering"].map((stage) => {
     const counts = run.stages?.[stage] || {};
     const total = Object.values(counts).reduce((sum, n) => sum + n, 0);
@@ -369,6 +371,7 @@ async function refresh(auto = false) {
     const { runs, errors } = await api(apiUrl("/runs"));
     if (request !== state.runRequest) return;
     state.runs = runs;
+    if (options.resultsOnly && !state.selectedRun) state.selectedRun = runs[0]?.run_id || null;
     const previousRun = state.selectedRun;
     if (state.startingRun) {
       if (runs.some((run) => run.run_id === state.startingRun.id)) {
@@ -858,7 +861,7 @@ $("#model-none").addEventListener("click", () => {
   invalidatePreview();
 });
 $("#refresh-button").addEventListener("click", async () => {
-  await loadInputs();
+  if (!options.resultsOnly) await loadInputs();
   await refresh();
   if (state.selectedCase) {
     await loadCase(state.selectedCase.batch, state.selectedCase.caseId);
@@ -881,7 +884,8 @@ $("#start-form").addEventListener("submit", (event) => { event.preventDefault();
 
 const ready = (async () => {
   state.runId = suggestedRunId();
-  await Promise.all([loadConfig(), loadInputs(), refresh().then(() => restoreRecall())]);
+  $("#config").hidden = options.resultsOnly === true;
+  await Promise.all([...(options.resultsOnly ? [] : [loadConfig(), loadInputs()]), refresh().then(() => restoreRecall())]);
 })();
 
 return { ready, restoreRecall: async params => { await refresh(); await restoreRecall(params); } };

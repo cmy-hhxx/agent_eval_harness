@@ -760,11 +760,12 @@ test("Mongo delivers inputs and newly settled outputs during evaluation without 
   assert.equal(restored.jobs["2026-09-22"].mongo, undefined);
 });
 
-test("Mongo publishes settled results while the next input snapshot is downloading", async () => {
+test("Mongo timeout during refresh does not block input promotion or evaluation of new answers", async () => {
   const state = fresh(), controller = new AbortController(), date = "2026-09-29";
   let rows = 1, release!: () => void, uploading = false, finishUpload!: () => void;
   const transfer = new Promise<void>(resolve => { release = resolve; });
   const upload = new Promise<void>(resolve => { finishUpload = resolve; });
+  const evaluated: number[] = [];
   const deps = services({
     discover: async () => [day(date, rows)],
     sync: async (_job, current, _signal, beforeReplace) => {
@@ -773,9 +774,10 @@ test("Mongo publishes settled results while the next input snapshot is downloadi
       return { changed: true, bytes: 10, rows: current.rows };
     },
     syncMongo: async job => {
-      if (job.summary?.readyComparisons === 2) { uploading = true; await upload; }
+      if (job.summary?.readyComparisons === 2) { uploading = true; await upload; throw new Error("Mongo network timeout"); }
       return { inputs: 4, comparisons: job.summary?.readyComparisons ?? 0, inserted: 0, updated: 0 };
     },
+    evaluate: async job => { evaluated.push(job.downloaded!.a_fast); return { status: "completed", summary }; },
   });
   const work = runPipeline(state, options, deps, controller.signal);
   try {
@@ -786,10 +788,13 @@ test("Mongo publishes settled results while the next input snapshot is downloadi
     job.summary = { ...summary, readyComparisons: 2 };
     await until(() => uploading);
     release();
-    await delay(150);
-    assert.equal(job.downloaded!.a_fast, 1, "Mongo pins the previous snapshot until its upload completes");
+    await until(() => job.downloaded?.a_fast === 2 && job.evaluation === "completed");
+    assert.equal(job.mongo!.status, "running");
+    assert.deepEqual(evaluated, [1, 2]);
     finishUpload();
-    await until(() => job.downloaded?.a_fast === 2);
+    await until(() => job.mongo?.status === "retry");
+    assert.match(job.mongo!.error!, /Mongo network timeout/);
+    assert.deepEqual(evaluated, [1, 2], "delivery failure never replays successful evaluations");
   } finally { release(); finishUpload(); controller.abort(); await work; }
 });
 
@@ -874,7 +879,7 @@ test(`Mongo receipts for ${previousTarget ?? "an unconfirmed task"} do not suppr
   assert.equal(uploads, 2, "the current target's receipt remains resumable");
 });
 
-test("Mongo pins inputs during delivery and an interrupted upload resumes immediately", async () => {
+test("Mongo delivery permits input promotion and an interrupted upload resumes immediately", async () => {
   const state = fresh(), date = "2026-09-29", controller = new AbortController();
   await runPipeline(state, { ...options, once: true }, services(), AbortSignal.timeout(3000));
   const job = state.jobs[date]; let count = 1, downloads = 0, started = false;
@@ -891,9 +896,8 @@ test("Mongo pins inputs during delivery and an interrupted upload resumes immedi
     await until(() => started);
     count = 2;
     await until(() => job.observed.a_fast === 2);
-    assert.equal(job.downloaded!.a_fast, 1);
-    await until(() => downloads === 1);
-    assert.equal(job.downloaded!.a_fast, 1, "transfer can start but Mongo still pins installed inputs");
+    await until(() => downloads === 1 && job.downloaded?.a_fast === 2);
+    assert.equal(job.mongo!.status, "running", "promotion is independent of network delivery");
   } finally { controller.abort(); await work; }
   assert.equal(job.mongo!.status, "pending");
   assert.equal(job.mongo!.error, undefined);

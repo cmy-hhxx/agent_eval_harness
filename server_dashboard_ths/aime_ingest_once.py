@@ -172,7 +172,41 @@ def snapshot(dataset):
             "archives": [{**item, "mtime_ns": str(item["mtime_ns"])} for item in signature if item["name"] in pending]}
 
 
-def process_snapshot(dataset, names, stable_seconds, timeout_seconds, checkpoint=None):
+def existing_records(dataset):
+    """Coordinates for historical backfill; source bodies remain in their normalized files."""
+    records, exclusions, seen = [], [], set()
+    for model in dataset.models:
+        for file in sorted((dataset.output_dir / model).glob("*.jsonl")):
+            before = file.stat()
+            with file.open("rb") as stream:
+                for number, raw in enumerate(stream, 1):
+                    if not raw.strip():
+                        continue
+                    try:
+                        row = json.loads(raw)
+                        identity = trace_id(row)
+                        source = row.get("_source", {})
+                        if not identity:
+                            raise ValueError("trace_id_missing")
+                        if identity in seen:
+                            raise ValueError("duplicate_trace")
+                        if not row.get("batch_id") or not row.get("case_id"):
+                            raise ValueError("business_identity_missing")
+                        records.append({"model": model, "date": source.get("business_date") or file.stem,
+                                        "batch_id": row["batch_id"], "case_id": row["case_id"], "trace_id": identity,
+                                        "input_file": str(file), "input_index": number - 1,
+                                        "original_file": source.get("original_file", ""),
+                                        "original_line": source.get("original_line"), "original_item": source.get("original_item")})
+                        seen.add(identity)
+                    except (ValueError, TypeError, AttributeError) as exc:
+                        exclusions.append({"model": model, "input_file": str(file), "input_line": number, "reason": str(exc)})
+            after = file.stat()
+            if (before.st_size, before.st_mtime_ns) != (after.st_size, after.st_mtime_ns):
+                raise RuntimeError(f"input changed while listing: {file}")
+    return {"records": records, "exclusions": exclusions}
+
+
+def process_snapshot(dataset, names, stable_seconds, timeout_seconds, checkpoint=None, paused=None):
     result = {"reports": [], "deferred": [], "baseline_ambiguous_trace_ids": []}
     journal = json.loads(checkpoint.read_text()) if checkpoint and checkpoint.exists() else {"names": names, "prepared": {}}
     if journal["names"] != names:
@@ -181,7 +215,10 @@ def process_snapshot(dataset, names, stable_seconds, timeout_seconds, checkpoint
     dataset.process_archives([])
     dataset.index_existing_traces()
     result["baseline_ambiguous_trace_ids"] = sorted(dataset.baseline_ambiguous)
-    for name in names:
+    for index, name in enumerate(names):
+        if paused and paused():
+            result["deferred"].extend({"archive": remaining, "reason": "paused"} for remaining in names[index:])
+            break
         if Path(name).name != name or Path(name).suffix.lower() != ".7z":
             raise ValueError("invalid archive name")
         path = dataset.archive_dir / name
@@ -229,7 +266,7 @@ def process_snapshot(dataset, names, stable_seconds, timeout_seconds, checkpoint
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("operation", choices=["scan", "process"])
+    parser.add_argument("operation", choices=["scan", "process", "catalog"])
     for name in ["archive-dir", "input-dir", "data-state", "validator", "output"]:
         parser.add_argument("--" + name, required=True)
     parser.add_argument("--names-file")
@@ -245,10 +282,16 @@ def main():
         parser.error("archive-dir does not exist")
     dataset.state_dir.mkdir(parents=True, exist_ok=True)
     signal.signal(signal.SIGTERM, lambda *_: (_ for _ in ()).throw(KeyboardInterrupt()))
+    pause_requested = False
+    def request_pause(*_):
+        nonlocal pause_requested
+        pause_requested = True
+    signal.signal(signal.SIGUSR1, request_pause)
+    print("AIME_INGEST_READY", flush=True)
     with dataset.archive_lock(), contextlib.redirect_stdout(sys.stderr):
-        result = snapshot(dataset) if args.operation == "scan" else process_snapshot(
+        result = snapshot(dataset) if args.operation == "scan" else existing_records(dataset) if args.operation == "catalog" else process_snapshot(
             dataset, json.loads(Path(args.names_file).read_text()), args.stable_seconds, args.timeout_seconds,
-            Path(args.output + ".checkpoint.json"))
+            Path(args.output + ".checkpoint.json"), paused=lambda: pause_requested)
         app.write_json_atomic(Path(args.output), result)
 
 

@@ -43,3 +43,17 @@ test('duplicates, quarantine and unstable archives are reported without an empty
  f.deps.clean=async()=>({report:r,file:'/state/quarantine.json'});const result=await runAimeIncremental(options(),f.deps);
  assert.equal(result.duplicates,1);assert.equal(result.quarantined,2);assert.equal(result.exit_code,2);assert.equal(result.attribution_started,0);assert.equal(f.calls.length,0);
 });
+test('historical normalized inputs are backfilled without new archives and missing stages are checked on startup',async()=>{
+ const f=fixture();f.setDiscovery(false);f.deps.existingRecords=async()=>[record('historical')];
+ const first=await runAimeIncremental({...options(),refreshCompleted:true},f.deps);
+ assert.equal(first.backfilled_records,1);assert.equal(first.added_records,0);assert.equal(f.calls.length,1);
+ const second=await runAimeIncremental(options(),f.deps);assert.equal(second.backfilled_records,0);assert.equal(f.calls.length,1);
+ await runAimeIncremental({...options(),refreshCompleted:true},f.deps);assert.equal(f.calls.length,2,'one startup reconciliation can add a missing stage to a completed day');
+});
+test('pause after scanning prevents new cleaning and evaluation without cancelling accepted work',async()=>{
+ const f=fixture(),pause=new AbortController(),scan=f.deps.scan;
+ f.deps.scan=async()=>{const result=await scan();pause.abort();return result;};
+ f.deps.clean=async()=>{throw Error('paused cleaning must not start');};
+ const result=await runAimeIncremental({...options(),pauseSignal:pause.signal},f.deps);
+ assert.equal(result.processed_archives,0);assert.equal(f.calls.length,0);
+});

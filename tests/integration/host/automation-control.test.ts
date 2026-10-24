@@ -47,3 +47,25 @@ test("failure stays visible without automatic retry or stopping another source",
   assert.throws(() => control.run("unknown"), /Unknown automation source/);
   await control.close();
 });
+
+test("pause drains one source without aborting active work or stopping another source", async () => {
+  const calls: { id: string; signal: AbortSignal; pauseSignal: AbortSignal; finish(): void }[] = [];
+  const control = createAutomationControl(["wencai", "aime"], async (id, signal, pauseSignal) => {
+    await new Promise<void>(resolve => calls.push({ id, signal, pauseSignal, finish: resolve }));
+  });
+  control.run("wencai"); control.run("aime");
+  await new Promise(setImmediate);
+  assert.equal(control.pause("wencai").status, "pausing");
+  assert.equal(calls[0].signal.aborted, false);
+  assert.equal(calls[0].pauseSignal.aborted, true);
+  assert.equal(calls[1].pauseSignal.aborted, false);
+  assert.equal(control.snapshot("aime").status, "running");
+  calls[0].finish(); await new Promise(setImmediate);
+  assert.equal(control.snapshot("wencai").status, "paused");
+  assert.equal(control.resume("wencai").status, "running");
+  await new Promise(setImmediate);
+  assert.equal(calls[2].pauseSignal.aborted, false);
+  control.stop("wencai");
+  assert.equal(calls[2].signal.aborted, true);
+  calls[2].finish(); calls[1].finish(); await control.close();
+});

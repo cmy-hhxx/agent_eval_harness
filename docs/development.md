@@ -24,7 +24,7 @@
 | 离线汇报 | [汇报验证](../evaluation-report/README.md#维护与构建) |
 | 远程工作台 / 数据服务 | [部署](deployment.md)、[服务验证](../server_dashboard_ths/README.md#本地验证)，已接入 `npm test` 与 `test:full` |
 
-测试分组以 [scripts/test.mjs](../scripts/test.mjs) 和 [package.json](../package.json) 为准。`npm test`、`test:full`、`test:integration` 先构建；前两者限制测试文件并发，避免 Worker 子进程挤占时限。失败应定位原因，不自动重跑或延长时限。
+测试分组以 [scripts/test.mjs](../scripts/test.mjs) 和 [package.json](../package.json) 为准。`npm test`、`test:full`、`test:integration` 先构建，同时最多运行两个测试文件，避免 Worker 子进程挤占时限。失败应定位原因，不自动重跑或延长时限。
 
 测试只覆盖当前可观察行为：
 

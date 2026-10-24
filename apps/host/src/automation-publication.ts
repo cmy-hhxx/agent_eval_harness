@@ -1,7 +1,7 @@
 import path from "node:path";
 import { randomUUID } from "node:crypto";
 import { object, type JsonObject, type PublicationInput, type PublicationResult } from "@eval/contracts";
-import { appendStatisticsLog, completeCaseMetadata, fileSourceReader, readCaseMetadata, readJson, readJsonl, readStatisticsLogs, writeJson } from "@eval/data";
+import { appendStatisticsLog, completeCaseMetadata, fileSourceReader, readCaseMetadata, readJson, readJsonl, readStatisticsLogs, writeJson, pinInputSources, waitForRunLock } from "@eval/data";
 import { publishMongo, readMongoLabels } from "@eval/runtime/client";
 import { PublicationStatistics, statisticsInput, publishableComparisons, publicationComparison, locateRecordStream, normalizeInput, assertStatisticsLog, assertCompleteComparisonRewrite, type EvalConfig } from "@eval/workflows/comparison";
 import type { AutomationJob, AutomationState } from "@eval/automations";
@@ -13,11 +13,41 @@ import { automationMongoTarget } from "./automation-sources.js";
 import { predictionOrigin } from "./automation-prediction.js";
 import { statisticsSource, type StatisticsDeliveryStore } from "./statistics-delivery.js";
 
+export interface PublicationSnapshot {
+  inputs(): AsyncIterableIterator<PublicationInput>;
+  results(purpose?: "publication" | "statistics"): AsyncIterableIterator<PublicationResult>;
+  comparisons: string[][];
+  close(): Promise<void>;
+}
+
 /** Reads immutable input files pinned by the publication lane and accepts only settled result references. */
-export async function publicationSnapshot(config: AutomationConfig, job: AutomationJob, signal: AbortSignal, purpose: "publication" | "statistics" = "publication") {
+export async function publicationSnapshot(config: AutomationConfig, job: AutomationJob, signal: AbortSignal, purpose: "publication" | "statistics" = "publication"): Promise<PublicationSnapshot> {
+  job = structuredClone(job);
   const host = await loadConfig(config.hostConfigs);
   const metadata = await readCaseMetadata(path.join(config.sourceDirectory, "case-meta.jsonl"));
-  const runs = await Promise.all(job.runIds.map(async (id) => ({ id, state: await checkpoint(host.evaluation.output.path, id) })));
+  const release = await waitForRunLock(path.join(config.sourceDirectory, job.date, ".snapshot"), signal);
+  let runs: { id: string; state: Awaited<ReturnType<typeof checkpoint>> }[];
+  let prediction: { runId: string; comparisonIds: string[]; state: NonNullable<Awaited<ReturnType<typeof checkpoint>>> } | undefined;
+  let pinned: Awaited<ReturnType<typeof pinInputSources>>;
+  try {
+    runs = await Promise.all(job.runIds.map(async id => ({ id, state: await checkpoint(host.evaluation.output.path, id) })));
+    if (config.predictionResults) {
+      try {
+        const published = await readJson<{ runId: string; comparisonIds: string[] }>(path.join(config.predictionResults, job.date, "published.json"));
+        const state = await checkpoint(host.evaluation.output.path, published.runId);
+        if (!state) throw new Error("Published prediction run is missing: " + published.runId);
+        prediction = { ...published, state };
+      } catch (error) { if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error; }
+    }
+    const sources = new Set(runs.flatMap(({ state }) => Object.values(state?.inputs ?? {}).map(input => input.source)));
+    if (!config.prediction && !job.adopted)
+      for (const model of config.remoteModels) sources.add(path.join(config.sourceDirectory, job.date, model + ".jsonl"));
+    for (const { id, state } of [...runs, ...(prediction ? [{ id: prediction.runId, state: prediction.state }] : [])])
+      if (state && (publishableComparisons(state).size || prediction?.runId === id && prediction.comparisonIds.length))
+        sources.add(path.join(host.evaluation.output.path, id, "results/comparison.jsonl"));
+    pinned = await pinInputSources([...sources]);
+  } finally { await release(); }
+  try {
   const revisions = new Map<string, string>();
   const coordinates = new Map<string, { byteOffset: number; byteLength: number }[]>();
   const inputKey = (caseId: unknown, versionId: string) => JSON.stringify([caseId, versionId]);
@@ -41,7 +71,8 @@ export async function publicationSnapshot(config: AutomationConfig, job: Automat
       const files = config.prediction ? registered : job.adopted ? [...new Set(runs.flatMap(({ state }) => Object.values(state?.inputs ?? {})
         .filter((input) => input.version === id).map((input) => input.source)))] : config.remoteModels.includes(id)
           ? [path.join(config.sourceDirectory, job.date, id + ".jsonl")] : registered;
-      for (const file of files) {
+      for (const original of files) {
+        const file = pinned.files.get(original)!;
         const revision = revisions.get(file) ?? await fileSourceReader.revision(file);
         revisions.set(file, revision);
         const coordinateKey = JSON.stringify([file, id]);
@@ -100,7 +131,7 @@ export async function publicationSnapshot(config: AutomationConfig, job: Automat
         if (seen.has(key) || quarantined.has(key)) continue;
         const version = (state.config as EvalConfig).inputs.versions.find((item) => item.id === candidate.version);
         if (!version) throw new Error("Accepted publication input version is not registered: " + candidate.version);
-        const { raw } = await locateRecordStream(candidate.source, { ...candidate, input_id: inputId }, version, job.date);
+        const { raw } = await locateRecordStream(pinned.files.get(candidate.source)!, { ...candidate, input_id: inputId }, version, job.date);
         seen.add(key);
         yield { versionId: candidate.version, trace: { ...completeCaseMetadata(raw, metadata), batch_id: candidate.batch_id, case_id: candidate.case_id, version: version.name } };
       }
@@ -133,31 +164,31 @@ export async function publicationSnapshot(config: AutomationConfig, job: Automat
         if (!task.receipt.rewriteIds?.length) throw new Error("Accepted comparison rewrite scope missing: " + source.taskId);
         rewriteIds.set(comparisonId, [...new Set([...(rewriteIds.get(comparisonId) ?? []), ...task.receipt.rewriteIds])]);
       }
-      for await (const item of readJsonl(path.join(host.evaluation.output.path, id, "results/comparison.jsonl"))) {
+      const resultFile = pinned.files.get(path.join(host.evaluation.output.path, id, "results/comparison.jsonl"));
+      if (!resultFile) throw new Error("Accepted comparison result file was not captured: " + id);
+      for await (const item of readJsonl(resultFile)) {
         signal.throwIfAborted();
         const row = object(item), key = String(row.comparison_id), evaluatedAt = ready.get(key);
         if (evaluatedAt === undefined) continue;
         if (object(row.case).batch_id !== job.date) throw new Error("Publication result belongs to another date");
         ready.delete(key);
-        if (Object.keys(object(row.models)).some(version => quarantined.has(inputKey(object(row.case).case_id, version)))) continue;
+        if (Object.keys(object(row.models)).some(version => quarantined.has(inputKey(object(row.case).case_id, version)))) {
+          if (!ready.size) break;
+          continue;
+        }
         const required = rewriteIds.get(key) ?? [];
         if (required.length) assertCompleteComparisonRewrite(row, required);
         yield { row: publicationComparison(row, comparisonInputs.get(key)!, state.inputs), evaluatedAt };
+        if (!ready.size) break;
       }
       if (ready.size) throw new Error(`Accepted comparison rows missing in ${id}: ${ready.size}`);
     }
   }
   async function* results(purpose: "publication" | "statistics" = "publication"): AsyncGenerator<PublicationResult> {
     const replacements = new Map<string, PublicationResult>();
-    if (config.predictionResults) {
-      let published: { runId: string; comparisonIds: string[] } | undefined;
-      try { published = await readJson(path.join(config.predictionResults, job.date, "published.json")); }
-      catch (error) { if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error; }
-      if (published) {
-        const state = await checkpoint(host.evaluation.output.path, published.runId);
-        if (!state) throw new Error("Published prediction run is missing: " + published.runId);
-        const pending = new Set(published.comparisonIds);
-        for await (const result of runResults([{ id: published.runId, state }], purpose === "statistics" ? new Set(pending) : undefined)) {
+    if (prediction) {
+        const pending = new Set(prediction.comparisonIds);
+        for await (const result of runResults([{ id: prediction.runId, state: prediction.state }], purpose === "statistics" ? new Set(pending) : undefined)) {
           if (!pending.delete(String(result.row.comparison_id))) continue;
           const metadata = object(result.row.prediction);
           if (result.row.evaluation_purpose !== "prediction" || metadata.source_evaluation_task_id !== config.id)
@@ -167,7 +198,6 @@ export async function publicationSnapshot(config: AutomationConfig, job: Automat
           replacements.set(id, result);
         }
         if (pending.size) throw new Error("Published prediction result is unavailable");
-      }
     }
     for await (const result of runResults()) {
       const replacement = replacements.get(String(result.row.comparison_id));
@@ -183,16 +213,19 @@ export async function publicationSnapshot(config: AutomationConfig, job: Automat
     ...(state.config as EvalConfig).comparisons,
     ...Object.values(state.tasks).flatMap((task) => task.stage === "comparison" && !task.data.verificationAudit && task.receipt && task.data.group ? [task.data.group] : []),
   ] : []);
-  return { inputs, results, comparisons: runs.some(({ state }) => state) ? comparisons : host.evaluation.comparisons };
+  return { inputs, results, comparisons: runs.some(({ state }) => state) ? comparisons : host.evaluation.comparisons, close: pinned.close };
+  } catch (error) { await pinned.close(); throw error; }
 }
 
 export async function syncMongoDay(
   config: AutomationConfig, job: AutomationJob, signal: AbortSignal,
   dependencies = { snapshot: publicationSnapshot, mongo: publishMongo },
 ) {
+  job = structuredClone(job);
   const settings = config.publication, uri = process.env[settings.mongoUriEnv];
   if (!uri) throw new Error("Missing " + settings.mongoUriEnv);
   const snapshot = await dependencies.snapshot(config, job, signal);
+  try {
   // Validate the complete result set before any external writes, including cross-pair core consistency.
   const validation = new PublicationStatistics(snapshot.comparisons);
   for await (const input of snapshot.inputs()) validation.addInput(input);
@@ -214,21 +247,10 @@ export async function syncMongoDay(
       if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
     }
   }
-  let filesPublished = !config.prediction && !job.adopted;
-  for (const model of filesPublished ? config.remoteModels : []) {
-    try {
-      const receipt = await readJson<{ revision: string }>(path.join(config.stateDirectory, "input-publications", job.date, model + ".json"));
-      if (receipt.revision !== await fileSourceReader.revision(path.join(config.sourceDirectory, job.date, model + ".jsonl")))
-        filesPublished = false;
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
-      filesPublished = false;
-    }
-  }
   const counts = await dependencies.mongo({ uri, database: settings.mongoDatabase, collection: settings.mongoCollection, evaluationTaskId: origin.id,
     ...(settings.topic ? { topic: settings.topic } : {}),
     ...(config.prediction ? { resultsOnly: true } : {}),
-    inputsUnchanged: filesPublished || job.mongo?.target === automationMongoTarget(config) &&
+    inputsUnchanged: job.mongo?.target === automationMongoTarget(config) &&
       job.mongo.synced?.inputsUpdatedAt === (job.inputsUpdatedAt ?? 0),
     tlsCAFile: process.env[settings.mongoTlsCAFileEnv] }, job.date, snapshot.inputs(), snapshot.results(), signal);
   if (config.prediction) {
@@ -236,6 +258,7 @@ export async function syncMongoDay(
     await writeJson(publishedFile, { runId: job.runIds[0], comparisonIds: [...confirmed] });
   }
   return counts;
+  } finally { await snapshot.close(); }
 }
 
 /** One cumulative daily-dashboard inventory across every registered date, including adopted history. */
@@ -255,9 +278,11 @@ export async function statisticsSnapshot(
   for (const job of jobs) {
     if (!installed(job)) continue;
     const snapshot = await dependencies.snapshot(config, job, signal, "statistics");
+    try {
     statistics.addGroups(snapshot.comparisons, job.date);
     for await (const input of snapshot.inputs()) statistics.addInput(input);
     for await (const result of snapshot.results("statistics")) statistics.addResult(result);
+    } finally { await snapshot.close(); }
   }
   const labelKeys = new Set<string>();
   try {

@@ -7,7 +7,7 @@
     "a_expert",
     "b_expert"
   ],
-  "fromDate": "2026-10-13",
+  "fromDate": null,
   "completedDates": [],
   "hostConfigs": [
     "host.json",
@@ -23,10 +23,7 @@
   "refreshMs": 1800000,
   "retryMs": 30000,
   "maxEvaluationAttempts": 3,
-  "dailyComparisonLimitPerTier": 300,
-  "channelConcurrency": {
-    "openai": 1
-  },
+  "dailyComparisonLimitPerTier": null,
   "requestTimeoutMs": 600000,
   "publishProgress": true,
   "publication": {
@@ -37,6 +34,7 @@
     "mongoCollection": "agent_eval_bench_version_comparisons_new",
     "mongoTlsCAFileEnv": "AUTOMATIONS_MONGODB_TLS_CA_FILE"
   },
-  "publishStatisticsLog": true,
-  "publishMongo": true
+  "publishStatisticsLog": false,
+  "publishMongo": true,
+  "autoClean": true
 }

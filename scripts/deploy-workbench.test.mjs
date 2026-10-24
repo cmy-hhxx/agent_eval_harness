@@ -23,7 +23,7 @@ async function fixture(t) {
   git(directory, "clone", repository, seed);
   await mkdir(path.join(seed, "scripts")); await mkdir(path.join(seed, "configs"));
   for (const file of ["scripts/workbench-init.mjs", "configs/host.json", "configs/models.example.json",
-    "configs/automations-host.json", "configs/automations.json", "config.example.ini", "mise.toml"])
+    "configs/automations-host.json", "configs/automations.json", "configs/aime-ingest-and-attribute.example.json", "config.example.ini", "mise.toml"])
     await copyFile(path.join(root, file), path.join(seed, file));
   git(seed, "add", "."); git(seed, "commit", "-m", "initial"); git(seed, "push", "origin", "main");
   await writeFile(path.join(bin, "mise"), '#!/bin/bash\ncase "$1" in\ntrust|install) exit 0;;\nexec) shift; exec "$@";;\n*) exit 1;;\nesac\n', { mode: 0o755 });

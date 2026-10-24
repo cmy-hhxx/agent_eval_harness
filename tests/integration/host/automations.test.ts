@@ -45,7 +45,7 @@ test("six-model automation configuration validates remote identities and reserve
   try {
     const settings = await loadAutomationConfig(path.join(ROOT, "configs/automations-six-models.example.json"));
     assert.equal(new URL(settings.sourceUrl).pathname, "/data/gpt");
-    assert(settings.fromDate <= "2026-10-16", "GPT date range must include the available batch");
+    assert(!settings.fromDate || settings.fromDate <= "2026-10-16", "GPT date range must include the available batch");
     assert.equal(settings.runPrefix, "daily-six-");
     assert.equal(settings.sourceDirectory, path.join(ROOT, "data/sources/automations/remote-six-model-evaluation"));
     assert.equal(settings.stateDirectory, path.join(ROOT, "data/automations/remote-six-model-evaluation"));
@@ -113,7 +113,7 @@ test("completed quota stays completed despite unpaired inputs, including after r
     rewrite.status = "pending";
     assert.equal(evaluationOutcome([saved], summarize([saved]), DEFAULT_POLICY, 300).status, "retry", "active polish still gets its chance to finish");
     rewrite.status = "succeeded";
-    const settings = await fourModelSettings();
+    const settings = { ...await fourModelSettings(), dailyComparisonLimitPerTier: 300 };
     const job = { date: "2026-09-29", runIds: [saved.runId], evaluation: "waiting_inputs" } as AutomationJob;
     await writeJson(path.join(directory, saved.runId, "state.json"), saved);
     await recoverEvaluation(settings, directory, job, DEFAULT_POLICY);
@@ -221,7 +221,7 @@ test("automation comparison quota accepts a positive integer or explicit null fo
   try {
     const source = path.join(ROOT, "configs/automations.json"), file = path.join(directory, "automation.json");
     const settings = await readJson<Record<string, unknown>>(source);
-    assert.equal((await loadAutomationConfig(source)).dailyComparisonLimitPerTier, 300);
+    assert.equal((await loadAutomationConfig(source)).dailyComparisonLimitPerTier, Infinity);
     for (const value of [undefined, 0, -1, 1.5, "300"]) {
       await writeJson(file, { ...settings, dailyComparisonLimitPerTier: value });
       await assert.rejects(loadAutomationConfig(file), /Invalid automations.dailyComparisonLimitPerTier/);
@@ -281,7 +281,8 @@ test("automation channel concurrency accepts only positive integer limits", asyn
   try {
     const source = path.join(ROOT, "configs/automations.json"), file = path.join(directory, "automation.json");
     const settings = await readJson<Record<string, unknown>>(source);
-    assert.deepEqual((await loadAutomationConfig(source)).channelConcurrency, { openai: 1 });
+    await writeJson(file, { ...settings, channelConcurrency: { openai: 2 } });
+    assert.deepEqual((await loadAutomationConfig(file)).channelConcurrency, { openai: 2 });
     for (const value of [null, [], 1, { openai: 0 }, { openai: -1 }, { openai: 1.5 }, { openai: "1" }, { "": 1 }]) {
       await writeJson(file, { ...settings, channelConcurrency: value });
       await assert.rejects(loadAutomationConfig(file), /Invalid automations.channelConcurrency/);
@@ -292,8 +293,9 @@ test("automation channel concurrency accepts only positive integer limits", asyn
 });
 
 test("automation plans attribution, comparison and both rewrites while deferring clustering", async () => {
-  const { directory, config } = await fixtureConfig();
+  const { directory, config } = await fixtureConfig(undefined, true, true);
   try {
+    config.rewrite.comparisonItems = true;
     const date = "2026-09-29", source = path.join(directory, "source");
     for (const model of REMOTE_MODELS) await writeJsonl(path.join(source, date, model + ".jsonl"), [raw()].map((record) => ({ ...record, batch_id: date })));
     const evaluation = automationEvaluationConfig(config, source, date, REMOTE_MODELS);
@@ -324,6 +326,9 @@ test("automation plans attribution, comparison and both rewrites while deferring
     assert.equal(state.manifest.tasks.find((task) => task.id === accepted.id), accepted);
     assert(state.manifest.tasks.some((task) => task.stage === "comparison" && Object.values((task.data as TaskData).candidates)[0].case_id === "new-case"));
     assert.equal(state.manifest.states[accepted.id].status, "succeeded");
+    const disabled = automationEvaluationConfig({ ...config, rewrite: { attribution: false, comparison: false, clustering: false } }, source, date, REMOTE_MODELS);
+    assert.equal((await automationWorkflow.plan(disabled)).tasks.some(task => task.stage === "rewrite"), false,
+      "automation preserves explicitly disabled rewrites");
   } finally { await rm(directory, { recursive: true, force: true }); }
 });
 
@@ -410,7 +415,8 @@ test("automation defers unfinished clustering and later classifies attributions 
 for (const modelCount of [4, 6, 2]) test(`automation resumes mixed flat and session inputs and delivers complete Mongo and statistics rows (${modelCount} models)`, { timeout: 90_000 }, async (t) => {
   t.after(() => {
   });
-  const { directory, config, modelForStage } = await fixtureConfig();
+  const { directory, config, modelForStage } = await fixtureConfig(undefined, true);
+  config.rewrite.comparisonItems = true;
   let controller = new AbortController();
   const interrupted = new Set<string>(), interruptedTasks = new Set<string>(), calls = new Map<string, number>();
   const date = "2026-10-08", source = path.join(directory, "source");
@@ -581,6 +587,7 @@ for (const modelCount of [4, 6, 2]) test(`automation resumes mixed flat and sess
       let count = 0;
       for await (const _row of snapshot.results()) count++;
       assert.equal(count, delivered.comparisons, "publication validates the scope declared by accepted receipts");
+      await snapshot.close();
     }
   } finally {
     await worker.close();
@@ -971,6 +978,7 @@ test("a daily run adds new capped battles without changing accepted results or t
     const publishedOriginal = published.find(result => result.row.comparison_id === originalReceipt.exported!.id)!;
     assert.equal(publishedOriginal.row.evaluator_version, originalReceipt.exported!.row.evaluator_version);
     assert.deepEqual(publishedOriginal.row.rewritten, originalReceipt.exported!.row.rewritten);
+    await snapshot.close();
     const submitted = calls.size;
     await runEvaluation(resumed);
     assert.equal(calls.size, submitted, "restart must neither refill the quota nor repeat accepted work");

@@ -2,7 +2,9 @@ import { stat, readFile, readdir, link, unlink } from "node:fs/promises";
 import { randomUUID } from "node:crypto";
 import { createReadStream, openSync, closeSync, readSync, fstatSync, statSync, type BigIntStats } from "node:fs";
 import path from "node:path";
+import { setTimeout as delay } from "node:timers/promises";
 import type { InputSource } from "@eval/contracts";
+import { runLock } from "./files.js";
 
 /** File-system reads used to resolve configured input sources. */
 export interface SourceReader {
@@ -17,12 +19,35 @@ async function fileRevision(source: string): Promise<string> {
   return [info.dev, info.ino, info.size, info.mtimeNs].join(":");
 }
 
-/** Keep validated bytes readable while the downloader promotes or removes its staging directory. */
-export async function withPinnedInputSource<T>(source: string, operation: (file: string) => Promise<T>): Promise<T> {
-  const pinned = path.join(path.dirname(path.dirname(source)), `.publication-${randomUUID()}.jsonl`);
-  await link(source, pinned);
-  try { return await operation(pinned); }
-  finally { await unlink(pinned); }
+/** Capture a complete input group while the caller holds its short promotion lock. */
+export async function pinInputSources(sources: readonly string[]) {
+  const files = new Map<string, string>();
+  const close = async () => {
+    const pinned = [...files.values()]; files.clear();
+    await Promise.all(pinned.map(file => unlink(file)));
+  };
+  try {
+    for (const source of new Set(sources)) {
+      const pinned = path.join(path.dirname(source), `.publication-${randomUUID()}`);
+      await link(source, pinned);
+      files.set(source, pinned);
+    }
+    return { files, close };
+  } catch (error) { await close(); throw error; }
+}
+
+/** Short source-promotion contention is retryable; unrelated filesystem failures are not. */
+export async function waitForRunLock(directory: string, signal: AbortSignal) {
+  const deadline = Date.now() + 10_000;
+  for (;;) {
+    signal.throwIfAborted();
+    try { return await runLock(directory); }
+    catch (error) {
+      if (!(error instanceof Error) || !/^(Run already owned|Run lock recovery|Could not acquire run lock)/.test(error.message) || Date.now() >= deadline)
+        throw error;
+      await delay(25, undefined, { signal });
+    }
+  }
 }
 
 /** Read a file once, rejecting a read that raced a concurrent write. */

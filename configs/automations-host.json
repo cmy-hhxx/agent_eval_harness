@@ -1,5 +1,29 @@
 {
+  "models": {
+    "judge": {
+      "model": "deepseek-v4.1-flash",
+      "thinking": "high"
+    }
+  },
   "execution": {
-    "concurrency": 6
+    "concurrency": 32
+  },
+  "bindings": {
+    "criteria": {
+      "profile": "judge",
+      "thinking": "high"
+    },
+    "attribution": {
+      "profile": "judge",
+      "thinking": "high"
+    },
+    "comparison": {
+      "profile": "judge",
+      "thinking": "high"
+    },
+    "rewrite": {
+      "profile": "judge",
+      "thinking": "low"
+    }
   }
 }

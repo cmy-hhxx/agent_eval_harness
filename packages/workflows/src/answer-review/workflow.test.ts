@@ -11,7 +11,7 @@ import {rewriteAgent} from '@eval/agents/rewrite';
 import {scoreDirectory} from '@eval/prompts';
 import {fixtureConfig,sessionRaw,fakeIdentity,fakeEvaluatorVersion,parsedMaterial} from '../../../../tests/fixtures/comparison.js';
 import {services} from '../../../../tests/fixtures/services.js';
-import {planAnswerReview,answerReviewWorkflow,answerReviewRepository,reportAnswerReview,validateAnswerReview,prepareAnswerReviewRetry,prepareAnswerReviewAutomaticResume,appendAnswerReviewAttribution,type AnswerReviewConfig} from './index.js';
+import {planAnswerReview,answerReviewWorkflow,answerReviewRepository,reportAnswerReview,validateAnswerReview,prepareAnswerReviewRetry,prepareAnswerReviewAutomaticResume,appendAnswerReviewInputs,type AnswerReviewConfig} from './index.js';
 function score(caseId:string,q:string,a:string):ScoreResult{
  const known=new Set(['T1','T2','E2','L1','U2','D1']);
  const evidence=[{evidence_id:'q',source_id:'Q',start:0,end:Array.from(q).length,quote:q},{evidence_id:'a',source_id:'A',start:0,end:Array.from(a).length,quote:a}];
@@ -80,8 +80,9 @@ test('Score and direct Attribution run independently, omit SYS/DEV, and rewrite 
  const delta:AnswerReviewConfig={...config,reviewStages:['attribution'],rewrite:{...config.rewrite,attribution:false},
   inputs:{...config.inputs,records:[{model:version.id,batch_id:'b1',case_id:'two',trace_id:'trace-two',input_file:file,input_index:1}]}};
  const run=path.join(config.output.path,'flow');
- assert.equal(await appendAnswerReviewAttribution(run,delta),1);
- assert.deepEqual([...await prepareAnswerReviewAutomaticResume(run,new Set(['trace-one','trace-two']))],['trace-two']);
+ assert.equal(await appendAnswerReviewInputs(run,delta),1);
+ const addedAttribution=(await answerReviewRepository.readTasks(run,[])).manifest.tasks.find(task=>task.stage==='attribution'&&(task.data as any).candidate.trace_id==='trace-two')!;
+ assert.deepEqual([...await prepareAnswerReviewAutomaticResume(run,new Set(['trace-one','trace-two']))],[addedAttribution.id]);
  await runEvaluation({...services,agents,taskSource:answerReviewWorkflow,repository:answerReviewRepository,report:reportAnswerReview,
   runId:'flow',output:delta.output,config:delta,plan:await planAnswerReview(delta),engine:'pi',identity:fakeIdentity,
   evaluatorVersion:fakeEvaluatorVersion,modelForStage:fixture.modelForStage,policy:delta.execution,concurrency:1,retries:0,retryDelaySeconds:0,workerUrls:[worker.url]});
@@ -91,7 +92,7 @@ test('Score and direct Attribution run independently, omit SYS/DEV, and rewrite 
  assert.equal(appended.manifest.states[added.id].status,'succeeded');
  assert.equal(appended.receipts[added.id].exported!.row.trace_id,'trace-two');
  for(const [id,receipt] of Object.entries(before))assert.deepEqual(appended.receipts[id].exported,receipt.exported);
- assert.equal(await appendAnswerReviewAttribution(run,delta),0);
+ assert.equal(await appendAnswerReviewInputs(run,delta),0);
 });
 
 test('continuous resume preserves costs and identities and leaves terminal content failures reported',async t=>{
@@ -106,7 +107,7 @@ test('continuous resume preserves costs and identities and leaves terminal conte
  const state:any={manifest:{runId:'automatic',config,tasks:plan.tasks,states,inputCatalog:plan.catalog,inputs:{},pausedStages:[{stage:'attribution'}]},receipts:{},usage:{input:1,output:2,cacheRead:0,cacheWrite:0,totalTokens:3},recordedAttempts:8};
  await answerReviewRepository.writeRun(run,state);
  const eligible=await prepareAnswerReviewAutomaticResume(run,new Set(rows.map(r=>r.traces[0].meta.trace_id)));
- assert.deepEqual([...eligible].sort(),['trace-fresh','trace-language','trace-retry']);
+ assert.deepEqual(plan.tasks.filter(task=>eligible.has(task.id)).map(task=>(task.data as any).candidate.trace_id).sort(),['trace-fresh','trace-language','trace-retry']);
  const after=await answerReviewRepository.readRun(run);
  assert.deepEqual(after.manifest.states,states);assert.deepEqual(after.manifest.tasks.map(t=>t.id),plan.tasks.map(t=>t.id));
  assert.deepEqual(after.usage,state.usage);assert.equal(after.recordedAttempts,8);assert.equal(after.manifest.executionScope?.length,3);
@@ -121,12 +122,20 @@ test('exact incremental coordinates select only new attribution and reject trace
  config.inputs.records![0].trace_id='changed';const drift=await planAnswerReview(config);assert.equal(drift.tasks.length,0);assert.equal((drift.summary.issues as unknown[]).length,1);
 });
 
-test('manual failure retry preserves accepted rows and charges new task UUIDs only for unfinished work',async t=>{
- const f=await fixtureConfig();t.after(()=>rm(f.directory,{recursive:true,force:true}));
+test('manual failure retry preserves task identity and spent budgets until current limits allow another attempt',async t=>{
+ const f=await fixtureConfig([[{...sessionRaw('retry'),batch_id:'b1'} as any],[],[],[]]);t.after(()=>rm(f.directory,{recursive:true,force:true}));
  const config={...f.config,workflow:'answer-review',reviewStages:['attribution'],comparisons:[],inputs:{...f.config.inputs,versions:f.config.inputs.versions.slice(0,1)}} as AnswerReviewConfig;
+ config.execution.maxTaskAttempts=2;config.execution.repairAttempts=3;
  const plan=await planAnswerReview(config),task=plan.tasks[0],run=path.join(f.config.output.path,'retry');
  const state:any={manifest:{runId:'retry',config,tasks:plan.tasks,states:{[task.id]:{status:'failed',attempts:2,failure:{contentSubmissions:4}}},inputCatalog:plan.catalog,inputs:{},pausedStages:[{stage:'attribution'}]},receipts:{},usage:{input:1,output:2,cacheRead:0,cacheWrite:0,totalTokens:3},recordedAttempts:2};
  await answerReviewRepository.writeRun(run,state);const changes=await prepareAnswerReviewRetry(run),after=await answerReviewRepository.readRun(run);
- assert.equal(changes.length,1);assert.notEqual(changes[0].to,task.id);assert.deepEqual(after.usage,state.usage);assert.equal(after.recordedAttempts,2);
- assert.deepEqual(after.manifest.states[changes[0].to],{status:'pending',attempts:0});assert.equal(after.manifest.tasks[0].inputIds.case,task.inputIds.case);
+ assert.deepEqual(changes,[task.id]);assert.deepEqual(after.usage,state.usage);assert.equal(after.recordedAttempts,2);
+ assert.deepEqual(after.manifest.states[task.id],{status:'pending',attempts:2,failure:{contentSubmissions:4}});assert.equal(after.manifest.tasks[0].inputIds.case,task.inputIds.case);
+ assert.deepEqual([...await prepareAnswerReviewAutomaticResume(run,new Set(['trace-retry']))],[]);
+ const raised=await answerReviewRepository.readRun(run);(raised.manifest.config as AnswerReviewConfig).execution.maxTaskAttempts=3;(raised.manifest.config as AnswerReviewConfig).execution.repairAttempts=4;
+ await answerReviewRepository.writeRun(run,raised);assert.deepEqual([...await prepareAnswerReviewAutomaticResume(run,new Set(['trace-retry']))],[task.id]);
+ const stopped=await answerReviewRepository.readRun(run);stopped.manifest.states[task.id].status='failed';stopped.manifest.states[task.id].failure!.stopped=true;
+ await answerReviewRepository.writeRun(run,stopped);await prepareAnswerReviewRetry(run);
+ assert.deepEqual([...await prepareAnswerReviewAutomaticResume(run,new Set(['trace-retry']))],[]);
+ assert.equal((await answerReviewRepository.readRun(run)).manifest.states[task.id].failure!.stopped,true);
 });

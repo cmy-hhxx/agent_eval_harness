@@ -165,9 +165,6 @@ class AgentDataset(app.Dataset):
         for folder in self.state_dir.glob("ingest-*"):
             if folder.is_dir():
                 shutil.rmtree(folder)
-        for folder in Path(tempfile.gettempdir()).glob(f"ths-ingest-{self.provider}-*"):
-            if folder.is_dir():
-                shutil.rmtree(folder)
         for model in self.models:
             for directory in (self.output_dir / model, self.state_dir / "records" / model):
                 for path in directory.glob(".*.tmp"):
@@ -175,7 +172,9 @@ class AgentDataset(app.Dataset):
                         path.unlink()
 
     def process_archives(self, signature: list[dict[str, object]], *, retry_failed: bool = False) -> None:
-        with tempfile.TemporaryDirectory(prefix=f"ths-ingest-{self.provider}-") as folder:
+        temporary_root = self.state_dir / "tmp"
+        temporary_root.mkdir(parents=True, exist_ok=True)
+        with tempfile.TemporaryDirectory(prefix=f"ths-ingest-{self.provider}-", dir=temporary_root) as folder:
             self.staging = Path(folder)
             try:
                 super().process_archives(signature, retry_failed=retry_failed)

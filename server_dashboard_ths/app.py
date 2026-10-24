@@ -413,6 +413,7 @@ class Dataset:
         self.url_prefix = url_prefix if url_prefix is not None else ("" if not kind else "/" + kind)
         self.archive_part_files = ARCHIVE_PART_FILES
         self.independent = False
+        self.clean_cancel = None
         self.pairs = ({"fast": ("a_fast", "b_fast"), "expert": ("a_expert", "b_expert")}
                       if not kind else {
                           "__vs__".join(sorted((left, right))): (left, right)
@@ -423,6 +424,10 @@ class Dataset:
 
     def ready_path(self, day: str) -> Path:
         return self.state_dir / f"{day}.ready.json"
+
+    def check_clean_cancelled(self) -> None:
+        if self.clean_cancel is not None and self.clean_cancel.is_set():
+            raise InterruptedError("清洗已取消")
 
 
     def record_identity(self, row: dict, model: str) -> RecordKey:
@@ -727,10 +732,13 @@ class Dataset:
                     skipped.file_errors.append({"original_file": f"{path.name}/{member}", "reason": "member_missing"})
             except Exception as exc:
                 raise ArchiveReadError(str(exc)) from exc
+            self.check_clean_cancelled()
             for model, members in grouped.items():
                 for member in reversed(members):
+                    self.check_clean_cancelled()
                     source = folder.joinpath(*PurePosixPath(member.replace("\\", "/")).parts)
                     for number, raw in skipped.lines(source, path.name, member):
+                        self.check_clean_cancelled()
                         if not raw.strip():
                             continue
                         skipped.read += 1
@@ -764,6 +772,7 @@ class Dataset:
         temporary_paths = []
         try:
             for day in sorted({day for day, _ in affected}):
+                self.check_clean_cancelled()
                 state = self.ready_state(day)
                 if state is None:
                     if self.ready_path(day).exists() or any((self.output_dir / model / f"{day}.jsonl").exists() for model in self.models):
@@ -775,6 +784,7 @@ class Dataset:
                     raise ValueError(f"cannot merge into local-import day: {day}")
                 ready[day] = {"source": "root_archives", "rows": dict(cast(dict, state["rows"])), "files": dict(cast(dict, state["files"]))}
             for day, model in sorted(affected):
+                self.check_clean_cancelled()
                 target = self.output_dir / model / f"{day}.jsonl"
                 target.parent.mkdir(parents=True, exist_ok=True)
                 fd, name = tempfile.mkstemp(prefix=f".{day}.", suffix=".tmp", dir=target.parent)
@@ -786,6 +796,7 @@ class Dataset:
                         before = target.stat()
                         with target.open("rb") as source:
                             for raw in source:
+                                self.check_clean_cancelled()
                                 if raw.strip():
                                     if self.record_identity(json.loads(raw), model) in changes:
                                         raise ValueError("published identity is missing from the archive index; refusing to overwrite")
@@ -799,6 +810,7 @@ class Dataset:
                         if (before.st_size, before.st_mtime_ns) != (after.st_size, after.st_mtime_ns):
                             raise ValueError(f"published file changed while merging: {target}")
                     for key, record in changes.items():
+                        self.check_clean_cancelled()
                         if (record.day, key[1]) == (day, model):
                             raw = (json.dumps(record.row, ensure_ascii=False, separators=(",", ":")) + "\n").encode("utf-8")
                             offsets.append([output.tell(), len(raw)])
@@ -837,6 +849,7 @@ class Dataset:
                 failed = {item["name"] for item in self.load_archive_state()["failed_archives"]}
                 pending = [info for info in signature if info in pending or info["name"] in failed]
             for info in reversed(pending):
+                self.check_clean_cancelled()
                 archive_path = self.archive_dir / str(info["name"])
                 if file_signature(archive_path) != info:
                     continue
@@ -856,6 +869,7 @@ class Dataset:
                 }
                 existing_rows = {}
                 for key, record in records.items():
+                    self.check_clean_cancelled()
                     if record.day in local_days:
                         skipped.exclude_row(key[1], "local_import_overlap", record.row)
                         continue
@@ -903,12 +917,14 @@ class Dataset:
                             "failed_archives": sorted(failures.values(), key=lambda item: item["name"])}
                     plan = {"files": artifacts, "ready": ready, "root": root}
                     report = skipped.finish(changes, self.pairs, self.output_dir, ready, error)
+                    self.check_clean_cancelled()
                     with db:
                         db.execute("INSERT OR REPLACE INTO cleaning_reports VALUES (?, ?, ?, ?)",
                                    (info["name"], info["size"], info["mtime_ns"], json.dumps(report, ensure_ascii=False)))
                         for key, record in changes.items():
                             db.execute("INSERT INTO records VALUES (?, ?, ?, ?, ?, ?, ?)", (*key, record.day, record.archive, record.member))
                         db.execute("INSERT INTO pending VALUES (1, ?)", (json.dumps(plan, separators=(",", ":")),))
+                        self.check_clean_cancelled()
                     durable = True
                     self.publish_pending(db)
                 finally:
@@ -1019,13 +1035,16 @@ class Handler(BaseHTTPRequestHandler):
             self.send_json(503, {"error": "工作台索引不可用"})
             return True
         path = parsed.path.removeprefix("/data/workbench/")
+        task_clean = re.fullmatch(r"tasks/([a-f0-9-]+)/clean(?:/(stop|cancel))?", path)
         try:
             if self.command == "GET" and path == "catalog":
                 self.send_json(200, catalog.snapshot(parse_qs(parsed.query)))
+            elif self.command == "GET" and task_clean and task_clean[2] is None:
+                self.send_json(200, catalog.clean_status(task_clean[1]))
             elif self.command == "GET" and re.fullmatch(r"batches/[a-f0-9-]+/(report|sample)", path):
                 action = catalog.sample if path.endswith("/sample") else catalog.report
                 self.send_json(200, action(path.split("/")[1], parse_qs(parsed.query)))
-            elif self.command == "POST" and path in ("tasks", "assign", "clean", "evaluation-scope"):
+            elif self.command == "POST" and (path in ("tasks", "assign", "clean", "evaluation-scope") or task_clean):
                 if not self.headers.get("Content-Type", "").startswith("application/json"):
                     self.send_json(415, {"error": "application/json required"})
                     return True
@@ -1034,8 +1053,13 @@ class Handler(BaseHTTPRequestHandler):
                     self.send_json(413 if length > 65536 else 400, {"error": "invalid request size"})
                     return True
                 value = json.loads(self.rfile.read(length))
-                action = {"tasks": catalog.create_task, "assign": catalog.assign, "clean": catalog.start_clean, "evaluation-scope": catalog.evaluation_scope}[path]
-                self.send_json(202 if path == "clean" else 201 if path == "tasks" else 200, action(value))
+                if task_clean:
+                    result = (catalog.start_task_clean(task_clean[1], value) if task_clean[2] is None else
+                              catalog.stop_task_clean(task_clean[1], value, cancel=task_clean[2] == "cancel"))
+                    self.send_json(202, result)
+                else:
+                    action = {"tasks": catalog.create_task, "assign": catalog.assign, "clean": catalog.start_clean, "evaluation-scope": catalog.evaluation_scope}[path]
+                    self.send_json(202 if path == "clean" else 201 if path == "tasks" else 200, action(value))
             else:
                 self.send_json(404, {"error": "not found"})
         except Conflict as exc:
@@ -1281,7 +1305,7 @@ def make_datasets(root: Path, state_root: Path) -> dict[str, Dataset]:
     wencai = root / "0_wencai"
     datasets = {
         "/data/wencai": Dataset(wencai, state_root / "wencai", ROOT_MODELS,
-                                archive_dir=wencai / "1_7z_data", output_dir=wencai / "2_daily_eval_input", url_prefix="/data/wencai"),
+                                archive_dir=wencai / "1_7z_data/A_AA_comparision_data", output_dir=wencai / "2_daily_eval_input", url_prefix="/data/wencai"),
         "/data/post_training_model": Dataset(wencai, state_root / "post_training_model", POST_TRAINING_MODELS,
                                 "post_training_model", url_prefix="/data/post_training_model",
                                 archive_dir=wencai / "1_7z_data/post_train_model",
@@ -1289,6 +1313,7 @@ def make_datasets(root: Path, state_root: Path) -> dict[str, Dataset]:
     }
     from multi_agent_inputs import AgentDataset, SOURCES
     datasets.update({"/data/" + provider: AgentDataset(root, state_root, provider, "/data/" + provider) for provider in SOURCES})
+    datasets["/data/aime"].archive_dir = root / "1_aime/1_7z_data/online_data"
     return datasets
 
 

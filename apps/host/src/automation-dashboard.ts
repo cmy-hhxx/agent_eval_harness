@@ -14,6 +14,7 @@ import { automationMongoTarget } from "./automation-sources.js";
 import { validLlmConcurrency, type createAutomationLlm } from "./automation-llm.js";
 import { statisticsSource, type StatisticsDeliveryStore } from "./statistics-delivery.js";
 import type { createAutomationControl } from "./automation-control.js";
+import type { IncomingMessage, ServerResponse } from "node:http";
 
 const ASSETS = path.join(path.dirname(fileURLToPath(import.meta.url)), "../dashboard");
 export interface AutomationMonitorSettings { evaluatorVersion: string; concurrency: number }
@@ -67,6 +68,7 @@ export async function startAutomationDashboard(options: {
   statistics?: StatisticsDeliveryStore;
   runtimeLogFile?: string;
   control?: ReturnType<typeof createAutomationControl>;
+  daily?: (req: IncomingMessage, res: ServerResponse, url: URL) => Promise<boolean>;
 }) {
   const observations = new Map<AutomationDashboardSource, {
     sampledAt: number; snapshot?: ReturnType<typeof automationSnapshot>;
@@ -83,6 +85,7 @@ export async function startAutomationDashboard(options: {
   };
   return listen(async (req, res, url) => {
     res.setHeader("cache-control", "no-store");
+    if (await options.daily?.(req, res, url)) return;
     const sources = options.sources();
     const send = (value: unknown) => json(res, JSON.parse(redact(JSON.stringify(value),
       [...sources.map(source => process.env[source.config.publication.mongoUriEnv] ?? ""), ...configurationSecrets()])));
@@ -94,10 +97,10 @@ export async function startAutomationDashboard(options: {
       if (url.pathname === "/api/control") {
         if (!value || typeof value !== "object" || Array.isArray(value) ||
             typeof (value as Record<string, unknown>).sourceId !== "string" ||
-            !["run", "stop"].some(action => action === (value as Record<string, unknown>).action) || Object.keys(value).length !== 2)
-          throw new HttpError(400, "Expected sourceId and run/stop action");
+            !["run", "pause", "resume", "stop"].some(action => action === (value as Record<string, unknown>).action) || Object.keys(value).length !== 2)
+          throw new HttpError(400, "Expected sourceId and run/pause/resume/stop action");
         if (!options.control) throw new HttpError(409, "此进程由 CLI 管理");
-        const { sourceId, action } = value as { sourceId: string; action: "run" | "stop" };
+        const { sourceId, action } = value as { sourceId: string; action: "run" | "pause" | "resume" | "stop" };
         const result = options.control[action](sourceId);
         observations.clear();
         return send(result);

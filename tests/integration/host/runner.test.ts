@@ -525,6 +525,32 @@ test("one host routes tasks to both engines without sharing sessions or workspac
     await rm(directory, { recursive: true, force: true });
   }
 });
+test("pausing drains an accepted task and preserves pending work for the same run", async () => {
+  const { directory, config, modelForStage } = await fixtureConfig();
+  const pause = new AbortController();
+  let started = 0, aborted = 0;
+  const backend: AgentBackend = { identity: fakeIdentity, async createSession(options) {
+    return { async run() {
+      started++; pause.abort();
+      await inspectFor(options);
+      const submitted = await submitFor(options, draftFor(options.spec, taskResult(options.spec)));
+      assert.equal(submitted.isError, undefined, JSON.stringify(submitted));
+    }, async abort() { aborted++; }, async dispose() {} };
+  } };
+  const worker = await startWorker(backend, path.join(directory, "pause-worker"));
+  try {
+    const options = { ...services, runId: "pause-drain", output: config.output, config, plan: await buildPlan(config),
+      modelForStage, engine: "pi" as const, identity: fakeIdentity, evaluatorVersion: fakeEvaluatorVersion,
+      policy: config.execution, concurrency: 1, retries: 0, retryDelaySeconds: 0, workerUrls: [worker.url] };
+    const result = await runEvaluation({ ...options, pauseSignal: pause.signal });
+    assert.equal(result.status, "interrupted"); assert.equal(started, 1); assert.equal(aborted, 0);
+    const saved = await readRunState(path.join(config.output.path, options.runId));
+    assert.equal(Object.keys(saved.receipts).length, 1);
+    assert(Object.values(saved.manifest.states).some(state => state.status === "pending"));
+    assert(!Object.values(saved.manifest.states).some(state => state.status === "cancelled"));
+  } finally { await worker.close(); await rm(directory, { recursive: true, force: true }); }
+});
+
 test("stopping concurrent attempts never trips the stage circuit and the same run resumes", async () => {
   const rows = [raw("one"), raw("two")];
   const { directory, config, modelForStage } = await fixtureConfig([rows, [], rows, []]);
