@@ -50,3 +50,17 @@ test("ready downstream stages share slots with an unfinished attribution backlog
   states.c2!.status = "failed";
   assert(!scheduleTasks(tasks, states).slice(0, 4).some((task) => task.id === "blocked"));
 });
+
+test("ready continuations within a stage finish existing work before opening new independent tasks", () => {
+  const tasks = [
+    { id: "new-1", stage: "score", dependencies: {} },
+    { id: "new-2", stage: "score", dependencies: {} },
+    { id: "evidence", stage: "score", dependencies: {} },
+    { id: "axes", stage: "score", dependencies: { evidence: "evidence" } },
+    { id: "final", stage: "score", dependencies: { axes: "axes" } },
+    { id: "next-axes", stage: "score", dependencies: { evidence: "evidence" } },
+  ] as PlannedTask[];
+  const states: RunManifest["states"] = Object.fromEntries(tasks.map(task => [task.id, { status: "pending", attempts: 0 }]));
+  states.evidence.status = states.axes.status = "succeeded";
+  assert.deepEqual(scheduleTasks(tasks, states).slice(0, 4).map(task => task.id), ["final", "next-axes", "new-1", "new-2"]);
+});

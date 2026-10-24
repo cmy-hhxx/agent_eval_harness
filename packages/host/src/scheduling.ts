@@ -18,6 +18,8 @@ export function createScopeMembership(manifest: Pick<RunManifest, "executionScop
 // Share free slots between ready stages; a large upstream backlog must not
 // prevent work with already accepted dependencies from reaching its next stage.
 export function scheduleTasks(tasks: PlannedTask[], states: RunManifest["states"]): PlannedTask[] {
+  const stageByTask = new Map(tasks.map(task => [task.id, task.stage]));
+  const continuation = (task: PlannedTask) => Object.values(task.dependencies).some(id => stageByTask.get(id) === task.stage);
   const stages = new Map<string, { tasks: PlannedTask[]; next: number; running: number }>();
   const waiting: PlannedTask[] = [];
   for (const task of tasks) {
@@ -29,6 +31,7 @@ export function scheduleTasks(tasks: PlannedTask[], states: RunManifest["states"
       stage.tasks.push(task);
     else waiting.push(task);
   }
+  for (const stage of stages.values()) stage.tasks.sort((a, b) => Number(continuation(b)) - Number(continuation(a)));
   // Plans list upstream stages first. Prefer downstream work when counts tie.
   const queues = [...stages.values()].reverse();
   const scheduled: PlannedTask[] = [];

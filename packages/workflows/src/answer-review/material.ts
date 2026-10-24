@@ -1,4 +1,4 @@
-import type { ReviewCase } from "@eval/contracts";
+import type { ReviewAudit, ReviewCase } from "@eval/contracts";
 import { isToolSpan, type Candidate, type RawInput } from "@eval/workflows/inputs";
 /** Candidate private instructions never enter either independent evaluator's source map. */
 function publicValue(value: unknown): unknown {
@@ -36,9 +36,16 @@ export function answerReviewMaterial(candidate:Candidate,raw:RawInput,caseId:str
     const chars=Array.from(text),end=Math.min(chars.length,chars.length<=2400?chars.length:1200,remaining);remaining-=end;
     return {source_id,start:0,end,content:chars.slice(0,end).join(''),next_start:end<chars.length?end:null};
   });
+  const answer=Array.from(evidence.A),visibleAnswer=answer.slice(0,12000).join('');
+  const presented=[{source_id:'Q',start:0,end:Array.from(evidence.Q).length,content:evidence.Q},
+    {source_id:'A',start:0,end:Math.min(answer.length,12000),content:visibleAnswer},...initial_sources];
+  const seed:ReviewAudit={quotes:presented.filter(row=>row.end>row.start).map((row,index)=>({
+    evidence_id:`EV_${index+1}`,source_id:row.source_id,start:row.start,end:row.end,quote:row.content,
+  })),sources:[],actions:[],viewed:[],searches:[]};
+  material.review_seed=seed;
   const shown={case_id:caseId,task_question:candidate.question,candidate_output_id:'A',availability:material.availability,public_requirements:material.public_requirements,
-    candidate_response:Array.from(evidence.A).slice(0,12000).join(''),answer_requires_more:Array.from(evidence.A).length>12000,
-    initial_sources,tool_availability:{external_search:Boolean(process.env.SEARCH_API_KEY)},
+    candidate_response:visibleAnswer,answer_requires_more:answer.length>12000,
+    initial_sources,shared_quotes:seed.quotes,tool_availability:{external_search:Boolean(process.env.SEARCH_API_KEY)},
     evidence_catalog:Object.entries(evidence).map(([source_id,text])=>({source_id,length:Array.from(text).length})),tool_names:[...toolNames]};
   return {material,shown,origins};
 }
