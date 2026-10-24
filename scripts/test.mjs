@@ -38,5 +38,6 @@ await run("node", [
   "scripts/topic-clustering-scope.test.mjs",
   "scripts/benchmark.test.mjs",
   "scripts/publish.test.mjs",
+  "scripts/deploy-workbench.test.mjs",
   "server_dashboard_ths/dashboard.test.mjs",
 ]);

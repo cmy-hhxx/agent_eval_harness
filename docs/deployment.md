@@ -29,7 +29,18 @@ checkout 可以替换或重新克隆，运行目录不放入 Git。工作台只�
 WORKBENCH_ADMIN_PASSWORD='<管理员密码>' npm run deploy:workbench
 ```
 
-脚本读取 `.servers.conf` 的 `eval_data_server`，通过 Git origin 建立或快进服务器 checkout，安装 `mise.toml` 锁定的 Node/npm/Python/uv，并执行 `scripts/workbench-init.mjs`。初始化不会覆盖已有的 `runtime/config` 或密钥。
+脚本读取 `.servers.conf` 的 `eval_agent_server`，只通过 SSH 下发部署命令；代码由服务器直接从 `http://interactive-n01laf763gwn:8080/chenmingyang2/agent_eval_harness.git` 克隆或快进到 `main`，不使用本地 origin，不传输 checkout 或 bundle。其他集群 Git 地址用 `--repository <URL>` 显式指定。脚本安装 `mise.toml` 锁定的 Node/npm/Python/uv，并执行 `scripts/workbench-init.mjs`。初始化不会覆盖已有的 `runtime/config` 或密钥，已有 `workbench.env` 时无需管理员密码。
+
+服务器的 Git 认证必须提前配置：使用 `read:repository` 且仅授权本仓库的独立 token，凭据保存到 checkout 外的 `runtime/secrets/git-credentials`，权限 `600`；通过 Git credential helper 读取，禁止把 token 放进 origin、命令参数或 Git。服务器 checkout 的配置为：
+
+```bash
+git config credential.http://interactive-n01laf763gwn:8080.useHttpPath true
+git config credential.http://interactive-n01laf763gwn:8080.helper \
+  'store --file=/mnt/aigc_team/user_workspace/chenmingyang/eval_harness/runtime/secrets/git-credentials'
+git config http.http://interactive-n01laf763gwn:8080/.proxy ''
+```
+
+本地 Git 网页入口为 `http://117.50.195.94:2167`，SSH origin 使用 `2177`；评测服务器使用集群地址的 `8080`。这与工作台网页映射是不同服务。集群 Git 不经过服务器 HTTP 代理；否则即使 DNS 和服务正常，也可能被代理返回 `403`。部署脚本为 Git 主机设置 `NO_PROXY/no_proxy`，并保存仓库 URL 范围的禁用代理配置，使后续普通 `git pull` 同样直连。无凭据返回 `401`，需要先配置 credential helper。
 
 初始化后填写：
 
@@ -42,7 +53,7 @@ WORKBENCH_ADMIN_PASSWORD='<管理员密码>' npm run deploy:workbench
 ## 启动
 
 ```bash
-ssh <eval_data_server>
+ssh <eval_agent_server>
 cd /mnt/aigc_team/user_workspace/chenmingyang/eval_harness/code
 tmux new -s workbench
 bash workbench.sh
@@ -57,6 +68,25 @@ bash workbench.sh
 登录后在同一页通过一级导航切换模块；模块内定位与选择原位更新。`/runtime/api/` 和 `/data/<dataset>/` 下的数据接口只承载请求，不提供生产子页面。
 
 登录用户由初始化时的 `--admin-user` 决定，默认 `cmy`。会话使用 HttpOnly、SameSite=Strict Cookie；重启工作台后需要重新登录。
+
+## 更新代码
+
+本地完成提交并推送 `main` 后，先在 tmux 中停止工作台和评测，再到服务器 checkout 执行：
+
+```bash
+git pull --ff-only
+bash workbench.sh
+```
+
+只有依赖、vendor 或工具链发生变更时，启动前执行：
+
+```bash
+npm run deploy:workbench -- --on-server
+npm run bootstrap
+npm run build
+```
+
+`--on-server` 在当前服务器直接执行，不读取本地 `.servers.conf`，也不需要再次经过本机 SSH。部署只接受干净的代码目录和快进更新；服务器不修改业务源码，配置继续放在 `runtime/config/`。有未提交修改、分支分叉或 origin 不符时直接停止，不自动覆盖。代码更新不会自动启动评测来源。
 
 ## 启动与停止语义
 

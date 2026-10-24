@@ -17,22 +17,27 @@ TypeScript Host 编排评测任务，Pi / Prime Worker 执行模型与工具调�
 - 页面：`/` 单页工作台，Tabler 一级模块导航原位切换运行监控、数据与任务、评测运行、错误日志、聚类与问题库和流程定义；模块内定位、筛选与分页均在当前页面完成
 - 默认进入数据与任务：创建日常或专项任务、发现压缩包批次、归属、清洗和查看逐条报告；wencai、AIME、ifind 独立于任务类型。清洗后可选择同一任务的批次预检并启动评测，运行页关联错误定位、定向重试与同 run 续跑。结果支持按任务、批次和运行选择范围、单文件查看与归档，聚类手动预检启动，展示已纳入和未完成回答，重复范围由服务端阻止。日常与专项均手动清洗；已登记来源在运行监控点击「运行」后才持续取数与评测。操作见[数据服务](server_dashboard_ths/README.md)。
 
-首次部署由本地一次性执行：
+代码通过 Git 分发：本地提交并推送 `main`，`eval_agent_server` 从集群内的 `http://interactive-n01laf763gwn:8080/chenmingyang2/agent_eval_harness.git` 拉取。服务器使用独立的仓库只读凭据；不上传本地 checkout 或 Git bundle。
+
+首次部署由本地一次性执行（SSH 目标为 `.servers.conf` 的 `eval_agent_server`）：
 
 ```bash
 WORKBENCH_ADMIN_PASSWORD='<管理员密码>' npm run deploy:workbench
 ```
 
-部署脚本从现有 Git origin 建立 checkout，安装仓库锁定的工具链，并在 checkout 外创建不覆盖已有文件的运行配置。之后日常只需要：
+部署脚本从集群 Git 建立 checkout，安装仓库锁定的工具链，并在 checkout 外创建不覆盖已有文件的运行配置。日常更新先停止工作台，再在服务器执行：
 
 ```bash
-ssh <eval_data_server>
+ssh <eval_agent_server>
 cd /mnt/aigc_team/user_workspace/chenmingyang/eval_harness/code
+git pull --ff-only
 tmux new -s workbench
 bash workbench.sh
 ```
 
 `workbench.sh` 不执行 `git pull`，不每次重装依赖，不 daemonize。首次缺少依赖或构建产物时执行 bootstrap/build；后续只构建过期产物。实例锁阻止重复启动，子服务异常按退避重启，配置错误、端口冲突或连续崩溃会停止整套服务。服务启动和重启只恢复界面，评测来源等待手动点击「运行」。
+
+工具链或依赖有变更时，在服务器运行 `npm run deploy:workbench -- --on-server` 准备工具链，随后 `npm run bootstrap && npm run build`。已有管理员配置时无需再提供密码。认证、代理与更新约束见[部署指南](docs/deployment.md)。
 
 手动启动来源后，服务器侧每四小时生成统计记录并追加到 `runtime/log/comparison-statistics-log.jsonl`。本地只运行轻量 relay，不下载输入、运行状态或评测正文：
 

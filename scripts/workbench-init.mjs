@@ -3,8 +3,9 @@ import { access, copyFile, mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { parseArgs } from "node:util";
 import { promisify } from "node:util";
+import { fileURLToPath } from "node:url";
 
-const root = path.resolve(new URL("..", import.meta.url).pathname);
+const root = path.resolve(fileURLToPath(new URL("..", import.meta.url)));
 const args = parseArgs({ options: {
   "runtime-root": { type: "string" }, "data-root": { type: "string", default: "/mnt/fin_bench/eval_data" },
   "admin-user": { type: "string", default: "cmy" },
@@ -13,7 +14,8 @@ const runtime = path.resolve(args.values["runtime-root"] || path.join(root, "../
 const dataRoot = path.resolve(args.values["data-root"]);
 const adminUser = args.values["admin-user"];
 const adminPassword = process.env.WORKBENCH_ADMIN_PASSWORD;
-if (!adminPassword) throw new Error("WORKBENCH_ADMIN_PASSWORD is required to initialize the admin login");
+const secretFile = path.join(runtime, "secrets/workbench.env");
+if (!adminPassword && !await exists(secretFile)) throw new Error("WORKBENCH_ADMIN_PASSWORD is required to initialize the admin login");
 const directories = ["config", "data/problems", "data/sources/automations/remote-evaluation", "state/automations/remote-evaluation",
   "state/data-service", "state/log-writer", "state/workbench", "log", "python-packages", "secrets"];
 for (const directory of directories) await mkdir(path.join(runtime, directory), { recursive: true });
@@ -55,7 +57,6 @@ let example = await readFile(path.join(root, "config.example.ini"), "utf8");
 example = example.replace(/^AUTOMATIONS_MONGODB_URI\s*=.*$/m, "AUTOMATIONS_MONGODB_URI = mongodb://interactive-q1qu5v9oqj3n:5000");
 await writeOnce(path.join(runtime, "config/config.ini"), example, 0o600);
 
-const secretFile = path.join(runtime, "secrets/workbench.env");
 if (!(await exists(secretFile))) {
   const salt = randomBytes(16), hash = await promisify(scrypt)(adminPassword, salt, 64);
   const relayToken = randomBytes(32).toString("base64url");
