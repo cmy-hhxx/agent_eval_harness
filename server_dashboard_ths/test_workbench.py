@@ -38,7 +38,8 @@ class WorkbenchTest(unittest.TestCase):
         path.write_text(json.dumps(payload))
         return path
 
-    def batches(self):
+    def discover_batches(self):
+        self.catalog.discover()
         return self.catalog.snapshot({})["batches"]
 
     def task(self, source="wencai", category="task", profile="post_training_model"):
@@ -47,14 +48,21 @@ class WorkbenchTest(unittest.TestCase):
     def clean(self, batch_ids):
         self.catalog.start_clean({"batch_ids": batch_ids}, background=False)
 
+    def workbench_url(self):
+        server = app.DashboardServer(("127.0.0.1", 0), self.datasets, self.catalog)
+        threading.Thread(target=server.serve_forever, daemon=True).start()
+        self.addCleanup(server.server_close)
+        self.addCleanup(server.shutdown)
+        return f"http://127.0.0.1:{server.server_port}/data/workbench/"
+
     def test_evaluation_scope_freezes_only_selected_cleaned_records(self):
         self.package("first.7z", rows=[archive_row("b_fast", "one")])
-        first = self.batches()[0]
+        first = self.discover_batches()[0]
         with self.assertRaises(Conflict):
             self.catalog.evaluation_scope({"batch_ids": [first["id"]]})
         self.clean([first["id"]])
         self.package("second.7z", rows=[archive_row("b_fast", "two")])
-        second = next(row for row in self.batches() if row["name"] == "second.7z")
+        second = next(row for row in self.discover_batches() if row["name"] == "second.7z")
         self.clean([second["id"]])
         scope = self.catalog.evaluation_scope({"batch_ids": [first["id"]]})
         self.assertEqual([row["case_id"] for row in scope["records"]], ["one"])
@@ -70,11 +78,11 @@ class WorkbenchTest(unittest.TestCase):
     def test_task_assignment_cleaning_report_and_sample_survive_restart(self):
         self.package(rows=[archive_row("b_fast", "one"), archive_row("b_fast", "empty", answer="")],
                      extra={"AA-post_train_fast_V1.jsonl": json.dumps(archive_row("b_post_train_fast", "one")) + "\n{bad\n"})
-        batch = self.batches()[0]
+        batch = self.discover_batches()[0]
         task = self.task()
         self.catalog.assign({"batch_ids": [batch["id"]], "task_id": task["id"]})
         self.clean([batch["id"]])
-        result = self.batches()[0]
+        result = self.discover_batches()[0]
         self.assertEqual(result["status"], "cleaned")
         self.assertEqual((result["summary"]["read"], result["summary"]["accepted"], result["summary"]["excluded"]), (4, 2, 2))
         self.assertEqual(sum(result["summary"]["pairs"].values()), 1)
@@ -98,20 +106,20 @@ class WorkbenchTest(unittest.TestCase):
         bad = self.package("bad.7z")
         bad.write_bytes(b"broken")
         self.package("empty.7z", [archive_row("b_fast", "missing", answer="")])
-        batches = self.batches()
+        batches = self.discover_batches()
         self.clean([batch["id"] for batch in batches])
-        states = {batch["name"]: batch["status"] for batch in self.batches()}
+        states = {batch["name"]: batch["status"] for batch in self.discover_batches()}
         self.assertEqual(states, {"good.7z": "cleaned", "bad.7z": "failed", "empty.7z": "empty"})
-        failed = next(batch for batch in self.batches() if batch["name"] == "bad.7z")
+        failed = next(batch for batch in self.discover_batches() if batch["name"] == "bad.7z")
         self.assertTrue(self.catalog.report(failed["id"], {})["summary"]["error"])
 
     def test_metadata_issues_are_paginated_locatable_and_do_not_exclude_answers(self):
         self.package(rows=[archive_row("b_fast", f"case-{index}", meta_fields={
             "rued": {"R": "1", "U": 0, "E": 0, "D": 1}, "first_token_time_cost": -1,
             "info": {"task": "交易建议"}}) for index in range(26)])
-        batch = self.batches()[0]
+        batch = self.discover_batches()[0]
         self.clean([batch["id"]])
-        summary = self.batches()[0]["summary"]
+        summary = self.discover_batches()[0]["summary"]
         self.assertEqual((summary["accepted"], summary["excluded"], summary["metadata_issue_count"]), (26, 0, 52))
         self.assertNotIn("metadata_issues", summary)
         report = self.catalog.report(batch["id"], {"section": ["metadata_issues"]})
@@ -132,17 +140,17 @@ class WorkbenchTest(unittest.TestCase):
     def test_upload_growth_keeps_uuid_then_published_revision_gets_new_unassigned_batch(self):
         with patch.object(app, "STABLE_SECONDS", 30):
             path = self.package()
-            first = self.batches()[0]
+            first = self.discover_batches()[0]
             self.assertEqual(first["status"], "uploading")
             path.write_text(path.read_text() + " ")
-            second = self.batches()[0]
+            second = self.discover_batches()[0]
             self.assertEqual(first["id"], second["id"])
-            self.assertEqual(len(self.batches()), 1)
+            self.assertEqual(len(self.discover_batches()), 1)
             with self.assertRaises(Conflict):
                 self.clean([first["id"]])
-        self.clean([self.batches()[0]["id"]])
+        self.clean([self.discover_batches()[0]["id"]])
         path.write_text(path.read_text() + " ")
-        revision = next(batch for batch in self.batches() if batch["id"] != first["id"])
+        revision = next(batch for batch in self.discover_batches() if batch["id"] != first["id"])
         self.assertEqual(revision["revises"], first["id"])
         self.assertIsNone(revision["task_id"])
         with self.assertRaises(ValueError):
@@ -150,7 +158,7 @@ class WorkbenchTest(unittest.TestCase):
 
     def test_source_and_type_are_independent_and_assign_is_atomic(self):
         self.package()
-        batch = self.batches()[0]
+        batch = self.discover_batches()[0]
         for source in ("aime", "ifind", "wencai"):
             for category in ("daily", "task"):
                 task = self.task(source, category, source)
@@ -161,11 +169,11 @@ class WorkbenchTest(unittest.TestCase):
         own = self.task()
         with self.assertRaises(ValueError):
             self.catalog.assign({"batch_ids": [batch["id"], "missing"], "task_id": own["id"]})
-        self.assertEqual(self.batches()[0]["task_id"], batch["task_id"])
+        self.assertEqual(self.discover_batches()[0]["task_id"], batch["task_id"])
 
     def test_interrupt_after_durable_publication_recovers_without_extracting_twice(self):
         self.package()
-        batch = self.batches()[0]
+        batch = self.discover_batches()[0]
         dataset = self.datasets["/data/post_training_model"]
         publish = dataset.publish_pending
         def interrupt(db):
@@ -174,15 +182,15 @@ class WorkbenchTest(unittest.TestCase):
             publish(db)
         with patch.object(dataset, "publish_pending", side_effect=interrupt):
             self.clean([batch["id"]])
-        self.assertEqual(self.batches()[0]["status"], "failed")
+        self.assertEqual(self.discover_batches()[0]["status"], "failed")
         with patch.object(app, "SevenZipFile", side_effect=AssertionError("must recover publication")):
             self.clean([batch["id"]])
-        self.assertEqual(self.batches()[0]["status"], "cleaned")
+        self.assertEqual(self.discover_batches()[0]["status"], "cleaned")
         self.assertEqual(self.catalog.report(batch["id"], {})["summary"]["accepted"], 1)
 
     def test_concurrent_submission_and_changed_file_are_rejected(self):
         path = self.package()
-        batch = self.batches()[0]
+        batch = self.discover_batches()[0]
         self.catalog.cleaning.acquire()
         try:
             with self.assertRaises(Conflict):
@@ -192,20 +200,20 @@ class WorkbenchTest(unittest.TestCase):
         path.write_text(path.read_text() + " ")
         with self.assertRaises(Conflict):
             self.clean([batch["id"]])
-        self.assertEqual(next(item for item in self.batches() if item["id"] == batch["id"])["status"], "ready")
+        self.assertEqual(next(item for item in self.discover_batches() if item["id"] == batch["id"])["status"], "ready")
 
     def test_duplicate_and_conflicting_business_records_are_reported_without_overwrite(self):
         self.package("0123456789abcdef_20261019_010000.7z")
-        self.clean([self.batches()[0]["id"]])
+        self.clean([self.discover_batches()[0]["id"]])
         self.package("0123456789abcdef_20261019_020000.7z", [archive_row("b_fast", "one"), archive_row("b_fast", "new")])
-        new = next(batch for batch in self.batches() if batch["status"] == "ready")
+        new = next(batch for batch in self.discover_batches() if batch["status"] == "ready")
         self.clean([new["id"]])
         self.assertEqual(self.catalog.report(new["id"], {})["items"][0]["reason"], "duplicate_case")
         selected = self.catalog.sample(new["id"], {"index": ["0"]})
         self.assertEqual(selected["location"]["case_id"], "new")
         self.assertEqual(selected["location"]["input_index"], 1)
         self.package("0123456789abcdef_20261019_030000.7z", [archive_row("b_fast", "one", answer="changed")])
-        conflict = next(batch for batch in self.batches() if batch["status"] == "ready")
+        conflict = next(batch for batch in self.discover_batches() if batch["status"] == "ready")
         self.clean([conflict["id"]])
         self.assertEqual(self.catalog.report(conflict["id"], {})["items"][0]["reason"], "identity_conflict")
 
@@ -214,7 +222,7 @@ class WorkbenchTest(unittest.TestCase):
         special = self.task()
         for task in (daily, special):
             (Path(task["archive_dir"]) / "new.7z").write_text(json.dumps({"AA-fast.jsonl": json.dumps(archive_row("b_fast", "one"))}))
-        batches = self.batches()
+        batches = self.discover_batches()
         self.assertEqual({row["task_id"] for row in batches}, {daily["id"], special["id"]})
         with patch.object(self.catalog, "start_clean") as clean, \
                 patch.object(self.catalog.stop, "wait", side_effect=lambda _: self.catalog.stop.set()):
@@ -237,7 +245,7 @@ class WorkbenchTest(unittest.TestCase):
 
     def test_ready_filter_and_task_clean_use_a_finite_scope(self):
         self.package("first.7z", [archive_row("b_fast", "first")])
-        batch = self.batches()[0]
+        batch = self.discover_batches()[0]
         task_id = batch["task_id"]
         query = {"source": ["wencai"], "task": [task_id], "status": ["ready"]}
         self.assertEqual(self.catalog.snapshot(query)["total"], 1)
@@ -250,12 +258,13 @@ class WorkbenchTest(unittest.TestCase):
             result = self.catalog.start_task_clean(task_id, {}, background=False)
         self.assertEqual((result["status"], result["completed"], result["remaining"]), ("finished", 1, 0))
         self.assertEqual(result["batch_ids"], [batch["id"]])
+        self.catalog.discover()
         self.assertEqual([row["name"] for row in self.catalog.snapshot(query)["batches"]], ["later.7z"])
 
     def test_task_clean_stop_finishes_current_package_and_leaves_later_packages_ready(self):
         self.package("first.7z", [archive_row("b_fast", "first")])
         self.package("second.7z", [archive_row("b_fast", "second")])
-        task_id = self.batches()[0]["task_id"]
+        task_id = self.discover_batches()[0]["task_id"]
         dataset = self.datasets["/data/post_training_model"]
         process = dataset.process_archives
         def stop_after_current(signature, **kwargs):
@@ -266,12 +275,12 @@ class WorkbenchTest(unittest.TestCase):
         with patch.object(dataset, "process_archives", side_effect=stop_after_current):
             result = self.catalog.start_task_clean(task_id, {}, background=False)
         self.assertEqual((result["status"], result["completed"], result["remaining"]), ("stopped", 1, 1))
-        self.assertEqual(sorted(batch["status"] for batch in self.batches()), ["cleaned", "ready"])
+        self.assertEqual(sorted(batch["status"] for batch in self.discover_batches()), ["cleaned", "ready"])
 
     def test_task_cancel_before_commit_rolls_back_stages_and_can_resume(self):
         self.package("first.7z", [archive_row("b_fast", "first")])
         self.package("second.7z", [archive_row("b_fast", "second")])
-        task_id = self.batches()[0]["task_id"]
+        task_id = self.discover_batches()[0]["task_id"]
         dataset = self.datasets["/data/post_training_model"]
         prepare = dataset.prepare_archive_files
         def cancel_before_commit(changes):
@@ -281,30 +290,30 @@ class WorkbenchTest(unittest.TestCase):
         with patch.object(dataset, "prepare_archive_files", side_effect=cancel_before_commit):
             result = self.catalog.start_task_clean(task_id, {}, background=False)
         self.assertEqual((result["status"], result["completed"], result["remaining"]), ("cancelled", 0, 2))
-        self.assertEqual(sorted(batch["status"] for batch in self.batches()), ["interrupted", "ready"])
+        self.assertEqual(sorted(batch["status"] for batch in self.discover_batches()), ["interrupted", "ready"])
         self.assertEqual(dataset.known_days(), [])
         self.assertEqual(list(dataset.output_dir.rglob("*.tmp")), [])
         result = self.catalog.start_task_clean(task_id, {}, background=False)
         self.assertEqual((result["status"], result["completed"]), ("finished", 2))
-        self.assertEqual({batch["status"] for batch in self.batches()}, {"cleaned"})
+        self.assertEqual({batch["status"] for batch in self.discover_batches()}, {"cleaned"})
 
     def test_discovery_observes_external_aime_publication_without_cleaning_again(self):
         dataset = self.datasets["/data/aime"]
         row = archive_row("a_fast", "aime-case", meta_fields={"agent_mode": "fast", "trace_id": "aime-trace"})
         (dataset.archive_dir / "aime.7z").write_text(json.dumps({"answers.jsonl": json.dumps(row)}))
-        batch = next(batch for batch in self.batches() if batch["origin"] == "/data/aime")
+        batch = next(batch for batch in self.discover_batches() if batch["origin"] == "/data/aime")
         self.assertEqual(batch["status"], "ready")
         with dataset.archive_lock(), patch("multi_agent_inputs.app.SevenZipFile", FakeArchive):
             dataset.process_archives(app.archive_signature(dataset.archive_dir))
         with patch.object(dataset, "process_archives", side_effect=AssertionError("discovery must only observe")):
-            current = next(item for item in self.batches() if item["id"] == batch["id"])
+            current = next(item for item in self.discover_batches() if item["id"] == batch["id"])
         self.assertEqual(current["status"], "cleaned")
         report = self.catalog.report(batch["id"], {"section": ["records"]})
         self.assertEqual(report["items"][0]["original_file"], "aime.7z/answers.jsonl")
 
     def test_discovery_never_adopts_an_unfinished_external_publication(self):
         self.package()
-        batch = self.batches()[0]
+        batch = self.discover_batches()[0]
         dataset = self.datasets[batch["origin"]]
         with dataset.archive_lock():
             dataset.process_archives(app.archive_signature(dataset.archive_dir))
@@ -312,16 +321,16 @@ class WorkbenchTest(unittest.TestCase):
         try:
             with source:
                 source.execute("INSERT INTO pending VALUES (1, '{}')")
-            self.assertEqual(self.batches()[0]["status"], "ready")
+            self.assertEqual(self.discover_batches()[0]["status"], "ready")
             with source:
                 source.execute("DELETE FROM pending")
-            self.assertEqual(self.batches()[0]["status"], "cleaned")
+            self.assertEqual(self.discover_batches()[0]["status"], "cleaned")
         finally:
             source.close()
 
     def test_missing_identity_index_cannot_silently_replace_a_published_answer(self):
         self.package("0123456789abcdef_20261019_010000.7z")
-        self.clean([self.batches()[0]["id"]])
+        self.clean([self.discover_batches()[0]["id"]])
         dataset = self.datasets["/data/post_training_model"]
         output = dataset.output_dir / "b_fast/2026-09-29.jsonl"
         before = output.read_bytes()
@@ -330,46 +339,83 @@ class WorkbenchTest(unittest.TestCase):
             db.execute("DELETE FROM records")
         db.close()
         self.package("0123456789abcdef_20261019_020000.7z", [archive_row("b_fast", "one", answer="changed")])
-        batch = next(item for item in self.batches() if item["status"] == "ready")
+        batch = next(item for item in self.discover_batches() if item["status"] == "ready")
         self.clean([batch["id"]])
-        result = next(item for item in self.batches() if item["id"] == batch["id"])
+        result = next(item for item in self.discover_batches() if item["id"] == batch["id"])
         self.assertEqual(result["status"], "failed")
         self.assertIn("refusing to overwrite", result["error"])
         self.assertEqual(output.read_bytes(), before)
 
     def test_same_name_in_a_new_task_directory_cannot_reuse_another_origins_report(self):
         original = self.package()
-        first = self.batches()[0]
+        first = self.discover_batches()[0]
         task = self.task()
         self.catalog.assign({"batch_ids": [first["id"]], "task_id": task["id"]})
         self.clean([first["id"]])
         shutil.copy2(original, Path(task["archive_dir"]) / original.name)
-        second = next(batch for batch in self.batches() if batch["id"] != first["id"])
+        second = next(batch for batch in self.discover_batches() if batch["id"] != first["id"])
         self.clean([second["id"]])
-        result = next(batch for batch in self.batches() if batch["id"] == second["id"])
+        result = next(batch for batch in self.discover_batches() if batch["id"] == second["id"])
         self.assertEqual(result["status"], "failed")
         self.assertIn("同名包", result["error"])
         self.assertIsNone(result["summary"])
 
     def test_unreadable_member_does_not_discard_other_valid_member(self):
         self.package(extra={"unknown.jsonl": "{}"})
-        batch = self.batches()[0]
+        batch = self.discover_batches()[0]
         self.clean([batch["id"]])
         report = self.catalog.report(batch["id"], {})
         self.assertEqual(report["status"], "partial")
         self.assertEqual(report["summary"]["accepted"], 1)
         self.assertEqual(report["summary"]["file_errors"][0]["reason"], "model_unknown")
 
+    def test_catalog_http_reads_the_index_without_discovering_or_creating_datasets(self):
+        self.package("indexed.7z")
+        self.catalog.discover()
+        self.package("not-yet-discovered.7z")
+        base = self.workbench_url()
+        with patch.object(self.catalog, "discover", side_effect=AssertionError("GET must not scan archives")), \
+                patch.object(self.catalog, "dataset", side_effect=AssertionError("GET must not mutate dataset caches")):
+            for route in ("catalog", "catalog?source=wencai&status=ready"):
+                with urlopen(base + route, timeout=2) as response:
+                    data = json.load(response)
+                self.assertEqual(data["total"], 1)
+                self.assertEqual([batch["name"] for batch in data["batches"]], ["indexed.7z"])
+        self.catalog.discover()
+        self.assertEqual(self.catalog.snapshot({})["total"], 2)
+
+    def test_catalog_http_reads_the_committed_snapshot_while_discovery_holds_its_lock(self):
+        self.package()
+        batch = self.discover_batches()[0]
+        base = self.workbench_url()
+        entered, release = threading.Event(), threading.Event()
+
+        def discovering():
+            with self.catalog.lock, self.catalog.db() as db:
+                db.execute("UPDATE batches SET status='uploading' WHERE id=?", (batch["id"],))
+                entered.set()
+                release.wait(5)
+
+        writer = threading.Thread(target=discovering, daemon=True)
+        writer.start()
+        try:
+            self.assertTrue(entered.wait(5), "discovery transaction must start")
+            with urlopen(base + "catalog?status=ready", timeout=2) as response:
+                data = json.load(response)
+            self.assertEqual(data["total"], 1)
+            self.assertEqual(data["batches"][0]["id"], batch["id"])
+            self.assertEqual(data["batches"][0]["status"], "ready")
+        finally:
+            release.set()
+            writer.join(5)
+        self.assertFalse(writer.is_alive())
+        self.assertEqual(self.catalog.snapshot({})["batches"][0]["status"], "uploading")
+
     def test_http_validation_pagination_and_report_sample(self):
         self.package(rows=[archive_row("b_fast", str(index), answer="") for index in range(55)])
         self.package("good.7z")
-        self.clean([batch["id"] for batch in self.batches()])
-        server = app.DashboardServer(("127.0.0.1", 0), self.datasets, self.catalog)
-        thread = threading.Thread(target=server.serve_forever, daemon=True)
-        thread.start()
-        self.addCleanup(server.server_close)
-        self.addCleanup(server.shutdown)
-        base = f"http://127.0.0.1:{server.server_port}/data/workbench/"
+        self.clean([batch["id"] for batch in self.discover_batches()])
+        base = self.workbench_url()
         with urlopen(base + "catalog") as response:
             data = json.load(response)
         task_id = next(task["id"] for task in data["tasks"] if task["source"] == "aime")

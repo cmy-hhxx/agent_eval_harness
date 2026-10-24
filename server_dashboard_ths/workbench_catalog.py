@@ -218,7 +218,6 @@ class WorkbenchCatalog:
         return value
 
     def snapshot(self, query):
-        self.discover()
         page = int(query.get("page", ["1"])[0])
         if page < 1:
             raise ValueError("页码无效")
@@ -232,8 +231,9 @@ class WorkbenchCatalog:
             filters.append("b.task_id IS NULL")
         where = " WHERE " + " AND ".join(filters) if filters else ""
         joined = " FROM batches b LEFT JOIN tasks t ON t.id=b.task_id" + where
-        with self.lock, self.db() as db:
-            tasks = [{**dict(row), "archive_dir": str(self.dataset(dict(row)).archive_dir)} for row in db.execute("SELECT * FROM tasks ORDER BY created_at,id")]
+        with self.db() as db:
+            db.execute("BEGIN")
+            tasks = [{**dict(row), "archive_dir": str(self.datasets[row["dataset"]].archive_dir)} for row in db.execute("SELECT * FROM tasks ORDER BY created_at,id")]
             total = db.execute("SELECT count(*)" + joined, values).fetchone()[0]
             rows = db.execute("SELECT b.*,t.name AS task_name,t.source,t.category,t.dataset" + joined +
                               " ORDER BY b.discovered_at DESC,b.id LIMIT 50 OFFSET ?", [*values, (page - 1) * 50]).fetchall()

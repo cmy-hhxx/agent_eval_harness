@@ -47,7 +47,7 @@
 
 | 接口 | 行为 |
 |---|---|
-| `GET /data/workbench/catalog` | 任务、目录规则、分页批次；支持 source/category/task/status/unassigned/page |
+| `GET /data/workbench/catalog` | 仅读已提交的任务与分页批次索引；支持 source/category/task/status/unassigned/page。目录发现由后台轮询和显式清洗负责 |
 | `POST /data/workbench/tasks` | 创建任务：name、source、category、profile |
 | `POST /data/workbench/assign` | 批量归属：batch_ids、task_id；整组验证后提交 |
 | `POST /data/workbench/evaluation-scope` | Host 内部读取同任务已清洗批次的固定记录坐标、模型组和来源输出路径；不接收浏览器传入路径 |
