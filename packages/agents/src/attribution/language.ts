@@ -12,7 +12,7 @@ export function isChineseAttributionText(text:string){
 }
 
 /** Problem descriptors are inapplicable only when a strength explicitly carries null. */
-export function checkDirectAttributionLanguage(value:unknown){
+export function checkAttributionLanguage(value:unknown){
   const checks:AttributionLanguageCheck[]=[],issues:ValidationIssue[]=[];
   const object=(v:unknown):v is Record<string,unknown>=>typeof v==='object'&&v!==null&&!Array.isArray(v);
   const issue=(path:string,message:string)=>issues.push({category:'structure',code:'attribution_language',path,message});
@@ -29,8 +29,10 @@ export function checkDirectAttributionLanguage(value:unknown){
     const base='/findings/'+index;
     if(!object(finding)){issue(base,'finding 必须为对象。');return;}
     if(!['strength','problem'].includes(String(finding.type)))issue(base+'/type','finding 类型必须为 strength 或 problem。');
-    for(const field of ['text','reason','label','definition'] as const)
-      check(finding[field],field,base+'/'+field,finding.type==='strength'&&['label','definition'].includes(field));
+    for(const field of ['text','reason'] as const)check(finding[field],field,base+'/'+field);
+    const problem=object(finding.problem)?finding.problem:undefined;
+    for(const field of ['label','definition'] as const)
+      check(finding.type==='strength'&&finding.problem===null?null:problem?.[field],field,base+'/problem/'+field,finding.type==='strength');
   });
   return {checks,issues};
 }

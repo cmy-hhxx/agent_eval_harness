@@ -1,4 +1,6 @@
+import { responsibilityFixture } from "../../../../tests/fixtures/responsibility.js";
 import { canonicalEvidence } from "../../../../tests/fixtures/evidence.js";
+import { setFixtureComponentCatalog } from "../../../../tests/fixtures/attribution-submission.js";
 const INPUT_ID = "11111111-1111-4111-8111-111111111111";
 import test from "node:test";
 import assert from "node:assert/strict";
@@ -25,6 +27,7 @@ function fixture(answer = "| 代码 | 名称 |\n|---|---|\n| 688255.SH | 电科�
   input.answer.final_answer = answer;
   input.answer.catalog = [{ message_index: 1, type: "function_call_output", role: "tool", name: "lookup" }] as never;
   Object.assign(input.answer, { table_check_results: attributionTableChecks(raw, INPUT_ID, 2) });
+  setFixtureComponentCatalog(request);
   const result = structuredClone(example.result) as AttributionResult;
   result.has_standard_answer = false; result.is_correct = null;
   result.correctness_reason = ""; result.correctness_evidence = []; result.numeric_checks = [];
@@ -70,6 +73,7 @@ function resolutionFixture(messages: Record<string, unknown>[], quote: string,
   raw.messages.splice(2, 0, ...messages);
   const finalIndex = 2 + messages.length;
   (data.request.input.answer as { final_message_index: number }).final_message_index = finalIndex;
+  setFixtureComponentCatalog(data.request);
   for (const assessment of data.result.criterion_assessments)
     for (const [index, item] of assessment.evidence.entries()) assessment.evidence[index] = canonicalEvidence(INPUT_ID, finalIndex, item.quote);
   const plan = attributionTablePlan(raw, INPUT_ID, finalIndex)[0];
@@ -271,7 +275,8 @@ test("a conflict can be accepted when both original rows support an explicit pro
     evidence: [...[row.evidence, data.tables[0].rows[index].evidence].map(({ evidence_id, message_index, quote }) => ({ evidence_id, message_index, quote })),
       canonicalEvidence(INPUT_ID, 0, requirement.requirements[0]!.text)],
     assessment: { requirement_index: 0, observation: "代码错配", evidence_status: "established", impact: "影响标的识别" },
-    problem: { component: ["模型自身推理"], label: "代码错配", definition: "最终表替换了原始查询中的代码。" },
+    problem: { diagnosis: "other" as const, investigation: [], component: [responsibilityFixture("最终作答节点（原始名称未提供）", {evidence_ids: ([...[row.evidence, data.tables[0].rows[index].evidence].map(({ evidence_id, message_index, quote }) => ({ evidence_id, message_index, quote })),
+      canonicalEvidence(INPUT_ID, 0, requirement.requirements[0]!.text)]).map(item=>item.evidence_id)})], label: "代码错配", definition: "最终表替换了原始查询中的代码。" },
   }));
   attributionProfile.validate!(data.request, data.result, data.audit);
   assert.deepEqual(attributionTableReview(data.request, data.result).concerns, []);

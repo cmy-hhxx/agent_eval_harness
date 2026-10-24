@@ -39,7 +39,9 @@
         "original_answer_timing",
         "table_check_results",
         "note",
-        "norm_directory"
+        "norm_directory",
+        "component_catalog",
+        "business_chains"
       ],
       "properties": {
         "identity": {
@@ -171,6 +173,19 @@
               "chars": {
                 "type": "integer",
                 "minimum": 0
+              },
+              "semantic_role": {
+                "enum": [
+                  "model_call",
+                  "tool_call",
+                  "tool_return",
+                  "final_delivery",
+                  "conversation"
+                ]
+              },
+              "invoking_model_message_index": {
+                "type": "integer",
+                "minimum": 0
               }
             }
           }
@@ -253,6 +268,77 @@
           "items": {
             "$ref": "#/$defs/attributionNorm"
           }
+        },
+        "component_catalog": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "component",
+              "kind",
+              "identity_status",
+              "role",
+              "message_indices",
+              "identity_evidence",
+              "identity_gap"
+            ],
+            "properties": {
+              "component": {
+                "type": "string",
+                "minLength": 1
+              },
+              "kind": {
+                "enum": [
+                  "model",
+                  "tool",
+                  "unknown"
+                ]
+              },
+              "identity_status": {
+                "enum": [
+                  "named",
+                  "role_only",
+                  "unknown_identity"
+                ]
+              },
+              "role": {
+                "enum": [
+                  "final_answer",
+                  "model_call",
+                  "tool",
+                  "unknown"
+                ]
+              },
+              "message_indices": {
+                "type": "array",
+                "minItems": 1,
+                "uniqueItems": true,
+                "items": {
+                  "type": "integer",
+                  "minimum": 0
+                }
+              },
+              "identity_evidence": {
+                "type": "array",
+                "minItems": 1,
+                "items": {
+                  "$ref": "#/$defs/evidence"
+                }
+              },
+              "identity_gap": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "minLength": 1
+              }
+            }
+          }
+        },
+        "business_chains": {
+          "$ref": "#/$defs/businessChains"
         }
       }
     },
@@ -336,6 +422,34 @@
     },
     "allow_standard_conflict": {
       "type": "boolean"
+    },
+    "material_availability": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "public_task",
+        "final_delivery",
+        "process_records",
+        "actual_model_inputs",
+        "call_links"
+      ],
+      "properties": {
+        "public_task": {
+          "type": "boolean"
+        },
+        "final_delivery": {
+          "type": "boolean"
+        },
+        "process_records": {
+          "type": "boolean"
+        },
+        "actual_model_inputs": {
+          "type": "boolean"
+        },
+        "call_links": {
+          "type": "boolean"
+        }
+      }
     }
   },
   "$defs": {
@@ -783,6 +897,9 @@
         "document_url": {
           "type": "string",
           "minLength": 1
+        },
+        "request_query": {
+          "type": "string"
         }
       }
     },
@@ -803,7 +920,8 @@
         "note",
         "source_input_id",
         "original_user_timestamp",
-        "grader_only"
+        "grader_only",
+        "business_chains"
       ],
       "properties": {
         "identity": {
@@ -935,6 +1053,19 @@
               "chars": {
                 "type": "integer",
                 "minimum": 0
+              },
+              "semantic_role": {
+                "enum": [
+                  "model_call",
+                  "tool_call",
+                  "tool_return",
+                  "final_delivery",
+                  "conversation"
+                ]
+              },
+              "invoking_model_message_index": {
+                "type": "integer",
+                "minimum": 0
               }
             }
           }
@@ -985,6 +1116,9 @@
         },
         "answer_generation": {
           "$ref": "#/$defs/answer_generation"
+        },
+        "business_chains": {
+          "$ref": "#/$defs/businessChains"
         }
       }
     },
@@ -1190,6 +1324,132 @@
           "minItems": 1,
           "items": {
             "$ref": "#/$defs/evidence"
+          }
+        }
+      }
+    },
+    "businessChains": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "chain_index",
+          "tool_component",
+          "request_index",
+          "return_indices",
+          "planner_index",
+          "context_indices",
+          "link_basis",
+          "references",
+          "delivery_changed",
+          "checkpoints",
+          "final_evidence"
+        ],
+        "properties": {
+          "chain_index": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "tool_component": {
+            "type": "string",
+            "minLength": 1
+          },
+          "request_index": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "return_indices": {
+            "type": "array",
+            "minItems": 1,
+            "items": {
+              "type": "integer",
+              "minimum": 0
+            }
+          },
+          "planner_index": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "minimum": 0
+          },
+          "context_indices": {
+            "type": "array",
+            "items": {
+              "type": "integer",
+              "minimum": 0
+            }
+          },
+          "link_basis": {
+            "enum": [
+              "call_id",
+              "returned_query"
+            ]
+          },
+          "references": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "delivery_changed": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "checkpoints": {
+            "type": "array",
+            "minItems": 8,
+            "maxItems": 8,
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "step",
+                "availability",
+                "evidence",
+                "note"
+              ],
+              "properties": {
+                "step": {
+                  "enum": [
+                    "用户目标",
+                    "查询规划与标的选择",
+                    "工具请求参数",
+                    "原始返回及字段含义",
+                    "返回整理与上下文传递",
+                    "模型实际输入",
+                    "数据解释与计算",
+                    "核验与最终交付"
+                  ]
+                },
+                "availability": {
+                  "enum": [
+                    "available",
+                    "not_collected"
+                  ]
+                },
+                "evidence": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/$defs/evidence"
+                  }
+                },
+                "note": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              }
+            }
+          },
+          "final_evidence": {
+            "type": "array",
+            "items": {
+              "$ref": "#/$defs/evidence"
+            }
           }
         }
       }

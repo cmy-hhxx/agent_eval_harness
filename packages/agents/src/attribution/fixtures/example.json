@@ -39,7 +39,32 @@
               }
             ]
           }
-        ]
+        ],
+        "component_catalog": [
+          {
+            "component": "最终作答节点（原始名称未提供）",
+            "kind": "model",
+            "role": "final_answer",
+            "identity_status": "role_only",
+            "message_indices": [
+              1
+            ],
+            "identity_evidence": [
+              {
+                "evidence_id": "ev_11111111-1111-4111-8111-111111111111_1_text_0_7_/type",
+                "message_index": 1,
+                "quote": "message"
+              },
+              {
+                "evidence_id": "ev_11111111-1111-4111-8111-111111111111_1_text_0_9_/role",
+                "message_index": 1,
+                "quote": "assistant"
+              }
+            ],
+            "identity_gap": "轨迹未提供真实节点名称；名称仅表达可确认的轨迹角色，原调用标识留在证据导航中。"
+          }
+        ],
+        "business_chains": []
       },
       "candidate_id": "11111111-1111-4111-8111-111111111111",
       "task_analysis": {

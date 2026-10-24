@@ -1055,6 +1055,7 @@ test("a content repair can write its fixed file after all three repair explorati
         code: "import json\nfrom pathlib import Path\np=Path(SNAPSHOT)\nr=json.loads(p.read_text())\nr['strengths'][0]['evidence_indices'][0]=json.loads(REFERENCE)\np.write_text(json.dumps(r,ensure_ascii=False))"
           .replace("SNAPSHOT", JSON.stringify(feedback.draft_file))
           .replace("REFERENCE", JSON.stringify(JSON.stringify((reference as {evidence_index:number}).evidence_index))),
+        outputs: [feedback.draft_file],
       });
       assert.notEqual(fixed.isError, true, "the bounded writer allowance survives exhausted repair exploration");
       const budget = JSON.parse(fixed.content.at(-1)!.text!).budget;
@@ -1127,12 +1128,11 @@ test("file loading errors do not consume content repairs", async () => {
   }
 });
 
-for (const firstWrite of ["read_only", "outside_workspace"] as const)
-test(`a missing submission file restores a bounded writer after ${firstWrite} consumed its reserved call`, async () => {
+test("a missing submission file restores a bounded writer after a different JSON file consumed its reserved call", async () => {
   const fixture = await harness(async options => ({ async run() {
     assert.equal((await options.execute("calculate", { operation: "add", operands: ["2", "2"] })).isError, undefined);
-    const consumed = await options.execute("execute_code", { language: "python", code: firstWrite === "read_only"
-      ? "print(4)" : "from pathlib import Path\nPath('../evaluation.json').write_text('{\"ok\":true}')" });
+    const consumed = await options.execute("execute_code", { language: "python",
+      code: "from pathlib import Path\nPath('other.json').write_text('{\"ok\":true}')", outputs: ["other.json"] });
     assert.equal(consumed.isError, undefined);
     assert.deepEqual(object(object(consumed.details).budget).draft_writes, { used: 1, remaining: 0, tools: ["execute_code"] });
     const code = "from pathlib import Path\nPath('evaluation.json').write_text('{\"ok\":true}')";
@@ -1204,7 +1204,7 @@ test("file loading feedback cannot renew exhausted protected writers or bypass t
   const fixture = await harness(async options => ({ async run() {
     await options.execute("calculate", { operation: "add", operands: ["2", "2"] });
     for (let used = 1; used <= 4; used++) {
-      const failed = await options.execute("execute_code", { language: "python", code: "raise RuntimeError('failed writer')" });
+      const failed = await options.execute("execute_code", { language: "python", code: "raise RuntimeError('failed writer')", outputs: ["evaluation.json"] });
       assert.equal(failed.isError, true);
       assert.deepEqual(object(object(failed.details).budget).draft_writes,
         { used, remaining: used < 4 ? 1 : 0, tools: ["execute_code"] });
@@ -2262,14 +2262,14 @@ for (const method of ["accept", "inspect"] as const)
 for (const inspect of [false, true])
   test(`failed first drafting and the revealed phase share a bounded writer allowance (${inspect})`, async () => {
     const write = (value: unknown) => ({ language: "python", code:
-      `from pathlib import Path\nPath('evaluation.json').write_text(${JSON.stringify(JSON.stringify(value))}, encoding='utf-8')` });
+      `from pathlib import Path\nPath('evaluation.json').write_text(${JSON.stringify(JSON.stringify(value))}, encoding='utf-8')`, outputs: ["evaluation.json"] });
     const fixture = await harness(async options => ({
       async run() {
         await options.execute("read_trace", { candidate: "answer", message_index: 0, path: "/content" });
         const spent = await options.execute("calculate", { operation: "add", operands: ["1", "1"] });
         const budget = object(object(spent.details).budget);
         assert.equal(object(budget.exploration).remaining, 0);
-        const failed = await options.execute("execute_code", { language: "python", code: "raise AssertionError('first writer failed')" });
+        const failed = await options.execute("execute_code", { language: "python", code: "raise AssertionError('first writer failed')", outputs: ["evaluation.json"] });
         assert.equal(failed.isError, true);
         assert.deepEqual(object(object(failed.details).budget).draft_writes, { used: 1, remaining: 1, tools: ["execute_code"] });
         const contentTool = inspect ? "inspect_material" : "submit_evaluation_file";

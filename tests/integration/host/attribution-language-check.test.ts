@@ -11,7 +11,7 @@ test('the language CLI counts null strength fields as inapplicable and reports p
   const directory=await mkdtemp(path.join(os.tmpdir(),'attribution-language-'));t.after(()=>rm(directory,{recursive:true,force:true}));
   const file=path.join(directory,'attribution.jsonl');
   const row=(type:string,trace_id:string,label:unknown=null,definition:unknown=null)=>({trace_id,task_id:trace_id,summary:'回答完成了核心任务。',
-    findings:[{type,text:'结果准确。',reason:'原文支持该结果。',label,definition}]});
+    findings:[{type,text:'结果准确。',reason:'原文支持该结果。',problem:type==='strength'?null:{label,definition}}]});
   const source=JSON.stringify(row('strength','strength-trace'))+'\n\n'+JSON.stringify(row('problem','empty-problem'))+'\n'+
     JSON.stringify(row('problem','english-problem','Calculation error','The calculation is wrong.'))+'\n';
   await writeFile(file,source);

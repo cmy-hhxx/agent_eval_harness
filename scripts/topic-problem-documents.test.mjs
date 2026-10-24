@@ -9,9 +9,9 @@ function fixture() {
   const model = "b_post_train_fast", input = "00000000-0000-4000-8000-000000000001";
   const source = { model, input_id: input, batch_id: "2026-10-19", case_id: "case", task_id: "task",
     submission_id: "accepted", evaluator_version: "judge", run_id: "source" };
-  const observation = { sampleId: "sample", findingId: "f1", summary: "已改写摘要", components: ["模型自身推理"],
+  const observation = { sampleId: "sample", findingId: "f1", summary: "已改写摘要", components: ["模型推断与生成/事实关系推导"],
     evidenceStatus: "established", importance: "high", libraryStatus: "classified", findingLibraryStatus: "classified" };
-  const tree = { models: [{ id: model }], nodes: [{ id: "class1", model, category: "模型自身推理", label: "新类名",
+  const tree = { models: [{ id: model }], nodes: [{ id: "class1", model, category: "模型推断与生成/事实关系推导", label: "新类名",
     definition: "新定义", observations: [observation] }], unfinished: [], pending: { observations: [] },
     samples: [{ id: "sample", inputId: input, taskId: "task", model, date: source.batch_id, caseId: "case",
       taskSummary: "任务摘要", problemCount: 1 }], totals: { samples: 1, targetSamples: 1, unfinishedSamples: 0, problems: 1 } };
@@ -21,13 +21,13 @@ function fixture() {
       source_input_ids: [input], submissions: [{ task_id: "cluster", stage: "clustering", submission_id: "cluster-accepted", evaluator_version: "judge" }] }] } });
   return { record, scope: { kind: "full-evaluation", capturedAt: record.createdAt, sourceEvaluationComplete: true,
     targetAttributions: 1, acceptedAttributions: 1, excludedAttributions: 0 },
-    library: { model, components: { component: { label: "模型自身推理" } }, classes: { class1: {
+    library: { model, components: { component: { label: "模型推断与生成/事实关系推导" } }, classes: { class1: {
       status: "active", component_id: "component", category_paths: [["计算错误"]], label: "原类名", definition: "原定义" } } },
     inputs: { [input]: { version: model, batch_id: source.batch_id, case_id: "case", trace_id: "original-session" } },
     attributions: new Map([["task", { task_id: "task", submission_id: "accepted", evaluator_version: "judge",
       input_id: input, version: model, case: { batch_id: source.batch_id, case_id: "case" }, evaluation: { findings: [
         { type: "problem", finding_id: "f1", text: "原文", reason: "原因", importance: "high",
-          assessment: { evidence_status: "established" }, problem: { component: ["模型自身推理"] },
+          assessment: { evidence_status: "established" }, problem: { component: [{technical_domain:"模型推断与生成",functional_component:"事实关系推导"}] },
           evidence: [{ message_index: 1, quote: "本模型证据" }] }] } }]]) };
 }
 

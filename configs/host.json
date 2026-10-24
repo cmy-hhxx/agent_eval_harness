@@ -1,5 +1,5 @@
 {
-  "evaluatorVersion": "r314",
+  "evaluatorVersion": "r324",
   "inputs": {
     "timing_unit": "ms",
     "versions": [
@@ -105,6 +105,10 @@
     },
     "clustering": {
       "profile": "judge"
+    },
+    "instruction-review": {
+      "profile": "judge",
+      "thinking": "low"
     }
   },
   "execution": {

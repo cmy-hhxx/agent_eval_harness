@@ -36,6 +36,7 @@ function automationSelection(
   for (const task of tasks) {
     const source = (task.data as TaskData).rewriteOf;
     if (source && source.stage !== "clustering" && selected.has(source.taskId)) selected.add(task.id);
+    if (task.stage === "instruction-review" && selected.has(task.dependencies.source)) selected.add(task.id);
   }
   return selected;
 }
@@ -61,7 +62,7 @@ function limitAutomationPlan(plan: TaskPlan, limit: number, allowedGroups: reado
   plan.tasks = plan.tasks.filter((task) => selected.has(task.id)).sort((a, b) =>
     Number((b.data as TaskData).rewriteOf?.stage === "comparison") -
     Number((a.data as TaskData).rewriteOf?.stage === "comparison"));
-  for (const stage of ["attribution", "comparison", "rewrite", "clustering"])
+  for (const stage of ["attribution", "instruction-review", "comparison", "rewrite", "clustering"])
     plan.summary[stage + "_tasks"] = plan.tasks.filter((task) => task.stage === stage).length;
   const groups: Record<string, number> = {};
   for (const task of plan.tasks.filter((task) => task.stage === "comparison")) {

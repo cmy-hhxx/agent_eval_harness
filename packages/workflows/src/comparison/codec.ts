@@ -175,6 +175,7 @@ function evaluationFromRow(data: TaskData, row: JsonObject): ComparisonResult {
 }
 
 function resultEvaluation(data: TaskData, row: JsonObject, rewriteIds?: string[]): unknown {
+  if (data.stage === "instruction-review") return row.instruction_review;
   if (data.stage === "rewrite") {
     const rewrites = (stageResult(data.rewriteOf!.stage, row).rewritten as { rewrites: { id: string; text: string }[] }).rewrites;
     return { rewrites: rewriteIds ? rewriteIds.map((id) => {
@@ -227,7 +228,7 @@ function decodeState(
       candidates: Object.fromEntries(
         Object.entries(t.inputIds).filter(([label]) => t.stage !== "attribution" || label === "answer").map(([label, id]) => {
           if (!candidates[id]) throw new Error("输入引用缺失：" + id);
-          return [t.stage === "attribution" ? "A" : label, candidates[id]];
+          return [["attribution", "instruction-review"].includes(t.stage) ? "A" : label, candidates[id]];
         }),
       ),
     },
@@ -274,6 +275,15 @@ function decodeState(
       continue;
     }
     const data = task.data as TaskData;
+    if (data.stage === "instruction-review") {
+      const row = resultRow(receipt, { id: task.id, file: "instruction_review.jsonl" });
+      if (row.task_id !== task.id || row.source_attribution_task_id !== task.dependencies.source || row.evaluation_type !== "instruction_review")
+        throw new Error("指令检查结果与归因来源不一致：" + task.id);
+      const evaluation = restore(row.instruction_review, evaluationPatch || []);
+      state.receipts[task.id] = { ...value, evaluation, ...(submittedPatch ? { submitted: restore(evaluation, submittedPatch) } : {}),
+        exported: { id: task.id, file: "instruction_review.jsonl", row } };
+      continue;
+    }
     if (data.stage === "criteria" || data.verificationAudit || receipt.exported.file === "comparison-review.jsonl") {
       const resultId = receipt.exported.taskId ?? receipt.exported.comparisonId!;
       if (data.verificationAudit && (receipt.exported.taskId !== task.id || receipt.exported.file !== "comparison-verification.jsonl"))

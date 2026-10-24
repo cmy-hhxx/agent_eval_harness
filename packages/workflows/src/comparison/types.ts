@@ -126,7 +126,7 @@ export interface BatchPreflight {
   skipped_groups: number;
   input_issues: number;
 }
-export type Stage = "criteria" | "attribution" | "comparison" | "rewrite" | "clustering";
+export type Stage = "criteria" | "attribution" | "comparison" | "rewrite" | "clustering" | "instruction-review";
 /** The accepted result a rewrite task polishes. */
 export interface RewriteSource {
   stage: "attribution" | "comparison" | "clustering";

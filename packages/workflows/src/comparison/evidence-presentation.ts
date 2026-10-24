@@ -28,7 +28,7 @@ function materialEvidence(value: unknown, bank: EvidenceBank): unknown {
   if (!material) return value;
   const project = <T>(value: T) => projectEvidenceReferences(value, bank);
   const array = (value: unknown) => Array.isArray(value) ? value : [];
-  const generated = ["final_evidence", "question_evidence", "answer_generation", "criterion_instruction_sources", "trace_overview", "review_sections"];
+  const generated = ["business_chains", "final_evidence", "question_evidence", "answer_generation", "criterion_instruction_sources", "trace_overview", "review_sections"];
   const result = { ...material };
   for (const field of generated) if (Object.hasOwn(material, field)) result[field] = project(material[field]);
   if (Array.isArray(material.norm_directory)) result.norm_directory = material.norm_directory.map(entry => {

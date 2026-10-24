@@ -1,3 +1,4 @@
+import { responsibilityFixture } from "../../../../tests/fixtures/responsibility.js";
 import { attributionJudgment } from "../../../../tests/fixtures/attribution-judgment.js";
 import { validateJudgment } from "./validate.js";
 import { resolveJudgment } from "./resolve.js";
@@ -21,7 +22,7 @@ const judgmentFixture = (result: AttributionResult = structuredClone(example.res
     return attributionJudgment(request, result);
   };
 
-test("a wrong answer stays wrong without forcing an unsupported model responsibility", () => {
+test("a confirmed wrong answer retains its established defect and an explicitly inferred cause", () => {
   const request = structuredClone(example.request);
   request.input.ground_truth.value = "5";
   const result = structuredClone(example.result) as AttributionResult;
@@ -31,12 +32,12 @@ test("a wrong answer stays wrong without forcing an unsupported model responsibi
   result.criterion_assessments[0].status = "unmet";
   const finding = result.findings[0];
   finding.type = "problem";
-  finding.problem = { component: [], label: "取数结果偏差", definition: result.correctness_reason };
+  finding.problem = { diagnosis: "other" as const, investigation: [], component: [responsibilityFixture("最终作答节点（原始名称未提供）",{evidence_ids:finding.evidence.map(item=>item.evidence_id)})], label: "取数结果偏差", definition: result.correctness_reason };
   attributionProfile.validate!(request, result, audit);
   const accepted = resolveJudgment(request, judgmentFixture(result, request), audit) as AttributionResult;
   assert.equal(accepted.is_correct, false);
   assert.equal(accepted.core_assessment.meets_core, false);
-  assert.deepEqual(accepted.findings[0].problem!.component, []);
+  assert.equal(accepted.findings[0].problem!.component[0].certainty,"inferred");
 });
 
 
@@ -251,7 +252,7 @@ test("final-answer images must be inspected before claiming a missing deliverabl
   attributionProfile.validate!(request, result, { ...audit, viewedImages: ["answer:1"] });
 });
 test("Attribution judges one answer, conditionally on the standard answer", () => {
-  assert.deepEqual(Object.keys(attributionAgent.profiles), ["default", "direct"]);
+  assert.deepEqual(Object.keys(attributionAgent.profiles), ["default"]);
   attributionProfile.validate!(example.request, example.result, audit);
   const draft = judgmentFixture();
   assert.deepEqual(resolveJudgment(example.request, draft, audit), example.result);
@@ -281,7 +282,7 @@ test("Attribution judges one answer, conditionally on the standard answer", () =
     findings: { type: string; problem: Record<string, unknown> | null }[];
   };
   incomplete.findings[0]!.type = "problem";
-  incomplete.findings[0]!.problem = { component: ["模型自身推理"], label: "问题" };
+  incomplete.findings[0]!.problem = { diagnosis: "other" as const, investigation: [], component: [responsibilityFixture("最终作答节点（原始名称未提供）", {evidence_ids: []})], label: "问题" };
   assert.throws(
     () => attributionProfile.validate!(example.request, incomplete, audit),
     /required|输出结构无效/,
@@ -289,70 +290,8 @@ test("Attribution judges one answer, conditionally on the standard answer", () =
 
   const blankLabel = structuredClone(example.result) as unknown as AttributionResult;
   blankLabel.findings[0]!.type = "problem";
-  blankLabel.findings[0]!.problem = { component: ["模型自身推理"], label: "  ", definition: "说明" };
-  assert.throws(() => attributionProfile.validate!(example.request, blankLabel, audit), /问题名称不能为空/);
-});
-
-test("problem components must name a tool from the answer call chain", () => {
-  const request = structuredClone(example.request);
-  (request.input.answer as { catalog: { message_index: number; name: string; type: string; role?: string }[] }).catalog = [
-    { message_index: 1, name: "Search", type: "function_call_output" },
-    { message_index: 2, name: "FinQuery", type: "function_call_output" },
-    { message_index: 3, name: "NotATool", type: "message", role: "assistant" },
-  ];
-  request.sources.answer.value.messages.splice(1, 0,
-    { type: "function_call_output", role: "tool", content: "检索超时" },
-    { type: "function_call_output", role: "tool", content: "查询失败" },
-  );
-  request.input.answer.final_message_index = 3;
-  const finding = (component: string) => ({
-    ...example.result,
-    correctness_evidence: [canonicalEvidence(INPUT_ID, 3, "2+2=4")],
-    criterion_assessments: example.result.criterion_assessments.map((assessment) => ({
-      ...assessment, evidence: [canonicalEvidence(INPUT_ID, 3, "2+2=4")],
-    })),
-    findings: [
-      {
-        ...structuredClone(example.result.findings[0]),
-        type: "problem",
-        assessment: { ...example.result.findings[0]!.assessment, requirement_index: null },
-        problem: { component: [component], label: "取数失败", definition: "多次查询失败" },
-        evidence: component === "FinQuery"
-          ? [canonicalEvidence(INPUT_ID, 2, "查询失败")]
-          : [canonicalEvidence(INPUT_ID, 1, "检索超时")],
-      },
-    ],
-  });
-  attributionProfile.validate!(request, finding("Search"), audit);
-  const multiple = finding("Search");
-  multiple.findings[0]!.problem.component = ["Search", "FinQuery", "模型自身推理"];
-  assert.throws(() => attributionProfile.validate!(request, multiple, audit), /必须引用本方对应工具/);
-  multiple.findings[0]!.evidence.push(canonicalEvidence(INPUT_ID, 2, "查询失败"));
-  attributionProfile.validate!(request, multiple, audit);
-  multiple.findings[0]!.problem.component = [];
-  attributionProfile.validate!(request, multiple, audit);
-  for (const components of [["Search", "Search"]]) {
-    multiple.findings[0]!.problem.component = components;
-    assert.throws(() => attributionProfile.validate!(request, multiple, audit), /输出结构无效/);
-  }
-  const unsupported = finding("FinQuery");
-  unsupported.findings[0]!.evidence = [canonicalEvidence(INPUT_ID, 3, "2+2=4")];
-  assert.throws(() => attributionProfile.validate!(request, unsupported, audit), /必须引用本方对应工具/);
-  unsupported.findings[0]!.evidence = [canonicalEvidence(INPUT_ID, 1, "检索超时")];
-  assert.throws(() => attributionProfile.validate!(request, unsupported, audit), /必须引用本方对应工具/);
-  const suspected = finding("FinQuery") as AttributionResult;
-  suspected.findings[0]!.assessment.evidence_status = "uncertain";
-  suspected.findings[0]!.assessment.requirement_index = null;
-  attributionProfile.validate!(request, suspected, audit);
-  attributionProfile.validate!(request, { ...suspected, findings: [] }, audit);
-  assert.throws(() => attributionProfile.validate!(request, finding("search"), audit), /本方工具名/);
-  attributionProfile.validate!(request, finding("模型自身推理"), audit);
-  for (const component of ["Context Recall", "上下文召回", "检索阶段", "WebSearch", "NotATool"])
-    assert.throws(
-      () => attributionProfile.validate!(request, finding(component), audit),
-      /本方工具名/,
-      component,
-    );
+  blankLabel.findings[0]!.problem = { diagnosis: "other" as const, investigation: [], component: [responsibilityFixture("最终作答节点（原始名称未提供）", {evidence_ids: blankLabel.findings[0]!.evidence.map(item=>item.evidence_id)})], label: "  ", definition: "说明" };
+  assert.throws(() => attributionProfile.validate!(example.request, blankLabel, audit), /非空中文字符串/);
 });
 
 test("shared criteria are immutable and assessed exactly once", () => {
@@ -561,7 +500,7 @@ test("incoming problem associations cannot coexist with established satisfaction
     .find(source => source.path === "/content")!;
   const normRef = { evidence_id: cite(INPUT_ID, 0, source, 0, source.text.length).evidence_id };
   const problem = { ...draft.findings[0]!, type: "problem" as const,
-    problem: { component: ["模型自身推理"], label: "指令执行偏差", definition: "回答未按所关联的规范顺序组织内容。" },
+    problem: { diagnosis: "other" as const, investigation: [], component: [responsibilityFixture("最终作答节点（原始名称未提供）", {evidence_ids: ([...draft.findings[0]!.evidence, normRef]).map(item=>item.evidence_id)})], label: "指令执行偏差", definition: "回答未按所关联的规范顺序组织内容。" },
     evidence: [...draft.findings[0]!.evidence, normRef] };
   const submitted = { ...draft, findings: [problem] };
   const before = structuredClone({ request, submitted, audit });

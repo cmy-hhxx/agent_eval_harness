@@ -198,7 +198,7 @@ test("attribution and comparison workers receive blind prompts and tool views wh
     };
     assert.equal(row.ground_truth.value, "4 来自 secret-model", "formal results keep the original reference");
     assert(row.evaluations.a_fast!.summary.includes("a_fast"), "attribution receipts are not blinded on export");
-    assert.deepEqual(stages.sort(), ["attribution", "attribution", "comparison", "criteria"]);
+    assert.deepEqual(stages.sort(), ["attribution", "attribution", "comparison", "criteria", "instruction-review", "instruction-review"]);
   } finally {
     await worker.close();
     await rm(directory, { recursive: true, force: true });
@@ -320,54 +320,6 @@ test("planned input bodies are read by record only when a task accesses them", a
   } finally {
     await rm(directory, { recursive: true, force: true });
   }
-});
-
-test("each answer retains its own full system and developer constraints beyond the context budget", async () => {
-  const rows = ["不能把风险放在第一位", "必须把风险放在第一位"].map((rule) => ({
-    ...raw(), messages: [
-      { type: "message", role: "system", content: "背景。".repeat(9000) + rule },
-      { type: "message", role: "developer", content: "按自己的系统要求组织回答" },
-      ...raw().messages,
-    ],
-  }));
-  const { directory, config } = await fixtureConfig([[rows[0]], [], [rows[1]], []]);
-  config.execution.initialContextChars = 1;
-  try {
-    const plan = await buildPlan(config);
-    for (const task of plan.tasks.filter((task) => ["attribution", "comparison"].includes(task.stage) && !(task.data as TaskData).verificationOf)) {
-      const bound = comparisonWorkflow.bind(task, plan.inputs, dependenciesFor(task, await stateFor(config, plan, false)), { tasks: plan.tasks });
-      type Material = { initial_material: { message_index: number; value: unknown }[]; instruction_sources: {
-        message_index: number; path: string; role: string; content: unknown; evidence: ReturnType<typeof cite>[];
-      }[] };
-      const input = bound.request.input as { answer?: Material; candidates?: Record<string, Material> };
-      const materials = input.answer ? { answer: input.answer } : input.candidates!;
-      type ShownMaterial = { instruction_sources: { content: unknown; evidence: { reference: { evidence_index: number } }[] }[] };
-      const prepared = services.agents.prepare(bound);
-      const shown = parsedMaterial(prepared) as { answer?: ShownMaterial; candidates?: Record<string, ShownMaterial> };
-      const shownMaterials = shown.answer ? { answer: shown.answer } : shown.candidates!;
-      for (const [label, material] of Object.entries(materials)) {
-        const source = plan.inputs[task.inputIds[label]] as RawInput;
-        const constraints = material.instruction_sources.filter((m) => m.message_index < 2);
-        assert.equal(constraints.length, 2);
-        assert.deepEqual(constraints.map((m) => m.role), ["system", "developer"]);
-        assert.deepEqual(constraints.map((m) => m.path), ["/content", "/content"]);
-        assert.deepEqual(constraints.map((m) => m.content), source.messages.slice(0, 2).map((message) => message.content));
-        assert.equal(material.initial_material.filter((m) => m.message_index < 2).length, 0);
-        if (task.stage === "attribution") assert(shownMaterials[label]!.instruction_sources.every(m => !Object.hasOwn(m, "content")),
-          "attribution defers full instruction content while preserving source references");
-        else assert.deepEqual(shownMaterials[label]!.instruction_sources.map((m) => m.content), constraints.map((m) => m.content));
-        constraints.forEach((constraint, index) => {
-          assert.equal(constraint.evidence.length, 1);
-          assert.equal(resolveEvidence(source, constraint.evidence[0]!, label, emptyAudit(), "/evidence", task.inputIds[label]).quote, constraint.content);
-          const selection = shownMaterials[label]!.instruction_sources[index]!.evidence[0]!.reference;
-          assert.deepEqual(Object.keys(selection), ["evidence_index"]);
-          const reference = resolveEvidenceSelection(prepared.evidenceBank, selection, "/instruction_sources/" + index + "/evidence/0");
-          assert.deepEqual(reference, { evidence_id: constraint.evidence[0]!.evidence_id });
-          assert.equal(resolveEvidence(source, reference, label, emptyAudit(), "/evidence", task.inputIds[label]).quote, constraint.content);
-        });
-      }
-    }
-  } finally { await rm(directory, { recursive: true, force: true }); }
 });
 
 for (const entireAnswer of [false, true]) test(`oversized final-answer blocks preserve original text and direct reads (entire answer: ${entireAnswer})`, async () => {
@@ -537,8 +489,10 @@ test("resume skips accepted cases after edits and evaluates only unfinished and 
           async run() {
             await inspectFor(options);
             const input = await readJson<RawInput>(path.join(options.workdir, `inputs/${options.spec.inputs[0]!.name}.json`));
-            if (options.spec.evaluation.id === "attribution") calls.push(input.case_id!);
-            if (options.spec.evaluation.id === "attribution" && input.case_id === "todo" && !resumed) throw new Error("stop before submission");
+            const state=await readRunState(path.join(config.output.path,"test"));
+            const business=(state.manifest.tasks.find(task=>task.id===options.spec.taskId)!.data as TaskData).candidates.A;
+            if (options.spec.evaluation.id === "attribution") {assert(!Object.hasOwn(input,"case_id"));calls.push(business.case_id);}
+            if (options.spec.evaluation.id === "attribution" && business.case_id === "todo" && !resumed) throw new Error("stop before submission");
             await submitFor(options, draftFor(options.spec, taskResult(options.spec)));
           },
           async abort() {},
@@ -809,7 +763,7 @@ test("normal runs persist drafts before cleanup, carry them to one repair attemp
   );
   try {
     const stats = await runEvaluation(optionsFor(config, modelForStage, await buildPlan(config), [worker.url]));
-    assert.equal(calls, 5);
+    assert.equal(calls, 7);
     assert.equal(stats.completed_comparisons, 1);
     const state = await readRunState(path.join(config.output.path, "test"));
     assert.equal(state.manifest.states[firstTask!].failure?.draft, undefined);

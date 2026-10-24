@@ -54,7 +54,7 @@ export async function runAnswerReviewCommand(host: HostConfig, options: AnswerRe
   if (!saved && !plan.tasks.length) throw Error("没有可评回答，请先查看 preflight");
   const taskIds = !saved && options.pilotCases !== undefined ? answerReviewPilotTaskIds(plan, options.pilotCases) : undefined;
   const routing = options.balanceChannels ? createBalancedModels(host.models) : { modelForStage: createModelResolver(host.models) };
-  for (const stage of [...config.reviewStages!, ...(config.reviewStages!.includes("attribution") && config.rewrite.attribution ? ["rewrite"] : [])])
+  for (const stage of [...config.reviewStages!, ...(config.reviewStages!.includes("attribution") ? ["instruction-review"] : []), ...(config.reviewStages!.includes("attribution") && config.rewrite.attribution ? ["rewrite"] : [])])
     routing.modelForStage(stage);
   const controller = new AbortController(), stop = () => controller.abort(Error("User interrupted"));
   if (options.signal) {

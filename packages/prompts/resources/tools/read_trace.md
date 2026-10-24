@@ -1,4 +1,4 @@
-读取 candidate 的 message_index 消息。已知字段时传 JSON 路径 path，例如 /content/0/text 或 /output/datas/0；字符串返回原始文本，其他类型返回原消息 JSON 中的对应片段。未知路径时省略 path 或填空字符串，查看消息及 text_sources 目录。evidence 中的原文与 reference 配对，核对后选择对应 reference。
+读取 candidate 的 message_index 消息。已知字段时传 JSON 路径 path，例如 /content/0/text 或 /output/datas/0；字符串返回原始文本，其他类型返回原消息 JSON 中的对应片段。未知路径时省略 path，查看消息及 text_sources 目录；对象消息显式 path="" 读取根 JSON，不附路径目录。evidence 中的原文与 reference 配对，核对后选择对应 reference。
 按待核疑点选择读取范围：优先用 search_trace 或代码定位原词与字段，再用 path、offset、max_chars 读取相关片段及必要上下文；无需例行读完整个工具返回。片段截断了对象、单位、条件、表格行或异常说明时继续补读；遗漏判断要覆盖对应完整范围。已读且足够的原文可直接引用，不为缩短引文重复读取，也不为省字符丢掉必要条件。
 already_read=true 表示请求范围此前已完整展示，包括完整 JSON 字段所包含的原文本；局部 JSON 或其他位置的同文不算已读。显式指定 path 和 max_chars≤1800 的上下文核对返回完整片段，即使已读或部分重叠，也不拆散其中的条件和例外。重复请求仍消耗原探索额度。
 更大范围的重复读取只返回 quote_preview 和证据编号；部分重叠时 evidence 返回新增原文，reused_evidence 提供已读区间的编号和 offset/end_offset。next_offset 指向请求实际处理的末端，不是新增文字长度。已有材料足够就直接复用，需要连贯上下文时定向读取相关短片段。

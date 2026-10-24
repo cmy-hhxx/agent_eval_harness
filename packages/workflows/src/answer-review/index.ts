@@ -4,8 +4,8 @@ import {randomUUID} from "node:crypto";
 import {isDeepStrictEqual} from "node:util";
 import {canonical,HttpError,type AgentBinding,type PlannedTask,type RunState,type RunManifest,type WorkflowDefinition,type JsonObject,type SubmissionReceipt,type TaskPlan} from "@eval/contracts";
 import {createRunRepository,readJson,writeJson,atomicWrite,runLock,exists,type RunCodec} from "@eval/data";
-import {buildPlan,loadRunInputs,normalizeInput,pendingTaskProgress,type EvalConfig,type Candidate,type RawInput} from "@eval/workflows/comparison";
-import {directAttributionProfile,type DirectAttribution} from "@eval/agents/attribution";
+import {buildPlan,attributionTrace,validateOriginalAttributionEvidence,bindAttributionMaterial,bindInstructionReview,instructionReviewFollowup,instructionReviewRow,loadRunInputs,normalizeInput,pendingTaskProgress,type EvalConfig,type Candidate,type RawInput} from "@eval/workflows/comparison";
+import {attributionProfile,type AttributionResult} from "@eval/agents/attribution";
 import attributionOutputSchema from '../../../../schemas/workflow/answer-review-attribution.schema.json' with {type:'json'};
 import type {ScoreResult} from "@eval/agents/score";
 import {answerReviewMaterial} from "./material.js";
@@ -15,18 +15,19 @@ export * from './watch.js';
 export interface AnswerReviewConfig extends EvalConfig {workflow:'answer-review';reviewStages?:('score'|'attribution')[];reviewTaskIds?:string[]}
 interface TaskData {candidate:Candidate;rewriteOf?:string}
 const sourceMeta=Symbol('source meta: export only');
+const sourceTrace=Symbol('original trace: workflow only');
 function loadReviewInputs(manifest:RunManifest,records?:Map<string,Candidate>){return loadRunInputs(manifest,undefined,undefined,records,source=>{
   const record=source as Record<string,unknown>;
   return {raw:normalizeInput(source),origin:record._source,metadata:Object.hasOwn(record,'meta')?{meta:record.meta}:{}};
 });}
-export function attributionTextSlots(value:DirectAttribution){return [{id:'summary',text:value.summary,label:'归因总结'},...value.findings.flatMap((f,i)=>[
+export function attributionTextSlots(value:AttributionResult){return [{id:'summary',text:value.summary,label:'归因总结'},...value.findings.flatMap((f,i)=>[
   {id:`findings.${i}.text`,text:f.text,label:'实际表现'}, {id:`findings.${i}.reason`,text:f.reason,label:'证据与影响'},
-  ...(f.type==='problem'?[{id:`findings.${i}.label`,text:f.label!,label:'问题名称'},{id:`findings.${i}.definition`,text:f.definition!,label:'问题定义'}]:[]),
+  ...(f.problem?[{id:`findings.${i}.problem.label`,text:f.problem.label,label:'问题名称'},{id:`findings.${i}.problem.definition`,text:f.problem.definition,label:'问题定义'}]:[]),
 ])];}
 export async function planAnswerReview(config:AnswerReviewConfig){
   const indexed=await buildPlan({...config,comparisons:[],clustering:{...config.clustering,enabled:false}},undefined,{materializeInputs:false});
   const catalog=indexed.catalog as Candidate[],stages=config.reviewStages??['score','attribution'],tasks:PlannedTask[]=[];
-  for(const candidate of catalog)for(const stage of stages){const task:PlannedTask={id:randomUUID(),stage,inputIds:{case:candidate.input_id},dependencies:{},data:{candidate} satisfies TaskData};tasks.push(task);
+  for(const candidate of catalog)for(const stage of stages){const task:PlannedTask={id:randomUUID(),stage,inputIds:stage==='attribution'?{answer:candidate.input_id}:{case:candidate.input_id},dependencies:{},data:{candidate} satisfies TaskData};tasks.push(task);
     if(stage==='attribution'&&config.rewrite.attribution)tasks.push({id:randomUUID(),stage:'rewrite',inputIds:{},dependencies:{source:task.id},data:{candidate,rewriteOf:task.id} satisfies TaskData});}
   const manifest={config,tasks,inputCatalog:catalog} as RunManifest,inputs=prepareInputs(await loadReviewInputs(manifest),catalog);
   const summary={workflow:'answer-review',cases:catalog.length,valid_inputs:catalog.length,score_tasks:tasks.filter(t=>t.stage==='score').length,attribution_tasks:tasks.filter(t=>t.stage==='attribution').length,rewrite_tasks:tasks.filter(t=>t.stage==='rewrite').length,criteria_tasks:0,comparison_tasks:0,issues:indexed.summary.issues??[]};
@@ -42,24 +43,35 @@ function prepareInputs(raw:Record<string,unknown>,catalog:Candidate[]){
   const result:Record<string,unknown>={};
   for(const candidate of catalog)if(Object.hasOwn(raw,candidate.input_id))Object.defineProperty(result,candidate.input_id,{enumerable:true,get(){
     const source=raw[candidate.input_id] as {raw:RawInput;origin?:Record<string,unknown>;metadata:Record<string,unknown>};
-    const value=answerReviewMaterial(candidate,source.raw,candidate.input_id);
+    const value=attributionTrace(source.raw,candidate.input_id,candidate.final_index);
     const original=typeof source.origin?.original_file==='string'?source.origin.original_file:undefined,slash=original?.indexOf('/')??-1;
     const metadata={...source.metadata,trace_id:candidate.trace_id,answer_model:candidate.llm,input_file:candidate.source,input_line:candidate.line,
       source_archive:slash>=0?original!.slice(0,slash):null,source_member:slash>=0?original!.slice(slash+1):null,
       source_line:source.origin?.original_line??null,source_item:source.origin?.original_item??null,
       business_date:source.origin?.business_date??(/^[0-9]{4}-[0-9]{2}-[0-9]{2}$/.test(candidate.batch_id)?candidate.batch_id:null)};
-    return Object.defineProperty({...value.material,view:value.shown,origins:value.origins},sourceMeta,{value:metadata});
+    return Object.defineProperties(value,{[sourceMeta]:{value:metadata},[sourceTrace]:{value:source.raw}});
   }});
   return result;
 }
 export function bindAnswerReview(task:PlannedTask,inputs:Record<string,unknown>,dependencies:Record<string,SubmissionReceipt|undefined>):AgentBinding{
   const data=task.data as TaskData;
-  if(task.stage==='rewrite')return {agent:'rewrite',profile:'default',request:{input:{kind:'attribution',case:{batch_id:data.candidate.batch_id,case_id:data.candidate.case_id},items:attributionTextSlots(dependencies.source!.evaluation as DirectAttribution)},sources:{}}};
-  const source=inputs[data.candidate.input_id] as import("@eval/contracts").ReviewCase & {view:JsonObject};
-  return {agent:task.stage,profile:task.stage==='attribution'?'direct':'default',request:{input:source.view,sources:{case:{id:data.candidate.input_id,value:source}}}};
+  if(task.stage==='instruction-review')return bindInstructionReview(data.candidate,(inputs[data.candidate.input_id] as {[sourceTrace]:RawInput})[sourceTrace]);
+  if(task.stage==='rewrite')return {agent:'rewrite',profile:'default',request:{input:{kind:'attribution',case:{batch_id:data.candidate.batch_id,case_id:data.candidate.case_id},items:attributionTextSlots(dependencies.source!.evaluation as AttributionResult)},sources:{}}};
+  if(task.stage==='attribution')return bindAttributionMaterial(data.candidate,
+    (inputs[data.candidate.input_id] as {[sourceTrace]:RawInput})[sourceTrace]);
+  const original=(inputs[data.candidate.input_id] as {[sourceTrace]:RawInput})[sourceTrace];
+  const source=answerReviewMaterial(data.candidate,original,data.candidate.input_id);
+  return {agent:task.stage,profile:'default',request:{input:source.shown,sources:{case:{id:data.candidate.input_id,value:source.material}}}};
 }
 export const answerReviewWorkflow:WorkflowDefinition={
   id:'answer-review',plan:config=>planAnswerReview(config as AnswerReviewConfig),bind:bindAnswerReview,
+  advance:(task,receipt,state,inputs)=>{
+    if(task.stage==='attribution'){
+      const candidate=(task.data as TaskData).candidate,original=(inputs[candidate.input_id] as {[sourceTrace]:RawInput})[sourceTrace];
+      validateOriginalAttributionEvidence(receipt.evaluation,{[candidate.input_id]:original},receipt.audit);
+    }
+    return {tasks:instructionReviewFollowup(task,state)};
+  },
   async reconcile(_run,state,current){
     const manifest=state.manifest,saved=manifest.config as AnswerReviewConfig,config=current as AnswerReviewConfig;
     const stages=config.reviewStages??['score','attribution'];
@@ -97,7 +109,7 @@ export const answerReviewWorkflow:WorkflowDefinition={
     const add=(task:PlannedTask)=>{manifest.tasks.push(task);manifest.states[task.id]={status:'pending',attempts:0};};
     for(const candidate of selected)for(const stage of stages){
       const key=canonical([stage,candidate.input_id]);let task=tasks.get(key);
-      if(!task){task={id:randomUUID(),stage,inputIds:{case:candidate.input_id},dependencies:{},data:{candidate} satisfies TaskData};add(task);tasks.set(key,task);}
+      if(!task){task={id:randomUUID(),stage,inputIds:stage==='attribution'?{answer:candidate.input_id}:{case:candidate.input_id},dependencies:{},data:{candidate} satisfies TaskData};add(task);tasks.set(key,task);}
       if(stage==='attribution'&&config.rewrite.attribution&&!rewrites.has(task.id)){
         add({id:randomUUID(),stage:'rewrite',inputIds:{},dependencies:{source:task.id},data:{candidate,rewriteOf:task.id} satisfies TaskData});
         rewrites.add(task.id);
@@ -107,18 +119,23 @@ export const answerReviewWorkflow:WorkflowDefinition={
     const exact=config.reviewTaskIds&&new Set(config.reviewTaskIds);
     if(exact&&[...exact].some(id=>!manifest.tasks.some(task=>task.id===id)))throw Error('恢复范围包含未知任务');
     manifest.executionScope=manifest.tasks.filter(task=>selectedIds.has((task.data as TaskData).candidate.input_id)&&
-      (!exact||exact.has(task.id))&&(stages.includes(task.stage as 'score'|'attribution')||task.stage==='rewrite'&&stages.includes('attribution')&&config.rewrite.attribution)).map(task=>task.id);
-    manifest.preflight={...manifest.preflight,...Object.fromEntries(['score','attribution','rewrite'].map(stage=>[stage+'_tasks',manifest.tasks.filter(task=>task.stage===stage).length]))};
+      (!exact||exact.has(task.id))&&(stages.includes(task.stage as 'score'|'attribution')||task.stage==='instruction-review'&&stages.includes('attribution')||task.stage==='rewrite'&&stages.includes('attribution')&&config.rewrite.attribution)).map(task=>task.id);
+    manifest.preflight={...manifest.preflight,...Object.fromEntries(['score','attribution','instruction-review','rewrite'].map(stage=>[stage+'_tasks',manifest.tasks.filter(task=>task.stage===stage).length]))};
     return {tasks:manifest.tasks,inputs:prepareInputs(raw,catalog),catalog,summary:manifest.preflight};
   },
 };
-const resultFile=(stage:string)=>stage==='score'?'score.jsonl':'attribution.jsonl';
+const resultFile=(stage:string)=>stage==='score'?'score.jsonl':stage==='instruction-review'?'instruction_review.jsonl':'attribution.jsonl';
 export const answerReviewAttributionSchema=attributionOutputSchema;
-const validateAttributionOutput=new Ajv2020({allErrors:true,strict:false}).addSchema(directAttributionProfile.resultSchema!,'attribution/direct-result.schema.json').compile(attributionOutputSchema);
+const validateAttributionOutput=new Ajv2020({allErrors:true,strict:false}).addSchema(attributionProfile.resultSchema!,'attribution/result.schema.json').compile(attributionOutputSchema);
+function attributionEvaluation(row:JsonObject){
+  const properties=(attributionProfile.resultSchema as {properties:Record<string,unknown>}).properties;
+  return Object.fromEntries(Object.keys(properties).filter(key=>Object.hasOwn(row,key)).map(key=>[key,row[key]]));
+}
 const resultEncoder=(task:PlannedTask,state:RunState,inputs:Record<string,unknown>)=>{
   const receipt=state.receipts[task.id],data=task.data as TaskData;
   const metadata=(inputs[data.candidate.input_id] as {[sourceMeta]:Record<string,unknown>}|undefined)?.[sourceMeta];
   if(!metadata)throw Error('缺少源输入，不能静默遗漏meta：'+data.candidate.input_id);
+  if(task.stage==='instruction-review')return receipt.exported?{...receipt.exported,row:{...receipt.exported.row,...metadata}}:{id:task.id,file:'instruction_review.jsonl',row:{...instructionReviewRow(task,receipt,data.candidate),...metadata}};
   const missingMeta=(row:JsonObject)=>!Object.hasOwn(row,'meta')&&Object.hasOwn(metadata,'meta')?{meta:metadata.meta}:{};
   if(task.stage==='rewrite'){
     const source=state.receipts[data.rewriteOf!]!,row=source.exported!.row;
@@ -150,7 +167,7 @@ const codec:RunCodec<Checkpoint>={
     const tasks:PlannedTask[]=[],receipts:RunState['receipts']={},states:RunManifest['states']={};
     for(const[id,row]of Object.entries(checkpoint.tasks)){tasks.push({id,...row.task,data:{candidate:checkpoint.inputs[row.data.input_id],...(row.data.rewriteOf?{rewriteOf:row.data.rewriteOf}:{})}});states[id]=row.state;
       if(row.receipt&&(!ids||ids.has(id))){const saved=row.receipt,exported=saved.exported?{...saved.exported,row:read(saved.exported)}:undefined;
-        receipts[id]={...saved,evaluation:saved.evaluation??(row.task.stage==='rewrite'?{rewrites:(exported?.row.rewritten as any)?.rewrites}:row.task.stage==='attribution'?{summary:exported?.row.summary,findings:exported?.row.findings,evidence:exported?.row.evidence}:exported?.row.evaluation),audit:{...saved.audit,...(exported?.row.verification?{review:exported.row.verification}:{})},...(exported?{exported}:{})};}}
+        receipts[id]={...saved,evaluation:saved.evaluation??(row.task.stage==='rewrite'?{rewrites:(exported?.row.rewritten as any)?.rewrites}:row.task.stage==='attribution'?attributionEvaluation(exported!.row):row.task.stage==='instruction-review'?exported?.row.instruction_review:exported?.row.evaluation),audit:{...saved.audit,...(exported?.row.verification?{review:exported.row.verification}:{})},...(exported?{exported}:{})};}}
     return {manifest:{...checkpoint.manifest,tasks,states,inputs:Object.fromEntries(Object.keys(checkpoint.inputs).map(id=>[id,{id,name:id}])),inputCatalog:Object.values(checkpoint.inputs)},receipts,usage:checkpoint.usage,recordedAttempts:checkpoint.recordedAttempts};
   },
 };
@@ -170,7 +187,7 @@ export async function appendAnswerReviewInputs(run:string,config:AnswerReviewCon
       if(!prior){catalog.push(candidate);known.set(key(candidate),candidate);added++;}
       for(const stage of config.reviewStages??['score','attribution']){
         const identity=canonical([stage,selected.input_id]);if(taskKeys.has(identity))continue;
-        const task:PlannedTask={id:randomUUID(),stage,inputIds:{case:selected.input_id},dependencies:{},data:{candidate:selected} satisfies TaskData};
+        const task:PlannedTask={id:randomUUID(),stage,inputIds:stage==='attribution'?{answer:selected.input_id}:{case:selected.input_id},dependencies:{},data:{candidate:selected} satisfies TaskData};
         state.manifest.tasks.push(task);state.manifest.states[task.id]={status:'pending',attempts:0};taskKeys.add(identity);
       }
     }
@@ -185,7 +202,7 @@ export async function appendAnswerReviewInputs(run:string,config:AnswerReviewCon
   }finally{await release();}
 }
 /** An explicit retry reopens selected failures without replacing task identities or refunding their ledgers. */
-export async function prepareAnswerReviewRetry(run:string,traceIds?:ReadonlySet<string>,stages:readonly string[]=['score','attribution'],taskIds?:ReadonlySet<string>){
+export async function prepareAnswerReviewRetry(run:string,traceIds?:ReadonlySet<string>,stages:readonly string[]=['score','attribution','instruction-review'],taskIds?:ReadonlySet<string>){
   const release=await runLock(run);
   try{const state=await answerReviewRepository.readRun(run),retried:string[]=[],changedStages=new Set<string>();
     for(const task of state.manifest.tasks){const progress=state.manifest.states[task.id];
@@ -198,7 +215,7 @@ export async function prepareAnswerReviewRetry(run:string,traceIds?:ReadonlySet<
   }finally{await release();}
 }
 /** Continuous recovery retains task identities and spent budgets; terminal content failures stay reported. */
-export async function prepareAnswerReviewAutomaticResume(run:string,traceIds:ReadonlySet<string>,stages:readonly string[]=['score','attribution']){
+export async function prepareAnswerReviewAutomaticResume(run:string,traceIds:ReadonlySet<string>,stages:readonly string[]=['score','attribution','instruction-review']){
   const release=await runLock(run);
   try{
     const state=await answerReviewRepository.readRun(run),policy=(state.manifest.config as AnswerReviewConfig).execution;
@@ -223,7 +240,7 @@ export async function reportAnswerReview(run:string,state?:RunState){
   const stages:Record<string,Record<string,number>>={};for(const task of state.manifest.tasks){const status=state.manifest.states[task.id]?.status??'pending';const row=stages[task.stage]??={};row[status]=(row[status]??0)+1;}
   const results=state.manifest.tasks.filter(t=>t.stage==='score').flatMap(t=>state.receipts[t.id]?[{task:t,receipt:state.receipts[t.id]}]:[]);
   const summary={workflow:'answer-review',run_id:state.manifest.runId,status:state.manifest.status,active_stages:(state.manifest.config as AnswerReviewConfig).reviewStages??['score','attribution'],stages,tokens:state.usage,concurrency:state.manifest.concurrency,
-    completed_scores:results.length,completed_attributions:state.manifest.tasks.filter(t=>t.stage==='attribution'&&state.receipts[t.id]).length,
+    completed_instruction_reviews:state.manifest.tasks.filter(t=>t.stage==='instruction-review'&&state.receipts[t.id]).length,completed_scores:results.length,completed_attributions:state.manifest.tasks.filter(t=>t.stage==='attribution'&&state.receipts[t.id]).length,
     execution_task_statuses:Object.fromEntries([...new Set(Object.values(state.manifest.states).map(s=>s.status))].map(status=>[status,Object.values(state.manifest.states).filter(s=>s.status===status).length])),paused_stages:state.manifest.pausedStages??[]};
   await writeJson(path.join(run,'stats.json'),summary);
   const lines=['# 独立回答评测','',`状态：${summary.status}`,''];
@@ -232,14 +249,14 @@ export async function reportAnswerReview(run:string,state?:RunState){
     for(const{task,receipt}of results){const c=(task.data as TaskData).candidate,value=receipt.evaluation as ScoreResult;lines.push(`| ${c.case_id} | ${c.version} | ${value.final_answer_score?.score??JSON.stringify(value.final_answer_score?.score_range??null)} | ${value.final_answer_score?.status??(value as any).assessment_status} |`);}
   }else{
     lines.push('| 题目 | 模型 | 问题数 | 中文归因 |','|---|---|---|---|');
-    for(const task of state.manifest.tasks.filter(t=>t.stage==='attribution')){const receipt=state.receipts[task.id];if(!receipt)continue;const c=(task.data as TaskData).candidate,value=receipt.evaluation as DirectAttribution;
+    for(const task of state.manifest.tasks.filter(t=>t.stage==='attribution')){const receipt=state.receipts[task.id];if(!receipt)continue;const c=(task.data as TaskData).candidate,value=receipt.evaluation as AttributionResult;
       lines.push(`| ${c.case_id} | ${c.version} | ${value.findings.filter(f=>f.type==='problem').length} | ${value.summary.replaceAll('|','\\|').replaceAll('\n',' ')} |`);}
   }
   lines.push('');await atomicWrite(path.join(run,'report.md'),lines.join('\n'));return summary;
 }
 export function validateAnswerReview(state:RunState){
   for(const task of state.manifest.tasks){const r=state.receipts[task.id];if(!r)continue;if(r.taskId!==task.id||!r.exported||r.exported.id!==((task.data as TaskData).rewriteOf??task.id))throw Error('正式结果引用与任务不一致');
-    const row=r.exported.row,value=task.stage==='attribution'?{summary:row.summary,findings:row.findings,evidence:row.evidence}:row.evaluation;
+    const row=r.exported.row,value=task.stage==='attribution'?attributionEvaluation(row):task.stage==='instruction-review'?row.instruction_review:row.evaluation;
     if(task.stage==='attribution'&&!validateAttributionOutput(row))throw Error('归因导出元信息契约无效');
     if(task.stage!=='rewrite'&&canonical(value)!==canonical(r.evaluation))throw Error('正式结果正文与已接受收据不一致');}
   return {valid:true,receipts:Object.keys(state.receipts).length};

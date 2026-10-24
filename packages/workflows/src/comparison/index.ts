@@ -3,6 +3,9 @@ export * from "./types.js";
 export * from "./adapters.js";
 export * from "./input.js";
 export { normalizeInput } from "./input-record.js";
+export { bindAttributionMaterial } from "./binding.js";
+export { attributionTrace, validateOriginalAttributionEvidence } from "./public-trace.js";
+export { bindInstructionReview, instructionReviewFollowup, instructionReviewRow } from "./instruction-review.js";
 export * from "./input-catalog.js";
 export * from "./run-data.js";
 export * from "./task-progress.js";
@@ -41,3 +44,5 @@ export * from "./stability-statistics.js";
 export * from "./stability-report.js";
 export * from "./run-errors.js";
 export * from "./analysis-scope.js";
+
+export { businessChains } from "./business-chains.js";

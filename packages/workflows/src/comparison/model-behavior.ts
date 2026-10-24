@@ -1,3 +1,4 @@
+import { responsibilityLabels as technicalResponsibilityLabels } from "@eval/agents/attribution";
 import { canonical, type PlannedTask, type SubmissionReceipt } from "@eval/contracts";
 import type { AttributionResult, TaskData } from "./types.js";
 
@@ -83,9 +84,9 @@ export function modelBehavior(tasks: readonly PlannedTask[], receipts: Readonly<
         strengths.set(key, [...(strengths.get(key) ?? []), source]);
       }
       if (finding.type !== "problem" || !finding.problem) continue;
-      const components = [...new Set(finding.problem.component)].sort();
+      const components = technicalResponsibilityLabels(finding.problem).sort();
       const responsibility: ResponsibilityGroup = finding.assessment.evidence_status !== "established" ? "unconfirmed"
-        : !components.length ? "unknown" : components.includes("模型自身推理")
+        : !components.length ? "unknown" : components.some(component => component.startsWith("模型推断与生成/"))
           ? components.length === 1 ? "model" : "mixed" : "other";
       const observation = { finding_id: finding.finding_id, responsibility, components, text: finding.text,
         impact: finding.assessment.impact, source_conflict: false };

@@ -1,3 +1,4 @@
+import { responsibilityFixture } from "../../fixtures/responsibility.js";
 import test from "node:test";
 import assert from "node:assert/strict";
 import { readFile, rm } from "node:fs/promises";
@@ -85,9 +86,9 @@ test("answer-only and short third-party traces survive independent pairs, formal
             evaluation.core_assessment = { meets_core: false, reason: "核心计算结果错误。", criterion_ids: ["r1"] };
             evaluation.criterion_assessments[0] = { ...evaluation.criterion_assessments[0], status: "unmet",
               summary: "计算结果为5，未完成求和要求。", evidence: [evidence] };
-            evaluation.summary = "最终计算结果错误，责任尚未定位。";
+            evaluation.summary = "最终计算结果错误，责任依据现有材料推断。";
             Object.assign(evaluation.findings[0], { type: "problem", text: "加法结果错误", reason: "2+2应为4，最终回答写成5。",
-              problem: { component: [], label: "算术错误", definition: "最终交付的加法结果错误；现有材料不足以定位链路责任。" } });
+              problem: { diagnosis: "other" as const, investigation: [], component: [responsibilityFixture("最终作答节点（原始名称未提供）",{evidence_ids:evaluation.findings[0].evidence.map(item=>item.evidence_id)})], label: "算术错误", definition: "最终交付的加法结果错误；现有材料不足以定位链路责任。" } });
             evaluation.findings[0].assessment.observation = final;
           }
         } else if (task.stage === "comparison") {
@@ -163,7 +164,7 @@ test("answer-only and short third-party traces survive independent pairs, formal
         const baseline = object(object(row.evaluations).baseline_fast);
         assert.equal(baseline.is_correct, false);
         assert.equal(object(baseline.core_assessment).meets_core, false);
-        assert.deepEqual((baseline.findings as AttributionResult["findings"])[0].problem!.component, []);
+        assert.equal((baseline.findings as AttributionResult["findings"])[0].problem!.component[0].certainty, "inferred");
         assert.deepEqual(object((baseline.findings as JsonObject[])[0]).stage_trace,
           { tools: [], confidence: "none", source: "none", locations: [{ message_index: 1, tool_name: null }] });
         assert.equal(verdict.result, "win");

@@ -49,7 +49,7 @@ test("standalone Attribution and Comparison share material, validation, accepted
   await writeJson(path.join(fixture.directory,"assistant/users/alice/sessions",scope.sessionId,"operations",interruptedId,"request.json"),{operationId:interruptedId,kind:"attribution",inputs:[inputs[0]]});
   assert.equal((await gateway.read(scope,interruptedId)).error,"interrupted");
   const automatic=await gateway.invoke(scope,{kind:"comparison",operationId:randomUUID(),inputs},signal);
-  assert.equal(automatic.state,"succeeded",JSON.stringify(automatic));assert.equal(calls,4);
+  assert.equal(automatic.state,"succeeded",JSON.stringify(automatic));assert.equal(calls,6);
   const attributions=[];
   for(const reference of inputs){
    const operationId=randomUUID(),request={kind:"attribution" as const,operationId,inputs:[reference]};
@@ -61,9 +61,9 @@ test("standalone Attribution and Comparison share material, validation, accepted
   const operationId=randomUUID(),comparisonRequest={kind:"comparison" as const,operationId,inputs,attributions};
   interruptComparison=true;
   const failed=await gateway.invoke(scope,comparisonRequest,signal);
-  assert.equal(failed.state,"failed");assert.equal(calls,10);
+  assert.equal(failed.state,"failed");assert.equal(calls,14);
   const result=await gateway.invoke(scope,comparisonRequest,signal);
-  assert.equal(result.state,"succeeded",JSON.stringify(result));assert.equal(calls,11,"resume reuses accepted criteria and external attributions");
+  assert.equal(result.state,"succeeded",JSON.stringify(result));assert.equal(calls,15,"resume reuses accepted criteria and external attributions");
   const acceptedState=await readRunTasks(path.join(fixture.directory,"assistant/users/alice/sessions",scope.sessionId,"operations",operationId,"execution",operationId),[]);
   assert.deepEqual(acceptedState.manifest.tasks.map(task=>task.stage),["criteria","comparison"],"matching accepted attributions are reused without duplicate execution");
   const formalData=new LocalAnalysisData(path.join(fixture.directory,"assistant/users/alice/sessions",scope.sessionId,"operations",operationId,"execution"));
@@ -118,9 +118,10 @@ test("three-model specialist runs share one criteria task and return all three r
     assert.equal(material.candidate_count, 3);
     assert(material.source_catalog!.filter(source => source.kind === "context").every(source => source.role === "user"));
     const own = material.source_catalog!.filter(source => privateRules.includes(source.text));
-    assert.equal(own.length, 3, "each candidate's system constraint remains available for private checks");
-    assert(own.every(source => source.kind === "instruction" && source.role === "system" && source.applies_to.length === 1));
-    assert.equal(new Set(own.flatMap(source => source.applies_to)).size, 3, "private scopes must not merge across candidates");
+    assert.equal(own.length, 0, "internal instructions stay outside the shared criteria");
+   } else if (stage === "instruction-review") {
+    const catalog = (material as unknown as {norm_catalog:{role:string}[]}).norm_catalog;
+    assert.deepEqual(catalog.map(source => source.role), ["system"], "each independent check gets only its own governing rule");
    } else standards.push({ analysis: material.task_analysis!, owners: stage === "attribution"
     ? { answer: material.candidate_id! } : Object.fromEntries(Object.entries(material.candidates!).map(([label, candidate]) => [label, candidate.candidate_id])) });
    const output = taskResult(options.spec);
@@ -152,7 +153,7 @@ test("three-model specialist runs share one criteria task and return all three r
    inputs: inputIds.map(inputId => ({ runId: "source", inputId })) };
   const accepted = await gateway.invoke(scope, request, signal);
   assert.equal(accepted.state, "succeeded", JSON.stringify(accepted));
-  assert.deepEqual(stages.sort(), ["attribution", "attribution", "attribution", "comparison", "comparison", "comparison", "criteria"]);
+  assert.deepEqual(stages.sort(), ["attribution", "attribution", "attribution", "comparison", "comparison", "comparison", "criteria", "instruction-review", "instruction-review", "instruction-review"]);
   const execution = path.join(fixture.directory, "assistant/users/alice/sessions", scope.sessionId, "operations", operationId, "execution");
   const state = await readRunState(path.join(execution, operationId));
   const criteriaTasks = state.manifest.tasks.filter(task => task.stage === "criteria");
@@ -240,7 +241,7 @@ test("incompatible accepted attributions are independently reassessed without ch
   const result = await gateway.invoke(scope, { kind: "comparison", operationId, inputs,
    attributions: originals.map(({ inputId, operationId }) => ({ inputId, operationId })) }, signal);
   assert.equal(result.state, "succeeded", JSON.stringify(result));
-  assert.deepEqual(stages.sort(), ["attribution", "attribution", "comparison", "criteria"]);
+  assert.deepEqual(stages.sort(), ["attribution", "attribution", "comparison", "criteria", "instruction-review", "instruction-review"]);
   for (const original of originals) assert.deepEqual(await gateway.read(scope, original.operationId), original.result);
   const before = stages.length;
   await assert.rejects(gateway.invoke(scope, { kind: "comparison", operationId: randomUUID(), inputs,

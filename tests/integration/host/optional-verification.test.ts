@@ -33,7 +33,7 @@ for (const fail of [false, true]) test(`an optional ${fail ? "failed" : "success
       failureGuard: { threshold: 2, windowSize: 2 } };
     await runEvaluation(options);
     const baseline = await readRunState(run);
-    assert.equal(profiles.length, records.length * 4, "one Criteria, two Attributions and one Comparison complete each default case");
+    assert.equal(profiles.length, records.length * 6, "one Criteria, two Attributions, two instruction reviews and one Comparison complete each default case");
     assert(!profiles.includes("verification"));
     assert.equal(deliveryCoverage(baseline).valid, true);
     const sources = baseline.manifest.tasks.filter(task => task.stage === "comparison"), source = sources[0]!;
@@ -44,7 +44,7 @@ for (const fail of [false, true]) test(`an optional ${fail ? "failed" : "success
     const ids = prepared.selected.map(item => item.verification_task_id!), id = ids[0]!;
     await runEvaluation({ ...options, plan: { tasks: [], inputs: {}, summary: {} } });
     const state = await readRunState(run);
-    assert.equal(profiles.length, records.length * 5);
+    assert.equal(profiles.length, records.length * 7);
     assert.equal(profiles.at(-1), "verification");
     assert.deepEqual(state.manifest.executionScope, ids);
     assert.equal((await prepareClusteringJob([run], config)).config.clusteringJob.sources.length, records.length * 2,

@@ -311,7 +311,7 @@ export async function reportRun(run: string, options: { details?: boolean } = {}
       reason: manifest.states[task.id]?.reason || null,
     });
     // Rewrite and clustering receipts feed the report view, not the per-case result sections.
-    if (task.stage === "rewrite" || task.stage === "clustering" || task.stage === "criteria" || data.verificationAudit) continue;
+    if (task.stage === "rewrite" || task.stage === "clustering" || task.stage === "criteria" || task.stage === "instruction-review" || data.verificationAudit) continue;
     if (!receipt) {
       const failure = taskFailureSummary(manifest.states[task.id]);
       markdown.push(

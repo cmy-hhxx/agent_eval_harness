@@ -1,7 +1,5 @@
-import { directAttributionProfile } from "./direct.js";
-export { directAttributionProfile, validateDirectAttribution, type DirectAttribution, type DirectFinding } from "./direct.js";
-export {checkDirectAttributionLanguage,type AttributionLanguageField,type AttributionLanguageStatus} from './direct-language.js';
-import { agentPrompt, standardConflictInstructions } from "@eval/prompts";
+export {checkAttributionLanguage,type AttributionLanguageField,type AttributionLanguageStatus} from './language.js';
+import { agentPrompt, attributionTaxonomy, standardConflictInstructions } from "@eval/prompts";
 import { type AgentDefinition, type AgentProfile } from "@eval/contracts";
 import requestSchema from "../../../../schemas/attribution/request.schema.json" with { type: "json" };
 import submissionSchema from "../../../../schemas/attribution/submission.schema.json" with { type: "json" };
@@ -12,11 +10,13 @@ import { numericReferenceDirectory } from "./units.js";
 import { findingIssueContext } from "./finding-feedback.js";
 import { attributionSubmissionSchema } from "./submission-schema.js";
 import { attributionFindingBasis } from "./finding-basis.js";
+import { businessChainReads } from "./investigation.js";
 import { investigationMaterial } from "./investigation-material.js";
 export { attributionFindingBasis } from "./finding-basis.js";
 export { attributionNormDirectory, type AttributionNorm } from "./norm-directory.js";
 export { numericReferenceDirectory } from "./units.js";
 export * from "./types.js";
+export { responsibilityLabels } from "./responsibility.js";
 export { attributionTableChecks, attributionTableReview } from "./table-review.js";
 export type { TableReviewConcern } from "./table-review.js";
 // Attribution resolves evidence IDs into source locations before the result is accepted.
@@ -42,6 +42,8 @@ export const attributionProfile: AgentProfile = {
       requirement_index: Number(item.requirement_index ?? index) + 1 }));
     const { allow_standard_conflict, ...material } = input;
     const shown = { ...material, task_analysis: { ...analysis, requirements },
+      responsibility_taxonomy: attributionTaxonomy,
+      responsibility_choices: (answer.component_catalog as { component: string }[]).map(actor => actor.component),
       ...(allow_standard_conflict === true ? { standard_answer_review: standardConflictInstructions } : {}),
       criterion_check_count: requirements.length+analysis.scoring_points.length+analysis.red_flags.length,
       criterion_checks: [...requirements,...analysis.scoring_points,...analysis.red_flags].map(item => ({ text:item.text })),
@@ -55,10 +57,10 @@ export const attributionProfile: AgentProfile = {
     }), policy, failure);
   },
   toolNames,
-  requiredReads: (request) => (request.input.answer as { deferred_final_material: { message_index: number; path: string; total_chars: number }[] }).deferred_final_material.map((material) => ({
+  requiredReads: (request) => [...businessChainReads(request), ...(request.input.answer as { deferred_final_material: { message_index: number; path: string; total_chars: number }[] }).deferred_final_material.map((material) => ({
     candidate: "answer", message_index: material.message_index, kind: "text" as const,
     path: material.path, start: 0, end: material.total_chars,
-  })),
+  }))],
   validate: validateEvaluation,
   validateSubmission: validateModelSubmission,
   validationIssueContext: findingIssueContext,
@@ -67,5 +69,5 @@ export const attributionProfile: AgentProfile = {
 };
 export const attributionAgent: AgentDefinition = {
   id: "attribution",
-  profiles: { default: attributionProfile, direct: directAttributionProfile },
+  profiles: { default: attributionProfile },
 };

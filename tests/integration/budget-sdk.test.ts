@@ -19,21 +19,26 @@ import { setFixtureNormDirectory } from "../fixtures/attribution-submission.js";
 import { services } from "../fixtures/services.js";
 
 for (const engine of ["pi", "prime"] as const)
-  for (const mandatory of [false, true])
-    test(`${engine}: exhausted exploration permits failed-writer correction and mandatory reads; content repairs share the writer cap (${mandatory})`, { timeout: 60000 }, async () => {
+  for (const materialKind of ["none", "text", "json"] as const)
+    test(`${engine}: exhausted exploration permits failed-writer correction and mandatory reads; content repairs share the writer cap (${materialKind})`, { timeout: 60000 }, async () => {
       const { directory, config, models } = await fixtureConfig();
+      const mandatory = materialKind !== "none";
       const material = "必须核对的原文。";
+      const inputMessage = materialKind === "json" ? { output: { asset: "GLD.P", price: 369, note: material } } : { content: material };
+      const source = evidenceSources(inputMessage).find(source => source.kind === (materialKind === "json" ? "json" : "text"))!;
+      const readTarget = { candidate: "answer", message_index: 0, kind: source.kind, path: source.path, start: 0, end: source.text.length };
       const inputId = randomUUID();
       const submissionNames = ["submit_evaluation_file"];
       const ordinaryNames = ["read_trace", "search_trace", "calculate", "execute_code"];
       const allNames = [...ordinaryNames, ...submissionNames];
       const calculate = { name: "calculate", args: { operation: "add", operands: ["2", "2"] } };
-      const read = { name: "read_trace", args: { candidate: "answer", message_index: 0, path: "/content" } };
+      const read = { name: "read_trace", args: { candidate: "answer", message_index: 0, path: source.path, ...(materialKind === "json" ? {max_chars:source.text.length} : {}) } };
       const writeScore = (score: string | number) => ({ name: "execute_code", args: { language: "python",
-        code: `from pathlib import Path\nPath('evaluation.json').write_text(${JSON.stringify(JSON.stringify({ score }))}, encoding='utf-8')` } });
+        code: `from pathlib import Path\nPath('evaluation.json').write_text(${JSON.stringify(JSON.stringify({ score }))}, encoding='utf-8')`, outputs: ["evaluation.json"] } });
       const steps = [
         { ...calculate, tools: allNames },
         ...(mandatory ? [{ ...read, tools: ["read_trace", "execute_code", ...submissionNames] }] : []),
+        { name: "execute_code", args: { language: "python", code: "raise AssertionError('read-only code must not execute in the reserved draft slot')" }, tools: ["execute_code", ...submissionNames] },
         { name: "execute_code", args: { language: "python", code: `from pathlib import Path\nPath(${JSON.stringify(path.join(directory, "wrong-run/evaluation.json"))}).write_text('unused')`,
           outputs: ["evaluation.json"] }, tools: ["execute_code", ...submissionNames] },
         { name: "submit_evaluation_file", args: { path: "missing.json" }, tools: ["execute_code", ...submissionNames] },
@@ -50,9 +55,9 @@ for (const engine of ["pi", "prime"] as const)
         toolNames: ordinaryNames, fileSubmission: true,
         toolDescriptions: { read_trace: "Read original source.", search_trace: "Locate original source.", calculate: "Calculate exactly.",
           execute_code: "Write the JSON file.", submit_evaluation_file: "Submit a JSON file." },
-        renderPrompt: () => `Already displayed source: ${material}. Read the source and submit a score.`, requestSchema: { type: "object" },
+        renderPrompt: () => `Already displayed source: ${source.text}. Read the source and submit a score.`, requestSchema: { type: "object" },
         submissionSchema: { type: "object", additionalProperties: false, required: ["score"], properties: { score: { type: "number" } } },
-        requiredReads: () => mandatory ? [{ candidate: "answer", message_index: 0, kind: "text", path: "/content", start: 0, end: material.length }] : [],
+        requiredReads: () => mandatory ? [readTarget] : [],
       };
       const gatewayErrors: string[] = [];
       let requests = 0;
@@ -63,12 +68,17 @@ for (const engine of ["pi", "prime"] as const)
           const tools = payload.tools as Record<string, unknown>[];
           assert.deepEqual(tools.map((tool) => tool.name), step.tools,
             `request ${requests}: actual budget and mandatory coverage determine the available tools`);
-          if (requests === 3 + Number(mandatory))
+          if (requests === 3 + Number(mandatory)) {
+            assert.match(JSON.stringify(payload.input), /draft_output_required/);
+            assert(!JSON.stringify(payload.input).includes("AssertionError: read-only code"));
+          }
+          if (requests === 4 + Number(mandatory))
             assert.match(JSON.stringify(payload.input), /FileNotFoundError/,
               "the actual failed writer returns its script error before the same SDK gets one correction credit");
-          if (requests === 7 + Number(mandatory)) {
+          if (requests === 8 + Number(mandatory)) {
             const last = (payload.input as Record<string, unknown>[]).findLast(item => item.type === "function_call_output");
-            assert(String(last?.output).includes('"new_source_chars":0'), "initial display ranges reach both SDK tool loops");
+            if (materialKind === "json") assert(String(last?.output).includes("/output/note"), "JSON mandatory reading retains navigation to its original text leaf");
+            else assert(String(last?.output).includes('"new_source_chars":0'), "initial display ranges reach both SDK tool loops");
           }
           assert(!tools.some(tool => tool.name === "submit_evaluation"));
           const fileTool = tools.find(tool => tool.name === "submit_evaluation_file")!;
@@ -102,17 +112,17 @@ for (const engine of ["pi", "prime"] as const)
       try {
         models.models.judge!.baseUrl = gateway.url + "/v1";
         models.models.judge!.api = "openai-responses";
-        const modelForStage = createModelResolver(models), runId = `budget-${engine}-${mandatory}`;
+        const modelForStage = createModelResolver(models), runId = `budget-${engine}-${materialKind}`;
         await runEvaluation({
           runId, output: config.output, config, plan: { tasks: [{ id: "budget-task", stage: "budget", inputIds: { answer: inputId }, dependencies: {}, data: {} }],
-            inputs: { [inputId]: { messages: [{ content: material }] } }, summary: {} },
+            inputs: { [inputId]: { messages: [inputMessage] } }, summary: {} },
           engine, identity: backend.identity, evaluatorVersion: "fixture", modelForStage: () => modelForStage("attribution"),
           policy: { ...config.execution, maxToolCalls: 1, repairAttempts: 2 }, concurrency: 1, retries: 0, retryDelaySeconds: 0,
           agents: new AgentRegistry([{ id: "budget", profiles: { default: profile } }]), repository,
           taskSource: { id: "budget", bind: (task, inputs) => {
             const id = task.inputIds.answer;
             return { agent: "budget", profile: "default",
-              presentedReads: [{ candidate: "answer", message_index: 0, kind: "text", path: "/content", start: 0, end: material.length }],
+              presentedReads: [readTarget],
               request: { input: {}, sources: {
               answer: { id, value: inputs[id] },
             } } };

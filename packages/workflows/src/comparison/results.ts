@@ -7,6 +7,7 @@ import {
   type SubmissionReceipt,
 } from "@eval/contracts";
 import { attributionProfile } from "@eval/agents/attribution";
+import { instructionReviewRow } from "./instruction-review.js";
 import { criteriaProfile } from "@eval/agents/criteria";
 import { comparisonProfile } from "@eval/agents/comparison";
 import type { RewriteResult } from "@eval/agents/rewrite";
@@ -172,6 +173,7 @@ export function attributionRow(task: PlannedTask, receipt: SubmissionReceipt): J
 }
 /** Result file per stage; the single place that maps stages to JSONL artifacts. */
 export function resultFile(stage: Stage): string {
+  if (stage === "instruction-review") return "instruction_review.jsonl";
   if (stage === "criteria") return "criteria.jsonl";
   if (stage === "attribution") return "attribution.jsonl";
   if (stage === "comparison") return "comparison.jsonl";
@@ -180,11 +182,13 @@ export function resultFile(stage: Stage): string {
 }
 /** The stage output inside its exported identity envelope. */
 export function stageResult(stage: string, row: JsonObject): JsonObject {
+  if (stage === "instruction-review") return row.instruction_review as JsonObject;
   return stage === "criteria" || ["comparison_review", "comparison_verification"].includes(String(row.evaluation_type)) ? row.result as JsonObject
     : stage === "attribution" ? row.evaluation as JsonObject
     : stage === "clustering" ? row.result as JsonObject : row;
 }
 function replaceStageResult(stage: string, row: JsonObject, result: JsonObject): JsonObject {
+  if (stage === "instruction-review") return { ...row, instruction_review: result };
   return stage === "attribution" ? { ...row, evaluation: result }
     : stage === "clustering" || stage === "criteria" || ["comparison_review", "comparison_verification"].includes(String(row.evaluation_type)) ? { ...row, result } : result;
 }
@@ -231,6 +235,8 @@ export function encodeResult(task: PlannedTask, state: RunState, inputs: Record<
     (task.stage !== "comparison" || data.verificationAudit !== true || !data.verificationOf?.taskId))
     throw new Error("可选核验必须同时声明核验标记与正式对比来源。");
   const receipt = state.receipts[task.id];
+  if (task.stage === "instruction-review") return receipt.exported ?? { id: task.id, file: "instruction_review.jsonl",
+    row: instructionReviewRow(task, receipt, Object.values(data.candidates)[0]) };
   // Durable exports have already crossed the acceptance boundary. Reuse their exact row on resume.
   if (receipt.exported && task.stage !== "rewrite") {
     const data = task.data as TaskData;

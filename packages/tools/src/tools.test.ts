@@ -58,6 +58,36 @@ test("JSON drafting rejects paths outside the workspace without editing files", 
       assert.equal((await runtime.execute("edit_json", { path: file, set_json: "{}" }, new AbortController().signal)).isError, true);
   } finally { await rm(ctx.workdir, { recursive: true, force: true }); }
 });
+
+for (const writer of ["edit_json", "execute_code"])
+test(`read-only code cannot consume the last reserved JSON draft slot before ${writer}`, async () => {
+  const ctx = await context();
+  try {
+    ctx.policy.maxToolCalls = 2;
+    ctx.draftWriteInCallLimit = true;
+    const runtime = new ToolRuntime(ctx, createRegistry().select(["calculate", "execute_code", "edit_json"]));
+    const signal = new AbortController().signal;
+    runtime.reserveDraftWrite();
+    await runtime.execute("calculate", { operation: "add", operands: ["2", "2"] }, signal);
+    for (const outputs of [undefined, ["extracted.txt"]]) {
+      const read = await runtime.execute("execute_code", { language: "python",
+        code: "from pathlib import Path\nPath('reader-ran').write_text('must not execute')", ...(outputs ? { outputs } : {}) }, signal);
+      assert.equal(read.isError, true);
+      assert.equal((read.details as {errors:{code:string}[]}).errors[0].code, "draft_output_required");
+      assert.deepEqual(runtime.budget().exploration, { used: 1, remaining: 0 });
+      assert.equal(runtime.budget().draft_writes.used, 0);
+      assert.equal(runtime.budget().draft_writes.remaining, 1);
+    }
+    await assert.rejects(readFile(path.join(ctx.workdir, "reader-ran")), { code: "ENOENT" });
+    const saved = writer === "edit_json"
+      ? await runtime.execute(writer, { path: "evaluation.json", set_json: '{"ok":true}' }, signal)
+      : await runtime.execute(writer, { language: "python", code: "from pathlib import Path\nPath('evaluation.json').write_text('{\"ok\":true}')", outputs: ["evaluation.json"] }, signal);
+    assert.notEqual(saved.isError, true, JSON.stringify(saved));
+    assert.deepEqual(JSON.parse(await readFile(path.join(ctx.workdir, "evaluation.json"), "utf8")), { ok: true });
+    assert.equal(runtime.budget().draft_writes.remaining, 0);
+    assert.equal(ctx.audit.calls, 2, "one exploration and one actual draft write stay within the original call limit");
+  } finally { await rm(ctx.workdir, { recursive: true, force: true }); }
+});
 test("search distinguishes new source text from reused hits without inviting a redundant read", async () => {
   const ctx = await context();
   try {
@@ -672,7 +702,8 @@ test("trace reads accept neutral directory defaults and an empty root path witho
     assert.deepEqual(reused, JSON.parse(plain.content[0].text!));
     const root = await read({ path: "", source_offset: 0 });
     assert(!root.isError, JSON.stringify(root));
-    assert.deepEqual(JSON.parse(root.content[0].text!).text_sources, [{ path: "/content", chars: 6 }]);
+    assert.equal(JSON.parse(root.content[0].text!).text_sources, undefined);
+    assert.equal(JSON.parse(root.content[0].text!).source.kind, "json");
     assert.equal(ctx.audit.traceReads.length, 2);
     const conflicting = await read({ path: "/content", source_offset: 1 });
     assert.equal(conflicting.isError, true);

@@ -1,3 +1,4 @@
+import { responsibilityFixture } from "../../../../tests/fixtures/responsibility.js";
 import { attributionSubmission } from "../../../../tests/fixtures/attribution-submission.js";
 import { resolveJudgment } from "./resolve.js";
 const INPUT_ID = "11111111-1111-4111-8111-111111111111";
@@ -37,6 +38,7 @@ function fixture() {
     identity: { version_id: "B", display_name: "对方回答", answer_model: null },
     final_answer: peer.messages[1]!.content as string, source_input_id: peerId, original_user_timestamp: timestamp, grader_only: true } };
   delete (request.input.reference_materials as any).B.norm_directory;
+  delete (request.input.reference_materials as any).B.component_catalog;
   const ref = (source: string, index: number, path: string): EvidenceReference => {
     const raw = request.sources[source]!.value as { messages: unknown[] };
     const selected = selectEvidenceSource(evidenceSources(raw.messages[index]), path)!;
@@ -49,7 +51,7 @@ function fixture() {
     type: "problem", dimension: "correctness", stage: "final_answer", importance: "high",
     text: "UTC日期错误", reason: "原请求UTC日期为12日，实际回答为13日。", evidence: [ownRef, peerRef],
     assessment: { requirement_index: 0, observation: "UTC日期相差一天", evidence_status: "established", impact: "核心日期不可用" },
-    problem: { component: [], label: "日期错误", definition: "最终日期与原请求UTC日期不一致。" },
+    problem: { diagnosis: "other" as const, investigation: [], component: [responsibilityFixture("最终作答节点（原始名称未提供）",{evidence_ids:[ownRef.evidence_id]})], label: "日期错误", definition: "最终日期与原请求UTC日期不一致。" },
   }], criterion_assessments: [{ criterion_id: "r1", status: "unmet", evidence_status: "established",
     summary: "回答日期与原请求UTC日期不一致。", evidence: [ownRef, peerRef] }],
     core_assessment: { meets_core: false, reason: "日期错误。", requirement_indices: [0] } };

@@ -144,7 +144,7 @@ test("same-run AB to ABC expansion reuses accepted sources when the shared crite
     const sourceReceipts = structuredClone(original.receipts);
     const acceptedIds = new Set(Object.keys(original.receipts));
     assert.deepEqual(experiment.entered.map((item) => item.stage).sort(),
-      ["attribution", "attribution", "comparison", "criteria"]);
+      ["attribution", "attribution", "comparison", "criteria", "instruction-review", "instruction-review"]);
 
     assert.equal((await experiment.extend()).completed_comparisons, 3);
     const expanded = await readRunState(experiment.run);
@@ -159,7 +159,7 @@ test("same-run AB to ABC expansion reuses accepted sources when the shared crite
     assert.equal(new Set(rows.map((row) => Object.keys(row.attribution_task_ids).sort().join("/"))).size, 3);
 
     const additions = experiment.entered.filter((item) => !acceptedIds.has(item.taskId));
-    assert.deepEqual(additions.map((item) => item.stage).sort(), ["attribution", "comparison", "comparison", "criteria"]);
+    assert.deepEqual(additions.map((item) => item.stage).sort(), ["attribution", "comparison", "comparison", "criteria", "instruction-review"]);
     const newCriteria = expanded.manifest.tasks.find((task) => task.stage === "criteria" && !acceptedIds.has(task.id))!;
     assert.deepEqual(expanded.receipts[newCriteria.id].evaluation,
       original.receipts[originalRows[0].criteria_task_id].evaluation);
@@ -312,7 +312,7 @@ test("same-run source changes independently reassess stale evidence for new pair
     assert.equal(validation.evidence.valid, false);
     assert(validation.evidence.errors.length > 0);
     const staleOriginTasks = original.manifest.tasks.filter(task =>
-      task.id === oldA || Object.values(task.dependencies).includes(oldA)).map(task => task.id).sort();
+      task.stage !== "instruction-review" && (task.id === oldA || Object.values(task.dependencies).includes(oldA))).map(task => task.id).sort();
     assert.deepEqual(validation.evidence.errors.map(error => error.slice(0, error.indexOf(":"))).sort(), staleOriginTasks,
       "only the original attribution and original comparisons that still cite its changed source lose evidence validity");
     const calls = experiment.entered.length;

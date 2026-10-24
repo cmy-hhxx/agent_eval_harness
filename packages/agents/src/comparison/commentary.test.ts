@@ -27,7 +27,7 @@ for (const usable of [true, false]) for (const relative of ["A", "B"] as const) 
         evidence: [canonicalEvidence(request.sources[label].id, 1, final)] });
       Object.assign(attribution.findings[0], { type: "problem", text: "所求加法结果错误。", reason: "2+2应为4。",
         evidence: [canonicalEvidence(request.sources[label].id, 1, final)],
-        problem: { component: [], label: "计算错误", definition: "加法结果错误。" } });
+        problem: { diagnosis: "other" as const, investigation: [], component: [], label: "计算错误", definition: "加法结果错误。" } });
       Object.assign(attribution.findings[0].assessment, { observation: final, impact: "所求结果不可用，须重新计算。" });
     }
     const draft = requestComparisonSubmission(request, example.result as ComparisonResult);

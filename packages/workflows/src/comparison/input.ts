@@ -221,6 +221,7 @@ export function taskCase(data: TaskData): { batch_id: string; case_id: string } 
 }
 function taskKey(task: PlannedTask): string {
   const data = task.data as TaskData;
+  if (task.stage === "instruction-review") return canonical([task.stage, task.dependencies.source]);
   const comparisonRole = data.verificationAudit ? "audit" : "standalone";
   if (data.reviewOf) return canonical(["review", data.reviewOf.taskId, task.stage, data.group ?? Object.values(data.candidates).map((c) => c.version)]);
   if (data.stage === "criteria") return canonical(["criteria", data.criteriaScope]);

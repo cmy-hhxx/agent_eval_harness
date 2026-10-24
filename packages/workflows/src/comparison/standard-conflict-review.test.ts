@@ -13,7 +13,7 @@ import { configureStandardReview } from "./review.js";
 import { readRunState, reconcileRun, writeRunState } from "./run-data.js";
 import { prepareFailedTasks } from "./repair.js";
 import { summarizeResults } from "./report.js";
-import type { TaskData } from "./types.js";
+import type { TaskData, RawInput } from "./types.js";
 
 function apply(state: RunState, change: ReturnType<NonNullable<WorkflowDefinition["advance"]>>) {
   for (const replacement of change.replace ?? []) state.manifest.tasks[state.manifest.tasks.findIndex(task => task.id === replacement.id)] = replacement;
@@ -29,7 +29,7 @@ test("standard review is opt-in and disabling it releases pending consumers with
   const receipt = { taskId: source.id, evaluation: { standard_conflict: true } } as SubmissionReceipt;
   const state = { manifest: { config: fixture.config, tasks: [...plan.tasks], states: Object.fromEntries(plan.tasks.map(task =>
     [task.id, { status: task.id === source.id ? "succeeded" : "pending", attempts: 0 }])) }, receipts: { [source.id]: receipt } } as unknown as RunState;
-  assert.deepEqual(comparisonWorkflow.advance!(source, receipt, state, plan.inputs), { tasks: [] });
+  assert.deepEqual({...comparisonWorkflow.advance!(source, receipt, state, plan.inputs),tasks:comparisonWorkflow.advance!(source, receipt, state, plan.inputs).tasks.filter(t=>t.stage!=="instruction-review")}, { tasks: [] });
   fixture.config.standardAnswerReview = true;
   configureStandardReview(state, true);
   const before = structuredClone(state.receipts);
@@ -108,7 +108,7 @@ for (const confirmed of [false, true]) test(`standard conflict review ${confirme
     const evaluationFor = (task: PlannedTask) => {
       const evaluation = attributionResult(false, "2+2=4", true, task.inputIds.answer);
       const question = (task.data as TaskData).candidates.A.question;
-      evaluation.criterion_assessments[0].evidence[1] = {
+      for(const assessment of evaluation.criterion_assessments)assessment.evidence[1] = {
         evidence_id: evidenceId(task.inputIds.answer, 0, "text", "/content", 0, question.length), message_index: 0, quote: question,
       };
       return evaluation;
@@ -161,13 +161,13 @@ for (const confirmed of [false, true]) test(`standard conflict review ${confirme
     const bound = bindTask(review, plan.inputs, { criteria: receipts[criteria.id] }, { tasks: state.manifest.tasks });
     assert.deepEqual(bound.request.input.review_context, { reasons: [standardConflictReviewInstructions] });
     assert.equal(bound.request.sources.peer_1.id, counterpart.inputIds.answer);
-    assert.deepEqual(bound.request.sources.peer_1.value, plan.inputs[counterpart.inputIds.answer]);
+    assert.deepEqual((bound.request.sources.peer_1.value as RawInput).messages, (plan.inputs[counterpart.inputIds.answer] as RawInput).messages);
     const peer = (bound.request.input.reference_materials as Record<string, { final_answer: string; grader_only: boolean }>).peer_1;
     assert.equal(peer.final_answer, "2+2=4");
     assert.equal(peer.grader_only, true);
     assert.equal(bound.request.input.attributions, undefined, "fresh review receives original answers without earlier judgments");
     const boundPeer = bindTask(peerReview, plan.inputs, { criteria: receipts[criteria.id] }, { tasks: state.manifest.tasks });
-    assert.deepEqual(boundPeer.request.sources.peer_1.value, plan.inputs[source.inputIds.answer]);
+    assert.deepEqual((boundPeer.request.sources.peer_1.value as RawInput).messages, (plan.inputs[source.inputIds.answer] as RawInput).messages);
     assert.deepEqual(boundPeer.request.input.review_context, bound.request.input.review_context);
     assert.deepEqual(comparisonWorkflow.advance!(source, receipts[source.id], state, plan.inputs).tasks, [], "replaying advancement cannot duplicate the review");
     const reviewed = { ...value, standard_conflict: confirmed };
@@ -182,7 +182,7 @@ for (const confirmed of [false, true]) test(`standard conflict review ${confirme
     state.receipts[peerReview.id] = receipt(peerReview.id, peerValue);
     state.manifest.states[peerReview.id].status = "succeeded";
     const peerNext = comparisonWorkflow.advance!(peerReview, state.receipts[peerReview.id], state, plan.inputs);
-    assert(peerNext.tasks.every(task => task.stage === "rewrite"), "accepted source reviews only expand their independent text groups");
+    assert(peerNext.tasks.every(task => ["rewrite","instruction-review"].includes(task.stage)), "accepted source reviews only expand their independent text groups");
     apply(state, peerNext);
     for (const accepted of [review, peerReview]) {
       const groups = state.manifest.tasks.filter(task => task.stage === "rewrite" && task.dependencies.source === accepted.id)
@@ -195,7 +195,7 @@ for (const confirmed of [false, true]) test(`standard conflict review ${confirme
         "replaying an accepted review must preserve its already scheduled rewrite groups");
     }
     state.receipts[counterpart.id] = receipt(counterpart.id, { ...peerValue, standard_conflict: true }); state.manifest.states[counterpart.id].status = "succeeded";
-    assert.deepEqual(comparisonWorkflow.advance!(counterpart, state.receipts[counterpart.id], state, plan.inputs), { tasks: [] },
+    assert.deepEqual({tasks:comparisonWorkflow.advance!(counterpart, state.receipts[counterpart.id], state, plan.inputs).tasks.filter(t=>t.stage!=="instruction-review")}, { tasks: [] },
       "a late original proposal neither duplicates review nor changes downstream sources");
     assert(state.manifest.tasks.filter(task => task.stage === "clustering").every(task => comparisonWorkflow.canStart!(task, state.manifest)));
     const rows = [review, peerReview, counterpart, source].map(task => ({
@@ -266,6 +266,6 @@ test("an ordinary standard mismatch does not request an extra standard review", 
     evaluation.standard_conflict = false;
     const receipt = { taskId: task.id, evaluation } as SubmissionReceipt;
     const state = { manifest: { config: fixture.config, tasks: plan.tasks }, receipts: { [task.id]: receipt } } as unknown as RunState;
-    assert.deepEqual(comparisonWorkflow.advance!(task, receipt, state, plan.inputs).tasks, []);
+    assert.deepEqual(comparisonWorkflow.advance!(task, receipt, state, plan.inputs).tasks.filter(t=>t.stage!=="instruction-review"), []);
   } finally { await rm(fixture.directory, { recursive: true, force: true }); }
 });

@@ -5,12 +5,10 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
 import { selectEvidence, emptyUsage, ValidationError, type CriteriaInput, type PlannedTask, type SubmissionReceipt, type TaskAnalysis } from "@eval/contracts";
-import { criteriaAgent, criteriaProfile, criteriaSources } from "@eval/agents/criteria";
-import { comparisonScope } from "@eval/agents/comparison";
+import { criteriaProfile, criteriaSources } from "@eval/agents/criteria";
 import { attributionProfile, attributionFindingBasis, type AttributionNorm, type AttributionResult, type AttributionSubmission } from "@eval/agents/attribution";
-import { resolveEvidence, sourceContentBlocks } from "@eval/tools";
+import { resolveEvidence } from "@eval/tools";
 import { bindTask } from "./binding.js";
-import { criterionInstructionSources } from "./instruction-bindings.js";
 import type { Candidate, RawInput, TaskData } from "./types.js";
 import { emptyAudit } from "../../../../tests/fixtures/comparison.js";
 
@@ -24,143 +22,6 @@ const candidatesFor = (question: string, finalIndex: number, reference: unknown)
     answer_timing: { first_token_seconds: null, first_answer_seconds: null, finish_seconds: 1,
       source_unit: "seconds", source_values: {}, source_fields: {} },
   }]));
-
-test("loaded skill rules flow through public binding without acquiring common scope from an appended USER context", () => {
-  for (const shared of [false, true]) {
-    const question = "计算2+2", rule = '<skill_content name="answer">\n# 收尾\n普通回答须以问句结尾；文件交付时不使用问句。\n</skill_content>';
-    const candidates = candidatesFor(question, 3, null);
-    const trace = (load: boolean, answer: string): RawInput => ({ messages: [
-      { role: "user", content: question },
-      { type: "tool_call", name: load ? "view_skill" : "query", input: { name: "answer" } },
-      { type: "tool_result", name: load ? "view_skill" : "query", output: rule },
-      { role: "assistant", content: answer },
-    ] });
-    const inputs = { [candidates.A.input_id]: trace(true, "2+2=4"), [candidates.B.input_id]: trace(shared, "2+2=4。需要拆解吗？") };
-    const criteriaTask: PlannedTask = { id: randomUUID(), stage: "criteria", dependencies: {},
-      inputIds: { A: candidates.A.input_id, B: candidates.B.input_id }, data: { stage: "criteria", candidates, reference: null } };
-    const criteria = bindTask(criteriaTask, inputs, {}, { tasks: [criteriaTask] });
-    new AgentRegistry([criteriaAgent]).prepare(criteria);
-    const catalogue = criteriaSources(criteria.request.input as unknown as CriteriaInput);
-    const skillSources = catalogue.filter(source => source.role === "tool");
-    assert(skillSources.length);
-    assert(skillSources.every(source => JSON.stringify(source.applies_to) === JSON.stringify(shared ? [] : [candidates.A.input_id])));
-    const analysis: TaskAnalysis = { task_type: "calculation", goal: question, requirements: [
-      { id: "r1", text: question, acceptance_rule: question, applies_to: [] },
-      ...(shared ? [{ id: "r2", text: "遵守共同收尾规范", applies_to: [],
-        acceptance_rule: sourceContentBlocks(rule, "/output").map(block => block.quote).join("\n\n") }] : []),
-    ], scoring_points: [], red_flags: [] };
-    const receipt = (task: PlannedTask, evaluation: unknown): SubmissionReceipt => ({ taskId: task.id, attemptId: randomUUID(),
-      submissionId: randomUUID(), acceptedAt: 1, status: "succeeded", evaluatorVersion: "fixture", judge: "fixture",
-      evaluation, audit: emptyAudit(), usage: emptyUsage() });
-    const dependencies: Record<string, SubmissionReceipt> = { criteria: receipt(criteriaTask, analysis) }, tasks = [criteriaTask];
-    for (const label of ["A", "B"] as const) {
-      const task: PlannedTask = { id: randomUUID(), stage: "attribution", dependencies: { criteria: criteriaTask.id },
-        inputIds: { answer: candidates[label].input_id }, data: { stage: "attribution", candidates: { A: candidates[label] }, reference: null } };
-      tasks.push(task);
-      const binding = bindTask(task, inputs, { criteria: dependencies.criteria }, { tasks });
-      registry.prepare(binding);
-      const answer = binding.request.input.answer as { norm_directory: AttributionNorm[]; instruction_sources: { role: string }[] };
-      assert.equal(answer.instruction_sources.some(source => source.role === "tool"), label === "A" || shared);
-      const audit = emptyAudit(), choose = (ref: { evidence_id: string }) => selectEvidence(audit.evidenceBank!, ref).evidence_index;
-      const final = canonicalEvidence(candidates[label].input_id, 3, label === "A" ? "2+2=4" : "2+2=4。需要拆解吗？");
-      const draft: AttributionSubmission = { is_correct: null, correctness_reason: "", correctness_evidence_indices: [], numeric_checks: [],
-        meets_core: true, core_reason: "计算结果可用。", core_requirements: [1], summary: "完成计算。", strengths: [], problems: [],
-        criterion_assessments: analysis.requirements.map(() => ({ status: "met", evidence_status: "established", summary: "结果可用。", evidence_indices: [choose(final)] })) };
-      if (label === "A") {
-        const basis = attributionFindingBasis(binding.request.input);
-        const own = basis.find(item => item.kind === "own_rule" && (item.evidence as { quote: string }[]).some(e => e.quote.includes("文件交付")));
-        const start = rule.indexOf("普通回答"), midpoint = start + 6;
-        const fragments = [[0, midpoint], [midpoint, rule.length]], short = [[start, start + 2]];
-        for (const ranges of [fragments, short]) {
-          draft.problems = [{ dimension: "instruction_following", stage: "final_answer", importance: "low", basis_index: shared ? 2 : 1,
-            text: "未以问句结尾。", reason: "正常回答触发收尾规则。", impact: "未遵守本方收尾要求，数字仍可用。",
-            evidence_status: "established", evidence_indices: [choose(final), ...ranges.map(([a,b]) =>
-              choose(canonicalEvidence(candidates.A.input_id, 2, rule.slice(a,b), "/output", a)))],
-            component: ["模型自身推理"], label: "收尾要求未遵守", definition: "普通回答遗漏要求的问句。" }];
-          if (!shared) {
-            draft.criterion_assessments[0].status = "partial";
-            for (const dimension of ["instruction_following", "format", "correctness"] as const) {
-              draft.problems[0].dimension = dimension;
-              assert.throws(() => registry.resolve(binding, draft, audit), error => error instanceof ValidationError &&
-                error.issues!.some(issue => issue.code === "instruction_private_basis" && issue.path === "/problems/0/basis_index"),
-                "changing only the dimension cannot promote the same private evidence to a shared requirement");
-            }
-            draft.problems[0].dimension = "instruction_following";
-            const active = binding.request.input.task_analysis as unknown as TaskAnalysis;
-            active.requirements.push({ id: "peer-only", text: "对方规则", applies_to: [candidates.B.input_id],
-              acceptance_rule: sourceContentBlocks(rule, "/output").map(block => block.quote).join("\n\n") });
-            assert.throws(() => registry.resolve(binding, draft, audit), error => error instanceof ValidationError &&
-              error.issues!.some(issue => issue.code === "instruction_private_basis"), "a peer-only copy cannot authorize the current candidate");
-            active.requirements.pop();
-            draft.problems[0].basis_index = own!.basis_index;
-            draft.criterion_assessments[0].status = "met";
-          } else draft.criterion_assessments[1].status = "partial";
-          const result = registry.resolve(binding, draft, audit) as AttributionResult;
-          registry.validate(binding, result, audit);
-          assert.equal(result.findings[0].assessment.requirement_index, shared ? 1 : null);
-          dependencies[label] = receipt(task, result);
-        }
-      } else dependencies[label] = receipt(task, registry.resolve(binding, draft, audit));
-    }
-    const task: PlannedTask = { id: randomUUID(), stage: "comparison", dependencies: Object.fromEntries(Object.entries(dependencies).map(([key,r]) => [key,r.taskId])),
-      inputIds: criteriaTask.inputIds, data: { stage: "comparison", candidates, reference: null, group: ["a_fast", "b_fast"] } };
-    const comparison = bindTask(task, inputs, dependencies, { tasks: [...tasks, task] });
-    assert.equal(comparisonScope(comparison.request).findings.A![0].scope, shared ? "pair" : "source_only");
-    // An already-accepted wrong association also cannot bypass the downstream boundary.
-    if (!shared) {
-      const input = comparison.request.input as any;
-      input.attributions.A.findings[0].assessment.requirement_index = 0;
-      input.attributions.A.findings[0].context_evidence = [canonicalEvidence(candidates.A.input_id, 0, question)];
-      for (const dimension of ["instruction_following", "correctness"]) {
-        input.attributions.A.findings[0].dimension = dimension;
-        assert.equal(comparisonScope(comparison.request).findings.A![0].scope, "source_only");
-      }
-      const raw = comparison.request.sources.A.value as { messages: Record<string, unknown>[] };
-      raw.messages[1].name = "query"; raw.messages[2].name = "query";
-      assert.equal(comparisonScope(comparison.request).findings.A![0].scope, "pair", "ordinary tool facts are not reclassified by their wording");
-    }
-  }
-});
-
-test("attribution defers repeated long instruction blocks and reuses overview evidence without changing trusted material", () => {
-  const question = "计算结果", rule = "## 规范\n\n" + "条件与例外原文。".repeat(500) + "\n\n**调用收敛：**\n最多四次查询。\n\n### 出处标注\n隐藏内部品牌。";
-  const candidates = candidatesFor(question, 4, null), raw: RawInput = { messages: [
-    { role: "system", content: rule }, { role: "user", content: question },
-    { type: "tool_call", name: "Calc", input: { expression: "2+2" } },
-    { type: "tool_result", name: "Calc", output: [{ text: "4" }, { text: "AttributeError: shift" }] },
-    { role: "assistant", content: "最终结果是4。" },
-  ] };
-  const analysis: TaskAnalysis = { task_type: "calculation", goal: question, requirements: [
-    { id: "r1", text: question, acceptance_rule: question, applies_to: [] },
-    { id: "r2", text: "遵守本方规则", acceptance_rule: rule, applies_to: [candidates.A.input_id] },
-  ], scoring_points: [], red_flags: [] };
-  const criteriaTask: PlannedTask = { id: randomUUID(), stage: "criteria", dependencies: {},
-    inputIds: { A: candidates.A.input_id, B: candidates.B.input_id }, data: { stage: "criteria", candidates, reference: null } };
-  const task: PlannedTask = { id: randomUUID(), stage: "attribution", dependencies: { criteria: criteriaTask.id },
-    inputIds: { answer: candidates.A.input_id }, data: { stage: "attribution", candidates: { A: candidates.A }, reference: null } };
-  const receipt: SubmissionReceipt = { taskId: criteriaTask.id, attemptId: randomUUID(), submissionId: randomUUID(),
-    acceptedAt: 1, status: "succeeded", evaluatorVersion: "fixture", judge: "fixture", evaluation: analysis,
-    audit: emptyAudit(), usage: emptyUsage() };
-  const before = structuredClone({ raw, analysis });
-  const binding = bindTask(task, { [candidates.A.input_id]: raw }, { criteria: receipt }, { tasks: [criteriaTask, task] });
-  const bank: string[] = [], shown = binding.projectModelInput!(binding.modelInput!, bank);
-  const prompt = attributionProfile.renderPrompt(shown);
-  assert(!prompt.includes(rule), "full instructions are neither embedded again nor copied into acceptance rules");
-  assert(prompt.includes("answer.criterion_instruction_sources.r2[0]"));
-  const answer = shown.answer as any;
-  assert.deepEqual(answer.initial_material, []);
-  assert(!Object.hasOwn(answer.instruction_sources[0], "content"));
-  const navigation = answer.norm_directory.flatMap((entry: any) => entry.evidence).find((entry: any) => entry.outline)?.outline;
-  assert(navigation.some((item: any) => item.title === "**调用收敛：**" && rule.slice(item.offset).startsWith(item.title)));
-  assert(navigation.some((item: any) => item.title === "### 出处标注"));
-  assert(JSON.stringify(navigation).length < 2400);
-  assert(!Object.hasOwn(answer.instruction_sources[0].evidence[0], "outline"), "the rule navigation appears beside its basis, without a second copy");
-  assert(!Object.hasOwn(answer.final_evidence[0], "quote"), "final text is not copied again with its evidence number");
-  const error = answer.trace_overview.entries.flatMap((entry: any) => entry.highlights).find((item: any) => item.quote.includes("AttributeError"));
-  assert.equal(resolveEvidence(raw, { evidence_id: bank[error.reference.evidence_index - 1] }, "answer", emptyAudit(), "/evidence", candidates.A.input_id).quote, error.quote);
-  assert.equal((binding.request.input.task_analysis as unknown as TaskAnalysis).requirements[1].acceptance_rule, rule);
-  assert.deepEqual({ raw, analysis }, before);
-});
 
 test("reference changes leave Criteria material unchanged and remain complete in Attribution", () => {
   const question = "2025年一季度汽车销量", answer = "候选实际回复：747万辆。", instruction = "写明统计范围和单位。";
@@ -184,10 +45,10 @@ test("reference changes leave Criteria material unchanged and remain complete in
     assert(!prompt.includes("候选实际回复") && !prompt.includes("2025-01-31"));
     const criteriaInput = criteria.request.input as unknown as CriteriaInput, sources = criteriaSources(criteriaInput);
     for (const candidate of criteriaInput.candidates) {
-      assert.deepEqual(candidate.instructions, [{ message_index: 0, role: "system", content: instruction }]);
+      assert.deepEqual(candidate.instructions, []);
       assert.deepEqual(candidate.context, [{ message_index: 1, role: "user", content: question }]);
     }
-    assert.deepEqual(sources.map(source => source.kind), ["question", "instruction", "context", "quality"]);
+    assert.deepEqual(sources.map(source => source.kind), ["question", "context", "quality"]);
     assert.equal(sources.find(source => source.kind === "context")!.text, question);
     const analysis = criteriaProfile.resolve!(criteria.request, { requirements: [{
       source_indices: sources.filter(source => ["question", "quality"].includes(source.kind)).map(source => source.source_index),
@@ -209,63 +70,6 @@ test("reference changes leave Criteria material unchanged and remain complete in
     assert.deepEqual(attribution.modelInput!.ground_truth, { available: reference !== null, value: reference });
     assert(Object.values(inputs).every(input => input.messages[finalIndex].role === "assistant"));
   }
-});
-
-test("common quality and correctness survive the workflow while each system rule stays with its owner", () => {
-  const question = "计算二加二。", reference = "四", candidates = candidatesFor(question, 2, reference);
-  const rules = { A: "只写结果。", B: "用完整句子说明结果。" }, replies = { A: "四", B: "结果是四。" };
-  const inputs = Object.fromEntries(Object.entries(candidates).map(([label, candidate]) => [candidate.input_id, {
-    messages: [{ role: "system", content: rules[label as "A" | "B"] }, { role: "user", content: question },
-      { role: "assistant", content: replies[label as "A" | "B"] }],
-  }]));
-  const criteriaTask: PlannedTask = { id: randomUUID(), stage: "criteria", dependencies: {},
-    inputIds: Object.fromEntries(Object.entries(candidates).map(([label, candidate]) => [label, candidate.input_id])),
-    data: { stage: "criteria", candidates, reference } satisfies TaskData };
-  const criteria = bindTask(criteriaTask, inputs, {}, { tasks: [criteriaTask] });
-  const catalogue = criteriaSources(criteria.request.input as unknown as CriteriaInput);
-  const rubric = criteriaProfile.resolve!(criteria.request, { requirements: [
-    { source_indices: [1], text: "给出二加二的计算结果。" },
-    { source_indices: [catalogue.find(source => source.kind === "quality")!.source_index], text: "结果可靠，推理成立，表达清楚。" },
-    ...catalogue.filter(source => source.kind === "instruction").map(source => ({ source_indices: [source.source_index], text: source.text })),
-    ...qualityChecks(catalogue.find(source => source.kind === "quality")!.source_index).slice(1),
-  ], scoring_points: [], red_flags: [] }, emptyAudit()) as TaskAnalysis;
-  criteriaProfile.validate!(criteria.request, rubric, emptyAudit());
-  assert.deepEqual(rubric.requirements.map(item => item.applies_to), [[], [], [candidates.A.input_id], [candidates.B.input_id], [], [], []]);
-  assert(!criteriaProfile.renderPrompt(criteria.request.input).includes(replies.B));
-  const receipt = (task: PlannedTask, evaluation: unknown): SubmissionReceipt => ({ taskId: task.id, attemptId: randomUUID(),
-    submissionId: randomUUID(), acceptedAt: 1, status: "succeeded", evaluatorVersion: "fixture", judge: "fixture",
-    evaluation, audit: emptyAudit(), usage: emptyUsage() });
-  const dependencies: Record<string, SubmissionReceipt> = { criteria: receipt(criteriaTask, rubric) };
-  const tasks = [criteriaTask];
-  for (const label of ["A", "B"] as const) {
-    const task: PlannedTask = { id: randomUUID(), stage: "attribution", inputIds: { answer: candidates[label].input_id },
-      dependencies: { criteria: criteriaTask.id }, data: { stage: "attribution", candidates: { A: candidates[label] }, reference } satisfies TaskData };
-    tasks.push(task);
-    const binding = bindTask(task, inputs, { criteria: dependencies.criteria }, { tasks });
-    const answer = binding.request.input.answer as { norm_directory: AttributionNorm[] };
-    const ownIndex = label === "A" ? 2 : 3, peerIndex = label === "A" ? 3 : 2;
-    assert(answer.norm_directory.some(norm => norm.requirement_index === ownIndex && norm.roles.includes("system")));
-    assert(!answer.norm_directory.some(norm => norm.requirement_index === peerIndex));
-    const finalRef = (binding.modelInput!.answer as { final_evidence: { reference: { evidence_id: string } }[] }).final_evidence[0].reference;
-    const reads = emptyAudit(), finalNumber = selectEvidence(reads.evidenceBank!, finalRef).evidence_index;
-    const draft: AttributionSubmission = { is_correct: true, correctness_reason: "结果与参考答案四一致。",
-      correctness_evidence_indices: [finalNumber], numeric_checks: [],
-      criterion_assessments: Array.from({ length: 6 }, () => ({ status: "met", evidence_status: "established", summary: "满足本项要求。", evidence_indices: [finalNumber] })),
-      meets_core: true, core_reason: "正确给出所求结果。", core_requirements: [1], summary: "正确完成计算。", strengths: [], problems: [] };
-    const result = registry.resolve(binding, draft, reads) as AttributionResult;
-    registry.validate(binding, result, reads);
-    assert.equal(result.is_correct, true);
-    assert.deepEqual(binding.request.input.ground_truth, { available: true, value: reference });
-    assert.equal(result.criterion_assessments[ownIndex].status, "met");
-    assert.equal(result.criterion_assessments[peerIndex].status, "not_applicable");
-    dependencies[label] = receipt(task, result);
-  }
-  const comparisonTask: PlannedTask = { id: randomUUID(), stage: "comparison", inputIds: criteriaTask.inputIds,
-    dependencies: Object.fromEntries(Object.entries(dependencies).map(([label, item]) => [label, item.taskId])),
-    data: { stage: "comparison", candidates, reference, group: ["a_fast", "b_fast"] } satisfies TaskData };
-  tasks.push(comparisonTask);
-  const comparison = bindTask(comparisonTask, inputs, dependencies, { tasks });
-  assert.deepEqual(comparisonScope(comparison.request).common_criterion_ids, ["r1", "r2", "r5", "r6", "r7"]);
 });
 
 for (const normFirst of [true, false]) test(`accepted merged Criteria retains norm and answer closure with ${normFirst ? "norm" : "question"} first`, () => {
@@ -428,101 +232,4 @@ test("01868 public USER leaf closes attribution without absorbing its private jo
   assert(otherNorms.every(norm => norm.evidence.every(origin => origin.source_input_id === undefined &&
     resolveEvidence(inputs[candidates.B.input_id], { evidence_id: origin.evidence_id }, "answer", emptyAudit(), "/evidence", candidates.B.input_id).quote === question)));
   assert.deepEqual(rubric.requirements[1]!.applies_to, [candidates.A!.input_id]);
-});
-
-test("a headed private norm keeps all leaf origins without being promoted by a short task description", () => {
-  const question="解释平均利率。",parts=["## 风险边界","只有投资建议须提示风险。","概念解释无需风险提示；不得扩大触发范围。"];
-  const final="平均利率是按统一口径计算的平均融资成本。",candidates=candidatesFor(question,2,null);
-  const trace:RawInput={messages:[{role:"system",content:parts.map(text=>({type:"input_text",text}))},{role:"user",content:question},{role:"assistant",content:final}]};
-  const inputs=Object.fromEntries(Object.values(candidates).map(candidate=>[candidate.input_id,structuredClone(trace)]));
-  const criteriaTask:PlannedTask={id:randomUUID(),stage:"criteria",inputIds:{A:candidates.A.input_id,B:candidates.B.input_id},dependencies:{},data:{stage:"criteria",candidates,reference:null} satisfies TaskData};
-  const criteria=bindTask(criteriaTask,inputs,{}, {tasks:[criteriaTask]});
-  const rubric=criteriaProfile.resolve!(criteria.request,{requirements:[{source_indices:criteriaSources(criteria.request.input as unknown as CriteriaInput)
-    .filter(source=>["question","quality"].includes(source.kind)).map(source=>source.source_index),text:"准确清楚地解释平均利率的含义。"}, ...qualityChecks(criteriaSources(criteria.request.input as unknown as CriteriaInput).find(source => source.kind === "quality")!.source_index)],scoring_points:[],red_flags:[]},emptyAudit()) as TaskAnalysis;
-  const receipt:SubmissionReceipt={taskId:criteriaTask.id,attemptId:randomUUID(),submissionId:randomUUID(),acceptedAt:1,status:"succeeded",evaluatorVersion:"fixture",judge:"fixture",evaluation:rubric,audit:emptyAudit(),usage:emptyUsage()};
-  const task:PlannedTask={id:randomUUID(),stage:"attribution",inputIds:{answer:candidates.A.input_id},dependencies:{criteria:criteriaTask.id},data:{stage:"attribution",candidates:{A:candidates.A},reference:null} satisfies TaskData};
-  const binding=bindTask(task,inputs,{criteria:receipt},{tasks:[criteriaTask,task]});
-  const answer=binding.request.input.answer as {norm_directory:AttributionNorm[]};
-  const own=answer.norm_directory.find(item=>item.roles.includes("system"))!;
-  assert.equal(own.requirement_index,null);assert.deepEqual(own.evidence.map(item=>item.quote),parts);
-  const finalRef=(binding.modelInput!.answer as any).final_evidence[0].reference;
-  const reads=emptyAudit(),finalNumber=selectEvidence(reads.evidenceBank!,finalRef).evidence_index;
-  const draft:AttributionSubmission={is_correct:null,correctness_reason:"",correctness_evidence_indices:[],numeric_checks:[],summary:"已解释含义。",meets_core:true,core_reason:"给出了所求含义。",core_requirements:[1],
-    criterion_assessments:rubric.requirements.map(()=>({status:"met",evidence_status:"established",summary:"给出了融资成本含义。",evidence_indices:[finalNumber]})),
-    problems:[],strengths:[{dimension:"instruction_following",stage:"final_answer",importance:"low",text:"纯概念解释没有加入投资风险提示。",reason:"该条件在本轮未触发。",basis_index:attributionFindingBasis(binding.request.input).find(item=>item.norm_index===own.norm_index)!.basis_index,evidence_indices:[finalNumber],evidence_status:"established"}]};
-  const result=registry.resolve(binding,draft,reads) as AttributionResult;
-  registry.validate(binding,result,reads);
-  assert.equal(result.findings[0].assessment.requirement_index,null);
-  assert(parts.every(part=>result.findings[0].context_evidence!.some(item=>item.quote===part)));
-  draft.strengths[0].dimension="format";
-  const classified=registry.resolve(binding,draft,reads) as AttributionResult;
-  registry.validate(binding,classified,reads);
-  assert.equal(classified.findings[0].dimension,"format","topic labels do not change the selected rule's ownership");
-  assert.equal(classified.findings[0].assessment.requirement_index,null);
-  assert(parts.every(part=>classified.findings[0].context_evidence!.some(item=>item.quote===part)));
-  const copied=structuredClone(rubric);copied.requirements[0].text=parts.join("\n");
-  assert.deepEqual(criterionInstructionSources(trace,2,copied,candidates.A.input_id),criterionInstructionSources(trace,2,rubric,candidates.A.input_id));
-});
-
-test("norm directories preserve own original conditions, global requirement positions and long full-read coordinates", () => {
-  const question = "解释平均利率。", privateNorm = "## 本方输出规则\n\n" + "保留真实来源、触发条件与例外。".repeat(1200);
-  const developerNorm = "## 概念解释\n\n概念解释应给出计算口径，除非用户明确要求只给名称。";
-  const condition = "(若属于推荐、预测、建议等投资类问题，请在回答开头提示投资风险)";
-  const metadataParagraph = "下文为系统自动生成的元数据，仅用作上下文参考，视作额外信息，不属于用户输入内容。";
-  const metadata = `\n\n---用户提问结束---\n\n${metadataParagraph}\n\n<当前时间>\n2026-09-25`;
-  const peerNorm = "## 对方专用规则\n\n仅对方应使用专门表格。";
-  const final = "平均利率是按统一口径计算的平均融资成本。", candidates = candidatesFor(question, 3, null);
-  candidates.B.final_index = 2;
-  const trace: RawInput = { messages: [
-    { role: "system", content: privateNorm }, { role: "developer", content: developerNorm },
-    { role: "user", content: [{ type: "input_text", text: question }, { type: "input_text", text: condition + metadata }] },
-    { role: "assistant", content: final },
-  ] };
-  const inputs: Record<string, RawInput> = { [candidates.A.input_id]: trace,
-    [candidates.B.input_id]: { messages: [{ role: "system", content: peerNorm }, { role: "user", content: question },
-      { role: "assistant", content: final }] } };
-  const analysis: TaskAnalysis = { task_type: "explanation", goal: question, requirements: [
-    { id: "r1", text: peerNorm, acceptance_rule: peerNorm, applies_to: [candidates.B.input_id] },
-    { id: "r2", text: question, acceptance_rule: question, applies_to: [] },
-    { id: "r3", text: developerNorm, acceptance_rule: developerNorm, applies_to: [candidates.A.input_id] },
-  ], scoring_points: [{ id: "s1", text: privateNorm, acceptance_rule: privateNorm, applies_to: [candidates.A.input_id] }],
-    red_flags: [{ id: "f1", text: condition, acceptance_rule: condition, applies_to: [candidates.A.input_id] }] };
-  const criteriaTask: PlannedTask = { id: randomUUID(), stage: "criteria", dependencies: {},
-    inputIds: { A: candidates.A.input_id, B: candidates.B.input_id },
-    data: { stage: "criteria", candidates, reference: null } satisfies TaskData };
-  const receipt: SubmissionReceipt = { taskId: criteriaTask.id, attemptId: randomUUID(), submissionId: randomUUID(),
-    acceptedAt: 1, status: "succeeded", evaluatorVersion: "fixture", judge: "fixture", evaluation: analysis,
-    audit: emptyAudit(), usage: emptyUsage() };
-  const task: PlannedTask = { id: randomUUID(), stage: "attribution", inputIds: { answer: candidates.A.input_id },
-    dependencies: { criteria: criteriaTask.id }, data: { stage: "attribution", candidates: { A: candidates.A }, reference: null } satisfies TaskData };
-  const binding = bindTask(task, inputs, { criteria: receipt }, { tasks: [criteriaTask, task] });
-  const answer = binding.request.input.answer as { norm_directory: AttributionNorm[] };
-  assert.deepEqual(answer.norm_directory.filter(norm => norm.requirement_index !== null).map(norm => norm.requirement_index), [1, 2]);
-  const physical = answer.norm_directory.filter(norm => norm.requirement_index === null);
-  assert(physical.some(norm => norm.roles.includes("system") && norm.evidence.some(origin => origin.quote === privateNorm)));
-  const conditionNorm = physical.find(norm => norm.roles.includes("user") && norm.evidence.some(origin => origin.quote === condition))!;
-  assert(conditionNorm, "a genuine unselected USER condition remains available in its complete physical block");
-  assert(conditionNorm.evidence.every(origin => origin.quote !== metadataParagraph), "independent context is not merged into the condition block");
-  const metadataNorm = answer.norm_directory.find(norm => norm.evidence.some(origin => origin.quote === metadataParagraph))!;
-  assert(metadataNorm, "original USER context is retained without semantic keyword filtering");
-  assert.equal(metadataNorm.requirement_index, null, "context does not acquire a common requirements index");
-  assert.deepEqual(metadataNorm.evidence, [canonicalEvidence(candidates.A.input_id, 2, metadataParagraph, "/content/1/text",
-    (condition + metadata).indexOf(metadataParagraph))]);
-  assert(answer.norm_directory.every(norm => norm.evidence.every(origin => !origin.quote.includes(peerNorm))));
-  const bank: string[] = [], shown = binding.projectModelInput!(binding.modelInput!, bank).answer as {
-    norm_directory: { norm_index: number; roles: string[]; requirement_index: number | null; evidence: {
-      quote?: string; quote_preview?: string; has_more?: boolean; reference: { evidence_index: number };
-      search_scope?: { candidate: string; message_index: number; path: string }; start_offset?: number; end_offset: number;
-    }[] }[] };
-  const original = physical.find(norm => norm.roles.includes("system"))!, norm = shown.norm_directory[original.norm_index]!;
-  assert.equal(norm.requirement_index, null);
-  assert.equal(norm.evidence[0]!.quote, undefined);
-  assert.equal(norm.evidence[0]!.quote_preview, privateNorm.slice(0, 200));
-  assert.equal(norm.evidence[0]!.has_more, true);
-  assert(!Object.hasOwn(norm.evidence[0]!, "read_request"));
-  assert.deepEqual(norm.evidence[0]!.search_scope, { candidate: "answer", message_index: 0, path: "/content" });
-  assert.equal(norm.evidence[0]!.start_offset, 0);
-  assert.equal(norm.evidence[0]!.end_offset, privateNorm.length);
-  assert.equal(bank[norm.evidence[0]!.reference.evidence_index - 1], original.evidence[0]!.evidence_id);
-  assert.equal(resolveEvidence(trace, { evidence_id: bank[norm.evidence[0]!.reference.evidence_index - 1] }, "answer", emptyAudit(), "/evidence", candidates.A.input_id).quote, privateNorm);
 });

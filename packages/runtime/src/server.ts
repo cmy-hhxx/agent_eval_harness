@@ -282,7 +282,7 @@ export async function startWorker(
           const missing = traceReadCoverage(audit, target).missing[0];
           if (!missing) continue;
           const args = { candidate: target.candidate, message_index: target.message_index, path: target.path,
-            offset: missing.start, max_chars: 16000 };
+            offset: missing.start, max_chars: Math.min(16000, target.end - missing.start) };
           emit(attempt, "tool_start", { name: "read_trace", args, required_material: true });
           const read = await runtime.execute("read_trace", args, controller.signal, explorationLimit());
           emit(attempt, "tool_end", { name: "read_trace", result: read, required_material: true });
@@ -871,7 +871,7 @@ export async function startWorker(
         throw new HttpError(400, "Invalid input refs");
       registry.select(spec.evaluation.toolNames);
       if (spec.evaluation.requiredReads !== undefined && (!Array.isArray(spec.evaluation.requiredReads) ||
-        spec.evaluation.requiredReads.some(read => !read || read.kind !== "text" || typeof read.path !== "string" ||
+        spec.evaluation.requiredReads.some(read => !read || !["text", "json"].includes(read.kind) || typeof read.path !== "string" || read.kind === "json" && read.path !== "" ||
           !spec.inputs.some(input => input.name === read.candidate) ||
           !Number.isSafeInteger(read.message_index) || read.message_index < 0 ||
           !Number.isSafeInteger(read.start) || !Number.isSafeInteger(read.end) || read.start < 0 || read.end <= read.start) ||

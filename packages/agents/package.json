@@ -26,6 +26,10 @@
     "./score": {
       "types": "./score.d.ts",
       "import": "./score.js"
+    },
+    "./instruction-review": {
+      "types": "./instruction-review.d.ts",
+      "import": "./instruction-review.js"
     }
   }
 }

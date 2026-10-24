@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import { canonical, submissionToolNames, type FailureContext, type JsonObject, type Policy } from "@eval/contracts";
 
-export type PromptStage = "criteria" | "attribution" | "comparison" | "rewrite" | "clustering" | "score";
+export type PromptStage = "criteria" | "attribution" | "comparison" | "rewrite" | "clustering" | "score" | "instruction-review";
 
 const builtinToolNames = [
   "read_trace", "search_trace", "view_image", "calculate", "calculate_pair", "execute_code",
@@ -27,6 +27,11 @@ export function workflowText(name: "attribution-material" | "core-rewrite" | "cr
   return resource(`workflow/${name}.md`);
 }
 export const attributionNotApplicableText = resource("attribution/default/not_applicable.md");
+export const attributionTaxonomy = JSON.parse(resource("attribution/taxonomy.json")) as {
+  domains: Record<string, string[]>;
+  stages: string[];
+  investigation_steps: string[];
+};
 const descriptions = new Map<string, string>(
   builtinToolNames.map((name) => [name, resource(`tools/${name}.md`)]),
 );
@@ -47,8 +52,8 @@ export function agentPrompt(stage: PromptStage, toolNames: string[], profile = "
   const evidenceGuide = toolNames.some(name => ["read_trace", "search_trace", "view_image", "check_table"].includes(name))
     ? `\n${evidence}\n` : "";
   const systemPrompt = resource(`${stage}/${profile}/system.md`) + "\n\n" + (stage === "score" ? "" : commentary + "\n\n") + instructions + evidenceGuide;
-  const fileSubmission = stage === "attribution" && profile !== "direct" || stage === "comparison" && profile === "verification";
-  const draftWriteInCallLimit = stage === "attribution" && profile !== "direct";
+  const fileSubmission = stage === "attribution" || stage === "comparison" && profile === "verification";
+  const draftWriteInCallLimit = stage === "attribution";
   const names = [...toolNames, ...submissionToolNames(fileSubmission)];
   if (new Set(names).size !== names.length) throw new Error(`Duplicate prompt tool in ${stage}`);
   const toolDescriptions = Object.fromEntries(names.map((name) => {

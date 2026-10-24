@@ -1,3 +1,4 @@
+import { responsibilityFixture } from "../../fixtures/responsibility.js";
 import test from "node:test";
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
@@ -40,7 +41,7 @@ async function fixture(caseCount = 2, components?: string[], uniqueProblems = fa
         result.task_analysis = criteriaResultForTask(task, plan.inputs);
         if (uniqueProblems) result.findings[0].problem!.label += " " + candidate.batch_id + " " + candidate.case_id;
         if (components) result.findings = components.map((component, index) => ({ ...structuredClone(result.findings[0]),
-          finding_id: "f" + index, problem: { ...result.findings[0].problem!, component: [component] } }));
+          finding_id: "f" + index, problem: { ...result.findings[0].problem!, component: [responsibilityFixture(component, {evidence_ids: result.findings[0].evidence.map(item=>item.evidence_id)})] } }));
         result.findings.forEach(finding => { finding.problem!.definition += candidate.case_id; });
       }
       receipts[task.id] = { taskId: task.id, attemptId: randomUUID(), submissionId: randomUUID(),
@@ -190,7 +191,7 @@ test("cluster CLI accepts repeated run selections and previews without creating 
 });
 
 test("new clustering plans isolate responsibility buckets and preserve each model's budget chain", async t => {
-  const f = await fixture(2, ["模型自身推理", "FinQuery"]); t.after(() => rm(f.directory, { recursive: true, force: true }));
+  const f = await fixture(2, ["最终作答节点（原始名称未提供）", "FinQuery"]); t.after(() => rm(f.directory, { recursive: true, force: true }));
   f.config.clustering.maxCasesPerTask = 100; f.config.clustering.maxNewClassesPerTask = 3; f.config.clustering.minSupport = 3;
   const { plan } = await prepareClusteringJob(f.runs, f.config), tasks = plan.tasks.filter(task => task.stage === "clustering");
   assert.equal(tasks.length, 6, "two responsibility buckets plus one directory pass per model");
@@ -207,7 +208,7 @@ test("new clustering plans isolate responsibility buckets and preserve each mode
       else { const bucket = new Set(input.items.map(item => item.component)); assert.equal(bucket.size, 1);
         components.add([...bucket][0]); assert.equal(input.budget.max_new_classes, 3); }
     }
-    assert.deepEqual(components, new Set(["FinQuery", "模型自身推理"]));
+    assert.deepEqual(components, new Set(["工具业务实现/结果完整性", "模型推断与生成/事实关系推导"]));
   }
 });
 
@@ -224,12 +225,12 @@ test("ordinary targeted attribution reviews in scope must finish before clusteri
 });
 
 test("bucket requests omit unrelated class examples while keeping model-wide caps and complete consolidation", async t => {
-  const f = await fixture(2, ["模型自身推理", "FinQuery"]); t.after(() => rm(f.directory, { recursive: true, force: true }));
+  const f = await fixture(2, ["最终作答节点（原始名称未提供）", "FinQuery"]); t.after(() => rm(f.directory, { recursive: true, force: true }));
   f.config.clustering.maxCasesPerTask = 100;
   const { plan } = await prepareClusteringJob(f.runs, f.config);
   const material = plan.inputs.a_fast as { library: ProblemProjection; config: { clustering: { maxClassesPerModel: number } } };
-  material.library = { components: ["模型自身推理", "查询工具", "未涉及工具"].map((label, index) => ({
-    id: randomUUID(), label, definition: "组件职责", aliases: index === 1 ? [" finQUERY "] : [],
+  material.library = { components: ["模型推断与生成/事实关系推导", "查询工具", "未涉及工具"].map((label, index) => ({
+    id: randomUUID(), label, definition: "组件职责", aliases: index === 1 ? [" 工具业务实现/结果完整性 "] : [],
     classes: [{ id: randomUUID(), label: "具体问题" + index, definition: "问题边界", aliases: [], occurrences: 1,
       examples: [{ input_id: randomUUID(), batch_id: "2026-10-01", case_id: "case", finding_id: "f0", evidence_status: "established",
         run_id: "source", task_id: randomUUID(), submission_id: randomUUID(), reason: index === 2 ? "UNRELATED_EXAMPLE" : "相关样本" }] }],
@@ -244,7 +245,7 @@ test("bucket requests omit unrelated class examples while keeping model-wide cap
   assert.equal(input.budget.max_new_classes, 0); assert.equal(input.budget.max_new_components, 0);
   const mixed = { ...ordinary, data: { model: "a_fast", itemIds: own.slice(0, 2).flatMap(task => (task.data as { itemIds: string[] }).itemIds) } };
   const mixedInput = clusteringJobWorkflow.bind(mixed, plan.inputs, {}, { tasks: plan.tasks }).request.input as { library: ProblemProjection };
-  assert.deepEqual(mixedInput.library.components.map(component => component.label), ["模型自身推理", "查询工具"]);
+  assert.deepEqual(mixedInput.library.components.map(component => component.label), ["模型推断与生成/事实关系推导", "查询工具"]);
   const finalInput = clusteringJobWorkflow.bind(own[2], plan.inputs, {}, { tasks: plan.tasks }).request.input as { library: ProblemProjection };
   assert.equal(finalInput.library, material.library); assert.equal(finalInput.library.components.length, 3);
   assert.equal(JSON.stringify(finalInput).includes("UNRELATED_EXAMPLE"), true);
@@ -473,7 +474,7 @@ test("eight workers classify one component concurrently before serial novelty di
   const library = applyClustering(emptyLibrary("a_fast"), { run_id: "seed", run_path: f.directory,
     evaluator_version: fakeEvaluatorVersion, task_id: randomUUID(), submission_id: randomUUID(), version: "a_fast", batch_id: "",
     observations: [observation], result: { assignments: [{ item_id: observation.id, new_class_key: "known" }], merges: [],
-      new_classes: [{ key: "known", component: "模型自身推理", label: "已知算术错误", definition: "算术计算出错。",
+      new_classes: [{ key: "known", component: "模型推断与生成/事实关系推导", label: "已知算术错误", definition: "算术计算出错。",
         closest_existing: null, novelty: "首次建立。", category_paths: [["数值可靠性"]] }] } });
   await writeProblemLibrary(problemLibraryFile(f.config.problemLibrary, "a_fast"), library);
   const output = { kind: "directory" as const, path: path.join(f.directory, "parallel") };
@@ -499,7 +500,7 @@ test("eight workers classify one component concurrently before serial novelty di
         const found = classes.find(problem => problem.label === "新的计算错误");
         if (found) result = { assignments: request.items.map(item => ({ item_id: item.id, class_id: found.id })), new_classes: [], merges: [] };
         else result = { assignments: request.items.map(item => ({ item_id: item.id, new_class_key: "novel" })), merges: [],
-          new_classes: [{ key: "novel", component: "模型自身推理", label: "新的计算错误", definition: "与已有边界不同的计算错误。",
+          new_classes: [{ key: "novel", component: "模型推断与生成/事实关系推导", label: "新的计算错误", definition: "与已有边界不同的计算错误。",
             closest_existing: classes[0].id, novelty: "不同计算边界。", category_paths: [["数值可靠性"]] }] };
       }
       const submitted = await submitFor(options, draftFor(options.spec, result));

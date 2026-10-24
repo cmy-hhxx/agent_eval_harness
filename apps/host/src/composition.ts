@@ -1,4 +1,5 @@
 import { scoreAgent } from "@eval/agents/score";
+import { instructionReviewAgent } from "@eval/agents/instruction-review";
 import { configurationSecrets } from "./settings.js";
 import { AgentRegistry } from "@eval/host";
 import { comparisonAgent, comparisonProfile } from "@eval/agents/comparison";
@@ -15,7 +16,7 @@ export const logger = createFileLogger({
   lockDirectory: path.resolve(process.env.EVAL_LOG_LOCK_DIR || path.join(ROOT, ".runtime/log-writer")),
   secrets: configurationSecrets(),
 });
-export const agents = new AgentRegistry([scoreAgent, criteriaAgent, comparisonAgent, attributionAgent, rewriteAgent, clusteringAgent]);
+export const agents = new AgentRegistry([scoreAgent, instructionReviewAgent, criteriaAgent, comparisonAgent, attributionAgent, rewriteAgent, clusteringAgent]);
 export const services = {
   logger,
   agents,

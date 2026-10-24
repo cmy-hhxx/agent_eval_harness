@@ -770,7 +770,7 @@ test("established medium problems on both sides of one shared slot can retain me
       finding.evidence = [canonicalEvidence(data.request.sources[label].id, 1, final)];
       finding.assessment.observation = finding.text;
       finding.assessment.impact = "局部解释错误，未使最终数值不可用。";
-      Object.assign(finding, { problem: { component: [], label: "计算说明错误", definition: finding.text } });
+      Object.assign(finding, { problem: { diagnosis: "other" as const, investigation: [], component: [], label: "计算说明错误", definition: finding.text } });
     }
     if (swapped) {
       [data.request.sources.A, data.request.sources.B] = [data.request.sources.B, data.request.sources.A];
@@ -895,7 +895,7 @@ test("own strengths and material problems remain required matrix findings when t
   const problem = { ...structuredClone(original), type: "problem" as const,
     dimension: "instruction_following" as const, importance: "medium" as const,
     text: "另一处日期表述未遵守自身时间规范。", assessment: { ...original.assessment, requirement_index: 1 },
-    problem: { component: "model", label: "日期表述失当", definition: "日期表述未遵守自身时间规范。" } };
+    problem: { diagnosis: "other" as const, investigation: [], component: "model", label: "日期表述失当", definition: "日期表述未遵守自身时间规范。" } };
   input.attributions.B.findings.push(strength, problem);
   const automatic=resolve(data); validate(data.request,automatic);
   assert.deepEqual(automatic.decision_basis.comparisons[1].assessments.B.finding_indices,[1,2]);
@@ -1003,7 +1003,7 @@ test("uncertain findings cannot be decisive and one-sided material advantages ca
   problem.reason = "用户要求说明计算过程，回答只给出结果4。";
   problem.assessment.observation = problem.text;
   problem.assessment.impact = "数值可用，但共同要求中的过程说明缺失。";
-  Object.assign(problem, { problem: { component: [], label: "计算过程缺失", definition: problem.text } });
+  Object.assign(problem, { problem: { diagnosis: "other" as const, investigation: [], component: [], label: "计算过程缺失", definition: problem.text } });
   input.attributions.B.criterion_assessments[0].status = "partial";
   input.attributions.B.criterion_assessments[0].summary = problem.text;
   data.result.decision_basis.comparisons[0].assessments.B.status = "partial";

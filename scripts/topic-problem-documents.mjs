@@ -1,3 +1,4 @@
+import { responsibilityLabels } from "@eval/agents/attribution";
 import { attributionTreeDocument } from "./attribution-tree-document.mjs";
 import { isDeepStrictEqual } from "node:util";
 
@@ -82,7 +83,7 @@ export function topicProblemDocuments({ record, library, attributions, inputs, s
         importance: finding.importance, evidenceStatus: finding.assessment.evidence_status,
         status: nodes.length ? (pending.length ? "mixed" : "grouped") : pending[0].findingLibraryStatus,
         pendingStatuses: [...new Set(pending.map(o => o.libraryStatus))], classIds: nodes.map(node => node.id),
-        components: [...finding.problem.component],
+        components: responsibilityLabels(finding.problem),
         evidence: finding.evidence.map(e => ({ message_index: e.message_index, quote: e.quote })) };
     });
     records.push({ _id: `sample:${identity}:${sample.inputId}`, kind: "sample", id: sample.inputId,

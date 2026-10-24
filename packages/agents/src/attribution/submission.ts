@@ -87,12 +87,23 @@ function bindSubmission(request: AgentRequest, submitted: unknown, audit: ToolAu
           expected:basis.filter(item=>item.norm_index !== null).map(item=>item.basis_index),
           message:"指令遵循须选择有真实规范来源的依据。"});
       const ruleBound=row.dimension === "instruction_following" || selected?.kind === "own_rule";
-      const evidence = references(row.evidence_indices, `${path}/evidence_indices`);
+      const component = type === "problem" ? list(row.component).map(object).map((cause, index) => {
+        const { evidence_indices, ...fields } = cause;
+        return { ...fields, evidence_ids: references(evidence_indices, `${path}/component/${index}/evidence_indices`).map(ref => ref.evidence_id) };
+      }) : [];
+      const investigation = type === "problem" ? list(row.investigation).map(object).map((chain, i) => ({
+        chain_index: chain.chain_index, steps: list(chain.steps).map(object).map((step, j) => {
+          const { evidence_indices, ...fields } = step;
+          return { ...fields, evidence_ids: references(evidence_indices, `${path}/investigation/${i}/steps/${j}/evidence_indices`).map(ref => ref.evidence_id) };
+        }),
+      })) : [];
+      const evidence = references([...new Set([...list(row.evidence_indices), ...list(row.component).flatMap(cause => list(object(cause).evidence_indices)),
+        ...list(row.investigation).flatMap(chain => list(object(chain).steps).flatMap(step => list(object(step).evidence_indices)))])], `${path}/evidence_indices`);
       return { type, dimension: row.dimension, stage: row.stage, importance: row.importance, text: row.text, reason: row.reason, evidence,
         ...(ruleBound ? {norm_index:selected?.norm_index ?? null} : {}),
         assessment: { observation: row.text, evidence_status: row.evidence_status, impact: type === "strength" ? row.reason : row.impact,
           ...(ruleBound ? {} : {requirement_index:selected?.requirement_index ?? null}) },
-        ...(type === "problem" ? {problem: {component:row.component,label:row.label,definition:row.definition}} : {}),
+        ...(type === "problem" ? {problem: {component,diagnosis:row.diagnosis,investigation,label:row.label,definition:row.definition}} : {}),
       };
     }),
     ...(Object.hasOwn(value,"table_resolutions") ? { table_resolutions: list(value.table_resolutions).map(object).map((row,index) => ({

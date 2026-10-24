@@ -1,3 +1,4 @@
+import { responsibilityFixture } from "../../fixtures/responsibility.js";
 import { canonicalEvidence } from "../../fixtures/evidence.js";
 import test from "node:test";
 import assert from "node:assert/strict";
@@ -23,7 +24,7 @@ for (const clustering of [false, true]) test(`rewrite embeds named text in stage
     clustering ? Array.from({ length: 4 }, () => [raw("q1", "4", "2+2=5")]) : undefined, true, clustering,
   );
   const initialRewrites = clustering ? 5 : 3;
-  const expectedCalls = clustering ? 15 : 11;
+  const expectedCalls = clustering ? 17 : 13;
   const expectedRewrites = clustering ? 9 : 7;
   let calls = 0;
   const logged: EvaluationLog[] = [];
@@ -60,7 +61,7 @@ for (const clustering of [false, true]) test(`rewrite embeds named text in stage
             finding.reason = "原文给出5，正确结果应为4。";
             finding.assessment.observation = material.answer.final_answer;
             finding.assessment.impact = "唯一所求结果错误，未完成计算要求。";
-            finding.problem = { component: ["模型自身推理"], label: "计算错误", definition: "计算与事实不符。" };
+            finding.problem = { diagnosis: "other" as const, investigation: [], component: [responsibilityFixture("最终作答节点（原始名称未提供）", {evidence_ids: []})], label: "计算错误", definition: "计算与事实不符。" };
           }
           const result = await submitFor(options, draftFor(options.spec, evaluation));
           assert.equal(result.isError, undefined, JSON.stringify(result));

@@ -1,12 +1,15 @@
+import { businessChains, businessChainNavigation } from "./business-chains.js";
 import { isToolSpan } from "./adapters.js";
 import { isDeepStrictEqual } from "node:util";
 import { workflowText } from "@eval/prompts";
 import { canonical, presentSource, type AgentBinding, type PlannedTask, type SubmissionReceipt, type TaskAnalysis } from "@eval/contracts";
-import { cite, images, originalUserTimestamp, displayEvidence, evidenceSources, messageContentSources, parseEvidenceCoordinates, instructionSources, normativeSources, sourceTextBlocks, visualCaptureMarkers, type InstructionSource, type TableCheckResult } from "@eval/tools";
+import { traceComponentIdentities, cite, images, answerTurnContexts, originalUserTimestamp, displayEvidence, evidenceSources, messageContentSources, parseEvidenceCoordinates, instructionSources, normativeSources, sourceTextBlocks, visualCaptureMarkers, type InstructionSource, type TableCheckResult, type TraceComponentIdentity } from "@eval/tools";
 import { acceptedAttributionView } from "./accepted-attribution.js";
 import { presentedMaterialReads, projectComparisonEvidence } from "./evidence-presentation.js";
 import { contentText } from "./input.js";
-import type { TaskData, RawInput, ComparisonResult } from "./types.js";
+import type { TaskData, RawInput, ComparisonResult, Candidate } from "./types.js";
+import { attributionTrace } from "./public-trace.js";
+import { bindInstructionReview } from "./instruction-review.js";
 import { display } from "./results.js";
 import { sourceSlots } from "./commentary.js";
 import { taskObservations, requestItems } from "./observations.js";
@@ -108,6 +111,10 @@ function modelMaterial(material: Record<string, unknown>, candidate: string, raw
   }).map((section, index) => ({ section_index: index + 1, ...section })) : [];
   return {
     ...anonymous,
+    ...(material.component_catalog ? { component_catalog: (material.component_catalog as TraceComponentIdentity[]).map(actor => ({ ...actor,
+      identity_evidence: actor.identity_evidence.map(shown),
+    })) } : {}),
+    ...(material.business_chains ? { business_chains: businessChainNavigation(material.business_chains as import("@eval/agents/attribution").BusinessChain[], candidate) } : {}),
     ...(captureGaps.length ? { capture_gaps: captureGaps } : {}),
     ...(imageCount ? { final_images: { image_count: imageCount,
       view_request: { candidate, message_index: finalIndex } } } : {}),
@@ -179,6 +186,83 @@ function modelMaterial(material: Record<string, unknown>, candidate: string, raw
   };
 }
 
+/** Both workflows adapt their public task and trace into this single Attribution contract. */
+export function bindAttributionMaterial(candidate: Candidate, original: RawInput, analysis?: TaskAnalysis,
+  options: { reference?: unknown; initialContextChars?: number } = {}): AgentBinding {
+  const raw = attributionTrace(original, candidate.input_id, candidate.final_index);
+  const task_analysis: TaskAnalysis = analysis ?? { task_type: "回答评审", goal: candidate.question,
+    requirements: [{ id: "r1", text: candidate.question, acceptance_rule: candidate.question, applies_to: [] }], scoring_points: [], red_flags: [] };
+  const reference = options.reference === undefined ? candidate.reference : options.reference;
+  const sources = { answer: { id: candidate.input_id, value: raw } };
+  const finalSources = messageContentSources(raw.messages[candidate.final_index]);
+  const limit = Math.max(16000, options.initialContextChars ?? 16000);
+  const deferred = finalSources.filter(source => source.text.length > limit);
+  const citations = citationInventory(raw, candidate.input_id, candidate.final_index);
+  let used = 0;
+  const initial: {
+    message_index: number;
+    value: unknown;
+    evidence: ReturnType<typeof cite>[];
+  }[] = [];
+  const addInitial = (message_index: number, value: unknown, evidence: ReturnType<typeof cite>[]) => {
+    const text = canonical(value);
+    const cost = text.length + evidence.reduce((total, item) => total + item.quote.length, 0);
+    if (used + cost > (options.initialContextChars ?? 16000) || text.includes("data:image/")) return;
+    initial.push({ message_index, value, evidence });
+    used += cost;
+  };
+  // A citation may identify a small complete source inside a very large return.
+  // Prefer original returns over duplicate renderer projections; neither proves the claim.
+  const cited = new Map(citations.references.flatMap(reference => {
+    const returned = reference.sources.filter(source => source.origin === "tool_return");
+    return (returned.length ? returned : reference.sources).map(source => [source.evidence_id, source] as const);
+  }));
+  for (const { evidence_id, message_index, quote } of cited.values())
+    addInitial(message_index, quote, [{ evidence_id, message_index, quote }]);
+  const priority = raw.messages
+    .map((message, index) => ({ index, returned: isToolSpan(message) || message.role === "tool" ||
+      ["function_call_output", "tool_result"].includes(message.type || "") }))
+    .sort((a, b) => Number(b.returned) - Number(a.returned) || b.index - a.index)
+    .map(item => item.index);
+  for (const i of priority) {
+    if (i === candidate.final_index) continue;
+    if (["system", "developer"].includes(raw.messages[i].role || "")) continue;
+    const value = Object.fromEntries(
+      Object.entries(raw.messages[i]).filter(
+        ([key]) => !["input_messages", "model", "model_parameters"].includes(key),
+      ),
+    );
+    // Evidence must describe the projected material actually shown, and its quotes count
+    // against the same budget. Raw-only fields stay behind read_trace for progressive
+    // disclosure instead of inflating the first prompt with quotes from hidden content.
+    const evidence = evidenceSources(value)
+      .filter((source) => source.kind === "text" && source.text.length && source.text.length <= 2000)
+      .map((source) => cite(candidate.input_id, i, source, 0, source.text.length));
+    addInitial(i, value, evidence);
+  }
+  initial.sort((a, b) => a.message_index - b.message_index);
+  const answer = {
+    identity: { version_id: candidate.version, display_name: candidate.name, answer_model: candidate.llm },
+    question: candidate.question, final_message_index: candidate.final_index,
+    final_answer: deferred.reduce((text, source) => text.replaceAll(source.text, ""), contentText(raw.messages[candidate.final_index].content)),
+    final_evidence: finalSources.filter(source => source.text.length <= limit).map(source => cite(candidate.input_id, candidate.final_index, source, 0, source.text.length)),
+    deferred_final_material: deferred.map(source => ({ message_index: candidate.final_index, path: source.path, total_chars: source.text.length })),
+    initial_material: initial, instruction_sources: [], citation_inventory: citationInventory(raw, candidate.input_id, candidate.final_index),
+    business_chains: businessChains(raw, candidate.input_id, candidate.final_index),
+    catalog: traceCatalog(raw), component_catalog: traceComponentIdentities(raw, candidate.input_id, candidate.final_index),
+    input_file: "inputs/answer.json", original_answer_timing: { finish_seconds: candidate.answer_timing.finish_seconds },
+    answer_generation: getAnswerGeneration(raw, candidate.input_id, candidate.final_index),
+    criterion_instruction_sources: criterionInstructionSources(raw, candidate.final_index, task_analysis, candidate.input_id),
+    table_check_results: attributionTableChecks(raw, candidate.input_id, candidate.final_index), note: workflowText("attribution-material"),
+  };
+  const input = { candidate_id: candidate.input_id, task_analysis, material_availability: { public_task: true, final_delivery: true, process_records: raw.messages.some((message,index)=>index!==candidate.final_index && !["user","system","developer"].includes(message.role??"") && message.type!=="private_instruction_omitted"), actual_model_inputs: answerTurnContexts(raw,candidate.final_index).length>0, call_links: traceCatalog(raw).some(row=>row.call_message_index!==undefined) }, ground_truth: { available: reference !== null, value: reference }, answer };
+  Object.assign(answer, { norm_directory: attributionNormDirectory({ input, sources }) });
+  const modelInput = { ...input, task_focus: taskFocus({ answer }, input.ground_truth, { answer: raw }), task_analysis: taskAnalysisPresentation(task_analysis, { answer: candidate.input_id }, answer.criterion_instruction_sources),
+    answer: modelMaterial(answer, "answer", raw, candidate.input_id, 8000) };
+  return { agent: "attribution", profile: "default", request: { input, sources }, modelInput,
+    projectModelInput: projectComparisonEvidence, presentedReads: presentedMaterialReads(modelInput.answer, "answer", candidate.input_id) };
+}
+
 export function bindTask(
   task: PlannedTask,
   inputs: Record<string, unknown>,
@@ -202,6 +286,10 @@ function bindSourceTask(
   acceptedAnalysis?: TaskAnalysis,
 ): AgentBinding {
   const data = task.data as TaskData;
+  if (task.stage === "instruction-review") {
+    const candidate = data.candidates.A ?? Object.values(data.candidates)[0];
+    return bindInstructionReview(candidate, inputs[candidate.input_id] as RawInput);
+  }
   if ((data.verificationAudit || data.verificationOf) &&
     (task.stage !== "comparison" || data.stage !== "comparison" || data.verificationAudit !== true || !data.verificationOf?.taskId))
     throw new Error("可选核验必须同时声明核验标记与正式对比来源。");
@@ -217,9 +305,8 @@ function bindSourceTask(
         const raw = inputs[candidate.input_id] as RawInput;
         return {
           candidate_id: candidate.input_id,
-          instructions: instructionSources(raw, candidate.input_id, candidate.final_index)
-            .map(({ message_index, role, content }) => ({ message_index, role, content })),
-          context: normativeSources(raw, candidate.input_id, candidate.final_index).filter(source => source.role === "user")
+          instructions: [],
+          context: normativeSources(raw, candidate.input_id, candidate.final_index).filter(source => source.role === "user" && source.path === "/content")
             .map(({ message_index, content }) => ({ message_index, role: "user" as const, content })),
         };
       }),
@@ -325,6 +412,37 @@ function bindSourceTask(
         Object.values(item.dependencies).some(id => id === task.id || id === data.reviewOf!.taskId)))
       throw new Error("事实复核来源与登记的同题材料不一致：" + key);
   }
+  if (attribution) {
+    const binding = bindAttributionMaterial(data.candidates.A, inputs[data.candidates.A.input_id] as RawInput,
+      task_analysis as TaskAnalysis, { reference, initialContextChars: data.initialContextChars });
+    const reviewReasons = [...(data.reviewOf?.reasons ?? []), ...(data.reviewQuestions ?? [])];
+    const additions = { allow_standard_conflict: data.standardAnswerReview === true,
+      ...(reviewReasons.length ? { review_context: { reasons: reviewReasons } } : {}) };
+    Object.assign(binding.request.input, additions); Object.assign(binding.modelInput!, additions);
+    if(reviewReasons.length)binding.modelInput!.review_context={reasons:reviewReasons,kind:"unverified_concerns"};
+    if(data.prediction)binding.modelInput!.prediction_evaluation=workflowText("prediction-evaluation");
+    if (Object.keys(data.referenceCandidates ?? {}).length) {
+      const registered: Record<string, unknown> = {}, shown: Record<string, unknown> = {};
+      for (const [key, candidate] of Object.entries(data.referenceCandidates!)) {
+        const peer = bindAttributionMaterial(candidate, inputs[candidate.input_id] as RawInput, task_analysis as TaskAnalysis, { reference });
+        const raw = peer.request.sources.answer.value as RawInput;
+        binding.request.sources[key] = peer.request.sources.answer;
+        const { component_catalog: _actors, norm_directory: _norms, ...peerAnswer } = peer.request.input.answer as Record<string, unknown>;
+        const { component_catalog: _shownActors, norm_directory: _shownNorms, ...peerShown } = peer.modelInput!.answer as Record<string, unknown>;
+        registered[key] = { ...peerAnswer, grader_only: true, source_input_id: candidate.input_id,
+          original_user_timestamp: originalUserTimestamp(raw) };
+        shown[key] = { ...peerShown, grader_only: true, source_input_id: candidate.input_id,
+          original_user_timestamp: originalUserTimestamp(raw) };
+      }
+      binding.request.input.reference_materials = registered;
+      binding.modelInput!.reference_materials = shown;
+    }
+    if (blind) {
+      for (const source of Object.values(binding.request.sources)) source.presentation = blind.presentation;
+      binding.modelInput = presentSource(binding.modelInput, blind.presentation);
+    }
+    return binding;
+  }
   const sources = Object.fromEntries(
     Object.entries(task.inputIds).map(([label, id]) => [label, {
       id,
@@ -333,7 +451,7 @@ function bindSourceTask(
     }]),
   );
   const materials = Object.fromEntries(
-    (attribution ? [["answer", data.candidates.A] as const, ...Object.entries(data.referenceCandidates ?? {})] : Object.entries(data.candidates)).map(([label, candidate]) => {
+    Object.entries(data.candidates).map(([label, candidate]) => {
       const raw = sources[label].value as RawInput;
       const finalSources = messageContentSources(raw.messages[candidate.final_index]);
       const finalBlockLimit = Math.max(16000, data.initialContextChars ?? 16000);
@@ -394,7 +512,7 @@ function bindSourceTask(
         label,
         {
           question,
-          ...(!attribution ? { candidate_id: candidate.input_id } : {}),
+          candidate_id: candidate.input_id,
           final_message_index: candidate.final_index,
           answer_generation: getAnswerGeneration(raw, candidate.input_id, candidate.final_index),
           final_answer: final,
@@ -410,14 +528,14 @@ function bindSourceTask(
           catalog: traceCatalog(raw),
           input_file: `inputs/${label}.json`,
           original_answer_timing: { finish_seconds: candidate.answer_timing.finish_seconds },
-          ...(!attribution ? { original_answer_usage: originalAnswerUsage(inputs[candidate.input_id] as RawInput) } : {}),
+          original_answer_usage: originalAnswerUsage(inputs[candidate.input_id] as RawInput),
           note: workflowText("attribution-material"),
         },
       ];
     }),
   );
 
-  const attributions = attribution ? {} : Object.fromEntries(
+  const attributions = Object.fromEntries(
     Object.entries(dependencies)
       .filter(([label, r]) => Object.hasOwn(data.candidates, label) && r?.taskId === task.dependencies[label] && r?.status === "succeeded")
       .map(([label, r]) => {
@@ -432,7 +550,7 @@ function bindSourceTask(
         return [label, { ...result, findings: result.findings.map((finding, index) => ({ ...finding, finding_index: index })) }];
       }),
   );
-  const tableReviews = attribution ? {} : Object.fromEntries(Object.entries(data.candidates).flatMap(([label, candidate]) => {
+  const tableReviews = Object.fromEntries(Object.entries(data.candidates).flatMap(([label, candidate]) => {
     const receipt = dependencies[label];
     if (!receipt) return [];
     const review = attributionTableReview({ input: { answer: { final_message_index: candidate.final_index,
@@ -441,26 +559,8 @@ function bindSourceTask(
     attributions[label] as AttributionResult);
     return [[label, review]];
   }));
-  const sourceReview = attribution ? {} : comparisonSourceReview({ sources,
+  const sourceReview = comparisonSourceReview({ sources,
     input: { task_analysis, candidates: materials, attributions } }, tableReviews);
-  const answer = attribution ? {
-    ...materials.answer,
-    criterion_instruction_sources: criterionInstructionSources(inputs[data.candidates.A.input_id] as RawInput,
-      data.candidates.A.final_index, task_analysis as TaskAnalysis, data.candidates.A.input_id),
-    table_check_results: attributionTableChecks(inputs[data.candidates.A.input_id] as RawInput, data.candidates.A.input_id, data.candidates.A.final_index),
-    identity: {
-      version_id: data.candidates.A.version,
-      display_name: data.candidates.A.name,
-      answer_model: data.candidates.A.llm,
-    },
-  } : undefined;
-  const referenceMaterials = attribution && Object.keys(data.referenceCandidates ?? {}).length ? Object.fromEntries(
-    Object.entries(data.referenceCandidates!).map(([key, candidate]) => {
-      const { instruction_sources: _instructions, ...factual } = materials[key];
-      return [key, { ...factual, table_check_results: attributionTableChecks(inputs[candidate.input_id] as RawInput, candidate.input_id, candidate.final_index),
-        grader_only: true, source_input_id: candidate.input_id,
-        original_user_timestamp: originalUserTimestamp(inputs[candidate.input_id] as RawInput) }];
-    })) : undefined;
   let comparisonDraft: ComparisonResult | undefined;
   if (data.verificationAudit) {
     const draftTask = context.tasks.find(item => item.id === data.verificationOf!.taskId);
@@ -474,45 +574,13 @@ function bindSourceTask(
       throw new Error("可选核验缺少匹配的已接受正式对比：" + data.verificationOf!.taskId);
     comparisonDraft = structuredClone(draft?.evaluation as ComparisonResult);
   }
-  const reviewReasons = [...(data.reviewOf?.reasons ?? []), ...(data.reviewQuestions ?? [])];
-  const reviewContext = reviewReasons.length ? { reasons: reviewReasons } : undefined;
-  const input = attribution
-    ? {
-      candidate_id: data.candidates.A.input_id,
-      allow_standard_conflict: data.standardAnswerReview === true,
-      task_analysis,
-      ...(reviewContext ? { review_context: reviewContext } : {}),
-      ground_truth: { available: data.reference !== null, value: reference },
-      answer,
-      ...(referenceMaterials ? { reference_materials: referenceMaterials } : {}),
-    }
-    : {
-      task_analysis,
-      ground_truth: { available: data.reference !== null, value: reference },
-      candidates: materials,
-      ...(comparisonDraft ? { comparison_draft: comparisonDraft } : {}),
-      attributions,
-      source_review: sourceReview,
-    };
-  if (answer) Object.assign(answer, { norm_directory: attributionNormDirectory({ input, sources }) });
+  const input = { task_analysis, ground_truth: { available: data.reference !== null, value: reference }, candidates: materials, ...(comparisonDraft ? { comparison_draft: comparisonDraft } : {}), attributions, source_review: sourceReview };
   const binding: AgentBinding = {
-    agent: attribution ? "attribution" : "comparison",
+    agent: "comparison",
     profile: data.verificationAudit ? "verification" : "default",
     projectModelInput: projectComparisonEvidence,
     request: { input, sources },
-    modelInput: attribution
-      ? { ...input,
-        ...(reviewContext ? { review_context: { ...reviewContext, kind: "unverified_concerns" } } : {}),
-        task_analysis: taskAnalysisPresentation(task_analysis as TaskAnalysis, { answer: sources.answer.id }, answer!.criterion_instruction_sources),
-        task_focus: taskFocus({ answer: materials.answer }, input.ground_truth,
-          { answer: inputs[data.candidates.A.input_id] as RawInput }),
-        answer: modelMaterial(answer!, "answer", sources.answer.value as RawInput, sources.answer.id, Math.min(8000, data.initialContextChars ?? 16000)),
-        ...(referenceMaterials ? { reference_materials: Object.fromEntries(Object.entries(referenceMaterials).map(([key, material]) => {
-          const projected = modelMaterial({ ...material, instruction_sources: [] }, key, sources[key].value as RawInput, sources[key].id);
-          const { instruction_sources: _instructions, ...factual } = projected;
-          return [key, factual];
-        })) } : {}) }
-      : data.verificationAudit ? verificationPresentation({ ...input, candidates: Object.fromEntries(Object.entries(materials).map(([label, material]) => {
+    modelInput: data.verificationAudit ? verificationPresentation({ ...input, candidates: Object.fromEntries(Object.entries(materials).map(([label, material]) => {
           const projected = modelMaterial(material, label, sources[label].value as RawInput, sources[label].id);
           return [label, { ...material, citation_inventory: projected.citation_inventory, answer_generation: projected.answer_generation,
             criterion_instruction_sources: criterionInstructionSources(sources[label].value as RawInput,
@@ -536,8 +604,6 @@ function bindSourceTask(
   };
   if (data.prediction && binding.modelInput)
     binding.modelInput.prediction_evaluation = workflowText("prediction-evaluation");
-  if (attribution && binding.modelInput) binding.presentedReads = presentedMaterialReads(
-    binding.modelInput.answer as Record<string, unknown>, "answer", sources.answer.id);
   if (blind && binding.modelInput) binding.modelInput = presentSource(binding.modelInput, blind.presentation);
   if (data.verificationAudit) {
     binding.inspectionInput = binding.modelInput;

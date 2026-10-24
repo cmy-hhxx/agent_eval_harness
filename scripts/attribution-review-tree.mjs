@@ -1,3 +1,4 @@
+import { responsibilityLabels } from "@eval/agents/attribution";
 import { effectiveProblemOccurrences, normalizeLabel, projectLibrary } from "@eval/agents/clustering";
 
 const modelOrder = ["a_fast", "a_expert", "b_fast", "b_expert"];
@@ -84,7 +85,7 @@ export function projectProblemLibraryTree(rows, libraries, classTexts, unfinishe
       const row = byTask.get(occurrence.attribution.task_id);
       if (!row) continue;
       const finding = row.raw.findings.find(item => item.finding_id === occurrence.finding_id);
-      const component = finding?.problem?.component.find(value => [target.component.label, ...target.component.aliases].some(label => normalizeLabel(label) === normalizeLabel(value)));
+      const component = (finding?.problem ? responsibilityLabels(finding.problem) : []).find(value => [target.component.label, ...target.component.aliases].some(label => normalizeLabel(label) === normalizeLabel(value)));
       if (library.model !== row.model || occurrence.version !== row.model || occurrence.input_id !== row.inputId ||
         occurrence.batch_id !== row.date || occurrence.case_id !== row.caseId || occurrence.attribution.run !== row.attribution.run ||
         occurrence.attribution.run_id !== row.attribution.run_id || occurrence.attribution.submission_id !== row.attribution.submission_id ||
@@ -109,8 +110,8 @@ export function projectProblemLibraryTree(rows, libraries, classTexts, unfinishe
   }
   const pending = assigned.flatMap(row => row.raw.findings.flatMap(finding => {
     if (finding.type !== "problem") return [];
-    const components = finding.problem.component.filter(component => !row.classes.some(item => item.findingId === finding.finding_id && item.component === component));
-    return components.length || !finding.problem.component.length ? [{ taskId: row.taskId, findingId: finding.finding_id,
+    const components = responsibilityLabels(finding.problem).filter(component => !row.classes.some(item => item.findingId === finding.finding_id && item.component === component));
+    return components.length || !responsibilityLabels(finding.problem).length ? [{ taskId: row.taskId, findingId: finding.finding_id,
       components, summary: row.problemSummaries.get(finding.finding_id) }] : [];
   }));
   return projectAttributionTree(assigned, { nodes, pending, samples: assigned.map(row => ({ taskId: row.taskId, taskSummary: row.taskSummary })) }, unfinished);
@@ -132,7 +133,7 @@ export function projectAttributionTree(rows, grouping, unfinished = []) {
       if (finding.type !== "problem") continue;
       const coordinate = key(row.taskId, finding.finding_id);
       if (problems.has(coordinate)) throw new Error(`归因审阅问题坐标重复：${coordinate}`);
-      const components = finding.problem.component;
+      const components = responsibilityLabels(finding.problem);
       const statusByComponent = new Map(components.map(component => [component,
         (row.classes ?? []).some(item => item.findingId === finding.finding_id && item.component === component) ? "classified" :
           finding.assessment.evidence_status === "uncertain" ? "uncertain" :
@@ -154,9 +155,9 @@ export function projectAttributionTree(rows, grouping, unfinished = []) {
     const coordinate = key(member.taskId, member.findingId), problem = problems.get(coordinate);
     if (!problem) throw new Error(`归因审阅成员缺失或重复：${coordinate}`);
     const { row, finding, libraryStatus: findingLibraryStatus, statusByComponent } = problem;
-    const components = member.components ?? finding.problem.component, seen = claimed.get(coordinate) ?? new Set();
-    if (!Array.isArray(components) || new Set(components).size !== components.length || components.some(component => !finding.problem.component.includes(component)) ||
-      (!components.length && finding.problem.component.length) || (components.length ? components : [null]).some(component => seen.has(component)))
+    const components = member.components ?? responsibilityLabels(finding.problem), seen = claimed.get(coordinate) ?? new Set();
+    if (!Array.isArray(components) || new Set(components).size !== components.length || components.some(component => !responsibilityLabels(finding.problem).includes(component)) ||
+      (!components.length && responsibilityLabels(finding.problem).length) || (components.length ? components : [null]).some(component => seen.has(component)))
       throw new Error(`归因审阅成员缺失或重复：${coordinate}`);
     for (const component of components.length ? components : [null]) seen.add(component);
     claimed.set(coordinate, seen);
@@ -183,7 +184,7 @@ export function projectAttributionTree(rows, grouping, unfinished = []) {
   });
   const pendingObservations = grouping.pending.map(observe);
   if (claimed.size !== problems.size || [...problems.entries()].some(([coordinate, problem]) =>
-    claimed.get(coordinate)?.size !== Math.max(1, problem.finding.problem.component.length))) throw new Error("归因审阅问题覆盖不完整");
+    claimed.get(coordinate)?.size !== Math.max(1, responsibilityLabels(problem.finding.problem).length))) throw new Error("归因审阅问题覆盖不完整");
   const observations = [...nodes.flatMap(node => node.observations), ...pendingObservations];
   const samples = rows.map(row => {
     const own = [...new Map(observations.filter(item => item.sampleId === row.id).map(item => [item.findingId, item])).values()];

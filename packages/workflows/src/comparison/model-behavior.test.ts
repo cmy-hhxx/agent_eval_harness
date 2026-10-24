@@ -1,3 +1,4 @@
+import { responsibilityFixture } from "../../../../tests/fixtures/responsibility.js";
 import test from "node:test";
 import assert from "node:assert/strict";
 import { emptyUsage, type PlannedTask, type SubmissionReceipt } from "@eval/contracts";
@@ -15,7 +16,7 @@ function finding(id: string, component: string[], options: { uncertain?: boolean
   return { finding_id: id, type: options.strength ? "strength" : "problem", text: options.text ?? `具体行为 ${id}`, reason: "来源可核对",
     dimension: "reasoning", stage: "final_answer", importance: "medium", evidence: [],
     assessment: { requirement_index: null, observation: "已观察行为", evidence_status: options.uncertain ? "uncertain" : "established", impact: "影响交付" },
-    problem: options.strength ? null : { component, label: "问题", definition: "已记录问题" } };
+    problem: options.strength ? null : { diagnosis: "other", investigation: [], component:component.map((name,index)=>responsibilityFixture(name,{role:index?"contributing":"primary"})), label: "问题", definition: "已记录问题" } };
 }
 function receipt(id: string, findings: AttributionResult["findings"]): SubmissionReceipt {
   return { taskId: id, submissionId: `${id}-receipt`, evaluatorVersion: "test", judge: "judge", acceptedAt: 1,
@@ -24,8 +25,8 @@ function receipt(id: string, findings: AttributionResult["findings"]): Submissio
 }
 
 test("model behavior counts mixed and unknown responsibility once without attributing strengths", () => {
-  const findings = [finding("f1", ["模型自身推理"]), finding("f2", ["模型自身推理", "search", "search"]),
-    finding("f3", ["search"]), finding("f4", []), finding("f5", ["模型自身推理"], { uncertain: true }),
+  const findings = [finding("f1", ["最终作答节点（原始名称未提供）"]), finding("f2", ["最终作答节点（原始名称未提供）", "search", "search"]),
+    finding("f3", ["search"]), finding("f4", []), finding("f5", ["最终作答节点（原始名称未提供）"], { uncertain: true }),
     finding("f6", [], { strength: true })];
   const source = receipt("source", findings), copy = receipt("copy", findings);
   const result = modelBehavior([task("source"), task("copy"), task("pending", "unreviewed")], { source, copy });
@@ -44,7 +45,7 @@ test("model behavior follows current attribution references and stays independen
     dependencies: { A: "current", B: "other" },
     data: { candidates: { A: { input_id: "answer" }, B: { input_id: "b-answer" } } } });
   const receipts = { old: receipt("old", [finding("f1", ["search"])]),
-    current: receipt("current", [finding("f1", ["模型自身推理"])]), other: receipt("other", []) };
+    current: receipt("current", [finding("f1", ["最终作答节点（原始名称未提供）"])]), other: receipt("other", []) };
   const result = modelBehavior(tasks, receipts);
   assert.deepEqual(result.rows[0].sources.map(item => item.task_id), ["current"]);
   assert.equal(result.summary.by_version.a.problems.model, 1);
@@ -55,7 +56,7 @@ test("model behavior follows current attribution references and stays independen
 
 test("different accepted descriptions at one finding coordinate stay unconfirmed and retain both sources", () => {
   const result = modelBehavior([task("first"), task("second")], {
-    first: receipt("first", [finding("f1", ["模型自身推理"], { text: "单位错误" })]),
+    first: receipt("first", [finding("f1", ["最终作答节点（原始名称未提供）"], { text: "单位错误" })]),
     second: receipt("second", [finding("f1", [], { text: "来源无法核实" })]),
   });
   const item = result.rows[0].findings[0];
@@ -70,7 +71,7 @@ test("an accepted review replaces its earlier responsibility findings while a pe
   (review.data as TaskData).reviewOf = { taskId: original.id, round: 1, reasons: ["核实原问题"] };
   (pending.data as TaskData).reviewOf = { taskId: review.id, round: 2, reasons: ["继续核实"] };
   const receipts: Record<string, SubmissionReceipt> = {
-    original: receipt(original.id, [finding("f0", ["模型自身推理"])]),
+    original: receipt(original.id, [finding("f0", ["最终作答节点（原始名称未提供）"])]),
     review: receipt(review.id, []),
   };
   const tasks = [original, review, pending], result = modelBehavior(tasks, receipts);
@@ -79,7 +80,7 @@ test("an accepted review replaces its earlier responsibility findings while a pe
   assert.equal(result.summary.accepted_answers, 1);
   assert.equal(result.summary.planned_answers, 1);
   assert.equal(result.summary.by_version.a.problems.model, 0);
-  receipts.pending = receipt(pending.id, [finding("f0", ["模型自身推理", "search"])]);
+  receipts.pending = receipt(pending.id, [finding("f0", ["最终作答节点（原始名称未提供）", "search"])]);
   const latest = modelBehavior(tasks, receipts);
   assert.deepEqual(latest.rows[0].sources.map(source => source.task_id), [pending.id]);
   assert.equal(latest.summary.by_version.a.problems.mixed, 1);
@@ -88,7 +89,7 @@ test("an accepted review replaces its earlier responsibility findings while a pe
 });
 
 test("accepted reviews replace old findings even when separate pairs still reference both sources", () => {
-  for (const reviewedFindings of [[], [finding("f0", ["模型自身推理", "search"])]]) {
+  for (const reviewedFindings of [[], [finding("f0", ["最终作答节点（原始名称未提供）", "search"])]]) {
     const original = task("original"), review = task("review"), firstPeer = task("first-peer", "b-answer", "b"),
       secondPeer = task("second-peer", "c-answer", "c");
     (review.data as TaskData).reviewOf = { taskId: original.id, round: 1, reasons: ["核实原问题"] };
@@ -99,7 +100,7 @@ test("accepted reviews replace old findings even when separate pairs still refer
     }));
     const tasks = [original, review, firstPeer, secondPeer, ...comparisons];
     const receipts: Record<string, SubmissionReceipt> = {
-      original: receipt(original.id, [finding("f0", ["模型自身推理"])]),
+      original: receipt(original.id, [finding("f0", ["最终作答节点（原始名称未提供）"])]),
       [firstPeer.id]: receipt(firstPeer.id, []), [secondPeer.id]: receipt(secondPeer.id, []),
     };
     const beforePending = structuredClone({ tasks, receipts }), pending = modelBehavior(tasks, receipts);
@@ -134,7 +135,7 @@ test("a comparison awaiting multiple reviews retains the nearest accepted source
   const waiting = modelBehavior(tasks, receipts);
   assert.equal(waiting.summary.planned_answers, 2);
   assert.equal(waiting.summary.accepted_answers, 1);
-  receipts.original = receipt(original.id, [finding("f0", ["模型自身推理"])]);
+  receipts.original = receipt(original.id, [finding("f0", ["最终作答节点（原始名称未提供）"])]);
   const first = modelBehavior(tasks, receipts);
   assert.equal(first.summary.planned_answers, 2);
   assert.equal(first.summary.accepted_answers, 2);
@@ -143,7 +144,7 @@ test("a comparison awaiting multiple reviews retains the nearest accepted source
   const reviewed = modelBehavior(tasks, receipts);
   assert.deepEqual(reviewed.rows.find(row => row.input_id === "answer")!.sources.map(source => source.task_id), [review.id]);
   assert.equal(reviewed.summary.by_version.a.problems.model, 0);
-  receipts.latest = receipt(latest.id, [finding("f0", ["模型自身推理", "search"])]);
+  receipts.latest = receipt(latest.id, [finding("f0", ["最终作答节点（原始名称未提供）", "search"])]);
   const accepted = modelBehavior(tasks, receipts);
   assert.deepEqual(accepted.rows.find(row => row.input_id === "answer")!.sources.map(source => source.task_id), [latest.id]);
   assert.equal(accepted.summary.by_version.a.problems.mixed, 1);
@@ -158,7 +159,7 @@ test("a pending comparison review cannot recover an accepted source through anot
   const comparison: PlannedTask = { id: "comparison", stage: "comparison", inputIds: { A: "answer", B: "b-answer" },
     dependencies: { A: pending.id, B: peer.id }, data: { candidates: { A: { input_id: "answer" }, B: { input_id: "b-answer" } } } };
   const result = modelBehavior([original, bridge, pending, peer, comparison], {
-    original: receipt(original.id, [finding("f0", ["模型自身推理"])]), peer: receipt(peer.id, []),
+    original: receipt(original.id, [finding("f0", ["最终作答节点（原始名称未提供）"])]), peer: receipt(peer.id, []),
   });
   assert.equal(result.summary.planned_answers, 2);
   assert.equal(result.summary.accepted_answers, 1);
@@ -169,7 +170,7 @@ test("a pending comparison review cannot recover an accepted source through anot
 test("a problem and a strength at the same coordinate remain disputed regardless of source order", () => {
   for (const order of [["problem", "strength"], ["strength", "problem"]]) {
     const result = modelBehavior(order.map(id => task(id)), {
-      problem: receipt("problem", [finding("f0", ["模型自身推理"])]),
+      problem: receipt("problem", [finding("f0", ["最终作答节点（原始名称未提供）"])]),
       strength: receipt("strength", [finding("f0", [], { strength: true })]),
     });
     const item = result.rows[0].findings[0];

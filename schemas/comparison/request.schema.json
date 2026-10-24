@@ -817,6 +817,9 @@
         "document_url": {
           "type": "string",
           "minLength": 1
+        },
+        "request_query": {
+          "type": "string"
         }
       }
     },

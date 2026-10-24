@@ -9,6 +9,7 @@ import {
 } from "@eval/contracts";
 import { resolveAttributionEvidence } from "./source-evidence.js";
 import type { Evidence, ProblemProposal } from "./types.js";
+import { investigationIssues } from "./investigation.js";
 import { resolveProblemSubmission } from "./responsibility.js";
 import schema from "../../../../schemas/attribution/judgment.schema.json" with { type: "json" };
 import { parseTraceTables } from "@eval/tools";
@@ -71,6 +72,10 @@ export function resolveJudgment(request: AgentRequest, draft: unknown, audit: To
     // Validate responsibility against submitted evidence before attaching instruction context.
     const problem = finding.type === "problem"
       ? resolveProblemSubmission(request, finding.problem, selected, `${path}/problem`) : null;
+    if (problem) {
+      const issues = investigationIssues(request, problem, selected.filter((item): item is Evidence => !!item), audit, `${path}/problem`);
+      if (issues.length) throw new ValidationError(issues);
+    }
     const ruleBound=Object.hasOwn(finding,"norm_index");
     const norm = ruleBound && finding.norm_index !== null ? directory[finding.norm_index!] : undefined;
     const requirementIndex = ruleBound ? norm?.requirement_index ?? null : finding.assessment.requirement_index ?? null;

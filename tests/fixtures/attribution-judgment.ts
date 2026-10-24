@@ -1,6 +1,6 @@
 import type { AgentRequest,TaskAnalysis } from "@eval/contracts";
 import { attributionNormDirectory,numericReferenceDirectory,type AttributionResult,type ProblemProposal } from "@eval/agents/attribution";
-import { normSelection } from "./attribution-submission.js";
+import { normSelection, setFixtureComponentCatalog } from "./attribution-submission.js";
 type FixtureFinding = Omit<AttributionResult["findings"][number], "finding_id" | "problem" | "evidence" | "assessment"> & {
   norm_index?: number | null;
   assessment: Omit<AttributionResult["findings"][number]["assessment"], "requirement_index"> & { requirement_index?: number | null };
@@ -10,6 +10,7 @@ type FixtureFinding = Omit<AttributionResult["findings"][number], "finding_id" |
 
 /** Program-bound judgment for local business validation tests; never sent to a model submission tool. */
 export function attributionJudgment(request: AgentRequest, result: AttributionResult) {
+  setFixtureComponentCatalog(request);
   const { has_standard_answer: _derived, task_analysis: _shared, core_assessment, ...submission } = result;
   const refs = (evidence: AttributionResult["correctness_evidence"]) =>
     evidence.map(item => ({ evidence_id: item.evidence_id }));

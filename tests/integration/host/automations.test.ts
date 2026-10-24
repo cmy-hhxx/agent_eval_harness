@@ -9,7 +9,7 @@ import { RemoteInputs } from "@eval/runtime/client";
 import { runPipeline, type AutomationJob, type AutomationState } from "@eval/automations";
 import { startWorker } from "@eval/runtime/worker";
 import { body, json, listen } from "@eval/runtime/http";
-import { assertStatisticsLog, attributionSlots, buildPlan, comparisonCodec, comparisonSlots, deliveryCoverage, PublicationStatistics, readRunState, reconcileRun, type Checkpoint, type TaskData, type RawInput } from "@eval/workflows/comparison";
+import { assertStatisticsLog, attributionSlots, buildPlan, comparisonCodec, comparisonSlots, deliveryCoverage, prepareFailedTasks, PublicationStatistics, readRunState, reconcileRun, type Checkpoint, type TaskData, type RawInput } from "@eval/workflows/comparison";
 import { automationEvaluationConfig, loadAutomationConfig } from "../../../apps/host/src/automation-config.js";
 import { automationCommand } from "../../../apps/host/src/automation-command.js";
 import { publicationSnapshot, syncMongoDay } from "../../../apps/host/src/automation-publication.js";
@@ -229,6 +229,45 @@ test("automation comparison quota accepts a positive integer or explicit null fo
     await writeJson(file, { ...settings, dailyComparisonLimitPerTier: null });
     assert.equal((await loadAutomationConfig(file)).dailyComparisonLimitPerTier, Infinity);
   } finally { await rm(directory, { recursive: true, force: true }); }
+});
+
+test("capped automation retains and resumes an unfinished instruction review without repeating accepted work", async t => {
+  const { directory, config, modelForStage } = await fixtureConfig();
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  const calls = new Map<string, number>();
+  let interrupted: string | undefined, fail = true;
+  const worker = await startWorker({ identity: fakeIdentity, async createSession(options) {
+    return { async run() {
+      const id = options.spec.taskId;
+      calls.set(id, (calls.get(id) ?? 0) + 1);
+      if (options.spec.evaluation.id === "instruction-review" && fail && !interrupted) {
+        interrupted = id;
+        throw Error("controlled independent instruction check interruption");
+      }
+      const result = await submitFor(options, draftFor(options.spec, taskResult(options.spec)));
+      assert.equal(result.isError, undefined, JSON.stringify(result));
+    }, async abort() {}, async dispose() {} };
+  } }, path.join(directory, "worker"));
+  t.after(() => worker.close());
+  const options = { ...services, runId: "instruction-resume", output: config.output, config,
+    plan: await buildPlan(config), taskSource: createAutomationWorkflow(1), modelForStage,
+    evaluatorVersion: fakeEvaluatorVersion, engine: "pi" as const, identity: fakeIdentity,
+    policy: config.execution, concurrency: 4, retries: 0, retryDelaySeconds: 0, workerUrls: [worker.url] };
+  assert.equal((await runEvaluation(options)).completed_comparisons, 1);
+  const run = path.join(config.output.path, options.runId), before = await readRunState(run);
+  assert(interrupted);
+  assert.equal(before.manifest.states[interrupted].status, "failed");
+  fail = false;
+  assert.equal((await prepareFailedTasks(run, { apply: true })).count, 1);
+  await runEvaluation({ ...options, plan: { tasks: [], inputs: {}, summary: {} } });
+  const after = await readRunState(run);
+  assert(after.receipts[interrupted], "the unfinished independent session survives quota reconciliation");
+  assert.equal(calls.get(interrupted), 2);
+  for (const [id, receipt] of Object.entries(before.receipts)) {
+    assert.deepEqual(after.receipts[id], receipt);
+    assert.equal(calls.get(id), 1);
+  }
+  assert.equal((await validateRun(run)).valid, true);
 });
 
 test("narrowing automation pairs retains old receipts but dispatches no unfinished work for retired pairs", async t => {
@@ -503,7 +542,7 @@ for (const modelCount of [4, 6, 2]) test(`automation resumes mixed flat and sess
     }
     assert.deepEqual(interrupted, new Set(["rewrite/attribution", "rewrite/comparison"]));
     const saved = await readRunState(run), counts = summarize([comparisonCodec.encode(saved)]);
-    assert.deepEqual(Object.keys(counts.stages).sort(), ["attribution", "comparison", "criteria", "rewrite"]);
+    assert.deepEqual(Object.keys(counts.stages).sort(), ["attribution", "comparison", "criteria", "instruction-review", "rewrite"]);
     for (const stage of Object.values(counts.stages)) {
       assert(stage.total > 0);
       assert.equal(stage.completed, stage.total);

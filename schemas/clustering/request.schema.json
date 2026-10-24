@@ -28,7 +28,9 @@
         "min_support"
       ],
       "properties": {
-        "assignment_only": { "type": "boolean" },
+        "assignment_only": {
+          "type": "boolean"
+        },
         "active_classes": {
           "type": "integer",
           "minimum": 0
@@ -245,6 +247,103 @@
                                 "minLength": 1
                               }
                             }
+                          },
+                          "responsibilities": {
+                            "type": "array",
+                            "items": {
+                              "type": "object",
+                              "additionalProperties": false,
+                              "required": [
+                                "role",
+                                "component",
+                                "failure_stage",
+                                "mechanism",
+                                "certainty",
+                                "reason",
+                                "evidence_gap",
+                                "alternatives",
+                                "business_component",
+                                "chain_index",
+                                "chain_step",
+                                "field_names",
+                                "mechanism_source"
+                              ],
+                              "properties": {
+                                "role": {
+                                  "enum": [
+                                    "primary",
+                                    "contributing"
+                                  ]
+                                },
+                                "component": {
+                                  "type": "string"
+                                },
+                                "failure_stage": {
+                                  "type": "string"
+                                },
+                                "mechanism": {
+                                  "type": "string"
+                                },
+                                "certainty": {
+                                  "enum": [
+                                    "confirmed",
+                                    "inferred"
+                                  ]
+                                },
+                                "reason": {
+                                  "type": "string"
+                                },
+                                "evidence_gap": {
+                                  "type": [
+                                    "string",
+                                    "null"
+                                  ]
+                                },
+                                "alternatives": {
+                                  "type": "array",
+                                  "items": {
+                                    "type": "string"
+                                  }
+                                },
+                                "business_component": {
+                                  "type": "string",
+                                  "minLength": 1
+                                },
+                                "chain_index": {
+                                  "type": [
+                                    "integer",
+                                    "null"
+                                  ],
+                                  "minimum": 1
+                                },
+                                "chain_step": {
+                                  "enum": [
+                                    "用户目标",
+                                    "查询规划与标的选择",
+                                    "工具请求参数",
+                                    "原始返回及字段含义",
+                                    "返回整理与上下文传递",
+                                    "模型实际输入",
+                                    "数据解释与计算",
+                                    "核验与最终交付"
+                                  ]
+                                },
+                                "field_names": {
+                                  "type": "array",
+                                  "uniqueItems": true,
+                                  "items": {
+                                    "type": "string",
+                                    "minLength": 1
+                                  }
+                                },
+                                "mechanism_source": {
+                                  "enum": [
+                                    "explicit_process",
+                                    "boundary_comparison"
+                                  ]
+                                }
+                              }
+                            }
                           }
                         }
                       }
@@ -337,6 +436,103 @@
                     "established",
                     "uncertain"
                   ]
+                },
+                "responsibilities": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "required": [
+                      "role",
+                      "component",
+                      "failure_stage",
+                      "mechanism",
+                      "certainty",
+                      "reason",
+                      "evidence_gap",
+                      "alternatives",
+                      "business_component",
+                      "chain_index",
+                      "chain_step",
+                      "field_names",
+                      "mechanism_source"
+                    ],
+                    "properties": {
+                      "role": {
+                        "enum": [
+                          "primary",
+                          "contributing"
+                        ]
+                      },
+                      "component": {
+                        "type": "string"
+                      },
+                      "failure_stage": {
+                        "type": "string"
+                      },
+                      "mechanism": {
+                        "type": "string"
+                      },
+                      "certainty": {
+                        "enum": [
+                          "confirmed",
+                          "inferred"
+                        ]
+                      },
+                      "reason": {
+                        "type": "string"
+                      },
+                      "evidence_gap": {
+                        "type": [
+                          "string",
+                          "null"
+                        ]
+                      },
+                      "alternatives": {
+                        "type": "array",
+                        "items": {
+                          "type": "string"
+                        }
+                      },
+                      "business_component": {
+                        "type": "string",
+                        "minLength": 1
+                      },
+                      "chain_index": {
+                        "type": [
+                          "integer",
+                          "null"
+                        ],
+                        "minimum": 1
+                      },
+                      "chain_step": {
+                        "enum": [
+                          "用户目标",
+                          "查询规划与标的选择",
+                          "工具请求参数",
+                          "原始返回及字段含义",
+                          "返回整理与上下文传递",
+                          "模型实际输入",
+                          "数据解释与计算",
+                          "核验与最终交付"
+                        ]
+                      },
+                      "field_names": {
+                        "type": "array",
+                        "uniqueItems": true,
+                        "items": {
+                          "type": "string",
+                          "minLength": 1
+                        }
+                      },
+                      "mechanism_source": {
+                        "enum": [
+                          "explicit_process",
+                          "boundary_comparison"
+                        ]
+                      }
+                    }
+                  }
                 }
               }
             },

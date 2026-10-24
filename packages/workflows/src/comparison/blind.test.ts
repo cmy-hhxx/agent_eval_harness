@@ -1,10 +1,11 @@
+import { responsibilityFixture } from "../../../../tests/fixtures/responsibility.js";
 import { canonicalEvidence } from "../../../../tests/fixtures/evidence.js";
 import test from "node:test";
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
 import { AgentRegistry } from "@eval/host";
 import { comparisonAgent } from "@eval/agents/comparison";
-import { emptyUsage, type CriteriaInput, type PlannedTask, type SubmissionReceipt } from "@eval/contracts";
+import { emptyUsage, type PlannedTask, type SubmissionReceipt } from "@eval/contracts";
 import { blindMaterials } from "./blind.js";
 import { instructionSources, resolveEvidence } from "@eval/tools";
 import { bindTask } from "./workflow.js";
@@ -66,100 +67,6 @@ test("blinding preserves final-answer instruction paths inside LLM contexts", ()
   assert.deepEqual(original, before);
 });
 
-test("criteria and attribution bind the real nested norm even when its identity is masked", () => {
-  const id = randomUUID();
-  const norm = "A组Fast：风险提示必须在结论之后。" + "保留完整条件。".repeat(35);
-  const trace: RawInput = { messages: [
-    { type: "message", role: "user", content: "计算2+2" },
-    { type: "llm_turn", input_messages: { messages: [
-      { role: "system", content: norm }, { role: "user", content: "计算2+2" },
-    ] }, output: [{ role: "assistant", content: "2+2=4。风险。" }] },
-    { type: "message", role: "assistant", content: "2+2=4。风险。" },
-  ] };
-  const candidate = { ...identities.A, input_id: id, question: "计算2+2", final_index: 2,
-    answer_timing: { finish_seconds: 1 } } as Candidate;
-  const candidates = { A: candidate };
-  const criteriaTask: PlannedTask = { id: randomUUID(), stage: "criteria", inputIds: { A: id }, dependencies: {},
-    data: { stage: "criteria", candidates, reference: null } satisfies TaskData };
-  const binding = bindTask(criteriaTask, { [id]: trace }, {}, { tasks: [criteriaTask] });
-  const input = binding.request.input as unknown as CriteriaInput;
-  assert.equal(input.candidates[0]!.instructions.length, 1);
-  assert.match(String(input.candidates[0]!.instructions[0]!.content), /风险提示必须在结论之后/);
-  assert(JSON.stringify(binding.request.sources).includes("A组Fast"), "registered original source remains canonical");
-  assert(JSON.stringify(binding.request.sources).includes("2+2=4。风险。"));
-  assert(!JSON.stringify(binding.request.input).includes("2+2=4。风险。"));
-  const rubric = criteriaResult();
-  rubric.requirements.push({ id: "r2", text: String(input.candidates[0]!.instructions[0]!.content),
-    applies_to: [], acceptance_rule: String(input.candidates[0]!.instructions[0]!.content) });
-  const receipt: SubmissionReceipt = { taskId: criteriaTask.id, attemptId: randomUUID(), submissionId: randomUUID(),
-    acceptedAt: 1, status: "succeeded", evaluatorVersion: "fixture", judge: "fixture", evaluation: rubric,
-    audit: emptyAudit(), usage: emptyUsage() };
-  const attributionTask: PlannedTask = { id: randomUUID(), stage: "attribution", inputIds: { answer: id },
-    dependencies: { criteria: criteriaTask.id }, data: { stage: "attribution", candidates, reference: null } satisfies TaskData };
-  const attribution = bindTask(attributionTask, { [id]: trace }, { criteria: receipt }, { tasks: [criteriaTask, attributionTask] });
-  const answer = attribution.request.input.answer as { instruction_sources: { path: string }[];
-    criterion_instruction_sources: Record<string, { message_index: number; path: string; quote: string }[]> };
-  assert.deepEqual(answer.criterion_instruction_sources.r2, [{ ...canonicalEvidence(id, 1, norm, "/input_messages/messages/0/content"),
-    path: "/input_messages/messages/0/content" }]);
-  assert.equal(answer.instruction_sources[0]!.path, "/input_messages/messages/0/content");
-  const shown = attribution.modelInput!.answer as { initial_material: unknown[];
-    instruction_sources: { content: string; evidence: { quote_preview?: string; reference: unknown }[] }[];
-    criterion_instruction_sources: Record<string, { quote_preview?: string; has_more?: boolean; reference: { evidence_id: string } }[]> };
-  assert(!Object.hasOwn(shown.instruction_sources[0]!, "content"), "full originals stay behind their real source coordinates");
-  assert.equal(shown.instruction_sources[0]!.evidence[0]!.quote_preview, blindMaterials(candidates).value(norm.slice(0, 200)));
-  assert(shown.instruction_sources[0]!.evidence[0]!.reference);
-  const boundNorm = shown.criterion_instruction_sources.r2![0]!;
-  assert.equal(boundNorm.quote_preview, blindMaterials(candidates).value(norm.slice(0, 200)));
-  assert.equal(boundNorm.has_more, true);
-  assert.equal(resolveEvidence(trace, boundNorm.reference, "answer", emptyAudit(), "evidence", id).quote, norm);
-  assert(!JSON.stringify(shown.initial_material).includes(norm));
-});
-
-for (const role of ["system", "user"] as const) test(`a single attribution keeps its group's blind map and complete ${role} norm across text parts`, () => {
-  const ids = [randomUUID(), randomUUID()];
-  const candidates = {
-    A: { ...identities.A, input_id: ids[0], question: "计算2+2", final_index: 1,
-      answer_timing: { finish_seconds: 1 } } as Candidate,
-    B: { version: "b_fast", name: "B组Fast", llm: "another-secret-model", input_id: ids[1], question: "计算2+2",
-      final_index: 2, answer_timing: { finish_seconds: 1 } } as Candidate,
-  };
-  const parts = ["B组Fast：只有涉及投资决策时，", "风险提示必须在结论之后；概念解释无需风险提示。"];
-  const trace: RawInput = { messages: [
-    { type: "message", role: "user", content: "计算2+2" },
-    { type: "llm_turn", input_messages: [{ role, content: parts.map(text => ({ type: "text", text })) },
-      { role: "user", content: "计算2+2" }], output: [{ role: "assistant", content: "2+2=4" }] },
-    { type: "message", role: "assistant", content: "2+2=4" },
-  ] };
-  const inputs = { [ids[0]!]: raw(), [ids[1]!]: trace };
-  const criteriaTask: PlannedTask = { id: randomUUID(), stage: "criteria", inputIds: { A: ids[0]!, B: ids[1]! }, dependencies: {},
-    data: { stage: "criteria", candidates, reference: null } satisfies TaskData };
-  if (role === "user") {
-    const selected = bindTask(criteriaTask, inputs, {}, { tasks: [criteriaTask] }).request.input as unknown as CriteriaInput;
-    assert(selected.candidates[1]!.context.some(source => source.message_index === 1 && Array.isArray(source.content)),
-      "Criteria must see the real nested USER norm before choosing the shared rubric");
-  }
-  const rubric = criteriaResult();
-  const groupBlind = blindMaterials(candidates), singleBlind = blindMaterials({ A: candidates.B });
-  assert.notEqual(groupBlind.value(parts.join("\n")), singleBlind.value(parts.join("\n")));
-  rubric.requirements.push({ id: "r2", text: parts.join("\n"), applies_to: [ids[1]!],
-    acceptance_rule: parts.join("\n") });
-  const receipt: SubmissionReceipt = { taskId: criteriaTask.id, attemptId: randomUUID(), submissionId: randomUUID(),
-    acceptedAt: 1, status: "succeeded", evaluatorVersion: "fixture", judge: "fixture", evaluation: rubric,
-    audit: emptyAudit(), usage: emptyUsage() };
-  const task: PlannedTask = { id: randomUUID(), stage: "attribution", inputIds: { answer: ids[1]! },
-    dependencies: { criteria: criteriaTask.id }, data: { stage: "attribution", candidates: { A: candidates.B }, reference: null } satisfies TaskData };
-  const binding = bindTask(task, inputs, { criteria: receipt }, { tasks: [criteriaTask, task] });
-  const answer = binding.request.input.answer as {
-    criterion_instruction_sources: Record<string, { message_index: number; path: string; quote: string }[]> };
-  assert.deepEqual(answer.criterion_instruction_sources.r2, parts.map((quote, index) => ({
-    ...canonicalEvidence(ids[1]!, 1, quote, `/input_messages/0/content/${index}/text`), path: `/input_messages/0/content/${index}/text`,
-  })));
-  const shown = binding.modelInput!.answer as {
-    criterion_instruction_sources: Record<string, { quote: string; reference: { evidence_id: string } }[]> };
-  assert.deepEqual(shown.criterion_instruction_sources.r2!.map(item =>
-    resolveEvidence(trace, item.reference, "answer", emptyAudit(), "evidence", ids[1]!).quote), parts);
-});
-
 test("comparison removes source identity from prompt text, trace, and attribution without changing receipts", () => {
   const trace: RawInput = {
     version: "a_fast",
@@ -174,7 +81,7 @@ test("comparison removes source identity from prompt text, trace, and attributio
     finding_id: "f1", type: "problem", dimension: "correctness", stage: "execution", importance: "medium",
     text: "A组Fast 的 Search 可能异常", reason: "secret-model 尚待核实", evidence: [canonicalEvidence(evidenceInputId, 2, "A组Fast", "/content/value")],
     assessment: { requirement_index: null, observation: "疑似异常", evidence_status: "uncertain", impact: "若属实会影响结果" },
-    problem: { component: ["Search"], label: "调用结果异常", definition: "结果不完整" },
+    problem: { diagnosis: "other" as const, investigation: [], component: [responsibilityFixture("Search", {evidence_ids: ([canonicalEvidence(evidenceInputId, 2, "A组Fast", "/content/value")]).map(item=>item.evidence_id)})], label: "调用结果异常", definition: "结果不完整" },
   } as AttributionResult["findings"][number];
   const attribution: AttributionResult = {
     criterion_assessments: [], core_assessment: { meets_core: true, reason: "已完成。", criterion_ids: ["r1"] },

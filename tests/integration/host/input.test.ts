@@ -1,3 +1,4 @@
+import { responsibilityFixture } from "../../fixtures/responsibility.js";
 import { testSettings } from "../../fixtures/settings.js";
 import { canonicalEvidence } from "../../fixtures/evidence.js";
 import { services as appServices } from "@eval/host-app/composition";
@@ -15,7 +16,7 @@ import type { Finding } from "@eval/workflows/comparison";
 import type { TaskData, RawInput } from "@eval/workflows/comparison";
 import { emptyAudit, fakeEvaluatorVersion, fakeIdentity, fakeJudge, fixtureConfig, attributionResult, comparisonResult, criteriaResultForTask, raw } from "../../fixtures/comparison.js";
 import path from "node:path";
-import { canonical, evidenceId, emptyUsage, type RunState, type SubmissionReceipt } from "@eval/contracts";
+import { canonical, evidenceId, emptyUsage, ValidationError, type RunState, type SubmissionReceipt } from "@eval/contracts";
 import { ArtifactStore, compressFile, fileSourceReader, readJsonl, writeJsonl } from "@eval/data";
 import { ROOT } from "../../fixtures/services.js";
 import { createRegistry, ToolRuntime } from "@eval/tools";
@@ -533,6 +534,7 @@ test("image observations require an actual image tool audit", async () => {
     });
     result.findings[0].evidence[0] = { evidence_id: evidenceId(task.inputIds.answer!, 1, "image"), message_index: 1, quote: "[图像观察]图片呈现结果" };
     result.findings[0].evidence.push(canonicalEvidence(task.inputIds.answer!, 0, "计算2+2"));
+    for(const cause of result.findings[0].problem?.component??[])cause.evidence_ids=result.findings[0].evidence.map(item=>item.evidence_id);
     assert.throws(() => validateEvaluation(task, plan.inputs, result, audit, {}), /未查看/);
     const runtime = new ToolRuntime(
       {
@@ -781,11 +783,11 @@ test("subjective inputs still run attribution and direct evidence needs no force
     forged.findings[0] = {
       ...forged.findings[0],
       type: "problem",
-      problem: { component: ["组件"], label: "问题", definition: "描述" },
+      problem: { diagnosis: "other" as const, investigation: [], component: [responsibilityFixture("组件", {evidence_ids: forged.findings[0].evidence.map(item=>item.evidence_id)})], label: "问题", definition: "描述" },
     } as (typeof forged.findings)[number];
     assert.throws(
       () => validateEvaluation(task, plan.inputs, forged, emptyAudit(), {}),
-      /problem\.component|上下文组装与传递|模型自身推理/,
+      (error: unknown) => error instanceof ValidationError && error.issues!.some(issue => issue.code === "responsibility_actor"),
     );
   } finally {
     await rm(directory, { recursive: true, force: true });

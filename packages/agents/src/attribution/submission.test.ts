@@ -1,3 +1,4 @@
+import { responsibilityFixture, responsibilitySubmissionFixture } from "../../../../tests/fixtures/responsibility.js";
 import { canonicalEvidence } from "../../../../tests/fixtures/evidence.js";
 import test from "node:test";
 import assert from "node:assert/strict";
@@ -6,7 +7,6 @@ import { ValidationError, evidenceId, selectEvidence, type AgentRequest, type To
 import { attributionAgent, attributionProfile, type AttributionResult } from "./index.js";
 import example from "./fixtures/example.json" with { type: "json" };
 import { attributionSubmission, setFixtureNormDirectory } from "../../../../tests/fixtures/attribution-submission.js";
-import { cite, evidenceSources, selectEvidenceSource } from "@eval/tools";
 
 function fixture(request:AgentRequest=structuredClone(example.request),result:AttributionResult=structuredClone(example.result) as AttributionResult) {
   const audit: ToolAudit = {calls:0,requiredReadCalls:0,viewedImages:[],traceReads:[],calculations:[],artifacts:[],evidenceBank:[]};
@@ -52,7 +52,7 @@ function captureFixture(marker: string) {
   f.draft.problems=[{basis_index:null,dimension:"format",stage:"final_answer",importance:"low",
     text:"可视交付有缺口。",reason:"所选材料只提供了采集状态。",impact:"图中内容无法交付给用户。",
     evidence_status:"established",evidence_indices:[selectEvidence(f.audit.evidenceBank!,capture).evidence_index],
-    component:[],label:"展示缺失",definition:"原始可视内容无法正常呈现。"}];
+    diagnosis: "other", investigation: [], component:[responsibilitySubmissionFixture("最终作答节点（原始名称未提供）",[selectEvidence(f.audit.evidenceBank!,capture).evidence_index],{technical_domain:"交付与呈现",functional_component:"实际呈现"})],label:"展示缺失",definition:"原始可视内容无法正常呈现。"}];
   return {...f,capture,final};
 }
 
@@ -105,7 +105,7 @@ test("missing fixed checks and injected identity fields are rejected rather than
   const g=fixture();Object.assign(g.draft.criterion_assessments[0],{criterion_id:"invented"});
   assert.throws(()=>g.registry.resolve(g.binding,g.draft,g.audit),/additional properties/);
 });
-test("all model-returned objects have at most two object layers",()=>{
+test("model-returned objects keep a bounded responsibility layer and program-owned identities",()=>{
   const f=fixture(),schema=attributionProfile.modelSubmissionSchema!(f.request) as any;
   function depth(value:any,level=0):number {
     if(!value||typeof value!=="object")return level;
@@ -113,7 +113,7 @@ test("all model-returned objects have at most two object layers",()=>{
     return Math.max(next,...Object.values(value.properties??{}).map(item=>depth(item,next)),value.items?depth(value.items,next):next,
       ...(value.allOf??[]).map((item:any)=>depth(item,next)));
   }
-  assert.equal(depth(schema),2);
+  assert.equal(depth(schema),4); // Root → problem → related chain → checked business step.
   assert(!JSON.stringify(schema).includes('"evidence_id"'));
   assert(!JSON.stringify(schema).includes('"criterion_id"'));
 });
@@ -128,66 +128,9 @@ function toolFixture() {
   result.core_assessment.meets_core=false;result.core_assessment.reason="唯一所求计算结果错误。";
   result.criterion_assessments.forEach(row=>{row.evidence=[final];if(row.criterion_id==="r1")row.status="unmet";});
   Object.assign(result.findings[0],{type:"problem",text:"把2+2答成5。",reason:"工具返回5并进入最终结论。",evidence:[final,tool],
-    problem:{component:["Calc"],label:"计算错误",definition:"工具结果错误并传入最终答案。"}});
+    problem:{diagnosis: "other" as const, investigation: [], component:[responsibilityFixture("Calc", {evidence_ids: ([final,tool]).map(item=>item.evidence_id)})],label:"计算错误",definition:"工具结果错误并传入最终答案。"}});
   return fixture(request,result);
 }
-
-test("lost tool data belongs to the actual answer input, not the tool or model by default",()=>{
-  const original=toolFixture(),request=original.request;
-  const result=original.registry.resolve(original.binding,original.draft,original.audit) as AttributionResult;
-  const finalText="缺少输入数据，未能完成计算。";
-  const messages=[{role:"user",content:"计算2+2"},
-    {role:"tool",type:"function_call_output",name:"Calc",content:"2+2=4"},
-    {type:"llm_turn",input_messages:[{role:"user",content:"计算2+2；工具数据：空"}],output:[{role:"assistant",content:finalText}]},
-    {type:"llm_turn",input_messages:[{role:"user",content:"独立规划输入"}],output:[{role:"assistant",content:"规划"}]},
-    {type:"final_answer",role:"assistant",content:finalText}];
-  (request.sources.answer.value as {messages:unknown[]}).messages=messages;
-  const evidence=(index:number,path:string)=>{
-    const range=selectEvidenceSource(evidenceSources(messages[index]),path)!;
-    return cite(request.sources.answer.id,index,range.source,range.start,range.end);
-  };
-  const final=evidence(4,"/content"),tool=evidence(1,"/content"),input=evidence(2,"/input_messages/0/content");
-  Object.assign(request.input.answer as object,{final_message_index:4,final_answer:finalText,final_evidence:[final],
-    catalog:messages.map((message,message_index)=>({message_index,type:message.type??"message",role:message.role,name:message.name,chars:JSON.stringify(message).length}))});
-  result.correctness_evidence=[final];result.numeric_checks=[];
-  result.criterion_assessments.forEach(row=>row.evidence=[final]);
-  Object.assign(result.findings[0],{stage:"execution",evidence:[final,tool,input],problem:{component:[],label:"输入数据丢失",definition:"工具返回了计算结果，实际生成输入却没有传入。"}});
-  const f=fixture(request,result),problem=f.draft.problems[0];
-  problem.component=["上下文组装与传递"];
-  const accepted=f.registry.resolve(f.binding,f.draft,f.audit) as AttributionResult;
-  f.registry.validate(f.binding,accepted,f.audit);
-  assert.deepEqual(accepted.findings[0].problem!.component,["上下文组装与传递"]);
-  assert.equal(accepted.is_correct,false);assert.equal(accepted.core_assessment.meets_core,false);
-  const json=evidence(2,"/input_messages");
-  problem.evidence_indices=[problem.evidence_indices[0],problem.evidence_indices[1],selectEvidence(f.audit.evidenceBank!,json).evidence_index];
-  f.registry.validate(f.binding,f.registry.resolve(f.binding,f.draft,f.audit),f.audit);
-  for(const invalid of [evidence(2,"/output/0/content"),evidence(3,"/input_messages/0/content"),evidence(2,"")]){
-    problem.evidence_indices=[problem.evidence_indices[0],problem.evidence_indices[1],selectEvidence(f.audit.evidenceBank!,invalid).evidence_index];
-    assert.throws(()=>f.registry.resolve(f.binding,f.draft,f.audit),error=>error instanceof ValidationError&&
-      error.issues!.some(issue=>issue.code==="problem_component_evidence_missing"));
-  }
-});
-
-test("explicit responsibility distinguishes a faulty tool from a correct tool used as counterevidence",()=>{
-  const f=toolFixture(),finding=f.draft.problems[0];
-  const schema=attributionProfile.modelSubmissionSchema!(f.request) as any;
-  assert.deepEqual(schema.properties.problems.items.properties.component.items.enum,["模型自身推理","Calc","回答呈现与采集","执行环境与权限配置"]);
-  const value=f.registry.resolve(f.binding,f.draft,f.audit) as AttributionResult;
-  assert.deepEqual(value.findings[0].problem!.component,["Calc"]);
-  const originalEvidence=[...finding.evidence_indices];
-  finding.evidence_indices=[finding.evidence_indices[0]];
-  assert.throws(()=>f.registry.resolve(f.binding,f.draft,f.audit),error=>error instanceof ValidationError&&
-    error.issues!.some(issue=>issue.code==="problem_component_evidence_missing"&&issue.path==="/problems/0/component/0"));
-  finding.component=[];
-  const unlocated=f.registry.resolve(f.binding,f.draft,f.audit) as AttributionResult;
-  assert.deepEqual(unlocated.findings[0].problem!.component,[]);
-  assert.equal(unlocated.is_correct,false);
-  finding.component=["模型自身推理"];
-  finding.evidence_indices=originalEvidence;
-  const accepted=f.registry.resolve(f.binding,f.draft,f.audit) as AttributionResult;
-  assert.deepEqual(accepted.findings[0].problem!.component,["模型自身推理"]);
-  assert.equal(accepted.findings[0].assessment.evidence_status,"established");
-});
 
 test("requirement links are explicit choices while verdict, prose and evidence fields remain required",()=>{
   const f=fixture();Reflect.deleteProperty(f.draft.strengths[0],"basis_index");
@@ -231,7 +174,7 @@ test("a minor ancillary defect does not contradict a met task requirement, while
   (f.request.sources.answer.value as {messages:{content:string}[]}).messages[1].content+="。。";
   f.draft.problems.push({...f.draft.strengths[0],dimension:"format",importance:"low",text:"句尾重复了句号。",
     reason:"计算值4正确，句尾多写的句号不改变数值。",impact:"不影响计算结果的使用。",
-    component:["模型自身推理"],label:"标点重复",definition:"正确数值之后出现重复句号。"});
+    diagnosis: "other", investigation: [], component:[responsibilitySubmissionFixture("最终作答节点（原始名称未提供）",f.draft.strengths[0].evidence_indices)],label:"标点重复",definition:"正确数值之后出现重复句号。"});
   const result=f.registry.resolve(f.binding,f.draft,f.audit) as AttributionResult;
   assert.equal(result.criterion_assessments[0].status,"met");
   assert.equal(result.findings[1].type,"problem");
@@ -300,16 +243,12 @@ test("a confirmed wrong reference does not force blame onto a correct answer or 
   const f=fixture(request);
   f.draft.is_correct=false;f.draft.standard_conflict=true;
   f.draft.correctness_reason="原题2+2的结果为4，回答正确；导入标准5错误，仅标准一致性不通过。";
-  const {evidence_indices}=f.draft.strengths[0];
-  f.draft.problems=[{basis_index:null,dimension:"correctness",stage:"final_answer",importance:"low",
-    text:"导入标准与已核实的正确结果冲突。",reason:f.draft.correctness_reason,impact:"影响对标评分，不构成回答错误。",
-    evidence_status:"established",evidence_indices,component:[],
-    label:"标准冲突",definition:"冲突来自导入标准，未发现候选或工具错误。"}];
+  f.draft.problems=[];
   const result=f.registry.resolve(f.binding,f.draft,f.audit) as AttributionResult;
   f.registry.validate(f.binding,result,f.audit);
   assert.equal(result.standard_conflict,true);
   assert.equal(result.core_assessment.meets_core,true);
-  assert.deepEqual(result.findings.find(row=>row.type==="problem")!.problem!.component,[]);
+  assert(!result.findings.some(row=>row.type==="problem"));
 });
 
 test("an image observation numbered by image order binds to the unique image entry",()=>{

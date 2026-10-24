@@ -50,11 +50,51 @@ export interface CoreAssessment {
  * and decides which class receives this problem; attribution never creates classes.
  */
 export interface ProblemProposal {
-  /** Evidence-backed tool names or supported responsibility roles; empty when responsibility is unresolved. */
-  component: string[];
+  /** Exactly one primary cause, followed by independently supported contributing causes. */
+  component: Responsibility[];
+  diagnosis: "entity_or_unit" | "source_absence" | "context_loss" | "other";
+  investigation: ChainInvestigation[];
   label: string;
   definition: string;
 }
+export interface Responsibility {
+  role: "primary" | "contributing";
+  technical_domain: string;
+  functional_component: string;
+  component: string;
+  /** Business operation, independently of the actor and technical classification. */
+  business_component: string;
+  chain_index: number | null;
+  chain_step: string;
+  field_names: string[];
+  mechanism_source: "explicit_process" | "boundary_comparison";
+  failure_stage: string;
+  mechanism: string;
+  certainty: "confirmed" | "inferred";
+  reason: string;
+  evidence_ids: string[];
+  evidence_gap: string | null;
+  alternatives: string[];
+}
+export interface ChainInvestigation {
+  chain_index: number;
+  steps: { step: string; status: "checked" | "not_collected"; observation: string; evidence_ids: string[] }[];
+}
+/** Program-owned navigation, always pointing into the original public process records. */
+export interface BusinessChain {
+  chain_index: number;
+  tool_component: string;
+  request_index: number;
+  return_indices: number[];
+  planner_index: number | null;
+  context_indices: number[];
+  link_basis: "call_id" | "returned_query";
+  references: string[];
+  delivery_changed: boolean | null;
+  checkpoints: { step: string; availability: "available" | "not_collected"; evidence: Evidence[]; note: string }[];
+  final_evidence: Evidence[];
+}
+export type ResponsibilitySubmission = Omit<Responsibility, "evidence_ids"> & { evidence_indices: number[] };
 export interface AttributionFinding extends Finding {
   /** Stable within this answer; used to preserve problem-library occurrence lineage. */
   finding_id: string;
@@ -119,7 +159,10 @@ export interface AttributionSubmission {
     evidence_indices: number[];
   }[];
   strengths: ObservationSubmission[];
-  problems: (ObservationSubmission & ProblemProposal & {impact:string})[];
+  problems: (ObservationSubmission & Omit<ProblemProposal,"component" | "investigation"> & {
+    component:ResponsibilitySubmission[]; impact:string;
+    investigation: { chain_index: number; steps: (Omit<ChainInvestigation["steps"][number], "evidence_ids"> & { evidence_indices: number[] })[] }[];
+  })[];
   numeric_checks: {
     label: string; reference_index: number; actual: string | number | null; scale: string;
     mode: "rounded" | "exact"; evidence_index: number;

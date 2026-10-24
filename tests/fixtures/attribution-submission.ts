@@ -1,12 +1,19 @@
 import { selectEvidence, type AgentRequest, type TaskAnalysis, type ToolAudit } from "@eval/contracts";
 import { attributionNormDirectory, attributionFindingBasis, numericReferenceDirectory, type AttributionResult, type AttributionSubmission } from "@eval/agents/attribution";
-import { parseEvidenceCoordinates } from "@eval/tools";
+import { parseEvidenceCoordinates, traceComponentIdentities } from "@eval/tools";
+import { businessChains } from "@eval/workflows/comparison";
 type NormChoice = { norm_index: number; requirement_index: number | null; evidence: { evidence_id: string }[] };
 /** Construct the current program-owned directory for a hand-built request. */
 export function setFixtureNormDirectory(request: AgentRequest) {
+  setFixtureComponentCatalog(request);
   const directory = attributionNormDirectory(request);
   Object.assign(request.input.answer as object, { norm_directory: directory });
   return directory;
+}
+export function setFixtureComponentCatalog(request: AgentRequest) {
+  const answer = request.input.answer as { final_message_index: number; component_catalog?: unknown };
+  Object.assign(answer, { business_chains: businessChains(request.sources.answer.value as import("@eval/workflows/comparison").RawInput, request.sources.answer.id, answer.final_message_index) });
+  answer.component_catalog = traceComponentIdentities(request.sources.answer.value as { messages: unknown[] }, request.sources.answer.id, answer.final_message_index);
 }
 
 /** Invert a known fixture using its genuine requirement owner or unique physical norm, never its prose. */
@@ -32,6 +39,10 @@ export function normSelection(directory: NormChoice[], finding: AttributionResul
 
 /** Build the current model payload directly from a known formal fixture and its provided source directory. */
 export function attributionSubmission(request: AgentRequest, result: AttributionResult, audit: ToolAudit): AttributionSubmission {
+  setFixtureComponentCatalog(request);
+  result = structuredClone(result);
+  for(const finding of result.findings)for(const cause of finding.problem?.component??[])
+    if(!cause.evidence_ids.length)cause.evidence_ids=finding.evidence.map(item=>item.evidence_id);
   const bank=audit.evidenceBank??=[],images=new Map<number,string>();
   const refs=(values:AttributionResult["correctness_evidence"])=>values.map(item=>{
     const selected=selectEvidence(bank,{evidence_id:item.evidence_id});
@@ -58,7 +69,8 @@ export function attributionSubmission(request: AgentRequest, result: Attribution
     strengths:result.findings.filter(row=>row.type==="strength").map(observation),
     problems:result.findings.filter(row=>row.type==="problem").map(row=>{
       const observed=observation(row),problem=structuredClone(row.problem!);
-      return {...observed,impact:row.assessment.impact,...problem};
+      return {...observed,impact:row.assessment.impact,...problem,investigation:problem.investigation.map(chain=>({...chain,steps:chain.steps.map(({evidence_ids,...step})=>({...step,evidence_indices:refs(row.evidence.filter(item=>evidence_ids.includes(item.evidence_id)))}))})),component:problem.component.map(({evidence_ids,...cause})=>({...cause,
+        evidence_indices:refs(row.evidence.filter(item=>evidence_ids.includes(item.evidence_id)))}))};
     }),
     numeric_checks:result.numeric_checks.map(({expected,matches:_matches,...row})=>({...row,
       reference_index:directory.findIndex(item=>item.expected===expected)+1,evidence_index:correctness[row.evidence_index]})),

@@ -159,7 +159,7 @@
         const verdictBottom=vy+verdictHeight;
         const postY=Math.max(matrixBottom,verdictBottom,flowBottom)+66;
         const problems=pair.candidates.map(c=>c.findings.filter(f=>f.type==='problem'));
-        const problemLines=problems.map((list,index)=>list.map(f=>({finding:f,wrapped:wrap(anonymous(`${f.problem?.component?.length?f.problem.component.join(' / '):'责任待定位'}｜${f.problem?.label||f.text}${f.assessment?.evidence_status==='uncertain'?'（待核实）':''}`),W-66,fonts.copy)})));
+        const problemLines=problems.map((list,index)=>list.map(f=>({finding:f,wrapped:wrap(anonymous(`${f.problem.component.map(c=>`${c.technical_domain}/${c.functional_component} · ${c.component}`).join(' / ')}｜${f.problem?.label||f.text}${f.assessment?.evidence_status==='uncertain'?'（待核实）':''}`),W-66,fonts.copy)})));
         const problemHeight=problemLines.reduce((h,groups)=>h+24+Math.max(22,groups.reduce((sum,g)=>sum+g.wrapped.length*18+5,0)),0);
         const fullHeight=postY+problemHeight+34;
         const indices=filteredIndices(),pageCount=String(indices.indexOf(current)+1).padStart(2,'0');

@@ -1,3 +1,4 @@
+import { responsibilityFixture } from "../../fixtures/responsibility.js";
 import test from "node:test";
 import assert from "node:assert/strict";
 import { rm } from "node:fs/promises";
@@ -27,7 +28,7 @@ function problemAttribution(answer: string, inputId: string): AttributionResult 
     ...result.findings[0]!,
     type: "problem",
     reason: "原文给出5，正确结果应为4。",
-    problem: { component: ["模型自身推理"], label: "算术错误", definition: "计算与事实不符。" },
+    problem: { diagnosis: "other" as const, investigation: [], component: [responsibilityFixture("最终作答节点（原始名称未提供）", {evidence_ids: []})], label: "算术错误", definition: "计算与事实不符。" },
   };
   return result;
 }
@@ -35,7 +36,7 @@ function problemAttribution(answer: string, inputId: string): AttributionResult 
 function proposedClass(): ClusteringResult {
   return {
     assignments: [{ item_id: "o1", new_class_key: "new" }],
-    new_classes: [{ key: "new", component: "模型自身推理", label: "算术错误", definition: "计算不符。", closest_existing: null, novelty: "首次出现。", category_paths: [["数值可靠性"]] }],
+    new_classes: [{ key: "new", component: "模型推断与生成/事实关系推导", label: "算术错误", definition: "计算不符。", closest_existing: null, novelty: "首次出现。", category_paths: [["数值可靠性"]] }],
     merges: [],
   };
 }
@@ -77,7 +78,7 @@ test("a batch may create every component its own observations use", async () => 
     const evaluation = {
       ...attributionResult(false),
       findings: [
-        { ...finding, finding_id: "f0", problem: { component: ["Search", "模型自身推理"], label: "检索不足", definition: "检索结果不完整，模型仍给出确定结论。" } },
+        { ...finding, finding_id: "f0", problem: { diagnosis: "other" as const, investigation: [], component: [responsibilityFixture("Search", {evidence_ids: []}), responsibilityFixture("最终作答节点（原始名称未提供）", {evidence_ids: [], role: "contributing"})], label: "检索不足", definition: "检索结果不完整，模型仍给出确定结论。" } },
       ],
     };
     const dependencies = { [inputId]: { evaluation } } as unknown as Record<string, SubmissionReceipt | undefined>;
@@ -90,7 +91,7 @@ test("a batch may create every component its own observations use", async () => 
 
     const known = structuredClone(task);
     (known.data as { projection: unknown }).projection = {
-      components: [{ id: "c1", label: "Search", definition: "", aliases: ["搜索"], classes: [] }],
+      components: [{ id: "c1", label: "工具业务实现/结果完整性", definition: "", aliases: ["搜索"], classes: [] }],
     };
     const narrowed = comparisonWorkflow.bind(known, {}, dependencies, { tasks: plan.tasks.map(item => item.id === known.id ? known : item) }).request.input as {
       budget: { max_new_components: number };
@@ -117,11 +118,11 @@ test("clustering bind preserves each shard's reserved component headroom", async
     const bound = shards.map((task, index) => {
       const inputId = Object.keys(task.dependencies)[0]!;
       const evaluation = attributionResult(false);
-      const component = index === 0 ? "Search" : "模型自身推理";
-      evaluation.findings[0]!.problem = { component: [component], label: "算术错误", definition: "计算不符。" };
+      const component = index === 0 ? "Search" : "最终作答节点（原始名称未提供）";
+      evaluation.findings[0]!.problem = { diagnosis: "other" as const, investigation: [], component: [responsibilityFixture(component, {evidence_ids: []})], label: "算术错误", definition: "计算不符。" };
       const dependencies = { [inputId]: { evaluation } } as unknown as Record<string, SubmissionReceipt>;
       const request = comparisonWorkflow.bind(task, {}, dependencies, { tasks: plan.tasks }).request;
-      return { request, component };
+      return { request, component: (request.input.items as {component:string}[])[0].component };
     });
     assert.deepEqual(bound.map(({ request }) => (request.input as { budget: { max_new_components: number } }).budget.max_new_components), [1, 0]);
     for (const [index, { request, component }] of bound.entries()) {
@@ -178,7 +179,7 @@ test("clustering builds a bounded per-model library and recalls classes across r
     };
     const summary = await runEvaluation(options);
     assert.equal(summary.completed_comparisons, 2);
-    assert.equal(calls.value, 10, "2 criteria + 4 attribution + 2 comparisons + 2 clustering");
+    assert.equal(calls.value, 14, "2 criteria + 4 attribution + 4 instruction reviews + 2 comparisons + 2 clustering");
     const run = path.join(config.output.path, "cluster-first");
 
     const clustering = await rows(path.join(run, "results", "clustering.jsonl"));
@@ -232,7 +233,7 @@ test("clustering builds a bounded per-model library and recalls classes across r
       config: { ...config, clustering: { ...config.clustering, enabled: false } },
       plan: { tasks: [], inputs: {}, summary: {} },
     });
-    assert.equal(calls.value, 10, "resume preserves all accepted evaluation receipts");
+    assert.equal(calls.value, 14, "resume preserves all accepted evaluation receipts");
     assert.equal((resumed.problem_library as Record<string, { occurrences: number }>).a_fast?.occurrences, 2);
 
     // A new run recalls the existing class instead of creating another one.
@@ -241,7 +242,7 @@ test("clustering builds a bounded per-model library and recalls classes across r
       runId: "cluster-second",
       plan: await buildPlan(config),
     });
-    assert.equal(calls.value, 20);
+    assert.equal(calls.value, 28);
     const recalled = await readJson<{ classes: Record<string, unknown>; occurrences: { classification: string }[] }>(
       path.join(config.problemLibrary.path, "a_fast.json"),
     );
@@ -336,7 +337,7 @@ test("a model over the library cap cannot partially commit another model", async
     const modelA = (first.data as { scope: { version: string } }).scope.version;
     const modelB = (second.data as { scope: { version: string } }).scope.version;
     const previous = emptyLibrary(modelB);
-    previous.components.c1 = { id: "c1", label: "模型自身推理", definition: "", aliases: [], first_seen: null };
+    previous.components.c1 = { id: "c1", label: "模型推断与生成/事实关系推导", definition: "", aliases: [], first_seen: null };
     previous.classes.k1 = { id: "k1", component_id: "c1", label: "其他问题", definition: "d", aliases: [], status: "active", merged_into: null, first_seen: null };
     await writeJson(path.join(config.problemLibrary.path, `${modelB}.json`), previous);
     const receipts: Record<string, unknown> = {};
@@ -408,7 +409,7 @@ test("explicit deferred reclassification preserves original receipts and uses on
         const material = parsedMaterial(options.spec) as { answer: { final_answer: string } };
         const value = problemAttribution(material.answer.final_answer, options.spec.inputs.find(input => input.name === "answer")!.id);
         value.findings.push({ ...structuredClone(value.findings[0]!), finding_id: "f-second", importance: "low",
-          problem: { component: ["模型自身推理"], label: "第二现象", definition: "与计算错误具有不同边界的第二现象。" } });
+          problem: { diagnosis: "other" as const, investigation: [], component: [responsibilityFixture("最终作答节点（原始名称未提供）", {evidence_ids: []})], label: "第二现象", definition: "与计算错误具有不同边界的第二现象。" } });
         result = value;
       }
       if (options.spec.evaluation.id === "clustering") {
@@ -492,7 +493,7 @@ test("library statistics count a jointly attributed finding once", async () => {
   try {
     const plan = await buildPlan(config), task = plan.tasks.find(task => task.stage === "clustering")!;
     const evaluation = problemAttribution("5", "7c4e3ba8-8f7c-46cc-b8fb-3016e10ea2dd");
-    evaluation.findings[0]!.problem!.component.push("Search");
+    evaluation.findings[0]!.problem!.component.push(responsibilityFixture("Search",{role:"contributing"}));
     const receipts = Object.fromEntries(Object.values(task.dependencies).map(id => [id, attributedReceipt(id, evaluation)]));
     const { taskObservations } = await import("@eval/workflows/comparison");
     const observations = taskObservations(task, id => receipts[id]);

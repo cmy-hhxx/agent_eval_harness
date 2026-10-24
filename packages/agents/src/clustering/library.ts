@@ -10,7 +10,7 @@ import type {
   ProblemProjection,
   AttributionSource,
 } from "@eval/contracts";
-import type { ClusteringResult } from "./types.js";
+import type { ClusteringResult, ClusteringExample } from "./types.js";
 import { categoryPathIssues, unionCategoryPaths } from "./organization.js";
 import { effectiveProblemOccurrences } from "./occurrence-review.js";
 import { representativeSamples } from "./samples.js";
@@ -112,14 +112,7 @@ export interface ClusteringObservation {
   established_count: number;
   uncertain_count: number;
   established_answer_ids: string[];
-  examples: {
-    finding: string;
-    reason: string;
-    dimension: string;
-    importance: string;
-    stage: string;
-    evidence_status: "established" | "uncertain";
-  }[];
+  examples: ClusteringExample[];
   refs: ClusteringObservationRef[];
 }
 export interface ApplyClusteringInput {
