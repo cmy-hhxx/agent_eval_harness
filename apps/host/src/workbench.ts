@@ -10,7 +10,8 @@ import { createFileLogger, runLock } from "@eval/data";
 import { applySettings, configurationSecrets, readSettings } from "./settings.js";
 import { ROOT } from "./paths.js";
 import { loadWorkbenchConfig } from "./workbench-config.js";
-import { bearerMatches, clearSessionCookie, cookieValue, loadWorkbenchSecrets, SessionStore, sessionCookie, verifyPassword } from "./workbench-auth.js";
+import { loadWorkbenchSecrets } from "./workbench-auth.js";
+import { createWorkbenchAccess } from "./workbench-access.js";
 import { loadConfig } from "./config.js";
 import { workbenchProxyTarget } from "./workbench-routes.js";
 
@@ -41,8 +42,8 @@ const services: Record<ServiceName, Service> = {
   runs: { name: "runs", stopping: false, restarts: [] },
 };
 const health = { data: false, automation: false, runs: false };
-const sessions = new SessionStore();
-const loginAttempts = new Map<string, { count: number; resetAt: number }>();
+const accessRequest = createWorkbenchAccess({ secrets, publicOrigin: config.publicOrigin,
+  loginEvent: async (event, remote) => { await logger.event(event, { component: "workbench", event, remote }); } });
 let stopping = false, server: http.Server | undefined, rejectFatal: ((error: Error) => void) | undefined;
 const fatal = new Promise<never>((_resolve, reject) => { rejectFatal = reject; });
 // A service can fail before initial health checks finish and the race below is attached.
@@ -165,9 +166,6 @@ const ASSETS = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../da
 const workbenchAssets = new Set(["tabler.css", "workbench.css", "workbench-region.css", "workbench.bundle.js", "daily-charts.bundle.js", "dashboard.css", "automations.css", "problems.css", "automations.html", "automation-errors.html", "index.html", "problems.html", "intake.html", "batch-runs.html", "analysis.html", "daily.html", "aime-results.html"]);
 const dataAssets: Record<string, string> = { "data.html": "dashboard.html", "data.css": "dashboard.css", "records.html": "records.html" };
 
-const LOGIN = `<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>登录 · 评测工作台</title>
-<style>:root{font-family:Inter,"PingFang SC","Microsoft YaHei",sans-serif;color:#17201d;background:#f3f6f4}*{box-sizing:border-box}body{margin:0;min-height:100vh;display:grid;place-items:center}form{width:min(360px,calc(100vw - 32px));background:#fff;border:1px solid #dbe3df;border-radius:12px;padding:28px}h1{font-size:22px;margin:0 0 22px}label{display:grid;gap:7px;margin:14px 0;font-size:14px}input{height:42px;border:1px solid #cdd8d2;border-radius:7px;padding:0 12px;font:inherit}button{width:100%;height:42px;margin-top:12px;border:0;border-radius:7px;background:#087f83;color:#fff;font:inherit;font-weight:600;cursor:pointer}.error{color:#a13030;font-size:14px;min-height:20px}</style></head>
-<body><form method="post" action="/login"><h1>登录</h1><label>用户<input name="username" autocomplete="username" required autofocus></label><label>密码<input name="password" type="password" autocomplete="current-password" required></label><div class="error">__ERROR__</div><button type="submit">登录</button></form></body></html>`;
 
 function sendJson(res: ServerResponse, status: number, value: unknown): void {
   res.writeHead(status, { "content-type": "application/json; charset=utf-8", "cache-control": "no-store" });
@@ -175,11 +173,6 @@ function sendJson(res: ServerResponse, status: number, value: unknown): void {
 }
 function sendHtml(res: ServerResponse, status: number, html: string, extra: http.OutgoingHttpHeaders = {}): void {
   res.writeHead(status, { "content-type": "text/html; charset=utf-8", "cache-control": "no-store", ...extra }); res.end(html);
-}
-async function requestBody(req: IncomingMessage, limit: number): Promise<string> {
-  const chunks: Buffer[] = []; let size = 0;
-  for await (const chunk of req) { size += chunk.length; if (size > limit) throw new Error("Request body too large"); chunks.push(Buffer.from(chunk)); }
-  return Buffer.concat(chunks).toString("utf8");
 }
 async function proxy(req: IncomingMessage, res: ServerResponse, target: { port: number; path: string }): Promise<void> {
   const headers: http.OutgoingHttpHeaders = { ...req.headers, host: req.headers.host, "x-forwarded-for": req.socket.remoteAddress,
@@ -198,42 +191,7 @@ async function proxy(req: IncomingMessage, res: ServerResponse, target: { port: 
 async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> {
   const url = new URL(req.url || "/", config.publicOrigin);
   if (url.pathname === "/health") return sendJson(res, 200, { ok: health.data && health.automation && health.runs, services: health });
-  if (url.pathname === "/login" && req.method === "GET") {
-    if (sessions.read(cookieValue(req.headers.cookie, "workbench_session"))) return sendHtml(res, 303, "", { location: "/" });
-    return sendHtml(res, 200, LOGIN.replace("__ERROR__", ""));
-  }
-  if (url.pathname === "/login" && req.method === "POST") {
-    const ip = req.socket.remoteAddress || "unknown", now = Date.now();
-    const attempt = loginAttempts.get(ip);
-    if (attempt && attempt.resetAt > now && attempt.count >= 5) return sendHtml(res, 429, LOGIN.replace("__ERROR__", "尝试次数过多，请稍后再试"));
-    if (req.headers.origin && req.headers.origin !== config.publicOrigin) return sendHtml(res, 403, LOGIN.replace("__ERROR__", "来源校验失败"));
-    const body = new URLSearchParams(await requestBody(req, 8192));
-    const valid = body.get("username") === secrets.adminUser && await verifyPassword(body.get("password") || "", secrets.passwordHash);
-    if (!valid) {
-      const current = attempt && attempt.resetAt > now ? attempt : { count: 0, resetAt: now + 5 * 60_000 };
-      current.count++; loginAttempts.set(ip, current);
-      await logger.event("login_failed", { component: "workbench", event: "login_failed", remote: ip });
-      return sendHtml(res, 401, LOGIN.replace("__ERROR__", "用户名或密码错误"));
-    }
-    loginAttempts.delete(ip);
-    const id = sessions.create(secrets.adminUser);
-    await logger.event("login_succeeded", { component: "workbench", event: "login_succeeded", remote: ip });
-    return sendHtml(res, 303, "", { location: "/", "set-cookie": sessionCookie(id) });
-  }
-  if (url.pathname === "/logout") {
-    sessions.delete(cookieValue(req.headers.cookie, "workbench_session"));
-    return sendHtml(res, 303, "", { location: "/login", "set-cookie": clearSessionCookie() });
-  }
-  const relay = url.pathname.startsWith("/runtime/api/relay/");
-  if (relay) {
-    if (!bearerMatches(req.headers.authorization, secrets.relayToken)) return sendJson(res, 401, { error: "Unauthorized" });
-  } else if (!sessions.read(cookieValue(req.headers.cookie, "workbench_session"))) {
-    if (url.pathname.startsWith("/runtime/api/") || url.pathname.startsWith("/data/") && !req.headers.accept?.includes("text/html"))
-      return sendJson(res, 401, { error: "Unauthorized" });
-    return sendHtml(res, 303, "", { location: `/login?next=${encodeURIComponent(url.pathname)}` });
-  }
-  if (req.method !== "GET" && req.method !== "HEAD" && url.pathname.startsWith("/data/workbench/") &&
-      req.headers.origin && req.headers.origin !== config.publicOrigin) return sendJson(res, 403, { error: "来源校验失败" });
+  if (await accessRequest(req, res, url)) return;
   if (url.pathname === "/") return sendHtml(res, 200, await readFile(path.join(ASSETS, "workbench.html"), "utf8"));
   if (url.pathname.startsWith("/workbench-assets/")) {
     const name = url.pathname.slice("/workbench-assets/".length);

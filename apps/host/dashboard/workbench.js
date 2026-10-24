@@ -10,6 +10,10 @@ import { mountAimeResults } from './aime-results.js';
 import { mountData } from '../../../server_dashboard_ths/dashboard.js';
 import { mountRecords } from '../../../server_dashboard_ths/records.js';
 import { Tab } from '@tabler/core';
+import { mountAccess } from './workbench-access.js';
+
+const access = mountAccess(document);
+window.fetch = access.fetch;
 
 const assets = '/workbench-assets/';
 const apiRoot = '/runtime/api/dashboard';

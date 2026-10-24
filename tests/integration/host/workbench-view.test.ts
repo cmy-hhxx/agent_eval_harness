@@ -33,6 +33,7 @@ test('three-module workbench defaults to both daily sources and keeps results an
       return new Response(await readFile(Object.hasOwn(dataFiles,file)?path.join(ROOT,'server_dashboard_ths',dataFiles[file]):path.join(directory,file),'utf8'));
     }
     if(url==='/health')return json({ok:true});
+    if(url==='/session')return json({authenticated:false});
     if(/^\/runtime\/api\/daily\/(wencai|aime)\/analytics$/.test(url))return json({source:url.split('/').at(-2),intake:{totals:{answers:0,questions:0,excluded:0},dates:[],models:[],exclusions:[],reportsComplete:true},evaluation:{unit:url.includes('/aime/')?'answers':'comparisons',totals:{total:0,completed:0,partial:0,running:0,pending:0,failed:0},dates:[]}});
     if(url==='/runtime/api/daily?page_size=10')return json({sources:['wencai','aime'].map(id=>({id,name:id,status:'idle',concurrency:id==='aime'?64:32,activeRequests:0,waitingRequests:0,settings:{engine:'pi',execution:{timeoutSeconds:600,maxToolCalls:8,retries:1},bindings:{},rewrite:{}},modelCatalog:[],packages:{items:[{id:id+'-package',name:id+'.7z',status:'cleaned',accepted:1,excluded:1}],total:1,page:1,pageSize:40},stages:{},runs:[]})),requests:[]});
     if(url.includes('/packages/')&&url.includes('/report?'))return json({batch_id:'package',status:'cleaned',summary:{read:2,accepted:1,excluded:1,questions:1},section:'exclusions',page:1,page_size:50,total:1,items:[{model:'model',case_id:'isolated',original_file:'archive.7z/member.jsonl',original_line:2,reason:'invalid_input'}]});

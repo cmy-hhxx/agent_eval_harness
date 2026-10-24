@@ -65,9 +65,9 @@ bash workbench.sh
 
 - `http://117.50.195.94:3309/`
 
-登录后在同一页通过一级导航切换模块；模块内定位与选择原位更新。`/runtime/api/` 和 `/data/<dataset>/` 下的数据接口只承载请求，不提供生产子页面。
+默认免登录进入工作台，通过一级导航切换模块；模块内定位与选择原位更新。总览、结果、数据和配置查看直接打开，执行控制在当前页面弹出登录框，成功后继续原操作。`/runtime/api/` 和 `/data/<dataset>/` 下的数据接口只承载请求，不提供生产子页面。
 
-登录用户由初始化时的 `--admin-user` 决定，默认 `cmy`。会话使用 HttpOnly、SameSite=Strict Cookie；重启工作台后需要重新登录。
+登录用户由初始化时的 `--admin-user` 决定，默认 `cmy`。会话使用 HttpOnly、SameSite=Strict Cookie；重启工作台后浏览仍可用，下一次执行控制需要重新登录。
 
 ## 更新代码
 
@@ -142,7 +142,7 @@ curl -fsS http://127.0.0.1:4174/api/health
 curl -fsS http://127.0.0.1:4173/api/health
 ```
 
-`/health` 未登录可见且只返回服务健康；其余页面与 API 需要管理员会话，relay API 只接受 Bearer token。
+页面、静态资源与 GET/HEAD 数据查询默认公开；非只读操作需要管理员会话并校验 Origin，未登录返回 `401` 和 `code: login_required`。`GET /session` 查询会话；`POST /login` 接收 URL 编码凭据并返回 JSON，`POST /logout` 清除会话。relay API 的所有方法仍只接受 Bearer token。
 
 ## 双日常来源配置
 

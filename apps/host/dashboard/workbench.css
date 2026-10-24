@@ -36,6 +36,14 @@ body { min-width:320px; }
 .mount-error { display:flex; flex-wrap:wrap; align-items:center; gap:12px; margin:0; }
 .tab-pane { min-width:0; }
 :focus-visible { outline:2px solid var(--tblr-primary); outline-offset:3px; }
+#access-dialog { width:min(400px,calc(100vw - 32px)); max-width:none; padding:24px; border:0; border-radius:8px; background:#fff; color:var(--tblr-body-color); box-shadow:0 12px 48px #171a2026; }
+#access-dialog::backdrop { background:#171a2055; }
+#access-form { display:grid; gap:18px; }
+#access-form header,#access-form footer { display:flex; align-items:center; justify-content:space-between; gap:12px; }
+#access-title { margin:0; font-size:18px; }
+#access-form .form-label { display:grid; gap:8px; margin:0; }
+#access-form footer { justify-content:flex-end; }
+#access-error { margin:0; color:var(--tblr-danger); }
 @media(min-width:768px) {
   html,body { height:100%; overflow:hidden; }
   .page { height:100dvh; min-height:0; overflow:hidden; }

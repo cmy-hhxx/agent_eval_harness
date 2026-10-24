@@ -6,7 +6,7 @@
       <button class="nav-link active" id="nav-evaluate" role="tab" data-module="evaluate" data-bs-target="#evaluate" aria-controls="evaluate" aria-selected="true">评测</button>
       <button class="nav-link" id="nav-results" role="tab" data-module="results" data-bs-target="#results" aria-controls="results" aria-selected="false">结果</button>
       <button class="nav-link" id="nav-more" role="tab" data-module="more" data-bs-target="#more" aria-controls="more" aria-selected="false">更多</button>
-    </nav><div class="sidebar-footer"><span id="service-status" role="status">连接中</span><a class="btn btn-sm" href="/logout">退出</a></div>
+    </nav><div class="sidebar-footer"><span id="service-status" role="status">连接中</span><button id="access-button" class="btn btn-sm" type="button">登录</button></div>
   </div></aside>
   <main class="page-wrapper" id="workspace"><div class="container-fluid tab-content workbench-content">
     <section class="tab-pane active show" id="evaluate" role="tabpanel" aria-labelledby="nav-evaluate" tabindex="0"><header class="page-header visually-hidden"><h1 class="page-title">评测</h1></header><div id="daily-content" class="mount" hidden></div></section>
@@ -19,4 +19,4 @@
       <div data-more="monitor" hidden><div id="monitor-content" class="mount" hidden></div></div>
     </section>
   </div></main>
-</div></body></html>
+</div><dialog id="access-dialog" aria-labelledby="access-title"><form id="access-form"><header><h2 id="access-title">登录</h2><button id="access-cancel" class="btn btn-sm" type="button">取消</button></header><label class="form-label">用户<input id="access-username" class="form-control" name="username" autocomplete="username" required></label><label class="form-label">密码<input id="access-password" class="form-control" name="password" type="password" autocomplete="current-password" required></label><p id="access-error" role="alert" hidden></p><footer><button id="access-submit" class="btn btn-primary" type="submit">登录</button></footer></form></dialog></body></html>
