@@ -26,9 +26,9 @@ test('daily date table shows full-range completion, both AIME stages and indepen
   const el = (id:string) => dom.window.document.getElementById(id)! as any;
   const wait = async (check:()=>boolean) => {for(let i=0;i<100;i++){if(check())return;await new Promise(setImmediate);}assert.fail('table did not settle');};
   try {
-    await controller.ready;assert.equal(el('data-date-rows').children.length,10);assert.match(el('data-date-rows').textContent,/完整完成 300 \/ 500 对/);assert.equal(el('data-date-rows').textContent.includes('✅'),false,'300 is not completion for a full-range source');
+    await controller.ready;assert.equal(el('data-date-rows').children.length,5);assert.match(el('data-date-rows').textContent,/完整完成 300 \/ 500 对/);assert.equal(el('data-date-rows').textContent.includes('✅'),false,'300 is not completion for a full-range source');
     completed=500;el('data-refresh').click();await wait(()=>el('data-date-rows').textContent.includes('✅'));assert.equal(requests.some(url=>url.includes('/records/')),false,'counts never load answer bodies');
-    el('data-next').click();assert.match(el('data-page').textContent,/2 \/ 2/);assert.equal(el('data-date-rows').children.length,6);
+    el('data-next').click();assert.match(el('data-page').textContent,/2 \/ 4/);assert.equal(el('data-date-rows').children.length,5);
     el('data-date').value=days[0];el('data-date').dispatchEvent(new dom.window.Event('change'));assert.equal(el('data-date-rows').children.length,1);
     await controller.select('aime');assert.equal(el('data-date').value,'');assert.equal(el('data-date-rows').textContent.includes('✅'),false);assert.match(el('data-date-rows').textContent,/Score 0 \/ 1.*Attribution 1 \/ 1/s);
     aimeComplete=true;el('data-refresh').click();await wait(()=>el('data-date-rows').textContent.includes('✅'));el('data-results').click();assert.deepEqual(results,['aime']);

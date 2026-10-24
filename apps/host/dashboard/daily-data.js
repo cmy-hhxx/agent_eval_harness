@@ -8,7 +8,7 @@ export function mountDailyData(root, options = {}) {
   const cache = new Map(), views = new Map(), buttons = [...root.querySelectorAll('[data-data-source]')];
   let source = 'wencai', request, generation = 0, disposed = false, sampleGeneration = 0, sampleController, sampleFocus;
   const node = (tag, text) => { const item = doc.createElement(tag); item.textContent = text ?? ''; return item; };
-  const view = () => { if (!views.has(source)) views.set(source, { date:'', page:1, size:10 }); return views.get(source); };
+  const view = () => { if (!views.has(source)) views.set(source, { date:'', page:1, size:5 }); return views.get(source); };
   function message(text) { $('data-error').textContent = text; $('data-error').hidden = !text; }
   async function showSamples(day, model) {
     const current = ++sampleGeneration, selection = { dataset:source, profile:source, date:day, model };

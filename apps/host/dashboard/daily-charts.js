@@ -17,6 +17,6 @@ export function mountCharts(root) {
   }
   const resize=()=>render();
   const observer=win.ResizeObserver?new win.ResizeObserver(resize):undefined;
-  observer?.observe(root.querySelector('#daily-analytics-charts'));win.addEventListener('resize',resize);
+  for(const element of root.querySelectorAll('.daily-chart'))observer?.observe(element);win.addEventListener('resize',resize);
   return {render,destroy(){disposed=true;observer?.disconnect();win.removeEventListener('resize',resize);for(const chart of charts.values())chart.dispose();charts.clear();}};
 }

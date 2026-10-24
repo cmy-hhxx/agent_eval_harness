@@ -396,7 +396,7 @@ blockquote,.markdown blockquote,.answer-markdown blockquote { border:0; }
 .workspace-dialog.aime-detail-dialog { width:min(1000px,calc(100vw - 32px)); height:fit-content; max-height:calc(100dvh - 32px); }
 .aime-detail-dialog .workspace-dialog-header { flex-wrap:nowrap; }
 .aime-detail-identity { flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; color:var(--muted); font-size:13px; }
-.aime-detail-tabs { flex:none; flex-wrap:nowrap; overflow-x:auto; margin:0 14px; }
+.aime-detail-tabs { flex:none; flex-wrap:nowrap; overflow-x:auto; overflow-y:hidden; margin:0 14px; }
 .aime-detail-tabs .nav-link { padding:8px 10px; white-space:nowrap; font-size:13px; }
 .aime-detail-tabs .nav-link.active { color:var(--text); background:transparent; border-color:transparent transparent var(--text); font-weight:600; }
 .aime-detail-notices { flex:none; display:flex; flex-wrap:wrap; align-items:center; gap:4px 12px; padding:0 14px; }
@@ -434,7 +434,7 @@ blockquote,.markdown blockquote,.answer-markdown blockquote { border:0; }
 .daily-data .error { color:var(--danger); margin:0; }
 .daily-dates-table { min-width:620px; table-layout:fixed; }
 .daily-dates-table th:first-child { width:124px; }
-.daily-data .daily-dates-table :is(th,td) { padding:12px 10px; border:0; background:#fff; text-align:left; vertical-align:top; }
+.daily-data .daily-dates-table :is(th,td) { padding:8px 10px; border:0; background:#fff; text-align:left; vertical-align:top; }
 .daily-data .daily-dates-table thead th { position:sticky; top:0; z-index:1; font-size:14px; }
 .daily-data .daily-dates-table tbody th { font-weight:500; font-variant-numeric:tabular-nums; white-space:nowrap; }
 .date-model-inputs,.date-completion,.date-stage-counts,.date-pending-counts { display:flex; flex-wrap:wrap; align-items:center; gap:4px 16px; font-variant-numeric:tabular-nums; }
@@ -444,6 +444,7 @@ blockquote,.markdown blockquote,.answer-markdown blockquote { border:0; }
 .date-completion strong { font-weight:500; }
 .date-stage-counts,.date-pending-counts { margin-top:4px; font-size:13px; color:var(--muted); }
 .date-pending-counts:empty { display:none; }
+#data-sample-dialog { height:fit-content; }
 #data-sample-content { display:flex; flex-direction:column; overflow:hidden; }
 #data-sample-content .records-shell { display:flex; flex-direction:column; flex:1; min-height:0; margin:0; padding:0; }
 #data-sample-content .records-header { flex:none; margin:0 0 8px; }
@@ -459,6 +460,12 @@ blockquote,.markdown blockquote,.answer-markdown blockquote { border:0; }
 .compact-records-table .record-identifier code { overflow-wrap:anywhere; white-space:normal; }
 @media(max-width:600px) { .compact-records-table,.compact-records-table tbody { display:block; }.compact-records-table thead { display:none; }.compact-records-table tr { display:grid; grid-template-columns:minmax(0,1fr); gap:6px; padding:12px 0; }.daily-data .compact-records-table td { display:block; width:auto; padding:0; } }
 @media(max-width:767px) { .daily-data { height:auto; }.daily-data-toolbar { gap:8px; } }
+@media(min-width:768px) and (max-height:850px) {
+  .daily-data .daily-dates-table :is(th,td) { padding-block:4px; line-height:1.4; }
+  .daily-data .date-model-link { min-height:20px; font-size:13px; }
+  .daily-data .date-model-inputs { margin-bottom:2px; }
+  .daily-data :is(.date-stage-counts,.date-pending-counts) { margin-top:2px; font-size:12px; line-height:1.4; }
+}
 @container workbench (max-width:600px) { .daily-detail-heading { gap:6px; }.daily-detail-heading h2 { width:100%; }.daily-tabs { margin-right:0; }.daily-stages>div { grid-template-columns:88px 110px minmax(40px,1fr); }.daily-stage-status { grid-column:1/-1; }.daily-facts>div { grid-template-columns:1fr; gap:3px; }.aime-fields>.aime-scalar { grid-template-columns:90px minmax(0,1fr); } }
 @media(min-width:768px) and (max-height:700px) {
   .daily-workspace { gap:6px; }
