@@ -63,8 +63,10 @@ test("specific actors, business operation and call coordinates stay distinct and
   const f = businessChainFixture();
   assert.equal(f.chain.request_index, 2); assert.deepEqual(f.chain.return_indices, [3]); assert.equal(f.chain.planner_index, 1);
   assert(!f.problem.component.some(cause => /^llm-call-|^[0-9a-f-]{32,}$/u.test(cause.component)));
-  f.cause.business_component = f.cause.component;
-  assert(codes(f).includes("responsibility_business_location"));
+  for (const generic of [f.cause.component, f.cause.chain_step, "工具执行与数据获取", "语义理解", "llm-call-0"]) {
+    f.cause.business_component = generic;
+    assert(codes(f).includes("responsibility_business_location"));
+  }
   f.cause.chain_index = null;
   assert(codes(f).includes("responsibility_chain"));
   f.problem.investigation = [];
@@ -109,11 +111,23 @@ test("a readable retrieved Goldman target cannot become an absent-source allegat
 
 test("wide financial rows navigate identity and the declared latest price field instead of an arbitrary serialized prefix", () => {
   const f = businessChainFixture(), returned = f.raw.messages[3].output as any;
-  Object.assign(returned.datas[0], Object.fromEntries(Array.from({ length: 500 }, (_, index) => [`A-padding-${index}`, index])));
+  returned.datas[0] = { ...Object.fromEntries(Array.from({ length: 500 }, (_, index) => [`A-padding-${index}`, index])), ...returned.datas[0] };
   const binding = bindAttributionMaterial(f.candidate, f.raw);
   const chain = (binding.request.input.answer as any).business_chains[0];
   const proof = chain.checkpoints.find((point: any) => point.step === "原始返回及字段含义").evidence;
   assert(proof.some((item: any) => item.quote === "GLD.P"));
   assert(proof.some((item: any) => item.quote === "SPDR Gold Shares"));
-  assert(proof.some((item: any) => item.quote.includes('"Closing Price[20261022]":369')));
+  assert(proof.some((item: any) => /"Closing Price\[20261022\]":\s*369/u.test(item.quote)));
+});
+
+test("a nameless tool keeps its catalog identity gap instead of displaying an invented name", () => {
+  const f = businessChainFixture();
+  delete f.raw.messages[2].name; delete f.raw.messages[3].name;
+  const binding = bindAttributionMaterial(f.candidate, f.raw), answer = binding.request.input.answer as any;
+  const actor = answer.component_catalog.find((actor: any) => actor.kind === "tool" && actor.message_indices.includes(2));
+  assert.equal(answer.business_chains[0].tool_component, actor.component);
+  assert(!["undefined", "query-call"].includes(actor.component));
+  assert.deepEqual(businessChainDirectoryIssues(binding.request), []);
+  answer.business_chains[0].tool_component = "finquery";
+  assert(businessChainDirectoryIssues(binding.request).length);
 });

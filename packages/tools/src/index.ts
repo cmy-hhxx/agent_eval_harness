@@ -358,15 +358,15 @@ export const builtinTools: ExecutableTool[] = [
         source_offset?: number;
       };
       const sources = evidenceSources(message(ctx, args.candidate, args.message_index));
-      const path = args.path || undefined;
+      const path = args.path;
       const selected = selectEvidenceSource(sources, path);
       if (!selected) throw new Error(tracePathHint(sources));
       const { source, start, end: selectionEnd } = selected;
       // A fully displayed serialized leaf also covers its decoded text. Partial JSON
       // and equal values at other paths do not establish that physical coverage.
-      const requiredText = ctx.requiredReads?.some(read => read.candidate === args.candidate &&
-        read.message_index === args.message_index && read.kind === "text" && read.path === source.path);
-      const jsonLeaf = source.kind === "text" && !requiredText
+      const requiredSource = ctx.requiredReads?.some(read => read.candidate === args.candidate &&
+        read.message_index === args.message_index && read.kind === source.kind && read.path === source.path);
+      const jsonLeaf = source.kind === "text" && !requiredSource
         ? selectEvidenceSource(sources.filter(item => item.kind === "json"), source.path) : undefined;
       const readInJson = jsonLeaf && traceReadCoverage(presentedAudit(ctx), { candidate: args.candidate, message_index: args.message_index,
         kind: "json", path: jsonLeaf.source.path, start: jsonLeaf.start, end: jsonLeaf.end }).covered;
@@ -379,7 +379,7 @@ export const builtinTools: ExecutableTool[] = [
       if (sourceOffset > paths.length) throw new Error("source_offset 超出文本路径目录范围");
       const showDirectory = path === undefined;
       const shownPaths = showDirectory ? paths.slice(sourceOffset, sourceOffset + 16).map((item) => ({ path: item.path, chars: item.text.length })) : [];
-      const coverage = (end: number) => readInJson ? { covered: true, missing: [] } : traceReadCoverage(requiredText ? ctx.audit : presentedAudit(ctx), {
+      const coverage = (end: number) => readInJson ? { covered: true, missing: [] } : traceReadCoverage(requiredSource ? ctx.audit : presentedAudit(ctx), {
         candidate: args.candidate, message_index: args.message_index, kind: source.kind, path: source.path,
         start: start + offset, end: start + end,
       });

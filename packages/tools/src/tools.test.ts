@@ -702,7 +702,8 @@ test("trace reads accept neutral directory defaults and an empty root path witho
     assert.deepEqual(reused, JSON.parse(plain.content[0].text!));
     const root = await read({ path: "", source_offset: 0 });
     assert(!root.isError, JSON.stringify(root));
-    assert.deepEqual(JSON.parse(root.content[0].text!).text_sources, [{ path: "/content", chars: 6 }]);
+    assert.equal(JSON.parse(root.content[0].text!).text_sources, undefined);
+    assert.equal(JSON.parse(root.content[0].text!).source.kind, "json");
     assert.equal(ctx.audit.traceReads.length, 2);
     const conflicting = await read({ path: "/content", source_offset: 1 });
     assert.equal(conflicting.isError, true);

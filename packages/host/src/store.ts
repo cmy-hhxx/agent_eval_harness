@@ -1,4 +1,4 @@
-import { ValidationError, HttpError, canonical, safeId, requiredReadCallLimit, mergeRequiredReadRanges, toolBudgetMetadataChars, validateEvidenceBank, validateEvidenceBankSources, type EvidenceBankUpdate, type EvidenceBank } from "@eval/contracts";
+import { ValidationError, HttpError, canonical, safeId, evidenceSources, requiredReadCallLimit, mergeRequiredReadRanges, toolBudgetMetadataChars, validateEvidenceBank, validateEvidenceBankSources, type EvidenceBankUpdate, type EvidenceBank } from "@eval/contracts";
 import { internalPath, writeJson } from "@eval/data";
 import type {
   AttemptSpec,
@@ -26,12 +26,12 @@ function availableRequiredReadCalls(reads: TraceRead[], required: { target: Trac
   const previous: TraceRead[] = [];
   let available = 0;
   for (const read of reads) {
-    if (!read || read.kind !== "text" || !Number.isSafeInteger(read.start) || !Number.isSafeInteger(read.end) || read.start < 0 || read.end <= read.start) continue;
+    if (!read || !["text", "json"].includes(read.kind) || !Number.isSafeInteger(read.start) || !Number.isSafeInteger(read.end) || read.start < 0 || read.end <= read.start) continue;
     const advances = required.some(({ target, text }) => {
-      if (read.candidate !== target.candidate || read.message_index !== target.message_index || read.path !== target.path) return false;
+      if (read.candidate !== target.candidate || read.message_index !== target.message_index || read.kind !== target.kind || read.path !== target.path) return false;
       if (read.end > text.length || read.end - read.start > 16000) return false;
       let cursor = target.start;
-      const ranges = previous.filter(item => item.candidate === target.candidate && item.message_index === target.message_index && item.path === target.path)
+      const ranges = previous.filter(item => item.candidate === target.candidate && item.message_index === target.message_index && item.kind === target.kind && item.path === target.path)
         .sort((a, b) => a.start - b.start);
       for (const range of ranges) {
         if (range.start > cursor || cursor >= target.end) break;
@@ -49,15 +49,8 @@ function requiredReadRanges(spec: AttemptSpec, inputs: Record<string, unknown>) 
   return mergeRequiredReadRanges((spec.evaluation.requiredReads ?? []).map(target => {
     const id = spec.inputs.find(input => input.name === target.candidate)?.id;
     const raw = id === undefined ? undefined : inputs[id] as { messages?: unknown[] } | undefined;
-    let text: unknown = raw?.messages?.[target.message_index];
-    if (target.path !== "") {
-      if (!target.path.startsWith("/")) throw new Error("Invalid required trace path");
-      for (const part of target.path.slice(1).split("/")) {
-        const key = part.replaceAll("~1", "/").replaceAll("~0", "~");
-        text = text && typeof text === "object" && Object.hasOwn(text, key)
-          ? (text as Record<string, unknown>)[key] : undefined;
-      }
-    }
+    const message = raw?.messages?.[target.message_index];
+    const text = message === undefined ? undefined : evidenceSources(message).find(source => source.kind === target.kind && source.path === target.path)?.text;
     if (typeof text !== "string") throw new Error("Required trace source is unavailable");
     if (!id) throw new Error("Required trace input identity is unavailable");
     return { target, inputId: id, text };

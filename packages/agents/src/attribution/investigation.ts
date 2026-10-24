@@ -1,6 +1,6 @@
 import { canonical, type AgentRequest, type ToolAudit, type TraceRead, type ValidationIssue } from "@eval/contracts";
 import { attributionTaxonomy } from "@eval/prompts";
-import { evidenceSources, parseEvidenceCoordinates, traceExchanges, traceReadCoverage } from "@eval/tools";
+import { evidenceSources, isComponentLocator, parseEvidenceCoordinates, traceExchanges, traceReadCoverage } from "@eval/tools";
 import type { BusinessChain, Evidence, ProblemProposal } from "./types.js";
 
 export const businessChainDirectory = (request: AgentRequest): BusinessChain[] =>
@@ -33,6 +33,8 @@ export function businessChainDirectoryIssues(request: AgentRequest): ValidationI
     const exchange = exchanges[index];
     const linked = canonical([chain.chain_index, chain.request_index, chain.return_indices, chain.planner_index, chain.link_basis]) ===
       canonical([index + 1, exchange.request_index, exchange.return_indices, exchange.planner_index, exchange.link_basis]);
+    const actor = (request.input.answer as { component_catalog: { kind: string; component: string; message_indices: number[] }[] })
+      .component_catalog.find(actor => actor.kind === "tool" && actor.message_indices.includes(chain.request_index));
     const points = chain.checkpoints.flatMap(point => point.evidence);
     const valid = points.every(item => {
       const point = parseEvidenceCoordinates(item.evidence_id);
@@ -41,7 +43,7 @@ export function businessChainDirectoryIssues(request: AgentRequest): ValidationI
       return point && source && point.input_id === request.sources.answer.id && point.message_index === item.message_index &&
         source.text.slice(point.start, point.end) === item.quote;
     });
-    if (!linked || !valid || canonical(chain.checkpoints.map(point => point.step)) !== canonical(attributionTaxonomy.investigation_steps))
+    if (!linked || !valid || actor?.component !== chain.tool_component || canonical(chain.checkpoints.map(point => point.step)) !== canonical(attributionTaxonomy.investigation_steps))
       issues.push({ category: "evidence", code: "business_chain_directory", path: `/answer/business_chains/${index}`,
         message: "链路必须保留真实请求、返回、规划者和原始坐标；检查点按固定业务顺序登记。" });
   });
@@ -81,7 +83,9 @@ export function investigationIssues(request: AgentRequest, problem: ProblemPropo
     const location = `${path}/component/${index}`, chain = chains.find(chain => chain.chain_index === cause.chain_index);
     if (cause.chain_index !== null && !chain) add("responsibility_chain", location, "责任须关联实际登记的业务调用链路。特定调用不能填写空关联。");
     if (related.length && !chain) add("responsibility_chain", location, "本问题已有相关业务链路，责任不能只落在通用最终节点；选择故障形成、传播或恢复所在的调用和业务步骤。");
-    if ([cause.component, cause.technical_domain, cause.functional_component, "模型推理错误", "最终作答节点", "回答模型"].includes(cause.business_component))
+    if (isComponentLocator(cause.business_component) || [cause.component, ...Object.keys(attributionTaxonomy.domains),
+      ...Object.values(attributionTaxonomy.domains).flat(), ...attributionTaxonomy.stages, ...attributionTaxonomy.investigation_steps,
+      "模型推理错误", "最终作答节点", "回答模型"].includes(cause.business_component))
       add("responsibility_business_location", location, "business_component 须说明具体业务处理位置，不能复述主体名称或技术分类。");
     if (chain && !cause.field_names.length && ["entity_or_unit", "context_loss"].includes(problem.diagnosis))
       add("responsibility_fields", location, "标的、单位或上下文问题须列明受影响的实际字段。");

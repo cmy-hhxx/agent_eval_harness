@@ -1,5 +1,5 @@
 import { attributionTaxonomy } from "@eval/prompts";
-import { answerTurnContexts, cite, evidenceSources, messageContentSources, parseEvidenceCoordinates, selectEvidenceSource, traceExchanges } from "@eval/tools";
+import { answerTurnContexts, cite, evidenceSources, messageContentSources, parseEvidenceCoordinates, selectEvidenceSource, traceComponentIdentities, traceExchanges } from "@eval/tools";
 import type { BusinessChain, Evidence } from "@eval/agents/attribution";
 import { citationInventory } from "./citations.js";
 import { getAnswerGeneration } from "./answer-generation.js";
@@ -10,15 +10,12 @@ const object = (value: unknown): Record<string, unknown> => value && typeof valu
 /** Link captured boundaries, not imagined intermediate processing or a causal verdict. */
 export function businessChains(raw: RawInput, inputId: string, finalIndex: number): BusinessChain[] {
   const inventory = citationInventory(raw, inputId, finalIndex), contexts = answerTurnContexts(raw, finalIndex);
+  const actors = traceComponentIdentities(raw, inputId, finalIndex);
   const generation = getAnswerGeneration(raw, inputId, finalIndex);
   const at = (index: number, path: string, limit = 4800): Evidence[] => {
     const range = selectEvidenceSource(evidenceSources(raw.messages[index]), path);
     if (!range) return [];
-    const key = path.slice(path.lastIndexOf("/") + 1).replaceAll("~1", "/").replaceAll("~0", "~");
-    const prefix = JSON.stringify(key) + ":";
-    const start = range.source.kind === "json" && range.source.text.slice(range.start - prefix.length, range.start) === prefix
-      ? range.start - prefix.length : range.start;
-    return [cite(inputId, index, range.source, start, Math.min(range.end, range.start + limit))];
+    return [cite(inputId, index, range.source, range.start, Math.min(range.end, range.start + limit))];
   };
   const outputs = (index: number): Evidence[] => evidenceSources(raw.messages[index])
     .filter(source => source.kind === "text" && /^\/output\/\d+\/content(?:\/|$)/u.test(source.path))
@@ -62,7 +59,7 @@ export function businessChains(raw: RawInput, inputId: string, finalIndex: numbe
     const finals = references.flatMap(reference => reference.occurrences.map(occurrence => occurrence.context));
     const stepEvidence = [goals, planner, request, returns, [...returns, ...actualInput], actualInput,
       [...actualInput, ...generated], [...generated, ...finals]];
-    return { chain_index: index + 1, tool_component: String(call.name), ...exchange,
+    return { chain_index: index + 1, tool_component: actors.find(actor => actor.kind === "tool" && actor.message_indices.includes(exchange.request_index))!.component, ...exchange,
       context_indices: [...new Set(contexts.map(context => context.message_index))],
       references: references.map(reference => reference.reference),
       delivery_changed: generation?.matches_captured_final === null || !generation ? null : !generation.matches_captured_final,

@@ -819,8 +819,7 @@
           "minLength": 1
         },
         "request_query": {
-          "type": "string",
-          "minLength": 1
+          "type": "string"
         }
       }
     },

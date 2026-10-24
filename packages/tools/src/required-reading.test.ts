@@ -6,7 +6,7 @@ import os from "node:os";
 import path from "node:path";
 import { DEFAULT_POLICY, resolveEvidenceSelection, requiredReadCallLimit, toolBudgetMetadataChars, type ToolContext, type TraceRead } from "@eval/contracts";
 import { ArtifactStore } from "@eval/data";
-import { createRegistry, resolveEvidence, ToolRuntime } from "./index.js";
+import { createRegistry, resolveEvidence, selectEvidenceSource, evidenceSources, ToolRuntime } from "./index.js";
 import { RequiredReadBudget } from "./required-reading.js";
 
 const target = (start: number, end: number, path = "/content"): TraceRead => ({
@@ -41,12 +41,14 @@ test("each independent range advances from its first uncovered position", () => 
   assert.equal(budget.isRequired(argumentsFor(), { traceReads: [target(0, 8)] }), false);
 });
 
-test("only valid explicit text requests with automatic full pages qualify", () => {
+test("only requests covering a full mandatory page or its remaining short range qualify", () => {
   const budget = new RequiredReadBudget(inputs(), new Map([["answer", INPUT_ID]]), [target(0, 8)], 4096, metadataChars);
   const audit = { traceReads: [] };
   assert.equal(budget.isRequired({ ...argumentsFor(), max_chars: 16000 }, audit), true);
+  assert.equal(budget.isRequired({ ...argumentsFor(), max_chars: 8 }, audit), true);
+  assert.equal(budget.isRequired({ ...argumentsFor(), max_chars: 12000 }, audit), true);
   for (const args of [
-    { ...argumentsFor(), max_chars: 1 }, { ...argumentsFor(), max_chars: 12000 },
+    { ...argumentsFor(), max_chars: 1 }, { ...argumentsFor(), max_chars: 7 }, { ...argumentsFor(), max_chars: 16001 },
     { ...argumentsFor(), candidate: "other" }, { ...argumentsFor(), message_index: 1 },
     { ...argumentsFor(), path: "/other" }, { ...argumentsFor(), path: undefined },
     { ...argumentsFor(), offset: -1 }, { ...argumentsFor(), offset: 0.5 },
@@ -78,6 +80,29 @@ test("required quota remains finite even if a caller reports tiny new ranges", (
   assert.equal(budget.remaining, 0);
   assert.equal(budget.isRequired(argumentsFor(2), audit), false);
   assert.equal(budget.charge(argumentsFor(2), target(2, 3), audit), false);
+});
+
+test("an exact JSON field uses mandatory quota with no exploration and preserves its JSON coordinates", async () => {
+  const workdir = await mkdtemp(path.join(os.tmpdir(), "eval-required-json-"));
+  try {
+    const raw = { messages: [{ output: { asset: "GLD.P", unit: "$", price: 369 } }] };
+    const range = selectEvidenceSource(evidenceSources(raw.messages[0]), "/output/price")!;
+    const target = { candidate: "answer", message_index: 0, kind: "json" as const, path: "", start: range.start, end: range.end };
+    const context: ToolContext = { inputIds: new Map([["answer", INPUT_ID]]), inputs: new Map([["answer", raw]]),
+      attemptId: "required-json", workdir, audit: { calls: 0, requiredReadCalls: 0, viewedImages: [], traceReads: [], calculations: [], artifacts: [] },
+      policy: { ...DEFAULT_POLICY, maxToolCalls: 0, maxOutputChars: 1024 }, requiredReads: [target],
+      artifacts: new ArtifactStore(path.join(workdir, "artifacts")) };
+    const runtime = new ToolRuntime(context, createRegistry().select(["read_trace"]));
+    const result = await runtime.execute("read_trace", { candidate: "answer", message_index: 0, path: "", offset: range.start,
+      max_chars: range.end - range.start }, new AbortController().signal);
+    assert.equal(result.isError, undefined, JSON.stringify(result));
+    const page = result.details as { source: { kind: string }; evidence: { quote: string }[]; text_sources?: unknown };
+    assert.equal(page.source.kind, "json");
+    assert.equal(page.text_sources, undefined);
+    assert.match(page.evidence[0].quote, /"price":\s*369/u);
+    assert.equal(context.audit.requiredReadCalls, 1);
+    assert.equal(runtime.budget().required_reads.covered, true);
+  } finally { await rm(workdir, { recursive: true, force: true }); }
 });
 
 for (const [name, text] of [

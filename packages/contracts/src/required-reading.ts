@@ -15,14 +15,14 @@ export function mergeRequiredReadRanges(ranges: readonly RequiredRange[]): Requi
   const grouped = new Map<string, RequiredRange[]>();
   for (const range of ranges) {
     const target = range?.target;
-    if (!target || target.kind !== "text" || typeof target.candidate !== "string" || !target.candidate ||
-      typeof target.path !== "string" || !Number.isSafeInteger(target.message_index) || target.message_index < 0 ||
+    if (!target || !["text", "json"].includes(target.kind) || typeof target.candidate !== "string" || !target.candidate ||
+      typeof target.path !== "string" || target.kind === "json" && target.path !== "" || !Number.isSafeInteger(target.message_index) || target.message_index < 0 ||
       !Number.isSafeInteger(target.start) || !Number.isSafeInteger(target.end) || target.start < 0 || target.end < target.start ||
       typeof range.text !== "string" || target.end > range.text.length)
       throw new RangeError("Invalid required trace range");
-    evidenceId(range.inputId, target.message_index, "text", target.path, target.start, target.end);
+    evidenceId(range.inputId, target.message_index, target.kind, target.path, target.start, target.end);
     if (target.start === target.end) continue;
-    const key = JSON.stringify([target.candidate, target.message_index, target.path]);
+    const key = JSON.stringify([target.candidate, target.message_index, target.kind, target.path]);
     const sourceRanges = grouped.get(key) ?? [];
     if (sourceRanges[0] && (sourceRanges[0].text !== range.text || sourceRanges[0].inputId !== range.inputId))
       throw new RangeError("Required trace ranges disagree on their source text");
@@ -69,10 +69,10 @@ export function toolBudgetMetadataChars(toolNames: readonly string[]): number {
 function pageLimit({ target, inputId, text }: RequiredRange, maxOutputChars: number, budgetMetadataChars: number): number {
   const longestOffset = text.length;
   const metadata = JSON.stringify({
-    source: { kind: "text", path: target.path },
+    source: { kind: target.kind, path: target.path },
     selection_path: target.path,
     evidence: [{
-      reference: { evidence_id: evidenceId(inputId, target.message_index, "text", target.path, longestOffset, longestOffset) },
+      reference: { evidence_id: evidenceId(inputId, target.message_index, target.kind, target.path, longestOffset, longestOffset) },
       message_index: target.message_index,
       quote: "",
     }],
