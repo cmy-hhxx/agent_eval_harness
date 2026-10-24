@@ -12,6 +12,7 @@ test('daily date table shows full-range completion, both AIME stages and indepen
   dom.window.HTMLDialogElement.prototype.showModal = function() { this.setAttribute('open',''); };
   dom.window.HTMLDialogElement.prototype.close = function() { this.removeAttribute('open'); this.dispatchEvent(new dom.window.Event('close')); };
   const bundle = await build({entryPoints:[path.join(directory,'daily-data.js')],bundle:true,write:false,format:'iife',globalName:'Data',platform:'browser'});
+  const recordsTemplate = await readFile(path.join(ROOT,'server_dashboard_ths/records.html'),'utf8');
   const days = Array.from({length:16},(_,index)=>`2026-10-${String(index+1).padStart(2,'0')}`), requests:string[] = [], results:string[] = [];
   let completed = 300, aimeComplete = false, failure = false;
   const counts = (complete:number,total:number) => ({total,completed:complete,partial:total-complete,pending:0,running:0,failed:0});
@@ -22,7 +23,7 @@ test('daily date table shows full-range completion, both AIME stages and indepen
   const fetcher = async (url:string) => { requests.push(url); if (url.includes('/records/')) return Response.json({total:1,items:[{format:'trace',trace_id:'trace-one',question:'完整原始问句',answer:'**完整原始回答**'}]}); if (failure) return Response.json({error:'读取故障'},{status:503}); return Response.json(analytics(url.includes('/aime/')?'aime':'wencai')); };
   dom.window.fetch = fetcher as any;
   dom.window.eval(bundle.outputFiles[0].text+'\nglobalThis.Data=Data;');
-  const controller = dom.window.Data.mountDailyData(dom.window.document,{fetch:fetcher,onResults:(source:string)=>results.push(source),recordsTemplate:()=>readFile(path.join(ROOT,'server_dashboard_ths/records.html'),'utf8')});
+  const controller = dom.window.Data.mountDailyData(dom.window.document,{fetch:fetcher,onResults:(source:string)=>results.push(source),recordsTemplate:async()=>recordsTemplate});
   const el = (id:string) => dom.window.document.getElementById(id)! as any;
   const wait = async (check:()=>boolean) => {for(let i=0;i<100;i++){if(check())return;await new Promise(setImmediate);}assert.fail('table did not settle');};
   try {
