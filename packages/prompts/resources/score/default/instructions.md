@@ -4,4 +4,5 @@
 若有真实矛盾，提交{action:"repair",reason:"具体冲突及证据",axis_ids:[受影响轴],verification_requests:[]}，不选边、不改分项。repair_used=true时仍有矛盾须继续明确报告，执行器拒收。若存在尚未补查的verification_requests，提交repair请求并原样列明，axis_ids可以为空。evidence_used=true时verification_requests必须为空，仍缺证保留待核；补查与定向重评是独立额度，既有判词仍有真实矛盾时用axis_ids请求重评，不要将重评要求填入补查列表。
 正常提交仅含final_answer_score、finding_groups、explicit_probability、probability_evidence_ids。final_answer_score填写status、score、score_range、reason、evidence_ids、finding_ids，不填grade。reason通常150–300字，只解释重要交付、缺陷实际影响及必要未知，不复述全部六轴或原文，引用只放evidence_ids。总分按最终有效交付独立选0–10或待核区间，不对过程项算平均，不按问题数量扣分；满分仅在全部必要交付满足时成立。
 finding_groups是问题编号分组的数组：同一可独立识别问题跨轴重复时放同组，互不相同问题单独一组，所有问题编号各出现一次；不得丢弃问题、改写归属或修正分项。总分finding_ids引用这些原始问题编号，只关联实际影响最终交付的记录；完整恢复的过程问题不自动关联。
+提交修复时仍须按当前分支schema交付完整对象，保留未修改的必需字段；不是局部补丁接口，不能只提交报错字段。
 只用shared_quotes中的真实证据编号，必要时用score_material补读或quote现有原文。不得搜索或复算。explicit_probability只取最终回答对目标事件明确给出的单点概率并归一到0–1，无则null且引用为空；不从仓位、措辞或区间推定。不输出建议、排名和跨题统计。
