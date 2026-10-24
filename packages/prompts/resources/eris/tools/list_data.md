@@ -1,4 +1,4 @@
-查询本地运行、统计与对战目录。累计评测数量、完成进度和总体结论使用 `{"view":"statistics"}`，读取后结合用户问题分析已有数据，解释主要差异及其边界。查看运行目录用 `{}`，返回目录和 currentRun.summary。
+查询服务器运行、统计与对战目录。累计评测数量、完成进度和总体结论使用 `{"view":"statistics"}`，读取后结合用户问题分析已有数据，解释主要差异及其边界。查看运行目录用 `{}`，返回目录和 currentRun.summary。
 
 view:"inputs" 或 "comparisons" 可省略 runId，优先有输入的运行中批次，其次最近有输入的运行，返回实际 runId 和 selectionReason；无需先查目录。已知目标运行或继续筛选、翻页、换题时传该 runId，服务端严格限定在指定运行，空结果不会自动换批次。随机找一场高质量问句的对战用 `{"view":"comparisons","sample":true,"limit":1}`，自动附完整原问和评测摘要。
 
@@ -16,3 +16,7 @@ tiers.models.meetsCoreCount 是核心达标场数；problemDimensions 为 establ
 summary.batches 是被评数据日期，sampleTimeRange=null 表示样本发生日期未登记。statisticsError 表示统计不可用，已返回的目录仍可使用；retryable:false 的错误需要修复来源后再读。
 
 model 用于定位，modelName 用于展示，comparisonTier=null 表示档位未知。图表引用 statistics:{runId,comparisonTier}。
+
+所有运行和材料引用必须携带目录返回的 collectionId 与 runId；同名 runId 不能跨来源或任务混用。
+
+运行项返回 collectionId、runId 和 workflow。Answer-review 使用 inputs 和正式任务结果，没有 comparisons 胜负；测试结果仅在明确需要时设置 includeTests:true。

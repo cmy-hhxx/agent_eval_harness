@@ -14,7 +14,7 @@ test("batched search displays a compact query count while retaining the complete
 });
 
 test("batch evidence details distinguish missing, partial and complete nodes without repeating quotes", () => {
-  const reference = { runId: "run", inputId: "input" };
+  const reference = { collectionId: "0_wencai/0_daily_eval", runId: "run", inputId: "input" };
   const items = [
     { reference: { ...reference, messageIndex: 3 }, text: "已读内容", evidence: [{ evidence_id: "source-3", quote: "已读内容" }], hasMore: true, nextOffset: 2000 },
     { reference: { ...reference, messageIndex: 7 }, text: "完整内容", hasMore: false, nextOffset: null },
@@ -37,8 +37,8 @@ test("batch evidence details distinguish missing, partial and complete nodes wit
 test("case details show each answer with an independently expandable trace map", () => {
   const output = { kind: "case", question: "用户想比较什么", answers: [{ modelName: "B组Expert", answer: { text: "实际回答", complete: true },
     trace: { messageCount: 40, toolCalls: 14, finalMessageIndex: 39, nodes: [
-      { messageIndex: 3, type: "tool_result", name: "memory", preview: "Error: missing argument", reference: { runId: "run", inputId: "input", messageIndex: 3 } },
-      { messageIndex: 39, type: "final_answer", reference: { runId: "run", inputId: "input", messageIndex: 39 } },
+      { messageIndex: 3, type: "tool_result", name: "memory", preview: "Error: missing argument", reference: { collectionId: "0_wencai/0_daily_eval", runId: "run", inputId: "input", messageIndex: 3 } },
+      { messageIndex: 39, type: "final_answer", reference: { collectionId: "0_wencai/0_daily_eval", runId: "run", inputId: "input", messageIndex: 39 } },
     ] } }] };
   const model = analysisToolModel("read_case", { state: "ok", output: JSON.stringify(output) });
   assert.equal(model.summary, "读取案例 · 1 条回答 · 已完成");
@@ -110,7 +110,7 @@ test("partial run directories keep published statistics visible without claiming
 test("chart summaries distinguish the chart type and execution state without exposing provenance references", () => {
   assert.deepEqual(analysisToolModel("show_chart", { state: "ok", output: JSON.stringify({ kind: "chart", chart: { type: "heatmap" } }) }),
     { summary: "显示热力矩阵 · 已完成" });
-  assert.deepEqual(analysisToolModel("show_chart", { state: "error", bodyRaw: JSON.stringify({ type: "pie", references: [{ runId: "run-private" }] }), output: "invalid values" }),
+  assert.deepEqual(analysisToolModel("show_chart", { state: "error", bodyRaw: JSON.stringify({ type: "pie", references: [{ collectionId: "0_wencai/0_daily_eval", runId: "run-private" }] }), output: "invalid values" }),
     { summary: "显示环形组成图 · 未完成" });
   assert.deepEqual(analysisToolModel("show_chart", { state: "running", bodyRaw: '{"type":' }), { summary: "显示图表 · 进行中" });
 });
@@ -136,10 +136,10 @@ test("comparison checks show actionable revision feedback instead of a raw drawi
 test("comparison pages show the question, outcome and both answer references in tool details", () => {
   for (const question of [{ questionPreview: "均线如何设置？" }, { question: "均线如何设置？" }]) {
     const result = analysisToolModel("list_data", { state: "ok", output: JSON.stringify({ kind: "comparisons", total: 200,
-      items: [{ ...question, reference: { runId: "run", taskId: "battle" },
+      items: [{ ...question, reference: { collectionId: "0_wencai/0_daily_eval", runId: "run", taskId: "battle" },
         outcomes: [{ resultLabel: "B组Fast胜" }], inputs: [
-          { modelName: "A组Fast", reference: { runId: "run", inputId: "answer-a" } },
-          { modelName: "B组Fast", reference: { runId: "run", inputId: "answer-b" } },
+          { modelName: "A组Fast", reference: { collectionId: "0_wencai/0_daily_eval", runId: "run", inputId: "answer-a" } },
+          { modelName: "B组Fast", reference: { collectionId: "0_wencai/0_daily_eval", runId: "run", inputId: "answer-b" } },
         ] }], summary: { inputCount: 400, caseCount: 200 } }) });
     assert.equal(result.summary, "查询正式对战 · 200 场匹配 · 本页 1 场");
     assert.equal(result.details.items[0].title, "均线如何设置？");

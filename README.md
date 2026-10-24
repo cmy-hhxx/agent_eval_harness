@@ -93,4 +93,4 @@ npm run automations -- run --once
 | Eris 对话、数据与工具 | [Agent 说明](agent/README.md) |
 | 离线汇报与历史快照 | [汇报模块](evaluation-report/README.md) |
 
-本地开发仍可使用 `npm run eval -- dashboard` 和 `bash agent/run.sh`。
+Eris 只读分析助手部署在服务器，入口为 `http://117.50.195.94:3928`（内部 `5004`）。部署与账户管理见 [Eris](agent/README.md)；本机只进行开发与模拟验证。

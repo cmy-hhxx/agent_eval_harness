@@ -46,10 +46,9 @@ const webReadText='政策利率以本公告为准。[伪造来源](javascript:al
 const webReadUrl='https://www.pbc.gov.cn/announcement.pdf';
 const webReadTool={name:'read_web',readOnly:true,description:'Read source text',inputSchema:{type:'object'},execute:async()=>{webReads++;return {content:[{type:'text',text:JSON.stringify({url:webReadUrl,requestedUrl:searchUrl,title:searchTitle,format:'pdf',retrievedAt:searchTime,elapsedMs:700,publicationDate:'2026-09-30',
  dateAssessment:{status:'within_range',basis:'page_metadata',date:'2026-09-30'},lines:[{number:130,text:webReadText,page:8},{number:131,text:'利率单位：年化百分比。',page:8}],matches:[{line:130,page:8}],totalLines:3400,totalPages:160,readPages:160,nextStartLine:132,truncated:true,limitations:['页面日期为来源声明']})}]};}};
-const sourceArgs={reference:{runId:'run-alpha',inputId:'input-one',messageIndex:0}};
+const sourceArgs={reference:{ collectionId: "0_wencai/0_daily_eval",runId:'run-alpha',inputId:'input-one',messageIndex:0}};
 const sourceText='原始问题：请核对这条回答的证据。';
-const formalReference={runId:'run-alpha',taskId:'task-internal-alpha'};
-const operationId='6a1b4a17-1039-4ead-ac32-9a37b0bf4ada';
+const formalReference={ collectionId: "0_wencai/0_daily_eval",runId:'run-alpha',taskId:'task-internal-alpha'};
 const evaluatorVersion='fixture-evaluator-private';
 const directoryQuery='run-private-prefix';
 const failedInputId='input-private-missing';
@@ -64,7 +63,7 @@ const server=await serveAssistant({port:0,userId:'local',webDirectory:process.cw
   await event({type:'agent_start'});await event({type:'turn_start'});await event({type:'message_end',message:{role:'user',content:[{type:'text',text}]}});
   const example=templateExamples[text.replace('图表模板测试示例：','')];
   if(example){
-   const statistics=example===templateExamples['双档战绩']?['Fast','Expert'].map(comparisonTier=>({statistics:{runId:'run-alpha',comparisonTier}})):null;
+   const statistics=example===templateExamples['双档战绩']?['Fast','Expert'].map(comparisonTier=>({statistics:{ collectionId: "0_wencai/0_daily_eval",runId:'run-alpha',comparisonTier}})):null;
    const versions=statistics?[{...example,scope:'更新前的统计快照',series:example.series.map((series,index)=>index===0?{...series,values:[series.values[0]-1,series.values[1]]}:series)},example]:[example];
    for(const [index,version] of versions.entries()){
     const exampleCall=`template-${selected.length}-${index}`,references=statistics??[{reference:formalReference}];
@@ -103,10 +102,6 @@ const server=await serveAssistant({port:0,userId:'local',webDirectory:process.cw
   await event({type:'message_end',message:{role:'toolResult',toolCallId:'image-'+selected.length,content:[],details:{sourceRead:{tool:'view_image',args:sourceArgs}},isError:false}});
   await event({type:'tool_execution_start',toolCallId:'formal-'+selected.length,toolName:'read_data',args:{reference:formalReference}});
   await event({type:'message_end',message:{role:'toolResult',toolCallId:'formal-'+selected.length,content:[{type:'text',text:JSON.stringify({kind:'accepted-result',reference:formalReference,evaluatorVersion,result:{conclusion:'已有正式结论'}})}],isError:false}});
-  await event({type:'tool_execution_start',toolCallId:'specialist-'+selected.length,toolName:'call_specialist',args:{operationId,kind:'comparison',inputs:[{runId:'run-alpha',inputId:'input-one'},{runId:'run-alpha',inputId:'input-two'}]}});
-  await event({type:'message_end',message:{role:'toolResult',toolCallId:'specialist-'+selected.length,content:[{type:'text',text:JSON.stringify({operationId,state:'succeeded',evaluatorVersion,result:{conclusion:'对比完成'}})}],isError:false}});
-  await event({type:'tool_execution_start',toolCallId:'read-specialist-'+selected.length,toolName:'read_specialist',args:{operationId}});
-  await event({type:'message_end',message:{role:'toolResult',toolCallId:'read-specialist-'+selected.length,content:[{type:'text',text:JSON.stringify({operationId,state:'succeeded',evaluatorVersion,result:{conclusion:'对比完成'}})}],isError:false}});
   await event({type:'tool_execution_start',toolCallId:'calculate-'+selected.length,toolName:'calculate',args:{operation:'add',operands:['1','2']}});
   await event({type:'message_end',message:{role:'toolResult',toolCallId:'calculate-'+selected.length,content:[{type:'text',text:JSON.stringify({operation:'add',operands:['1','2'],result:'3'})}],isError:false}});
   await event({type:'tool_execution_start',toolCallId:'chart-'+selected.length,toolName:'show_chart',args:{...chartData,references:[{reference:formalReference}]}});
@@ -114,7 +109,7 @@ const server=await serveAssistant({port:0,userId:'local',webDirectory:process.cw
   await event({type:'message_end',message:{role:'toolResult',toolCallId:'chart-'+selected.length,...chartReceipt,isError:false}});
   await event({type:'tool_execution_start',toolCallId:'failed-chart-'+selected.length,toolName:'show_chart',args:{...chartData,type:'pie',series:[{name:'FAST',values:[5,-3]}],references:[{reference:formalReference}]}});
   await event({type:'message_end',message:{role:'toolResult',toolCallId:'failed-chart-'+selected.length,content:[{type:'text',text:'饼图数值必须非负'}],isError:true}});
-  await event({type:'tool_execution_start',toolCallId:'failed-source-'+selected.length,toolName:'read_data',args:{reference:{runId:'run-alpha',inputId:failedInputId}}});
+  await event({type:'tool_execution_start',toolCallId:'failed-source-'+selected.length,toolName:'read_data',args:{reference:{ collectionId: "0_wencai/0_daily_eval",runId:'run-alpha',inputId:failedInputId}}});
   await event({type:'message_end',message:{role:'toolResult',toolCallId:'failed-source-'+selected.length,content:[{type:'text',text:rawReadError}],isError:true}});
   await event({type:'turn_end'});await event({type:'turn_start'});await event({type:'message_start',message:{role:'assistant'}});
   const answer='## 查询完成\n\n共有 12 条正式结果。\n\n先看决定性差异。\n\n优先补齐关键步骤。';
@@ -188,9 +183,9 @@ try{
  await page.locator('[data-process-activity][aria-expanded=false]').first().click();
  await page.getByRole('button',{name:/读取材料.*读取原始对话/}).first().waitFor();
  const collapsedSteps=await page.locator('body').innerText();
- for(const internal of ['run-alpha','input-one','input-two',formalReference.taskId,operationId,evaluatorVersion,directoryQuery,failedInputId,'task-private-missing','/private/eris/runs',rawReadError])assert(!collapsedSteps.includes(internal),`collapsed tool steps expose ${internal}`);
+ for(const internal of ['run-alpha','input-one','input-two',formalReference.taskId,evaluatorVersion,directoryQuery,failedInputId,'task-private-missing','/private/eris/runs',rawReadError])assert(!collapsedSteps.includes(internal),`collapsed tool steps expose ${internal}`);
  assert(!/runId|inputId|taskId|operationId|evaluatorVersion/.test(collapsedSteps),'collapsed tool steps expose internal field names');
- for(const businessText of ['读取原始对话','读取正式结论','对比评测 · 已完成','读取专业结论 · 已完成','加法 · 1 + 2 = 3','读取原始对话 · 未完成','搜索外部资料 · 3 种查询 · 新闻 · 1 条结果 · 部分完成（2/3）','读取外部原文 · PDF · 2 行 · 已完成'])assert(collapsedSteps.includes(businessText),`missing business step: ${businessText}`);
+ for(const businessText of ['读取原始对话','读取正式结论','加法 · 1 + 2 = 3','读取原始对话 · 未完成','搜索外部资料 · 3 种查询 · 新闻 · 1 条结果 · 部分完成（2/3）','读取外部原文 · PDF · 2 行 · 已完成'])assert(collapsedSteps.includes(businessText),`missing business step: ${businessText}`);
  const chartRow=page.locator('[data-tool=show_chart][data-state=ok]').getByRole('button').first();
  assert.equal(await chartRow.getAttribute('aria-expanded'),'false','a successful chart is visible without opening its tool details');
  assert.equal(await page.locator('figure[data-analysis-chart]').count(),1,'expanded work steps do not duplicate accepted charts or display rejected charts');
@@ -244,11 +239,6 @@ try{
  await page.getByRole('button',{name:/查询评测数据/}).first().click();
  await page.getByText('run-alpha',{exact:true}).first().waitFor();
  assert.equal(sourceReads,0,'collapsed source tools do not fetch materials');
- const professional=page.getByRole('button',{name:/专业评测.*对比评测/}).first();
- await professional.click();
- await page.getByText(operationId,{exact:true}).first().waitFor();
- await page.getByText(evaluatorVersion,{exact:true}).first().waitFor();
- await professional.click();
  await page.getByRole('button',{name:/读取材料/}).first().click();
  await page.getByText(sourceText,{exact:true}).waitFor();
  await page.getByText('证据',{exact:true}).first().click();
@@ -335,6 +325,7 @@ try{
  await page.getByRole('menuitem',{name:/推理等级/}).click();
  await page.getByRole('slider',{name:'推理等级'}).press('End');
  await page.getByRole('button',{name:/gpt-5.6-luna.*推理等级 max$/}).waitFor();
+ await page.waitForFunction(()=>{const input=document.querySelector('[data-reasoning-card] input[type=range]');return input&&!input.disabled;});
  const effortCard=await page.locator('[data-reasoning-card]').boundingBox();
  assert(effortCard&&effortCard.width<330&&effortCard.height<150,'the effort control retains a compact, full slider');
  const effortSlider=page.getByRole('slider',{name:'推理等级'}),effortBounds=await effortSlider.boundingBox();
@@ -346,8 +337,10 @@ try{
  await page.getByRole('button',{name:/gpt-5.6-luna.*推理等级 off$/}).waitFor();
  await effortSlider.press('End');
  await page.getByRole('button',{name:/gpt-5.6-luna.*推理等级 max$/}).waitFor();
+ await page.waitForFunction(()=>{const input=document.querySelector('[data-reasoning-card] input[type=range]');return input&&!input.disabled;});
  await page.getByRole('slider',{name:'推理等级'}).press('ArrowLeft');
  await page.getByRole('button',{name:/gpt-5.6-luna.*推理等级 xhigh$/}).waitFor();
+ await page.waitForFunction(()=>{const input=document.querySelector('[data-reasoning-card] input[type=range]');return input&&!input.disabled;});
  await page.getByRole('slider',{name:'推理等级'}).press('ArrowLeft');
  await page.getByRole('button',{name:/gpt-5.6-luna.*推理等级 high$/}).waitFor();
  await page.reload();await page.getByRole('button',{name:/gpt-5.6-luna.*推理等级 high$/}).waitFor();
@@ -475,6 +468,7 @@ try{
     await page.setViewportSize({width,height:1200});
     await exampleChart.locator('svg text').filter({hasText:'104'}).waitFor();
     await page.waitForFunction(()=>{const matrix=[...document.querySelectorAll('[data-research-chart=heatmap]')].at(-1);return matrix.firstElementChild.scrollWidth<=matrix.firstElementChild.clientWidth+1;});
+    await page.waitForFunction(()=>{const chart=[...document.querySelectorAll('[data-research-chart=heatmap]')].at(-1)?.closest('figure[data-analysis-chart]');if(!chart)return false;const b=chart.getBoundingClientRect();return [...chart.querySelectorAll('svg text')].every(node=>{const r=node.getBoundingClientRect();return r.left>=b.left&&r.right<=b.right;});});
     const labels=await exampleChart.locator('svg text').evaluateAll(nodes=>nodes.map(node=>{const r=node.getBoundingClientRect();return{text:node.textContent,left:r.left,right:r.right,top:r.top,bottom:r.bottom};}));
     for(const text of [...example.categories,...example.series.map(series=>series.name),...example.series.flatMap(series=>series.values.map(String))])assert(labels.some(label=>label.text===text),'every tier, result and exact count is visible');
     const bounds=await exampleChart.boundingBox();

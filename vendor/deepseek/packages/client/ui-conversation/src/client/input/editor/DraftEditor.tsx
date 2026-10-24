@@ -2,6 +2,7 @@
 import type { CSSProperties, KeyboardEventHandler, ReactNode, RefObject } from 'react'
 import type { LexicalEditor } from 'lexical'
 import clsx from 'clsx'
+import { HoverCardGroup } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { InputState } from '../../contract/input.ts'
 import { ComposerContentEditable } from './ComposerContentEditable.tsx'
 import { DecoratorPortals } from './DecoratorPortals.tsx'
@@ -35,7 +36,7 @@ export function DraftEditor({
 }: DraftEditorProps): ReactNode {
   return (
     <div ref={scrollRef} className={css.scroll} data-input-scroll>
-      <div className={css.grow}>
+      <HoverCardGroup className={css.grow}>
         <ComposerContentEditable
           editor={workspaceTrigger ? null : editor}
           editable={editable}
@@ -59,7 +60,7 @@ export function DraftEditor({
         )}
         <DecoratorPortals editor={workspaceTrigger ? null : editor} />
         {prediction}
-      </div>
+      </HoverCardGroup>
     </div>
   )
 }

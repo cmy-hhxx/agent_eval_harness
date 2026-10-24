@@ -75,45 +75,6 @@ test("durable inbox supports edit, removal and steering; progress uses upstream 
  }finally{await sessions.dispose();await rm(directory,{recursive:true,force:true});}
 });
 
-test("specialist previews coalesce durably, retain the final transcript and reconnect without sequence gaps", async()=>{
- const directory=await mkdtemp(tmpdir()+"/assistant-progress-");
- let release=()=>{};let driver!:ConversationDriverOptions;
- const options={directory,url:"http://127.0.0.1:1",model:{provider:"test",model:"test"} as ModelConfig,systemPrompt:"test",tools:[],driver:async(context:ConversationDriverOptions)=>{driver=context;return {
-  async prompt(){await context.event({type:"agent_start"});await new Promise<void>(resolve=>{release=resolve;});await context.event({type:"agent_end"});},
-  async steer(){},async abort(){release();},async dispose(){}
- };}};
- let sessions=new AssistantSessions(options);
- try{
-  const scope=await sessions.create("local"),requestId=randomUUID();
-  await sessions.prompt("local",{sessionId:scope.sessionId,requestId,mode:"queue",content:[{type:"text",text:"analyze"}]});
-  await until(async()=>!!driver);
-  await driver.event({type:"tool_execution_start",toolCallId:"specialist",toolName:"call_specialist",args:{operationId:"operation"}});
-  let expected="";
-  for(let i=0;i<26;i++){
-   const delta=`fragment-${i}:`+"evidence ".repeat(120);expected+=delta;
-   driver.progress("specialist",{operationId:"operation",event:{type:"model",data:{type:"message_update",assistantMessageEvent:{type:"thinking_delta",delta}}}});
-   await delay(50);
-  }
-  await delay(1000);
-  const abort=new AbortController(),follow=sessions.events(scope,abort.signal)[Symbol.asyncIterator]();
-  const baseline=object((await follow.next()).value);
-  assert.equal(baseline.type,"snapshot");assert(JSON.stringify(baseline).includes("fragment-25:"),"reconnect baseline contains the latest durable specialist preview");
-  abort.abort();await follow.return?.();
-  await driver.event({type:"message_end",message:{role:"toolResult",toolCallId:"specialist",content:[{type:"text",text:"accepted"}]}});
-  release();await until(async()=>(await sessions.list("local"))[0].requests[requestId]==="completed");
-  const page=object(await sessions.page(scope));
-  const events=(page.records as {event:{type:string;seq:number;data:Record<string,unknown>}}[]).map(row=>row.event);
-  const previews=events.filter(event=>event.type==="tool/ptc-dispatch");
-  assert(previews.length<=4,`${previews.length} snapshots for a short burst`);
-  assert.equal((previews.at(-1)!.data.content as {text:string}[])[0].text,expected);
-  assert(Buffer.byteLength(JSON.stringify(previews))<Buffer.byteLength(expected)+12000,"preview persistence must not multiply the transcript by the number of deltas");
-  assert.deepEqual(events.map(event=>event.seq),events.map((_,index)=>index));
-  await sessions.dispose();sessions=new AssistantSessions(options);
-  const restored=await sessions.page(scope);
-  assert.equal(JSON.stringify(restored),JSON.stringify(page),"restarting preserves the same final output and event sequence");
- }finally{await sessions.dispose();await rm(directory,{recursive:true,force:true});}
-});
-
 const recoveryCalls = ["accepted", "unknown", "not-started"];
 const recoveryContent = recoveryCalls.map(id => ({ type: "toolCall", id, name: "lookup", arguments: {} }));
 function assertRecovery(events: AssistantEvent[]) {

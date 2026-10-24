@@ -1,0 +1,21 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["runtimeRoot", "dataRoot", "evalConfigFile", "publicOrigin", "listen"],
+  "properties": {
+    "runtimeRoot": {"type": "string", "minLength": 1},
+    "dataRoot": {"type": "string", "minLength": 1},
+    "evalConfigFile": {"type": "string", "minLength": 1},
+    "publicOrigin": {"type": "string", "minLength": 1},
+    "listen": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["host", "port"],
+      "properties": {
+        "host": {"enum": ["0.0.0.0", "127.0.0.1"]},
+        "port": {"type": "integer", "minimum": 0, "maximum": 65535}
+      }
+    }
+  }
+}

@@ -4,7 +4,7 @@ import { EvidenceContent } from './case-evidence.js';
 
 const summaryStyle = { cursor: 'pointer', padding: '6px 0', color: '#24262B', fontSize: 14, fontWeight: 600 };
 const parse = value => { try { return JSON.parse(value); } catch { return null; } };
-const sourceKey = ref => JSON.stringify([ref?.runId, ref?.taskId, ref?.inputId]);
+const sourceKey = ref => JSON.stringify([ref?.collectionId, ref?.runId, ref?.taskId, ref?.inputId, ref?.sourceId]);
 function sourceReads(data) {
   const reads = [], seen = new Set(), pending = data.map(value => value.root);
   for (const block of pending) {
@@ -33,7 +33,7 @@ export function caseScenesFromTools(current, earlier = []) {
     const reference = read.args.reference, key = sourceKey(reference);
     if (seen.has(key)) return [];
     seen.add(key);
-    const sources = history.filter(candidate => candidate.args.reference.runId === reference.runId
+    const sources = history.filter(candidate => candidate.args.reference.collectionId === reference.collectionId && candidate.args.reference.runId === reference.runId
       && (!candidate.args.reference.inputId || candidate.args.reference.inputId === reference.inputId));
     return sources.length ? [{ key, sources, reference }] : [];
   });
@@ -49,7 +49,7 @@ export async function loadCaseScene(scene, read) {
       if (material?.kind !== 'case' || !Array.isArray(material.answers)) throw new Error('案例地图数据无效');
       const answers = scene.reference ? material.answers.filter(answer => {
         const ref = answer.reference ?? answer.answer?.reference;
-        return ref?.runId === scene.reference.runId && ref.inputId === scene.reference.inputId;
+        return ref?.collectionId === scene.reference.collectionId && ref?.runId === scene.reference.runId && ref.inputId === scene.reference.inputId;
       }) : material.answers;
       if (answers.length) return { ...material, answers };
     } catch (error) { failure = error; }

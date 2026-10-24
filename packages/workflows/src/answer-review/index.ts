@@ -2,9 +2,9 @@ import path from "node:path";
 import {Ajv2020} from 'ajv/dist/2020.js';
 import {randomUUID} from "node:crypto";
 import {isDeepStrictEqual} from "node:util";
-import {canonical,HttpError,type AgentBinding,type PlannedTask,type RunState,type RunManifest,type WorkflowDefinition,type JsonObject,type SubmissionReceipt,type TaskPlan} from "@eval/contracts";
+import {canonical,HttpError,type AgentBinding,type PlannedTask,type RunState,type RunManifest,type WorkflowDefinition,type JsonObject,type SubmissionReceipt,type TaskPlan,type RunReference} from "@eval/contracts";
 import {createRunRepository,readJson,writeJson,atomicWrite,runLock,exists,type RunCodec} from "@eval/data";
-import {buildPlan,attributionTrace,validateOriginalAttributionEvidence,bindAttributionMaterial,bindInstructionReview,instructionReviewFollowup,instructionReviewRow,loadRunInputs,normalizeInput,pendingTaskProgress,type EvalConfig,type Candidate,type RawInput} from "@eval/workflows/comparison";
+import {buildPlan,analysisTraceMap,contentText,locateRecordStream,attributionTrace,validateOriginalAttributionEvidence,bindAttributionMaterial,bindInstructionReview,instructionReviewFollowup,instructionReviewRow,loadRunInputs,normalizeInput,pendingTaskProgress,type EvalConfig,type Candidate,type RawInput} from "@eval/workflows/comparison";
 import {attributionProfile,type AttributionResult} from "@eval/agents/attribution";
 import attributionOutputSchema from '../../../../schemas/workflow/answer-review-attribution.schema.json' with {type:'json'};
 import type {ScoreResult} from "@eval/agents/score";
@@ -216,6 +216,14 @@ export async function prepareAnswerReviewRetry(run:string,traceIds?:ReadonlySet<
       if(!stages.includes(task.stage)||taskIds&&!taskIds.has(task.id)||traceIds&&!traceIds.has((task.data as TaskData).candidate.trace_id??'')||state.receipts[task.id]||!['failed','timed_out','cancelled','blocked','running'].includes(progress.status))continue;
       progress.status='pending';delete progress.nextRetryAt;retried.push(task.id);changedStages.add(task.stage);
     }
+    // Reopen only dependent unfinished work; accepted upstream results and all ledgers stay intact.
+    for(let changed=true;changed;){changed=false;
+      for(const task of state.manifest.tasks){
+        if(retried.includes(task.id)||state.receipts[task.id]||!Object.values(task.dependencies).some(id=>retried.includes(id)))continue;
+        const progress=state.manifest.states[task.id];progress.status='pending';delete progress.nextRetryAt;
+        retried.push(task.id);changedStages.add(task.stage);changed=true;
+      }
+    }
     state.manifest.executionScope=retried;
     state.manifest.pausedStages=(state.manifest.pausedStages??[]).filter(p=>!changedStages.has(p.stage));
     await answerReviewRepository.writeRun(run,state);return retried;
@@ -281,42 +289,60 @@ export function validateAnswerReview(state:RunState){
 
 
 const stages=['score','attribution'] as const;
-const candidate=(task:PlannedTask)=>(task.data as {candidate:Candidate}).candidate;
+const reviewStages=[...stages,'instruction-review'] as const;
+const candidate=(task:PlannedTask)=>(task.data as TaskData).candidate;
+export const answerReviewTaskInput=(task:PlannedTask)=>candidate(task).input_id;
 const failed=new Set(['failed','timed_out','blocked','cancelled']);
-function stageCounts(state:RunState,stage:string){
-  const tasks=state.manifest.tasks.filter(t=>t.stage===stage),statuses=tasks.map(t=>state.manifest.states[t.id]?.status??'pending');
-  const missing=Math.max(0,(state.manifest.inputCatalog as Candidate[]).length-new Set(tasks.map(task=>candidate(task).input_id)).size);
-  return {total:tasks.length+missing,succeeded:statuses.filter(s=>s==='succeeded').length,
-    failed:statuses.filter(s=>failed.has(s)).length,running:statuses.filter(s=>s==='running').length,pending:statuses.filter(s=>s==='pending').length+missing};
+type SavedReviewTask={id:string;row:Checkpoint['tasks'][string]};
+/** Accepted output references, not successful intermediate sessions, define business completion. */
+function stageProgress(tasks:SavedReviewTask[],stage:string){
+  const selected=tasks.filter(({row})=>row.task.stage===stage);
+  const formal=selected.filter(({id,row})=>row.state.status==='succeeded'&&row.receipt?.taskId===id&&
+    row.receipt?.exported?.id===id&&row.receipt.exported.file===resultFile(stage));
+  if(formal.length>1)throw Error('同一回答存在重复正式结果：'+stage);
+  const active=selected.filter(({row})=>row.state.status!=='succeeded');
+  const current=formal[0]??active.find(({row})=>row.state.status==='running')??
+    active.find(({row})=>failed.has(row.state.status)&&row.state.status!=='blocked')??
+    active.find(({row})=>row.state.status==='blocked')??
+    active.find(({row})=>Object.values(row.task.dependencies).every(id=>tasks.some(task=>task.id===id&&task.row.receipt)))??active[0]??selected.at(-1);
+  const status=formal.length?'succeeded':current?.row.state.status==='succeeded'?(stage==='score'&&current.row.receipt?'pending':'failed'):current?.row.state.status??'pending';
+  return {taskId:current?.id??null,status,attempts:selected.reduce((sum,task)=>sum+task.row.state.attempts,0),
+    error:current?.row.state.reason??(status==='failed'&&current?.row.state.status==='succeeded'?'缺少正式结果引用':null)};
 }
-function samples(state:RunState){
-  const grouped=new Map<string,PlannedTask[]>();
-  for(const task of state.manifest.tasks.filter(t=>stages.some(stage=>stage===t.stage))){
-    const id=candidate(task).input_id;grouped.set(id,[...(grouped.get(id)??[]),task]);
+function samples(saved:Checkpoint){
+  if(saved.workflow!=='answer-review')throw Error('该run不属于独立Score/Attribution流程');
+  const grouped=new Map<string,SavedReviewTask[]>();
+  for(const [id,row]of Object.entries(saved.tasks)){
+    const group=grouped.get(row.data.input_id)??[];group.push({id,row});grouped.set(row.data.input_id,group);
   }
-  return [...grouped].map(([inputId,tasks])=>{
-    const c=candidate(tasks[0]);
-    const views=Object.fromEntries(stages.map(stage=>{const task=tasks.find(t=>t.stage===stage),progress=task&&state.manifest.states[task.id];
-      return [stage,{taskId:task?.id??null,status:progress?.status??'pending',attempts:progress?.attempts??0,error:progress?.reason??null}];}));
+  return Object.entries(saved.inputs).map(([inputId,c])=>{
+    const tasks=grouped.get(inputId)??[],views=Object.fromEntries(stages.map(stage=>[stage,stageProgress(tasks,stage)]));
     const statuses=stages.map(stage=>views[stage].status),status=statuses.every(value=>value==='succeeded')?'succeeded':
-      statuses.includes('succeeded')?'partial':statuses.includes('running')?'running':statuses.some(value=>failed.has(value))?'failed':'pending';
-    return {inputId,caseId:c.case_id,batchId:c.batch_id,question:c.question,model:c.version,traceId:c.trace_id,status,stages:views};
+      statuses.some(value=>failed.has(value))?'failed':statuses.includes('succeeded')?'partial':statuses.includes('running')?'running':'pending';
+    return {inputId,caseId:c.case_id,batchId:c.batch_id,question:c.question,model:c.version,traceId:c.trace_id,status,stages:views,
+      instructionReview:stageProgress(tasks,'instruction-review')};
   });
 }
+function stageCounts(rows:ReturnType<typeof samples>,stage:typeof reviewStages[number]){
+  const views=rows.map(row=>stage==='instruction-review'?row.instructionReview:row.stages[stage]).filter(view=>stage!=='instruction-review'||view.taskId);
+  return {total:views.length,succeeded:views.filter(view=>view.status==='succeeded').length,
+    failed:views.filter(view=>failed.has(view.status)).length,running:views.filter(view=>view.status==='running').length,pending:views.filter(view=>view.status==='pending').length};
+}
+export async function answerReviewProgress(run:string){return samples(await readJson<Checkpoint>(path.join(run,'state.json')));}
 /** Status and pagination read only the compact checkpoint, never the entire result JSONL bodies. */
 export async function answerReviewRunSummary(run:string,date?:string){
   const saved=await readJson<Checkpoint>(path.join(run,'state.json'));
   return reviewRunSummary(run,saved,date);
 }
 async function reviewRunSummary(run:string,saved:Checkpoint,date?:string){
-  const state=codec.decode(saved,()=>{throw Error('概要不得读取结果正文');},new Set()),rows=samples(state),counts=Object.fromEntries(stages.map(stage=>[stage,stageCounts(state,stage)]));
+  const state=codec.decode(saved,()=>{throw Error('概要不得读取结果正文');},new Set()),rows=samples(saved),counts=Object.fromEntries(stages.map(stage=>[stage,stageCounts(rows,stage)]));
   const models:Record<string,{answers:number;completed:number;failed:number;pending:number}>={};
   for(const row of rows){const model=models[row.model]??={answers:0,completed:0,failed:0,pending:0};model.answers++;
     if(stages.every(stage=>row.stages[stage].status==='succeeded'))model.completed++;
     else if(stages.some(stage=>failed.has(row.stages[stage].status)))model.failed++;
     else model.pending++;}
   const artifacts=[];
-  for(const name of ['report.md','stats.json','results/score.jsonl','results/attribution.jsonl'])if(await exists(path.join(run,name)))artifacts.push({name});
+  for(const name of ['report.md','stats.json','results/score.jsonl','results/attribution.jsonl','results/instruction_review.jsonl'])if(await exists(path.join(run,name)))artifacts.push({name});
   if(date===undefined){
     const dates=new Set(Object.values(saved.inputs).map(input=>input.batch_id));
     if(dates.size===1&&/^\d{4}-\d{2}-\d{2}$/.test([...dates][0]))date=[...dates][0];
@@ -327,8 +353,8 @@ async function reviewRunSummary(run:string,saved:Checkpoint,date?:string){
     succeeded:rows.filter(row=>stages.every(stage=>row.stages[stage].status==='succeeded')).length,
     partial:rows.filter(row=>row.status==='partial').length,
     failed:rows.filter(row=>stages.some(stage=>failed.has(row.stages[stage].status))).length,
-    pending:rows.filter(row=>stages.some(stage=>['pending','running'].includes(row.stages[stage].status))).length,
-    stages:counts,evaluatorVersion:state.manifest.evaluatorVersion,artifacts};
+    pending:rows.filter(row=>row.status==='pending').length,running:rows.filter(row=>row.status==='running').length,
+    stages:counts,instructionReview:stageCounts(rows,'instruction-review'),evaluatorVersion:state.manifest.evaluatorVersion,artifacts};
 }
 /** One compact read per run, with overlapping daily scopes counted once by answer identity. */
 export async function answerReviewRunSummaries(locations:readonly {run:string;date?:string;optional?:boolean}[],records:readonly import('./incremental.js').AimeRecord[]=[]){
@@ -359,19 +385,12 @@ function answerReviewCoverage(){
     },
     add(saved:Checkpoint,date?:string){
       if(saved.workflow!=='answer-review')throw Error('该run不属于独立Score/Attribution流程');
-      const tasks=new Map<string,Map<string,{id:string;row:typeof saved.tasks[string]}>>();
-      for(const [id,row]of Object.entries(saved.tasks))if(stages.some(stage=>stage===row.task.stage)){
-        const group=tasks.get(row.data.input_id)??new Map();
-        if(group.has(row.task.stage))throw Error('同一回答存在重复阶段任务：'+row.data.input_id);
-        group.set(row.task.stage,{id,row});tasks.set(row.data.input_id,group);
-      }
-      for(const [id,input]of Object.entries(saved.inputs)){
-        const day=date??(/^\d{4}-\d{2}-\d{2}$/.test(input.batch_id)?input.batch_id:null);
+      for(const row of samples(saved)){
+        const input=saved.inputs[row.inputId],day=date??(/^\d{4}-\d{2}-\d{2}$/.test(input.batch_id)?input.batch_id:null);
         const answer=include(input.version,input.batch_id,input.case_id,input.trace_id,day);
         for(const stage of stages){
-          const task=tasks.get(id)?.get(stage),row=task?.row,state=row?.state.status??'pending';
-          const accepted=state==='succeeded'&&row?.receipt?.taskId===task?.id&&row?.receipt?.exported?.id===task?.id&&row?.receipt?.exported?.file===resultFile(stage);
-          const status:Status=accepted?'completed':state==='succeeded'||failed.has(state)?'failed':state==='running'?'running':'pending';
+          const current=row.stages[stage].status;
+          const status:Status=current==='succeeded'?'completed':failed.has(current)?'failed':current==='running'?'running':'pending';
           if(!answer.stages[stage]||rank[status]>rank[answer.stages[stage]])answer.stages[stage]=status;
         }
       }
@@ -394,21 +413,21 @@ function answerReviewCoverage(){
   };
 }
 export async function answerReviewSamples(run:string,params:URLSearchParams){
-  const state=await answerReviewRepository.readTasks(run,[]),query=(params.get('query')??'').toLowerCase(),model=params.get('model'),status=params.get('status');
-  const rows=samples(state).filter(row=>(!model||row.model===model)&&(!query||[row.question,row.caseId,row.traceId??''].some(value=>value.toLowerCase().includes(query)))&&
+  const saved=await readJson<Checkpoint>(path.join(run,'state.json')),query=(params.get('query')??'').toLowerCase(),model=params.get('model'),status=params.get('status');
+  const rows=samples(saved).filter(row=>(!model||row.model===model)&&(!query||[row.question,row.caseId,row.traceId??''].some(value=>value.toLowerCase().includes(query)))&&
     (!status||status==='all'||row.status===status));
   const integer=(key:string,fallback:number)=>{const raw=params.get(key);if(raw===null)return fallback;const n=Number(raw);if(!Number.isSafeInteger(n)||n<0)throw new HttpError(400,`Invalid ${key}`);return n;};
   const offset=integer('offset',0),limit=Math.min(100,Math.max(1,integer('limit',25)));
-  return {runId:state.manifest.runId,total:rows.length,offset,limit,items:rows.slice(offset,offset+limit)};
+  return {runId:saved.manifest.runId,total:rows.length,offset,limit,items:rows.slice(offset,offset+limit)};
 }
 export async function answerReviewSample(run:string,inputId:string){
-  const compact=await answerReviewRepository.readTasks(run,[]),row=samples(compact).find(item=>item.inputId===inputId);
+  const compact=await answerReviewRepository.readTasks(run,[]),row=(await answerReviewProgress(run)).find(item=>item.inputId===inputId);
   if(!row)throw new HttpError(404,'回答不存在');
   const selected=compact.manifest.tasks.filter(t=>candidate(t).input_id===inputId),ids=selected.map(t=>t.id),state=await answerReviewRepository.readTasks(run,ids);
   const inputs=await loadRunInputs(state.manifest,undefined,new Set(ids),undefined,value=>value),input=inputs[inputId] as Record<string,unknown>,normalized=normalizeInput(input),c=candidate(selected[0]);
   const source=(input._source??{}) as Record<string,unknown>,original=String(source.original_file??''),slash=original.indexOf('/');
   return {...row,input,answer:normalized.messages[c.final_index]?.content??'',
-    results:Object.fromEntries(stages.map(stage=>{const task=selected.find(t=>t.stage===stage);return [stage,task?state.receipts[task.id]?.exported?.row??null:null];})),
+    results:Object.fromEntries(reviewStages.map(stage=>{const view=stage==='instruction-review'?row.instructionReview:row.stages[stage];return [stage,view.taskId?state.receipts[view.taskId]?.exported?.row??null:null];})),
     tasks:selected.map(task=>{const p=state.manifest.states[task.id];return {id:task.id,stage:task.stage,status:p.status,reason:p.reason??null,attempts:p.attempts,errors:p.failure?.errors??[]};}),
     source:{archive:slash>=0?original.slice(0,slash):null,member:slash>=0?original.slice(slash+1):null,line:source.original_line??null,item:source.original_item??null}};
 }
@@ -416,8 +435,78 @@ export async function retryAnswerReviewTasks(run:string,raw:unknown){
   if(!raw||typeof raw!=='object'||Array.isArray(raw)||Object.keys(raw).some(key=>!['taskIds','stages'].includes(key)))throw new HttpError(400,'重试范围无效');
   const value=raw as {taskIds?:string[];stages?:string[]};
   for(const selected of [value.taskIds,value.stages])if(selected!==undefined&&(!Array.isArray(selected)||selected.some(id=>typeof id!=='string'||!id)))throw new HttpError(400,'重试范围无效');
-  if(value.stages?.some(stage=>!stages.some(known=>known===stage)))throw new HttpError(400,'AIME仅支持Score与Attribution');
+  if(value.stages?.some(stage=>!reviewStages.some(known=>known===stage)))throw new HttpError(400,'AIME仅支持Score、Attribution与独立指令检查');
   const state=await answerReviewRepository.readTasks(run,[]);
   if(value.taskIds?.some(id=>!state.manifest.tasks.some(task=>task.id===id)))throw new HttpError(400,'未知评测任务');
-  return {retried:await prepareAnswerReviewRetry(run,undefined,value.stages??stages,value.taskIds?new Set(value.taskIds):undefined)};
+  return {retried:await prepareAnswerReviewRetry(run,undefined,value.stages??reviewStages,value.taskIds?new Set(value.taskIds):undefined)};
+}
+
+/** Current answer-review checkpoints have no overview file. Reading metadata never opens result JSONL. */
+export async function readAnswerReviewAnalysis(run: string, taskIds: string[] = []) {
+  const state = await answerReviewRepository.readTasks(run, taskIds);
+  const candidates = state.manifest.inputCatalog as Candidate[];
+  const rows=await answerReviewProgress(run);
+  const counts=Object.fromEntries(reviewStages.map(stage=>[stage,stageCounts(rows,stage)]));
+  return { state, candidates, summary: {
+    workflow: "answer-review", status: state.manifest.status, startedAt: state.manifest.startedAt,
+    ...(state.manifest.finishedAt === undefined ? {} : { finishedAt: state.manifest.finishedAt }),
+    inputCount: candidates.length, caseCount: new Set(candidates.map(candidate => JSON.stringify([candidate.batch_id, candidate.case_id]))).size,
+    stages:counts, formalComparisonStats: null,
+  } };
+}
+
+export async function readAnswerReviewInput(run: string, inputId: string) {
+  const { state, candidates } = await readAnswerReviewAnalysis(run);
+  const candidate = candidates.find(candidate => candidate.input_id === inputId);
+  if (!candidate) throw new Error("输入未登记");
+  const config = state.manifest.config as AnswerReviewConfig;
+  const version = config.inputs.versions.find(version => version.id === candidate.version);
+  if (!version) throw new Error("输入版本未登记");
+  const { raw, record } = await locateRecordStream(candidate.source, candidate, version, config.inputs.default_batch_id);
+  return { raw, candidate: record, version };
+}
+
+export function answerReviewAnswer(raw: RawInput, candidate: Candidate, reference: RunReference, audience?: "user") {
+  const text = contentText(raw.messages[candidate.final_index]?.content);
+  return { reference, model: candidate.version, modelName: candidate.name, question: candidate.question,
+    answer: { reference: { ...reference, messageIndex: candidate.final_index }, chars: text.length,
+      complete: text.length <= 16000, ...(text.length <= 16000 ? { text } : { preview: text.slice(0, 400) }) },
+    trace: analysisTraceMap(raw, reference, candidate.final_index, audience) };
+}
+
+/** Resolve accepted sources with each stage's current evidence model; intermediate Score receipts are not public results. */
+export async function readAnswerReviewSources(run:string,taskId:string){
+  const {state,candidates}=await readAnswerReviewAnalysis(run,[taskId]);
+  const task=state.manifest.tasks.find(task=>task.id===taskId),receipt=state.receipts[taskId];
+  if(!task||!receipt?.exported||!reviewStages.some(stage=>stage===task.stage))throw Error('没有该任务的正式结果');
+  const candidate=candidates.find(candidate=>candidate.input_id===answerReviewTaskInput(task));
+  if(!candidate)throw Error('任务输入未登记');
+  const {raw,candidate:current}=await readAnswerReviewInput(run,candidate.input_id);
+  const sources:Record<string,string>={};
+  const add=(id:string,content:string)=>{
+    if(Object.hasOwn(sources,id)&&sources[id]!==content)throw Error('任务证据来源冲突');
+    sources[id]=content;
+  };
+  if(task.stage==='attribution'){
+    validateOriginalAttributionEvidence(receipt.evaluation,{[candidate.input_id]:raw},receipt.audit);
+    const visit=(value:unknown):void=>{
+      if(!value||typeof value!=='object')return;
+      if(Array.isArray(value)){value.forEach(visit);return;}
+      const row=value as Record<string,unknown>;
+      if(typeof row.evidence_id==='string'&&typeof row.quote==='string'){add(row.evidence_id,row.quote);return;}
+      Object.values(row).forEach(visit);
+    };
+    visit(receipt.evaluation);
+  }else{
+    const material=task.stage==='instruction-review'
+      ?bindInstructionReview(current,raw).request.sources.case.value as import('@eval/contracts').ReviewCase
+      :answerReviewMaterial(current,raw,candidate.input_id).material;
+    for(const [id,text]of Object.entries(material.evidence))add(id,text);
+    for(const source of receipt.audit.review?.sources??[])add(source.id,source.content);
+    for(const quote of (receipt.evaluation as {evidence?:import('@eval/contracts').ReviewQuote[]}).evidence??[]){
+      if(sources[quote.source_id]===undefined||Array.from(sources[quote.source_id]).slice(quote.start,quote.end).join('')!==quote.quote)
+        throw Error('正式证据与来源坐标不一致');
+    }
+  }
+  return {sources,receipt,candidate};
 }

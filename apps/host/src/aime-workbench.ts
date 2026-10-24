@@ -61,7 +61,7 @@ export async function loadAimeWorkbench(file:string,options:{id?:string;name?:st
       concurrency:configuration.concurrency,evaluatorVersion:current.evaluatorVersion,ownerAlive,externalOwner,watch:watch??null,
       error:externalOwner?'AIME正由另一个进程运行，请先停止原aime-auto或CLI进程':watch?.lastError??null,
       settings:{engine:overlay.engine??configuration.engine,debug:overlay.debug??false,execution:{...current.evaluation.execution,concurrency:configuration.concurrency},
-        bindings:Object.fromEntries(['score','attribution'].map(stage=>{const binding=current.models.bindings[stage],profile=current.models.models[binding?.profile];
+        bindings:Object.fromEntries(['score','attribution','instruction-review'].map(stage=>{const binding=current.models.bindings[stage],profile=current.models.models[binding?.profile];
           return [stage,{channel:binding?.channel??profile?.provider??'',model:binding?.model??profile?.model??'',thinking:binding?.thinking??profile?.thinking??'medium'}];}))},
       packages,stages,runs:view.runs,report:report??null};
   };
@@ -71,11 +71,11 @@ export async function loadAimeWorkbench(file:string,options:{id?:string;name?:st
     if(Object.keys(raw).some(key=>!['engine','debug','execution','bindings'].includes(key)))throw new HttpError(400,'AIME设置包含未知字段');
     if(raw.engine!==undefined&&!['pi','prime'].includes(String(raw.engine)))throw new HttpError(400,'未知Worker引擎');
     if(raw.debug!==undefined&&typeof raw.debug!=='boolean')throw new HttpError(400,'debug必须是布尔值');
-    if(raw.bindings&&Object.keys(raw.bindings as object).some(stage=>!['score','attribution'].includes(stage)))throw new HttpError(400,'AIME只配置Score与Attribution');
+    if(raw.bindings&&Object.keys(raw.bindings as object).some(stage=>!['score','attribution','instruction-review'].includes(stage)))throw new HttpError(400,'AIME只配置Score、Attribution与独立指令检查');
     const {engine,debug,...modelSettings}=raw,{engine:previousEngine,debug:previousDebug,...previous}=overlay;
     const patch={...dashboardSettings(modelSettings,previous),engine:engine??previousEngine,debug:debug??previousDebug} as AimeSettingsPatch;
     const validated=await host(patch),resolver=createModelResolver(validated.models);
-    resolver('score');resolver('attribution');
+    resolver('score');resolver('attribution');resolver('instruction-review');
     await writeJson(settingsFile,patch);overlay=patch;
     configuration.concurrency=Number(overlay.execution?.concurrency??configuration.concurrency);settings.concurrency=configuration.concurrency;
     settings.evaluatorVersion=validated.evaluatorVersion;
@@ -90,7 +90,7 @@ export async function loadAimeWorkbench(file:string,options:{id?:string;name?:st
       if(running)throw new HttpError(409,'AIME正在运行');running=true;
       const selected=structuredClone(overlay),selectedEngine=selected.engine??configuration.engine,selectedDebug=selected.debug??false;
       try{
-        const current=await host(selected),resolver=createModelResolver(current.models);resolver('score');resolver('attribution');
+        const current=await host(selected),resolver=createModelResolver(current.models);resolver('score');resolver('attribution');resolver('instruction-review');
         return await runAimeEvaluation(configuration,{signal,...controls,watch:true,host:async()=>structuredClone(current),engine:()=>selectedEngine,
           debug:()=>selectedDebug,concurrency:()=>controls.modelRequests?.concurrency()??configuration.concurrency});
       }

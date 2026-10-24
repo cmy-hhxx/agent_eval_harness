@@ -2,11 +2,16 @@ import { readFile, readdir, stat, mkdir, mkdtemp, cp, writeFile, rm, rename } fr
 import path from "node:path";
 import { execFileSync } from "node:child_process";
 import ts from "typescript";
+import picomatch from "picomatch";
+import yaml from "js-yaml";
+import upstreamTests from "../agent/vitest.config.mjs";
 import { root } from "./lib.mjs";
 
 // Explicit maintenance command; normal builds only read the checked-in sources.
 if (!process.argv[2]) throw new Error("Usage: node scripts/vendor-deepseek.mjs <upstream checkout>");
 const source = path.resolve(process.argv[2]);
+if (execFileSync("git", ["status", "--porcelain", "--untracked-files=normal"], { cwd: source, encoding: "utf8" }).trim())
+  throw new Error("Upstream checkout must be clean before recording its commit");
 const recordedDestination = path.join(root, "vendor/deepseek");
 const localPatch = await readFile(path.join(recordedDestination, "local.patch"), "utf8");
 for (const [, before, after] of [
@@ -35,7 +40,9 @@ const entries = [
   "packages/client/ui-settings-models/src/client/ModelListEditor.tsx",
   "packages/client/ui-settings-general/src/client/index.ts",
   "packages/client/ui-attachment/src/client/MessageImages.tsx",
-  "packages/client/ui-attachment/tests/message-image.client.spec.tsx",
+  "packages/client/ui-attachment/src/client/index.ts",
+  "packages/client/ui-file-drag/src/client/index.ts",
+  "packages/api/remote-access/src/client/mount.ts",
   "packages/llm/token-meter/src/usage-projection.ts",
   "packages/session/session-stats/src/projection.ts",
   "packages/client/web/src/base.css",
@@ -50,27 +57,15 @@ const entries = [
   "packages/client/connection/src/rpc-host.ts",
   "packages/core/session/src/index.ts",
   "packages/llm/llm/src/index.ts",
-  // Test-only dependencies stay out of application bundles; preserve upstream
-  // behavior coverage for the model picker and metric projections we compose.
-  "packages/client/ui-model-selection/tests/catalog.client.spec.ts",
-  "packages/client/ui-model-selection/tests/model-select.client.spec.tsx",
-  "packages/llm/token-meter/tests/token-usage-projection.spec.ts",
-  "packages/session/session-stats/tests/projection.spec.ts",
-  "packages/client/ui-commands/tests/popup.client.spec.ts",
-  "packages/client/ui-commands/tests/popup-view.client.spec.tsx",
-  "packages/client/ui-primitives/tests/menu-group.client.spec.tsx",
-  "packages/client/ui-primitives/tests/text-shimmer.client.spec.tsx",
-  "packages/client/ui-primitives/tests/tooltip.client.spec.tsx",
-  "packages/client/ui-conversation/tests/input-reference-submit.client.spec.ts",
-  "packages/client/ui-conversation/tests/queue-dock.client.spec.tsx",
-  "packages/client/ui-conversation/tests/service-orchestration.client.spec.ts",
-  "packages/client/ui-chat/tests/running-status.client.spec.tsx",
-  "packages/client/ui-chat/tests/process-groups.client.spec.ts",
-  "packages/client/ui-chat/tests/reasoning-row.client.spec.tsx",
-  "packages/client/ui-chat/tests/chat-view.client.spec.tsx",
-  "packages/client/ui-chat/tests/transcript-view-policy.client.spec.ts",
-  "packages/client/ui-tool/tests/tool-row.client.spec.tsx",
 ];
+const upstreamFiles = execFileSync("git", ["ls-files", "--", "packages"], { cwd: source, encoding: "utf8" }).trim().split("\n");
+const patchedFiles = [...localPatch.matchAll(/^\+\+\+ b\/(\S+)$/gm)].map(match => match[1]);
+const testMatchers = upstreamTests.test.include.map(pattern => {
+  const matches = picomatch(pattern);
+  if (![...upstreamFiles, ...patchedFiles].some(file => matches(file))) throw new Error(`Upstream test pattern has no files: ${pattern}`);
+  return matches;
+});
+entries.push(...upstreamFiles.filter(file => testMatchers.some(matches => matches(file))).sort());
 const aliases = {}, selected = new Set(), visited = new Set(), external = new Map();
 async function resolveFile(file) {
   for (const candidate of [file, file.replace(/\.[cm]?js$/, ".ts"), file + ".ts", file + ".tsx", path.join(file, "index.ts"), file.replace(/\.ts$/, "/index.ts")])
@@ -83,7 +78,7 @@ async function resolvePackage(specifier) {
   if (!item) return;
   const suffix = specifier.slice(name.length);
   const entry = item.manifest.exports?.[suffix ? "." + suffix : "."];
-  let output = typeof entry === "string" ? entry : entry?.default || entry?.import || entry?.types;
+  let output = typeof entry === "string" ? entry : entry?.types || entry?.default || entry?.import;
   if (!output && suffix.startsWith("/src/")) output = "." + suffix;
   if (!output) throw new Error(`No upstream export: ${specifier}`);
   const relative = output.replace(/^\.\/lib\/(?:types\/)?/, "src/").replace(/\.d\.ts$/, ".ts").replace(/\.[cm]?js$/, ".ts");
@@ -140,7 +135,7 @@ for (const name of [...selected].sort()) {
   // Make every available source export addressable without runtime package discovery.
   for (const [key, value] of Object.entries(manifest.exports || {})) {
     if (key.includes("*") || key === "./package.json") continue;
-    const output = typeof value === "string" ? value : value.default || value.import || value.types;
+    const output = typeof value === "string" ? value : value.types || value.default || value.import;
     if (!output) continue;
     const file = path.join(directory, output.replace(/^\.\/lib\/(?:types\/)?/, "src/").replace(/\.d\.ts$/, ".ts").replace(/\.[cm]?js$/, ".ts"));
     try { aliases[name + (key === "." ? "" : key.slice(1))] = path.relative(source, await resolveFile(file)); } catch {}
@@ -163,10 +158,31 @@ await writeFile(heroFile, hero);
 execFileSync("git", ["apply", `--directory=${path.relative(root, destination)}`, path.join(destination, "local.patch")], { cwd: root });
 for (const file of ["FishLogo.tsx", "BrandWordmark.tsx"])
   await rm(path.join(destination, "packages/client/ui-primitives/src", file), { force: true });
-for (const file of ["src/client/chat/RunningWhaleTail.tsx", "src/client/chat/running-whale@2x.png", "tests/running-whale-tail.client.spec.tsx"])
+for (const file of ["src/client/chat/RunningWhaleTail.tsx", "src/client/assets/running-whale@2x.png", "tests/running-whale-tail.client.spec.tsx"])
   await rm(path.join(destination, "packages/client/ui-chat", file), { force: true });
+async function sourceAliases(directory, prefix) {
+  for (const entry of await readdir(directory, { withFileTypes: true })) {
+    const file = path.join(directory, entry.name), name = prefix + "/" + entry.name;
+    if (entry.isDirectory()) await sourceAliases(file, name);
+    else if (entry.isFile()) aliases[name] = path.relative(destination, file);
+  }
+}
+for (const name of selected) {
+  const { directory, manifest } = packages.get(name);
+  if (manifest.exports?.["./src/*"] === "./src/*")
+    await sourceAliases(path.join(destination, path.relative(source, directory), "src"), name + "/src");
+}
+const dependencyPatches = [];
+const workspace = yaml.load(await readFile(path.join(source, "pnpm-workspace.yaml"), "utf8"));
+for (const [identity, file] of Object.entries(workspace.patchedDependencies)) {
+  const split = identity.lastIndexOf("@"), name = identity.slice(0, split), version = identity.slice(split + 1);
+  if (!external.has(name)) continue;
+  await mkdir(path.dirname(path.join(destination, file)), { recursive: true });
+  await cp(path.join(source, file), path.join(destination, file));
+  dependencyPatches.push({ package: name, version, file });
+}
 await cp(path.join(source, "LICENSE"), path.join(destination, "LICENSE"));
-await writeFile(path.join(destination, "sources.json"), JSON.stringify({ entries, aliases, packages: [...selected].sort(), dependencies: Object.fromEntries([...external].sort()) }, null, 2) + "\n");
+await writeFile(path.join(destination, "sources.json"), JSON.stringify({ entries, aliases, packages: [...selected].sort(), dependencies: Object.fromEntries([...external].sort()), dependencyPatches }, null, 2) + "\n");
 const upstreamFile = path.join(root, "vendor/upstream.json");
 const upstream = JSON.parse(await readFile(upstreamFile, "utf8"));
 upstream.deepseek = {
@@ -174,25 +190,7 @@ upstream.deepseek = {
   commit: execFileSync("git", ["-C", source, "rev-parse", "HEAD"], { encoding: "utf8" }).trim(),
   directory: "vendor/deepseek",
   license: "MIT; component-specific licenses retained in copied package directories",
-  local_changes: [
-    "Model catalog loads retain usable provider groups on partial failures and allow the next explicit load to retry; fully healthy catalogs remain cached and concurrent retries share one request. Regression tests cover partial failure and recovery.",
-    "ANSI basic blue uses its original static palette color so application brand accents do not recolor terminal content; the existing color mapping test is updated.",
-    "Eris reasoning selection uses a 304px native slider panel with a centered heading, full 26px pill track, 36px round thumb and per-model advertised levels. Ordinary levels use vermilion; only the highest uses a deep-red-to-warm-gold particle fill. Successful selections remain visible while the durable stream catches up; delayed acknowledgements cannot overwrite selections already advanced by that stream, including changes back to the initial value. Subsequent selection updates and reconnect remain authoritative. Drag interruption discards previews; save failure restores the saved value and keyboard focus. Tests cover delayed projections and acknowledgements, pointer release/cancellation, save/reset, pending lock and focus; reduced-motion and grouped model search remain supported.",
-    "Chat transcript side padding exposes --dsh-chat-inline-padding while retaining upstream composer clearance by default. Eris uses 16px on viewports up to 480px without changing composer or desktop geometry.",
-    "Assistant responses expose an application-owned visuals slot at the canonical final answer, plus a keyed Markdown fence slot. Eris renders accepted chart receipts once before the final response, keeps charts at the tail when no final answer exists, ignores chart placeholders, and renders bounded plain-text flow steps. Ordinary code fences retain the upstream renderer, streaming parser and safety behavior.",
-    "Standalone Markdown images are centered within the message column; inline image buttons retain inline layout.",
-    "Markdown asterisk strong emphasis opens before punctuation after adjacent CJK text or before non-ASCII punctuation, and closes after punctuation before adjacent CJK text or after non-ASCII punctuation before adjacent Latin letters or digits. Pure ASCII boundaries keep CommonMark rules; single-asterisk emphasis, escapes, code and math remain unchanged. Regression tests cover quoted and bracketed prose, mixed-language labels and the Eris response across streaming, text fragments, settlement and history replay.",
-    "Assistant reply HTTP(S) links render as plain source labels in streaming and restored Markdown, while tool evidence links, local file navigation, images and original stored content remain intact.",
-    "AssistantMarkdown renders consecutive provider text fragments as one Markdown document with a stable first-block key. Authored newlines and non-text boundaries remain intact; split emphasis, tables and links render correctly in both streaming and restored replies. Regression tests exercise the actual assistant component with the Eris fragment pattern.",
-    "Original attachment MessageImages/ImageGallery and lightbox are reused for source-reference tool inspection; bytes are resolved by the application only on expansion. Attachment presentation and CSS are unchanged, and upstream image behavior tests are retained.",
-    "Web-only source composition: UI, Connection/Gateway, Session client, Markdown, store and required Cordis/Typert dependencies. A staged refresh replaces the selected source graph without retaining deleted files. Aliases and source exports are recorded in sources.json; ordinary builds do not use the adjacent repository, Desktop carriers, native addons or Windows packaging.",
-    "local.patch exports the original HTTP RPC handler, allows a server-supplied mux URL, defaults to light, adds attachment/fork/read-only-workspace composition flags, omits an unavailable command launcher and replaces coding placeholder/hero copy. Transport/fold algorithms are unchanged; CSS only removes the unused official running-whale animation rules.",
-    "Official logo/wordmark and running-whale artwork, exports, fallback renderers and tests are removed. Application composition omits the brand plugin, settings themes/model marketplace and coding plugins. Application-provided logo and Eris name occupy the brand slots, including a running-status icon slot; upstream isolated clock, text shimmer and accessibility behavior are retained. The hero headline is Eris in both locales and the empty preview badge is omitted. Theme boot injection is fixed light.",
-    "Server bundle substitutes the original llm package manifest version literal for createRequire relative lookup; no protocol version or algorithm change.",
-    "ModelSelect's parameterized test uses the identical expected string with toBe, because the repository's Vitest runner does not allow inline snapshots inside it.each.",
-    "Settings reuse ui-settings-general with optional technical rows omitted and ui-theme with its appearance selector omitted. Web defaults show detailed work steps and support the upstream 10–22 px conversation font range. Running status copy is localized as analysis; matching upstream tests are updated. All settings CSS and interaction components remain upstream.",
-    "Gateway model selection reuses upstream fuzzy search, provider ordering, grouped menus, sticky headings, keyboard focus and ModelListEditor (selectionOnly skips manual model editing). Original token/session metric projections and ToolCallRecovery are reused. Original transport, conversation, Markdown, model selection, menu, queue, running-status, tool-row and metric projection tests with their test-support dependencies and benchmark fixtures/budgets are retained. Agent adapters supply local Pi/session persistence and the installed Chrome binary."
-  ],
+  local_changes: upstream.deepseek.local_changes,
 };
 const previous = destination + "-previous";
 await rename(recordedDestination, previous);

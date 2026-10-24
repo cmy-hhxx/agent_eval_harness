@@ -6,11 +6,12 @@ import type { ChatNodeViewProps, PresentationInjected, TurnTailOwnerProps } from
 import { AssistantMarkdown } from './AssistantMarkdown.tsx'
 
 type AssistantNodeViewProps = ChatNodeViewProps<'assistant-step'> & InjectFace<PresentationInjected>
-  & PropsRenderSlots<'conversation.chat.fence' | 'conversation.chat.visuals'>
+  & PropsRenderSlots<'conversation.chat.reasoning.body' | 'conversation.chat.message.images' | 'conversation.chat.fence' | 'conversation.chat.visuals'>
 
 /** Streaming, settled, and interrupted Assistant states share one keyed renderer instance. */
 export const AssistantNodeView = memo(function AssistantNodeView({
-  node, groupPart, useDisclosure, useTurnData, turnProcess, openFile, renderMessageImages, fileMentions, usePresentation, renderSlot, t,
+  node, groupPart, useDisclosure, useGroupAction, useTurnData, turnProcess, openFile, loadImage, fileMentions,
+  usePresentation, renderSlot, t,
 }: AssistantNodeViewProps) {
   const data = node.data
   const turn = node.location.kind === 'turn' || node.location.kind === 'step'
@@ -26,10 +27,13 @@ export const AssistantNodeView = memo(function AssistantNodeView({
     () => owner === undefined ? undefined : fileMentions(owner),
     [fileMentions, owner],
   )
+  const keepReplies = usePresentation(policy => policy.foldedReplies === 'all')
+  // A kept reply row stays visible while the folded Turn hides its inline reasoning.
   const reasoningHidden = turnProcess !== undefined
     && turnProcess.foldable
-    && turnProcess.spec.answerStep === data.step
-    && turnProcess.spec.inlineReasoning
+    && (keepReplies
+      ? groupPart !== 'reasoning'
+      : turnProcess.spec.answerStep === data.step && turnProcess.spec.inlineReasoning)
     && !turnProcess.open
   const revealProcess = useCallback(() => { turnProcess?.setOpen(true) }, [turnProcess])
   const renderFence = useCallback((fence: MarkdownFence) => fence.language !== 'chart' ? null
@@ -43,10 +47,13 @@ export const AssistantNodeView = memo(function AssistantNodeView({
       groupPart={groupPart}
       useDisclosure={useDisclosure}
       streaming={data.status === 'running'}
+      textInteractionSource={data.status === 'settled' && data.finalNode?.messageId !== undefined}
       interrupted={data.status === 'interrupted'}
-      renderMessageImages={renderMessageImages}
+      loadImage={loadImage}
       reasoningHidden={reasoningHidden}
+      useGroupAction={useGroupAction}
       usePresentation={usePresentation}
+      renderSlot={renderSlot}
       revealProcess={revealProcess}
       mentions={mentions}
       t={t}

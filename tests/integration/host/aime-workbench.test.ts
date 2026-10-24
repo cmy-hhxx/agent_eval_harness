@@ -16,7 +16,7 @@ test('AIME Workbench persists independent settings and refuses an existing CLI o
     hostConfigs:[path.join(ROOT,'configs/host.json'),path.join(ROOT,'configs/answer-review.json'),overlay],
     settingsFile:path.join(f.directory,'config.ini'),logDirectory:path.join(f.directory,'log'),logLockDirectory:path.join(f.directory,'log-lock'),concurrency:64});
   const aime=await loadAimeWorkbench(file),initial=await aime.snapshot();
-  assert.equal(initial.workflow,'answer-review');assert.equal(initial.concurrency,64);assert.deepEqual(Object.keys(initial.settings.bindings),['score','attribution']);
+  assert.equal(initial.workflow,'answer-review');assert.equal(initial.concurrency,64);assert.deepEqual(Object.keys(initial.settings.bindings),['score','attribution','instruction-review']);
   assert.equal(Object.hasOwn(initial.settings,'rewrite'),false);assert.deepEqual((await aime.runs()).runs,[]);
   await aime.setSettings({engine:'prime',debug:true,execution:{repairAttempts:2,maxTaskAttempts:8,retryDelaySeconds:3},bindings:{score:{thinking:'high'}}});
   await aime.setConcurrency(16);
@@ -32,7 +32,7 @@ test('AIME Workbench persists independent settings and refuses an existing CLI o
   assert.equal(Object.hasOwn(persisted.execution,'maxTaskAttempts'),false,'null is a wire clear operation, never a saved budget');
   const reloaded=await loadAimeWorkbench(file);assert.equal((await reloaded.snapshot()).settings.execution.maxTaskAttempts,initial.settings.execution.maxTaskAttempts);
   await assert.rejects(aime.setSettings({execution:{timeoutSeconds:null}}),/timeoutSeconds/);
-  await assert.rejects(aime.setSettings({bindings:{comparison:{thinking:'high'}}}),/Score与Attribution/);
+  await assert.rejects(aime.setSettings({bindings:{comparison:{thinking:'high'}}}),/Score、Attribution/);
   const release=await runLock(stateDirectory);
   assert.equal((await aime.runs()).retryAllowed,false,'an independent owner blocks preparation in the UI as well as the API');
   await assert.rejects(aime.run(new AbortController().signal),/另一个进程.*aime-auto/);
@@ -41,8 +41,9 @@ test('AIME Workbench persists independent settings and refuses an existing CLI o
   await writeJson(overlay,{models:{judge:{model:'removed-model',thinking:'low'}}});
   assert.equal((await aime.snapshot()).settings.bindings.score.model,'removed-model','a stale model remains visible for repair');
   await assert.rejects(aime.run(new AbortController().signal),/not declared/);
-  await aime.setSettings({bindings:{score:{model:'fixture'},attribution:{model:'fixture'}}});
+  await aime.setSettings({bindings:{score:{model:'fixture'},attribution:{model:'fixture'},'instruction-review':{model:'fixture'}}});
   assert.equal((await aime.snapshot()).settings.bindings.score.model,'fixture');
+  assert.equal((await aime.snapshot()).settings.bindings['instruction-review'].model,'fixture');
 });
 
 test('AIME daily coverage includes unplanned answers and historical formal runs while ignoring other workflows',async t=>{
@@ -55,6 +56,7 @@ test('AIME daily coverage includes unplanned answers and historical formal runs 
   const job={id:'1024',date:record.date,records:[record],done:false,output:path.join(outputDirectory,'1024'),result:undefined as {launched:number;succeeded:number}|undefined};
   await writeJson(path.join(stateDirectory,'state.json'),{scans:[],jobs:[job,structuredClone(job)]});
   await writeJson(path.join(outputDirectory,'unrelated/state.json'),{workflow:'wrong-workflow'});
+  await writeJson(path.join(outputDirectory,'.archive/old/1023/state.json'),{workflow:'old-contract'});
   const aime=await loadAimeWorkbench(file),snapshot=await aime.snapshot();
   assert.deepEqual(snapshot.answerCounts,{total:1,completed:0,partial:0,pending:1,failed:0,running:0});
   assert.equal(snapshot.stages.score.pending,1);assert.equal(snapshot.stages.attribution.pending,1);

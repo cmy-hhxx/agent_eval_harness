@@ -18,14 +18,14 @@ const fixtures = [
  const markdown = [headers, headers.map(() => '---'), ...rows].map(row => '|' + row.join('|') + '|').join('\n');
  return { ...fixture, index: index + 6, headers, rows, raw: JSON.stringify([{ type: 'input_text', text: markdown }]) };
 });
-const reference = { runId: 'table-stress', taskId: 'pair' }, args = { reference };
+const reference = { collectionId: "0_wencai/0_daily_eval", runId: 'table-stress', taskId: 'pair' }, args = { reference };
 const material = { kind: 'case', reference, question: '宽表与长名称的界面测试', answers: [{
- modelName: 'A组Expert', answer: { text: '表格测试材料', complete: true, reference: { runId: reference.runId, inputId: 'table-input', messageIndex: 10 } },
+ modelName: 'A组Expert', answer: { text: '表格测试材料', complete: true, reference: { collectionId: "0_wencai/0_daily_eval", runId: reference.runId, inputId: 'table-input', messageIndex: 10 } },
  trace: { messageCount: 11, toolCalls: 3, finalMessageIndex: 10, nodes: Array.from({ length: 11 }, (_, index) => ({
   messageIndex: index, type: index === 0 ? 'user_question' : index === 10 ? 'final_answer' : index >= 6 && index <= 8 ? 'tool_result' : index >= 3 && index <= 5 ? 'tool_call' : 'reasoning',
   ...(index >= 3 && index <= 8 ? { name: 'FinQuery' } : {}),
   ...(index >= 6 && index <= 8 ? { callMessageIndex: index - 3, preview: fixtures[index - 6].raw } : { preview: '隔离测试材料' }),
-  reference: { runId: reference.runId, inputId: 'table-input', messageIndex: index },
+  reference: { collectionId: "0_wencai/0_daily_eval", runId: reference.runId, inputId: 'table-input', messageIndex: index },
  })) },
 }] };
 let sessions, reads = 0, prompts = 0, browser, page;
@@ -117,7 +117,7 @@ try {
   assert.equal(await raw.locator('pre').textContent(), fixture.raw); await raw.locator('summary').click();
   await model.getByRole('button', { name: '复制给 Eris', exact: true }).click();
   const copied = await page.evaluate(() => navigator.clipboard.readText());
-  assert.deepEqual(JSON.parse(copied.slice(copied.indexOf('{'))), { reference: { runId: reference.runId, inputId: 'table-input', messageIndex: fixture.index }, relatedMessageIndices: [fixture.index - 3] });
+  assert.deepEqual(JSON.parse(copied.slice(copied.indexOf('{'))), { reference: { collectionId: "0_wencai/0_daily_eval", runId: reference.runId, inputId: 'table-input', messageIndex: fixture.index }, relatedMessageIndices: [fixture.index - 3] });
   await input.focus(); await input.press(process.platform === 'darwin' ? 'Meta+A' : 'Control+A'); await input.press('Backspace');
   await page.keyboard.press(process.platform === 'darwin' ? 'Meta+V' : 'Control+V');
   assert.equal(await input.innerText(), copied);

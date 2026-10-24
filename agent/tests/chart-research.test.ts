@@ -23,7 +23,7 @@ const samples = [
 ];
 const context = { scope: { userId: 'test', sessionId: 'test' }, callId: 'chart', signal: new AbortController().signal, progress() {} };
 const unexpected = async (): Promise<never> => { throw new Error('Unexpected dependency'); };
-const eris = createEris({ code: { execute: unexpected, read: unexpected }, data: { list: async () => ({ kind: 'inputs' }), read: unexpected, search: unexpected, image: unexpected }, specialists: { invoke: unexpected, read: unexpected }, search: { search: unexpected }, web: { read: unexpected } });
+const eris = createEris({ data: { list: async () => ({ kind: 'inputs' }), read: unexpected, search: unexpected, image: unexpected }, search: { search: unexpected }, web: { read: unexpected } });
 const tool = eris.tools.find(t => t.name === 'show_chart')!;
 
 test('Unicode text accepted by the tool remains a visible chart receipt at every text limit', async () => {
@@ -103,7 +103,7 @@ test('a one-row heatmap gives the data a readable cell height in the actual rend
 
 test('all research charts pass the public tool contract and remain readable after serialization', async () => {
   for (const chart of samples) {
-    const result = await tool.execute({ ...chart, references: [{ runId: 'test' }] }, context);
+    const result = await tool.execute({ ...chart, references: [{ collectionId: "0_wencai/0_daily_eval", runId: 'test' }] }, context);
     assert.deepEqual(chartFromToolOutput(result.content[0].text, 'ok'), chart);
     const options = researchOption(chart, 514);
     assert(options.series.length > 0);
@@ -187,7 +187,7 @@ test('invalid analytic shapes fail before source access', async () => {
     { ...samples[2], series: [{ name: 'A', values: [1, null, 2] }] },
     { ...samples[3], series: [...base.series, ...base.series] },
   ]) {
-    await assert.rejects(tool.execute({ ...chart, references: [{ runId: 'test' }] }, context));
+    await assert.rejects(tool.execute({ ...chart, references: [{ collectionId: "0_wencai/0_daily_eval", runId: 'test' }] }, context));
     assert.equal(chartFromToolOutput(JSON.stringify({ kind: 'chart', chart }), 'ok'), null);
   }
 });
@@ -198,7 +198,7 @@ test('omitting an unsupported annotation produces a renderable receipt with the 
     { categoryIndex: 5, seriesIndex: 0, note: '越界' },
   ]) {
     const chart = { ...samples[0], annotations: [annotation] };
-    const result = await tool.execute({ ...chart, references: [{ runId: 'test' }] }, context);
+    const result = await tool.execute({ ...chart, references: [{ collectionId: "0_wencai/0_daily_eval", runId: 'test' }] }, context);
     const rendered = chartFromToolOutput(result.content[0].text!, 'ok');
     assert(rendered);
     assert.deepEqual(rendered.series, chart.series);
@@ -228,7 +228,7 @@ test('compact layers use observed quartiles and keep unknown differences unknown
 test('every local template uses the current tool contract and the same receipt renderer', async () => {
   assert.equal(new Set(chartTemplates.map((t: { chart: { type: string } }) => t.chart.type)).size, 24);
   for (const { chart } of chartTemplates) {
-    const result = await tool.execute({ ...chart, references: [{ runId: 'test' }] }, context);
+    const result = await tool.execute({ ...chart, references: [{ collectionId: "0_wencai/0_daily_eval", runId: 'test' }] }, context);
     assert.deepEqual(chartFromToolOutput(result.content[0].text, 'ok'), chart);
     if (data.researchTypes.includes(chart.type)) assert(researchOption(chart).series.length > 0);
   }
@@ -280,7 +280,7 @@ test('scientific chart data requirements fail before any source is read', async 
     { ...example('violin'), categories: ['a','b','c','d','e'], series: [{ name: 'A', values: [1,2,3,4,5] }] },
   ];
   for (const chart of invalid) {
-    await assert.rejects(tool.execute({ ...chart, references: [{ runId: 'test' }] }, context));
+    await assert.rejects(tool.execute({ ...chart, references: [{ collectionId: "0_wencai/0_daily_eval", runId: 'test' }] }, context));
     assert.equal(chartFromToolOutput(JSON.stringify({ kind: 'chart', chart }), 'ok'), null, chart.type);
   }
 });
@@ -313,9 +313,9 @@ test('new diagrams reject invented progress, invalid composition and impossible 
     {...example('sankey'),categories:['A','B','C'],series:[{name:'A',values:[0,3,0]},{name:'B',values:[0,0,3]},{name:'C',values:[3,0,0]}]},
     {...example('chord'),categories:['A','B','C'],series:[{name:'A',values:[0,2,3]},{name:'B',values:[1,0,2]},{name:'C',values:[3,2,0]}]},
   ]) {
-    await assert.rejects(tool.execute({...chart,references:[{runId:'test'}]},context));
+    await assert.rejects(tool.execute({...chart,references:[{ collectionId: "0_wencai/0_daily_eval",runId:'test'}]},context));
     assert.equal(chartFromToolOutput(JSON.stringify({kind:'chart',chart}),'ok'),null,chart.type);
   }
   const decimal={...example('sankey'),categories:['A','B','C','D'],series:[{name:'A',values:[0,.1,.2,0]},{name:'B',values:[0,0,0,.1]},{name:'C',values:[0,0,0,.2]}]};
-  await tool.execute({...decimal,references:[{runId:'test'}]},context);
+  await tool.execute({...decimal,references:[{ collectionId: "0_wencai/0_daily_eval",runId:'test'}]},context);
 });

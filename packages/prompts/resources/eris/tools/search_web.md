@@ -1,4 +1,4 @@
-搜索公开网页或新闻，用于需要外部资料的问题。queries 中每项是一条查询，独立查询可合并；已有 URL 可用 read_web，本地材料用 search_data。摘要用于筛选来源，关键事实需要核验时读取原文。
+搜索公开网页或新闻，用于需要外部资料的问题。queries 中每项是一条查询，独立查询可合并；已有 URL 可用 read_web，服务器评测材料用 search_data。摘要用于筛选来源，关键事实需要核验时读取原文。
 
 domains、country、language 可在顶层统一设置，各查询可单独覆盖同名条件。示例：`{"queries":[{"query":"利率公告"},{"query":"金融统计"}],"domains":["pbc.gov.cn"],"country":"cn","language":"zh-cn"}`。实际生效的条件记录在各项 attempts 中。
 

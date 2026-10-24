@@ -1,3 +1,4 @@
+import WebSocket from "ws";
 import { randomUUID } from "node:crypto";
 import { setTimeout as delay } from "node:timers/promises";
 import { object, errorText, type AssistantModelSelection, type AssistantModelDirectory, type AssistantScope, type AssistantPrompt, type AssistantSessionState, type AssistantEvent, type AssistantModelOptions, type AssistantOwnership, type AssistantSessionRuntime, type JsonObject, type ToolResult } from "@eval/contracts";
@@ -61,6 +62,7 @@ export interface AssistantRuntimeOptions extends AssistantModelOptions {
   driver?: ConversationDriverFactory;
   predictor?: (options: PredictionOptions) => Promise<string | null>;
   ownership?: AssistantOwnership;
+  internalAuthorization?(userId: string): string;
   onError?(error: unknown): void;
 }
 function sessionProjections(state: AssistantSessionState, journal?: AssistantJournal, metrics?: ReturnType<typeof createAssistantMetrics>) {
@@ -160,6 +162,11 @@ export class AssistantSessions implements AssistantSessionRuntime {
     });
     value.writes = next.then(() => {});
     return next;
+  }
+  private async readCommitted<T>(value: Owned, read: () => T): Promise<T> {
+    let writes: Promise<void>;
+    do { writes = value.writes; await writes; } while (writes !== value.writes);
+    return read();
   }
   private async closeStep(value: Owned) {
     await value.writes;
@@ -427,7 +434,7 @@ export class AssistantSessions implements AssistantSessionRuntime {
   async projections(scope: AssistantScope) {
     const value = await this.target(scope);
     if ("url" in value) return this.forward(value, scope.userId, "session/projections", { request: { sessionId: scope.sessionId } });
-    return sessionProjections(value.journal.state, value.journal, value.metrics);
+    return this.readCommitted(value, () => ({ kind: "sequenced", ...sessionProjections(value.journal.state, value.journal, value.metrics) }));
   }
   async predict(scope: AssistantScope, sourceTurn: number, recentSuggestions: string[], signal: AbortSignal): Promise<{ text: string | null }> {
     signal.throwIfAborted();
@@ -501,7 +508,7 @@ export class AssistantSessions implements AssistantSessionRuntime {
   async cancel(scope: AssistantScope) {
     const value = await this.target(scope);
     if ("url" in value) { await this.forward(value, scope.userId, "session/cancel", { request: { sessionId: scope.sessionId } }); return; }
-    value.stopping = true; await value.driver?.abort();
+    value.stopping = true; value.prediction?.abort(); await value.driver?.abort();
   }
   async rename(scope: AssistantScope, title: string) {
     const value = await this.target(scope);
@@ -539,20 +546,34 @@ export class AssistantSessions implements AssistantSessionRuntime {
     if ("url" in value) {
       const base = `${value.url}/u/${scope.userId}/`;
       let relay = this.relays.get(base);
-      if (!relay) { relay = new RemoteStreamMuxClient(new URL("api/remote.mux", base).href.replace(/^http/, "ws")); this.relays.set(base, relay); }
+      if (!relay) { relay = new RemoteStreamMuxClient(() => new WebSocket(new URL("api/remote.mux", base).href.replace(/^http/, "ws"), this.options.internalAuthorization ? { headers: { authorization: this.options.internalAuthorization(scope.userId) } } : undefined)); this.relays.set(base, relay); }
       relay.start();
       yield* relay.open("session/follow", { args: { request: { address: { kind: "session", sessionId: scope.sessionId }, assistantStream: true } } }, signal);
       return;
     }
-    const following = value.feed.open(signal);
-    const events = value.journal.events, start = Math.max(0, events.length - 100);
-    yield { type: "snapshot", header: this.header(value), cursor: value.journal.state.lastSeq, records: events.slice(start).map((event) => ({ type: "event", event: this.publicEvent(event) })), hasMore: start > 0, projections: sessionProjections(value.journal.state, value.journal, value.metrics), assistantStream: value.stream.snapshot() };
+    const { following, snapshot } = await this.readCommitted(value, () => {
+      const following = value.feed.open(signal);
+      const events = value.journal.events, start = Math.max(0, events.length - 100);
+      const snapshot = { type: "snapshot", header: this.header(value), cursor: value.journal.state.lastSeq, records: events.slice(start).map((event) => ({ type: "event", event: this.publicEvent(event) })), hasMore: start > 0, projections: sessionProjections(value.journal.state, value.journal, value.metrics), assistantStream: value.stream.snapshot() };
+      return { following, snapshot };
+    });
+    yield snapshot;
     yield* following;
   }
   async *changes(userId: string, signal: AbortSignal, kind: "events" | "control") {
     const states = await this.list(userId);
+    const projectionCuts = new Map<string, number>();
+    const readProjection = async (state: AssistantSessionState) => {
+      const snapshot = object(await this.projections(state)), seq = snapshot.asOfSeq;
+      if (typeof seq !== "number" || !Number.isSafeInteger(seq) || seq < -1) throw new Error("Invalid session projection cut");
+      return { snapshot, seq };
+    };
     if (kind === "events") yield { type: "ready", clientId: randomUUID(), host: { home: this.options.directory } };
-    else yield { type: "baseline", value: { projections: Object.fromEntries(await Promise.all(states.map(async (state) => [state.sessionId, await this.projections(state)]))) } };
+    else yield { type: "baseline", value: { projections: Object.fromEntries(await Promise.all(states.map(async (state) => {
+      const { snapshot, seq } = await readProjection(state);
+      projectionCuts.set(state.sessionId, seq);
+      return [state.sessionId, snapshot];
+    }))) } };
     let favorites = JSON.stringify(await this.options.models?.readFavorites(userId));
     let settingsRevision = (await readAssistantPreferences(this.options.directory, userId)).revision;
     const seen = new Map(states.map((state) => [state.sessionId, JSON.stringify(state)]));
@@ -575,12 +596,17 @@ export class AssistantSessions implements AssistantSessionRuntime {
           yield { type: "emit", event: "api-session/added", args: [sessionSummary(state)] };
           yield { type: "emit", event: "api-session/status", args: [state.sessionId, state.status === "running"] };
         }
-        else if (state.lastSeq >= 0) for (const [key, value] of Object.entries(object(object(await this.projections(state)).values))) yield { type: "projection", sessionId: state.sessionId, key, value, seq: state.lastSeq };
+        else {
+          const { snapshot, seq } = await readProjection(state);
+          if (seq <= (projectionCuts.get(state.sessionId) ?? -1)) continue;
+          projectionCuts.set(state.sessionId, seq);
+          for (const [key, value] of Object.entries(object(snapshot.values))) yield { type: "projection", sessionId: state.sessionId, key, value, seq };
+        }
       }
     }
   }
   private async forward(owner: AssistantOwner, userId: string, method: string, args: unknown, signal?: AbortSignal) {
-    const response = await fetch(`${owner.url}/u/${userId}/api/${method}`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ type: "client-request", rpcId: randomUUID(), method, payload: { args } }), signal: AbortSignal.any([AbortSignal.timeout(30000), ...(signal ? [signal] : [])]) });
+    const response = await fetch(`${owner.url}/u/${userId}/api/${method}`, { method: "POST", headers: { "content-type": "application/json", ...(this.options.internalAuthorization ? { authorization: await this.options.internalAuthorization(userId) } : {}) }, body: JSON.stringify({ type: "client-request", rpcId: randomUUID(), method, payload: { args } }), signal: AbortSignal.any([AbortSignal.timeout(30000), ...(signal ? [signal] : [])]) });
     if (!response.ok) throw new Error(`Session owner returned ${response.status}`);
     const envelope = await response.json() as { result: { ok: boolean; value?: JsonObject; error?: { message: string } } };
     if (!envelope.result.ok) throw new Error(envelope.result.error?.message ?? "Session owner failed");

@@ -3,7 +3,9 @@ import { build as bundle } from "esbuild";
 import { readFile, mkdir, copyFile } from "node:fs/promises";
 import path from "node:path";
 import { root } from "./lib.mjs";
+import { applyAgentDependencyPatches } from "./apply-agent-dependency-patches.mjs";
 
+await applyAgentDependencyPatches();
 const vendor = path.join(root, "vendor/deepseek");
 const sources = JSON.parse(await readFile(path.join(vendor, "sources.json"), "utf8"));
 await mkdir(path.join(root, "dist/agent"), { recursive: true });

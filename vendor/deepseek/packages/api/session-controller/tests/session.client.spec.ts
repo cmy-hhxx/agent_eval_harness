@@ -12,7 +12,7 @@ import type { SessionId } from '@deepseek-ai/dsh-api-remotes/client'
 import { RemoteStreamCarrierError } from '@deepseek-ai/dsh-api-gateway/client'
 import { RemoteError, type RemoteResult } from '@deepseek-ai/dsh-typert-protocol'
 import { ok, type RemoteMock } from '@deepseek-ai/dsh-remote-mock'
-import { createClientTest, type TestClient, webApp } from '@deepseek-ai/dsh-client-test-runtime/src/assembly/index.ts'
+import { createClientTest, type TestClient, API_ROSTER } from './remote/client-roster.ts'
 import { Session } from '../src/client/sessions/session.ts'
 import { SessionEventStream } from '../src/client/transport.ts'
 import type { SessionFollowRequest, SessionPage, SessionPageRequest } from '../src/types.ts'
@@ -23,7 +23,6 @@ import {
 } from './remote/session.client.ts'
 
 /** A Session talks through the Gateway client; its dependency cone is the Typert registry and the Connection. */
-const API_ROSTER = webApp.closure(['@deepseek-ai/dsh-api-gateway'])
 const it = createClientTest({ roster: API_ROSTER })
 const SID = 'fk-s1' as SessionId
 const PARENT = 'fk-parent' as SessionId
@@ -511,6 +510,19 @@ describe('prompt and cancel errors', () => {
     // A successful interrupt leaves no stop error behind.
     expect(session.getSnapshot().promptError).toBeNull()
     expect(session.getSnapshot().subagent).toEqual({ address: CHILD, parentAvailable: true })
+  })
+
+  it('sends an addressed child continuation under its echo request id and retires a refused echo', async ({ mock, start }) => {
+    const session = await sessionBench(mock, start, SID, { address: CHILD, parentAvailable: true })
+    await session.open()
+    const accepted = session.beginSubmission({ mode: 'queue', text: '继续', attachments: [] })
+    await session.prompt([{ type: 'text', text: '继续' }], 'queue', undefined, accepted.requestId)
+    expect(mock.log.requests('subagents/prompt')).toMatchObject([{ requestId: accepted.requestId, ...CHILD }])
+    expect(session.getSnapshot().pendingSubmissions.map(echo => echo.requestId)).toEqual([accepted.requestId])
+
+    const refused = session.beginSubmission({ mode: 'queue', text: '附件', attachments: [] })
+    await session.prompt([{ type: 'file', receiptId: 'receipt' as never }], 'queue', undefined, refused.requestId)
+    expect(session.getSnapshot().pendingSubmissions.map(echo => echo.requestId)).toEqual([accepted.requestId])
   })
 
   it('forwards continuation image parts to the subagent prompt Remote unstripped', async ({ mock, start }) => {

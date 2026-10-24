@@ -1,0 +1,2 @@
+vendor/deepseek/local.patch -whitespace
+vendor/deepseek/patches/*.patch -whitespace

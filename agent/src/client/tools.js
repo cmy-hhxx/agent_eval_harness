@@ -6,9 +6,8 @@ import { analysisToolModel } from './tool-model.js';
 import { TurnCharts, TurnChartFallback } from './charts.js';
 import { TurnCaseScenes } from './case-scene.js';
 import { IgnoredChart } from './inline-visuals.js';
-import { MessageImages } from '../../../vendor/deepseek/packages/client/ui-attachment/src/client/MessageImages.tsx';
-const names={list_data:['查询评测数据','List evaluations'],read_case:['读取案例','Read case'],read_evidence:['批量读取证据','Read evidence batch'],read_data:['读取材料','Read material'],search_data:['搜索消息','Search messages'],search_web:['搜索外部资料','Search the web'],read_web:['读取网页原文','Read web source'],view_image:['查看图片','View image'],calculate:['计算','Calculate'],execute_code:['代码核验','Run code'],read_code_output:['读取代码输出','Read code output'],show_chart:['显示图表','Show chart'],show_comparison:['显示比较图','Show comparison'],call_specialist:['专业评测','Specialist evaluation'],read_specialist:['读取专业结果','Read accepted result'],specialist_output:['专业任务输出','Specialist output']};
-function AnalysisTool({toolName,block,cwd,home,openFile,inspect,useDisclosure,t,remote,sessionId}){
+const names={list_data:['查询评测数据','List evaluations'],read_case:['读取案例','Read case'],read_evidence:['批量读取证据','Read evidence batch'],read_data:['读取材料','Read material'],search_data:['搜索消息','Search messages'],search_web:['搜索外部资料','Search the web'],read_web:['读取网页原文','Read web source'],view_image:['查看图片','View image'],calculate:['计算','Calculate'],show_chart:['显示图表','Show chart'],show_comparison:['显示比较图','Show comparison']};
+function AnalysisTool({toolName,block,cwd,home,openFile,inspect,useDisclosure,t,remote,sessionId,renderFactorySlot,loadImage}){
  const model=toolRowModel(toolName,block,cwd,home);
  const disclosure=useDisclosure();
  const useRowDisclosure=useCallback(()=>disclosure,[disclosure]);
@@ -30,7 +29,7 @@ function AnalysisTool({toolName,block,cwd,home,openFile,inspect,useDisclosure,t,
  const images=loaded?.content.filter(part=>part.type==='image').map((part,index)=>({preview:{url:`data:${part.mimeType};base64,${part.data}`,name:`图片 ${index+1}`}}))??[];
  const presentation=analysisToolModel(toolName,{...model,output});
  if(sourceRead&&!loaded)presentation.details={items:[{fields:[],description:failure||'正在读取原始材料…'}]};
- return createElement(ToolRow,{useDisclosure:useRowDisclosure,t,variant:toolName==='search_web'?'search':model.variant,toolName,icon:createElement(IconAgentPresetOutlineRegular,{size:14}),title:names[toolName][document.documentElement.lang.startsWith('zh')?0:1],summary:presentation.summary,details:presentation.details,image:images.length?{label:names[toolName][0],images,text:output}:undefined,renderSlot:(_,props)=>createElement(MessageImages,{...props,t}),loadImage:async()=>{throw new Error('Image reference unavailable');},bodyRaw:model.bodyRaw,output,errorSummary:model.state==='error'?presentation.summary:model.errorSummary,state:model.state,inspect,onOpenFile:openFile});
+ return createElement(ToolRow,{useDisclosure:useRowDisclosure,t,variant:toolName==='search_web'?'search':model.variant,toolName,icon:createElement(IconAgentPresetOutlineRegular,{size:14}),title:names[toolName][document.documentElement.lang.startsWith('zh')?0:1],summary:presentation.summary,details:presentation.details,image:images.length?{path:'',images,extraText:output||null}:undefined,renderSlot:(_,props)=>renderFactorySlot('conversation.images.content',props),loadImage,bodyRaw:model.bodyRaw,output,errorSummary:model.state==='error'?presentation.summary:model.errorSummary,state:model.state,inspect,onOpenFile:openFile});
 }
 export const inject=['slots','remote','remote.assistant'];
 export function apply(ctx){

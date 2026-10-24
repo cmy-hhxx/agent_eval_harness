@@ -38,7 +38,9 @@ await run("node", [
   "scripts/topic-clustering-scope.test.mjs",
   "scripts/benchmark.test.mjs",
   "scripts/publish.test.mjs",
+  "scripts/apply-agent-dependency-patches.test.mjs",
   "scripts/deploy-workbench.test.mjs",
   "scripts/configure-daily-workbench.test.mjs",
+  "scripts/deploy-eris.test.mjs",
   "server_dashboard_ths/dashboard.test.mjs",
 ]);

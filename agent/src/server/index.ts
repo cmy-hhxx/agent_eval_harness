@@ -70,6 +70,11 @@ export function assistantEndpoints(sessions: AssistantSessionRuntime): Assistant
     },
     async stream(userId, endpoint, payload, signal) {
       const args = requestOf(payload), request = object(args.request ?? {});
+      if (endpoint === "remoteAccess/follow") return (async function* () {
+        signal.throwIfAborted();
+        yield { type: "baseline", owner: true };
+        if (!signal.aborted) await new Promise<void>(resolve => signal.addEventListener("abort", () => { resolve(); }, { once: true }));
+      })();
       if (endpoint === "$events") return sessions.changes(userId, signal, "events");
       if (endpoint === "session/control") return sessions.changes(userId, signal, "control");
       if (endpoint === "session/follow") return sessions.events({ userId, sessionId: String(object(request.address).sessionId) }, signal);

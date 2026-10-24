@@ -62,9 +62,8 @@ for (const scenario of ["repair", "repeat", "unknown", "extended", "reset"] as c
   let modelCalls = 0, executions = 0;
   const errors: unknown[] = [];
   const unexpected = async (): Promise<never> => { throw new Error("Unexpected dependency call"); };
-  const eris = createEris({ code: { execute: unexpected, read: unexpected },
-    data: { list: async () => { executions++; return { kind: "runs", currentRun: null, items: [] }; }, read: unexpected, search: unexpected, image: unexpected },
-    specialists: { invoke: unexpected, read: unexpected }, search: { search: unexpected }, web: { read: unexpected },
+  const eris = createEris({
+    data: { list: async () => { executions++; return { kind: "runs", currentRun: null, items: [] }; }, read: unexpected, search: unexpected, image: unexpected }, search: { search: unexpected }, web: { read: unexpected },
   });
   const tools: AssistantTool[] = scenario === "reset" ? [{
     name: "list_data", description: "read changing state", readOnly: true, inputSchema: { type: "object", properties: {} },
@@ -90,7 +89,7 @@ for (const scenario of ["repair", "repeat", "unknown", "extended", "reset"] as c
     const done = summary || scenario === "repair" && modelCalls === 3 || scenario === "reset" && modelCalls === 7 || scenario === "extended" && modelCalls === 35;
     let args: JsonObject = {};
     if (scenario === "repair" && modelCalls === 1) args = { limit: "5" };
-    if (scenario === "repeat") args = modelCalls % 2 ? { runId: ".", query: "." } : { query: ".", runId: "." };
+    if (scenario === "repeat") args = modelCalls % 2 ? { collectionId: "0_wencai/0_daily_eval", runId: ".", query: "." } : { collectionId: "0_wencai/0_daily_eval", query: ".", runId: "." };
     const delta = done ? { role: "assistant", content: "已完成核对。" } : {
       role: "assistant", tool_calls: [{ index: 0, id: `call-${modelCalls}`, type: "function",
         function: { name: scenario === "unknown" ? "missing_tool" : "list_data", arguments: JSON.stringify(args) } },

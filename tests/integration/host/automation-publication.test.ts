@@ -145,6 +145,7 @@ test("Mongo failure releases pinned inputs after a newer snapshot installs witho
   const config = await loadAutomationConfig("configs/automations.json");
   config.sourceDirectory = path.join(directory, "sources");
   config.stateDirectory = path.join(directory, "state");
+  config.predictionResults = path.join(directory,"predictions");
   config.remoteModels = ["a_fast", "b_fast"];
   evaluation.inputs.versions = evaluation.inputs.versions.filter(version => config.remoteModels.includes(version.id));
   const hostFile = path.join(directory, "host.json");
@@ -471,7 +472,7 @@ test("publication detects duplicate identities across adopted source files and r
     await writeJson(path.join(config.output.path, runId, "state.json"), { config, tasks: {}, inputs: {
       first: { version: "a_fast", source: first }, second: { version: "a_fast", source: second },
     } });
-    const settings = { ...await loadAutomationConfig(path.join(ROOT, "configs/automations.json")), hostConfigs: [hostFile] };
+    const settings = { ...await loadAutomationConfig(path.join(ROOT, "configs/automations.json")), hostConfigs: [hostFile], predictionResults: path.join(directory,"predictions") };
     const job = { date, runIds: [runId], adopted: true } as AutomationJob;
     const snapshot = await publicationSnapshot(settings, job, t.signal);
     const discoveryScans = scans;
@@ -497,7 +498,7 @@ test("pinned statistics input reads yield to pending Host requests between recor
     await writeJson(path.join(config.output.path, runId, "state.json"), { config, tasks: {}, inputs: {
       first: { version: "a_fast", source: file },
     } });
-    const settings = { ...await loadAutomationConfig(path.join(ROOT, "configs/automations.json")), hostConfigs: [hostFile] };
+    const settings = { ...await loadAutomationConfig(path.join(ROOT, "configs/automations.json")), hostConfigs: [hostFile], predictionResults: path.join(directory,"predictions") };
     const snapshot = await publicationSnapshot(settings, { date, runIds: [runId], adopted: true } as AutomationJob, t.signal);
     const iterator = snapshot.inputs();
     const first = await iterator.next();

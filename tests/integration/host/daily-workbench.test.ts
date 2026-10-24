@@ -54,7 +54,7 @@ test("daily HTTP exposes AIME stages and controls without starting evaluations o
       method: "POST", headers: { origin, "content-type": "application/json" }, body: JSON.stringify(body) });
     const initial = await get("/api/daily");
     assert.equal(initial.sources[0].id, "aime"); assert.equal(initial.sources[0].status, "idle");
-    assert.deepEqual(Object.keys(initial.sources[0].settings.bindings), ["score", "attribution"]);
+    assert.deepEqual(Object.keys(initial.sources[0].settings.bindings), ["score", "attribution", "instruction-review"]);
     assert.equal(initial.sources[0].packages.total, 1); assert.equal(calls, 0);
     const analytics = await get("/api/daily/aime/analytics");
     assert.equal(analytics.source, "aime"); assert.equal(analytics.intake.totals.answers, 125, "overview is not limited to the one visible package");

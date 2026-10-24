@@ -12,7 +12,7 @@ flowchart LR
   Automation[自动化] --> Host
 Workbench[工作台 supervisor / 网关] --> Automation
 Workbench --> DataService[Python 数据服务]
-  Eris[Eris 专业任务] --> Host
+  Eris[Eris 只读分析] --> Data
   Definitions[Agent / Workflow] --> Host
   Validation[稳定性 Workflow] --> Host
   Validation --> Statistics[确定性统计与独立报告]
@@ -93,6 +93,6 @@ Adapter 展开本地静态 Schema 引用，拒绝外部、循环和动态引用�
 
 ## 独立分析助手
 
-[Eris](../agent/README.md) 通过 Contracts 的数据源、专业网关与 Session 接口访问能力，应用 Host 注入实现。专业网关复用 Host 的校验、提交和恢复。
+[Eris](../agent/README.md) 通过 Contracts 的只读数据源与 Session 接口访问能力，应用 Host 注入 Comparison / Answer-review 读取和账户认证，不创建评测。
 
-Runtime 转换 Pi 与 Deepseek 会话事件，Data 维护权威追加记录及单个持锁执行者，其他本机副本转发。原始材料按引用重读，不复制进会话。
+Runtime 转换 Pi 与 Deepseek 会话事件，Data 维护权威追加记录及单个持锁执行者，其他服务器进程通过认证转发。原始材料按引用重读，不复制进会话。

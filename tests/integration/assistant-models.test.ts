@@ -83,7 +83,6 @@ test('Pi retains explicit DeepSeek Responses routing, tools and reasoning indepe
   emit('response.completed',{response:{id:`resp-${requestNumber}`,object:'response',status:'completed',output,usage:{input_tokens:40,output_tokens:10,total_tokens:50,input_tokens_details:{cached_tokens:0},output_tokens_details:{reasoning_tokens:reasoning?5:0}}}});
   res.end();
  });
- const evaluation:ModelConfig={provider:'evaluation-gateway',model:'MiniMax-M3',api:'openai-completions',baseUrl:gateway.url+'/evaluation',apiKeyEnv:'EVAL_CHANNEL_KEY_evaluation_Hgateway',thinking:'low',contextWindow:32000,maxOutputTokens:2048};
  const settings=parseSettings(`[channel.evaluation-gateway]
 base_url=${gateway.url}/evaluation
 api_key=evaluation-fixture
@@ -103,7 +102,7 @@ max_output_tokens=8192
 channel=deepseek
 `);
  applySettings(settings);
- const {model,gateways}=assistantModelConfiguration(evaluation,settings);
+ const {model,gateways}=assistantModelConfiguration(settings);
  const models:AssistantModelDirectory={
   async list(){return {models:[],failures:[],favorites:[],default:{provider:model.provider,model:model.model,reasoningEffort:model.thinking}};},
   async resolve(selection){const gateway=gateways.find(gateway=>gateway.model.provider===selection.provider)!;return {...gateway.model,model:selection.model,thinking:selection.reasoningEffort??gateway.model.thinking};},

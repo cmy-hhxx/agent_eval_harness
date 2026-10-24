@@ -8,13 +8,13 @@ import { assistantEndpoints } from '@eval/assistant/server';
 const directory = await mkdtemp(tmpdir() + '/assistant-case-');
 const shots = process.cwd() + '/.artifacts/agent-case';
 await mkdir(shots, { recursive: true });
-const reference = { runId: 'run', taskId: 'pair' }, args = { reference };
+const reference = { collectionId: "0_wencai/0_daily_eval", runId: 'run', taskId: 'pair' }, args = { reference };
 const recordedReasoning = '原始条件仅命中3只，不足要求的8只。'.repeat(150) + '末尾证据仍保留。';
 const longToolName = 'web_search_company_announcements_and_financial_evidence';
 const evidenceTable = '|指数代码|指数简称|最新涨跌幅:前复权|最新价|指数类型|成分领域|涨跌幅[20261009]|\n|---|---|---|---|---|---|---|\n|886068.TI|AI视频|5.48%|2159.86点|同花顺概念指数|A股指数|20261009|\n|`885877.TI`|转基因|5.45%|1,920.15|' + '较长的说明保留完整内容并自然换行。'.repeat(8) + '|A股指数|2026-10-09 09:30:00|';
 const recordedEvidence = JSON.stringify([{ type: 'input_text', text: '<referencable-result>\nID: 15\n' }, { type: 'input_text', text: '以下是结果：\n已核验两行。\n' + evidenceTable + '\n\n[公告](https://example.com/evidence)\n<script>untrusted</script>' }, { type: 'input_text', text: '</referencable-result>' }]);
 const material = { kind: 'case', reference, question: '比较这两份回答是否解决用户问题', answers: ['A组Expert', 'B组Expert'].map((modelName, i) => ({
- modelName, answer: { text: `${modelName}的实际最终回答`, complete: true, reference: { runId: 'run', inputId: `input-${i}`, messageIndex: 10 } },
+ modelName, answer: { text: `${modelName}的实际最终回答`, complete: true, reference: { collectionId: "0_wencai/0_daily_eval", runId: 'run', inputId: `input-${i}`, messageIndex: 10 } },
  trace: { messageCount: 11, toolCalls: 3, finalMessageIndex: 10, nodes: [
   { messageIndex: 0, type: 'user_question', role: 'user', chars: 40 },
   { messageIndex: 1, type: 'tool_call', name: 'memory', preview: '{"query":"用户偏好"}', chars: 80 },
@@ -27,7 +27,7 @@ const material = { kind: 'case', reference, question: '比较这两份回答是�
   { messageIndex: 8, type: 'tool_call', name: 'FinQuery', preview: '{"query":"核对指标"}' },
   { messageIndex: 9, type: 'tool_result', name: 'FinQuery', callMessageIndex: 8, preview: i === 0 ? recordedEvidence : '|项目|结论|证据|日期|\n|---|---|---|---|\n|数量|不足|仅三项|20261009|' },
   { messageIndex: 10, type: 'final_answer', role: 'assistant', chars: 60 },
- ].map(node => ({ ...node, reference: { runId: 'run', inputId: `input-${i}`, messageIndex: node.messageIndex } })) },
+ ].map(node => ({ ...node, reference: { collectionId: "0_wencai/0_daily_eval", runId: 'run', inputId: `input-${i}`, messageIndex: node.messageIndex } })) },
 })) };
 let reads = 0, prompts = 0, sessions;
 const tool = { name: 'read_case', readOnly: true, description: 'Read case', inputSchema: { type: 'object' },
@@ -38,7 +38,7 @@ const server = await serveAssistant({ port: 0, userId: 'local', webDirectory: pr
   prompts++;
   const global = text === '全局分析', deep = text.startsWith('请继续调查这条证据');
   const toolName = deep ? 'read_evidence' : 'read_case', callId = `${deep ? 'evidence-call' : 'case-call'}-${prompts}`;
-  const toolArgs = deep ? { reference: { runId: 'run', inputId: 'input-0' }, messages: [{ messageIndex: 2 }] } : args;
+  const toolArgs = deep ? { reference: { collectionId: "0_wencai/0_daily_eval", runId: 'run', inputId: 'input-0' }, messages: [{ messageIndex: 2 }] } : args;
   await event({ type: 'agent_start' }); await event({ type: 'turn_start' });
   await event({ type: 'message_end', message: { role: 'user', content: [{ type: 'text', text }] } });
   if (!global) {
@@ -111,7 +111,7 @@ try {
   await models.first().getByRole('button', { name: '已复制', exact: true }).waitFor();
   const copied = await page.evaluate(() => navigator.clipboard.readText());
   assert.match(copied, /A组Expert/);
-  assert.deepEqual(JSON.parse(copied.slice(copied.indexOf('{'))), { reference: { runId: 'run', inputId: 'input-0', messageIndex: 2 }, relatedMessageIndices: [1] });
+  assert.deepEqual(JSON.parse(copied.slice(copied.indexOf('{'))), { reference: { collectionId: "0_wencai/0_daily_eval", runId: 'run', inputId: 'input-0', messageIndex: 2 }, relatedMessageIndices: [1] });
   await models.first().getByRole('button', { name: '来自调用 #1', exact: true }).click();
   assert.deepEqual(JSON.parse(await models.first().locator('[data-evidence-preview]').textContent()), { query: '用户偏好' });
   assert.equal(await models.first().getByText('A组Expert的实际最终回答', { exact: true }).count(), 0);
@@ -200,7 +200,7 @@ try {
   await raw.locator('summary').click();
   await models.first().getByRole('button', { name: '复制给 Eris', exact: true }).click();
   const tableReference = await page.evaluate(() => navigator.clipboard.readText());
-  assert.deepEqual(JSON.parse(tableReference.slice(tableReference.indexOf('{'))), { reference: { runId: 'run', inputId: 'input-0', messageIndex: 9 }, relatedMessageIndices: [8] });
+  assert.deepEqual(JSON.parse(tableReference.slice(tableReference.indexOf('{'))), { reference: { collectionId: "0_wencai/0_daily_eval", runId: 'run', inputId: 'input-0', messageIndex: 9 }, relatedMessageIndices: [8] });
   assert(!tableReference.includes('886068.TI'), 'copying follows original coordinates, not rendered text');
   await page.screenshot({ path: shots + '/evidence-desktop.png', fullPage: true });
   await models.nth(1).locator('summary').first().click();
@@ -285,7 +285,7 @@ try {
   messageIndex, type: messageIndex === 0 ? 'user_question' : messageIndex === 1 ? 'tool_call' : messageIndex === 99 ? 'tool_result' : messageIndex === 100 ? 'final_answer' : 'reasoning',
   ...(messageIndex === 100 ? { previewTruncated: true } : {}),
   ...(messageIndex === 1 || messageIndex === 99 ? { name: 'Search' } : {}), ...(messageIndex === 99 ? { callMessageIndex: 1 } : {}),
-  preview: messageIndex === 1 ? '原始查询' : '完整证据。'.repeat(300), reference: { runId: 'run', inputId: 'input-0', messageIndex },
+  preview: messageIndex === 1 ? '原始查询' : '完整证据。'.repeat(300), reference: { collectionId: "0_wencai/0_daily_eval", runId: 'run', inputId: 'input-0', messageIndex },
  })) };
  await input.fill('分析长链路'); await input.press('Enter');
  const longScene = page.locator('[data-case-scene]').nth(2);
@@ -305,7 +305,7 @@ try {
  await longModel.getByRole('button', { name: '#99 Tool result · Search', exact: true }).click();
  await longModel.getByRole('button', { name: '复制给 Eris', exact: true }).click();
  assert.deepEqual(JSON.parse((await page.evaluate(() => navigator.clipboard.readText())).split('\n').slice(3).join('\n')),
-  { reference: { runId: 'run', inputId: 'input-0', messageIndex: 99 }, relatedMessageIndices: [1] });
+  { reference: { collectionId: "0_wencai/0_daily_eval", runId: 'run', inputId: 'input-0', messageIndex: 99 }, relatedMessageIndices: [1] });
  await longModel.locator('[data-case-evidence]').evaluate(el => { el.scrollTop = 500; });
  await longModel.getByRole('button', { name: '来自调用 #1', exact: true }).click();
  await longModel.locator('[data-evidence-preview]').getByText('原始查询', { exact: true }).waitFor();

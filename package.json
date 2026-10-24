@@ -41,9 +41,10 @@
     "worker": "node dist/apps/worker/src/cli.js",
     "build:agent": "node scripts/build-agent.mjs",
     "agent": "node dist/apps/host/src/agent.js",
-    "test:agent:upstream": "vitest run --config agent/vitest.config.mjs",
-    "test:agent:browser": "node agent/tests/browser-smoke.mjs && node agent/tests/browser-model-channels.mjs && node agent/tests/browser-conversation.mjs && node agent/tests/browser-prediction.mjs && node agent/tests/browser-case.mjs && node agent/tests/browser-evidence.mjs && node agent/tests/browser-diagrams.mjs && node agent/tests/chart-loading.mjs && node agent/tests/chart-resilience.mjs && node agent/tests/chart-layout.mjs",
-    "test:agent:performance": "node scripts/build-agent-benchmarks.mjs && vitest run --config agent/benchmarks.config.mjs benchmarks/"
+    "test:agent:upstream": "node scripts/apply-agent-dependency-patches.mjs && vitest run --config agent/vitest.config.mjs",
+    "test:agent:browser": "node agent/tests/browser-auth.mjs && node agent/tests/browser-smoke.mjs && node agent/tests/browser-model-channels.mjs && node agent/tests/browser-conversation.mjs && node agent/tests/browser-prediction.mjs && node agent/tests/browser-case.mjs && node agent/tests/browser-evidence.mjs && node agent/tests/browser-diagrams.mjs && node agent/tests/chart-loading.mjs && node agent/tests/chart-resilience.mjs && node agent/tests/chart-layout.mjs",
+    "test:agent:performance": "node scripts/build-agent-benchmarks.mjs && vitest run --config agent/benchmarks.config.mjs benchmarks/",
+    "deploy:eris": "node scripts/deploy-eris.mjs"
   },
   "dependencies": {
     "@lexical/history": "0.49.0",
@@ -61,7 +62,7 @@
     "echarts": "6.1.0",
     "immer": "10.2.0",
     "jsdom": "29.1.1",
-    "katex": "0.16.47",
+    "katex": "0.18.7",
     "lexical": "0.49.0",
     "mdast-util-from-markdown": "2.0.3",
     "mdast-util-gfm": "3.1.0",
@@ -74,6 +75,7 @@
     "micromark-util-classify-character": "2.0.1",
     "micromark-util-sanitize-uri": "2.0.1",
     "micromark-util-symbol": "2.0.1",
+    "mime": "4.1.1",
     "mongodb": "7.6.0",
     "pdfjs-dist": "6.3.289",
     "picomatch": "4.0.7",
@@ -82,10 +84,10 @@
     "shiki": "4.4.3",
     "simple-icons": "16.31.0",
     "undici": "7.30.0",
-    "use-sync-external-store": "1.2.0",
+    "use-sync-external-store": "1.6.0",
     "ws": "8.22.0",
     "zod": "4.6.5",
-    "zustand": "4.4.7"
+    "zustand": "4.5.7"
   },
   "devDependencies": {
     "@testing-library/react": "16.3.3",
@@ -95,11 +97,13 @@
     "@types/react": "18.3.31",
     "@types/react-dom": "18.3.7",
     "@types/ws": "8.18.1",
+    "@vitest/spy": "4.1.11",
     "esbuild": "0.25.12",
     "fast-check": "4.10.2",
+    "js-yaml": "4.3.2",
     "playwright": "1.63.0",
     "typescript": "5.9.3",
     "vite": "6.4.3",
-    "vitest": "3.2.7"
+    "vitest": "4.1.11"
   }
 }

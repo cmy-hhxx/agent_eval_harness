@@ -34,9 +34,20 @@ const server=await serveAssistant({port:0,userId:'local',webDirectory:process.cw
 let browser,referenceServer;
 try{
  browser=await chromium.launch({executablePath:process.env.CHROME_PATH||'/Applications/Google Chrome.app/Contents/MacOS/Google Chrome',headless:true});
- const page=await browser.newPage({viewport:{width:1440,height:960},colorScheme:'dark',locale:'zh-CN'}),errors=[];
+ const page=await browser.newPage({viewport:{width:1440,height:960},colorScheme:'dark',locale:'zh-CN'}),errors=[],assetRequests=[];
  page.on('pageerror',e=>errors.push(String(e)));
+ page.on('request',request=>{if(request.method()==='POST'&&/upload/i.test(request.url()))assetRequests.push(request.url());});
  await page.goto(server.url);const input=page.locator('[contenteditable=true]');await input.waitFor();
+ await input.evaluate(element=>{
+  const transfer=new DataTransfer();transfer.items.add(new File(['synthetic source'],'eris-intake-check.png',{type:'image/png'}));
+  element.dispatchEvent(new ClipboardEvent('paste',{clipboardData:transfer,bubbles:true,cancelable:true}));
+  element.dispatchEvent(new DragEvent('drop',{dataTransfer:transfer,bubbles:true,cancelable:true}));
+ });
+ await delay(100);
+ assert.equal(await input.innerText(),'','paste and drop cannot add files to the read-only composer');
+ assert.equal(await page.getByRole('button',{name:/eris-intake-check/}).count(),0,'no attachment preview enters the draft');
+ assert.deepEqual(assetRequests,[],'disabled attachment intake sends no asset uploads');
+ assert.equal(executions,0,'attachment gestures do not submit a prompt');
  assert.equal(await page.evaluate(()=>'dshDesktop' in globalThis),false,'the Web product does not expose a desktop bridge');
  assert.equal(await page.locator('body').getAttribute('data-ds-dark-theme'),null);
  assert.equal(await page.title(),'新对话 — Eris');

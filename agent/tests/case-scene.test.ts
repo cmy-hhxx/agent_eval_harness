@@ -12,9 +12,9 @@ const { evidenceParts } = await import(pathToFileURL(path.join(ROOT, "agent/src/
 const entry = (callId: string, tool: string, reference: object, isError = false) => ({ root: {
   kind: 'tool-result', callId, isError, meta: { sourceRead: { tool, args: { reference } } },
 } });
-const caseRead = entry('case', 'read_case', { runId: 'run', taskId: 'pair' });
-const evidence = entry('evidence', 'read_evidence', { runId: 'run', inputId: 'answer-A' });
-const material = (inputId: string) => ({ kind: 'case', question: '原问', answers: [{ modelName: 'A组Fast', reference: { runId: 'run', inputId } }] });
+const caseRead = entry('case', 'read_case', { collectionId: "0_wencai/0_daily_eval", runId: 'run', taskId: 'pair' });
+const evidence = entry('evidence', 'read_evidence', { collectionId: "0_wencai/0_daily_eval", runId: 'run', inputId: 'answer-A' });
+const material = (inputId: string) => ({ kind: 'case', question: '原问', answers: [{ modelName: 'A组Fast', reference: { collectionId: "0_wencai/0_daily_eval", runId: 'run', inputId } }] });
 const response = (value: object) => ({ ok: true, value: { content: [{ type: 'text', text: JSON.stringify(value) }] } });
 
 test('case scenes are visible in the reply tail without any source read; global turns stay empty', () => {
@@ -28,15 +28,15 @@ test('case scenes are visible in the reply tail without any source read; global 
   assert.match(render([caseRead]), /链路小现场/);
   assert.match(render([evidence], [{ kind: 'tool-call', location: { kind: 'step', turn: { turn: 1 } }, anchorSeq: 5, data: caseRead }]), /链路小现场/);
   assert.equal(reads, 0);
-  assert.equal(render([entry('global', 'list_data', { runId: 'run' })]), '');
-  assert.equal(render([entry('failed', 'read_case', { runId: 'run' }, true)]), '');
+  assert.equal(render([entry('global', 'list_data', { collectionId: "0_wencai/0_daily_eval", runId: 'run' })]), '');
+  assert.equal(render([entry('failed', 'read_case', { collectionId: "0_wencai/0_daily_eval", runId: 'run' }, true)]), '');
   assert.equal(caseScenesFromTools([caseRead, { ...caseRead }]).length, 1);
 });
 
 test('deep follow-ups resolve the exact answer, skip unrelated cases and deduplicate evidence batches', async () => {
-  const unrelated = entry('other', 'read_case', { runId: 'run', taskId: 'other-pair' });
-  const wrongRun = entry('different-run', 'read_case', { runId: 'elsewhere', taskId: 'pair' });
-  const scenes = caseScenesFromTools([evidence, entry('batch-2', 'read_evidence', { runId: 'run', inputId: 'answer-A' })], [caseRead, unrelated, wrongRun]);
+  const unrelated = entry('other', 'read_case', { collectionId: "0_wencai/0_daily_eval", runId: 'run', taskId: 'other-pair' });
+  const wrongRun = entry('different-run', 'read_case', { collectionId: "0_wencai/0_daily_eval", runId: 'elsewhere', taskId: 'pair' });
+  const scenes = caseScenesFromTools([evidence, entry('batch-2', 'read_evidence', { collectionId: "0_wencai/0_daily_eval", runId: 'run', inputId: 'answer-A' })], [caseRead, unrelated, wrongRun]);
   assert.equal(scenes.length, 1);
   const calls: string[] = [];
   const loaded = await loadCaseScene(scenes[0], async (callId: string) => {
@@ -49,18 +49,18 @@ test('deep follow-ups resolve the exact answer, skip unrelated cases and dedupli
 });
 
 test('a single-node evidence follow-up retains its case scene while formal-result reads remain global', async () => {
-  const single = entry('single', 'read_data', { runId: 'run', inputId: 'answer-A', messageIndex: 13 });
+  const single = entry('single', 'read_data', { collectionId: "0_wencai/0_daily_eval", runId: 'run', inputId: 'answer-A', messageIndex: 13 });
   const scenes = caseScenesFromTools([single, evidence], [caseRead]);
   assert.equal(scenes.length, 1);
   const loaded = await loadCaseScene(scenes[0], async () => response(material('answer-A')));
   assert.equal(loaded.answers[0].reference.inputId, 'answer-A');
   assert.equal(caseScenesFromTools([single], [caseRead]).length, 1);
-  assert.equal(caseScenesFromTools([entry('formal', 'read_data', { runId: 'run', taskId: 'pair' })], [caseRead]).length, 0);
-  assert.equal(caseScenesFromTools([entry('directory', 'read_data', { runId: 'run', inputId: 'answer-A' })], [caseRead]).length, 0);
+  assert.equal(caseScenesFromTools([entry('formal', 'read_data', { collectionId: "0_wencai/0_daily_eval", runId: 'run', taskId: 'pair' })], [caseRead]).length, 0);
+  assert.equal(caseScenesFromTools([entry('directory', 'read_data', { collectionId: "0_wencai/0_daily_eval", runId: 'run', inputId: 'answer-A' })], [caseRead]).length, 0);
 });
 
 test('copied evidence includes only recorded upstream and downstream coordinates', () => {
-  const reference = { runId: 'run', inputId: 'answer-A', messageIndex: 13 };
+  const reference = { collectionId: "0_wencai/0_daily_eval", runId: 'run', inputId: 'answer-A', messageIndex: 13 };
   const nodes = [{ messageIndex: 7, type: 'tool_call' }, { messageIndex: 12, type: 'tool_result' },
     { messageIndex: 13, type: 'tool_result', callMessageIndex: 7, reference }, { messageIndex: 15, type: 'tool_result', callMessageIndex: 7 }];
   const answer = { modelName: 'A组Expert', trace: { finalMessageIndex: 22, nodes } };
@@ -95,7 +95,7 @@ test('trace flow has one ordered rail and only source-confirmed call association
 });
 
 test('copying for Eris retains exact evidence coordinates and does not copy a truncated preview as evidence', () => {
-  const reference = { runId: 'run', inputId: 'answer-A', messageIndex: 13 };
+  const reference = { collectionId: "0_wencai/0_daily_eval", runId: 'run', inputId: 'answer-A', messageIndex: 13 };
   const text = evidenceFollowupText({ modelName: 'A组Fast', trace: { finalMessageIndex: 22 } }, { type: 'tool_result', name: '查询', messageIndex: 13, reference, preview: 'TRUNCATED_PREVIEW' });
   assert.match(text, /请继续调查/);
   assert.match(text, /A组Fast/);

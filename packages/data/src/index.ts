@@ -13,3 +13,5 @@ export * from "./case-metadata.js";
 export * from "./statistics-log.js";
 export * from "./run-deletion.js";
 export * from "./run-artifacts.js";
+export * from "./assistant-auth.js";
+export * from "./assistant-runs.js";

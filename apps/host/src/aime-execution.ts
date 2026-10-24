@@ -2,7 +2,7 @@ import path from 'node:path';
 import {spawn} from 'node:child_process';
 import {exists,readJson,writeJson,runLock,createFileLogger,hasLiveRunOwner} from '@eval/data';
 import type {ModelRequestControl} from '@eval/host';
-import {runAimeIncremental,runAimeWatch,answerReviewRepository,prepareAnswerReviewRetry,prepareAnswerReviewAutomaticResume,appendAnswerReviewInputs,planAnswerReview,
+import {runAimeIncremental,runAimeWatch,answerReviewRepository,answerReviewProgress,prepareAnswerReviewRetry,prepareAnswerReviewAutomaticResume,appendAnswerReviewInputs,planAnswerReview,
   type AimeIncrementalState,type AimeJob,type AimeRecord,type AimeCleaningReport,type AimeEvaluationResult} from '@eval/workflows/answer-review';
 import {loadConfig,type HostConfig} from './config.js';
 import {configurationSecrets,readSettings} from './settings.js';
@@ -108,7 +108,7 @@ export async function runAimeEvaluation(c:AimeConfiguration,options:AimeRunOptio
           }
           const before=await exists(file)?await answerReviewRepository.readTasks(job.output,[]):undefined;
           if(resumeTaskIds)eligible=new Set(before!.manifest.tasks.filter(task=>resumeTaskIds.has(task.id)).map(task=>(task.data as {candidate:{trace_id:string}}).candidate.trace_id));
-          const selected=(state:typeof before)=>state?.manifest.tasks.filter(t=>['score','attribution'].includes(t.stage)&&traceIds.has((t.data as {candidate:{trace_id:string}}).candidate.trace_id))??[];
+          const selected=(state:typeof before)=>state?.manifest.tasks.filter(t=>['score','attribution','instruction-review'].includes(t.stage)&&traceIds.has((t.data as {candidate:{trace_id:string}}).candidate.trace_id))??[];
           const pendingBefore=selected(before).filter(task=>before!.manifest.states[task.id].status!=='succeeded');
           let launched=0,code=0;
           if(eligible.size&&!options.pauseSignal?.aborted){
@@ -122,12 +122,12 @@ export async function runAimeEvaluation(c:AimeConfiguration,options:AimeRunOptio
           if(!await exists(file))return {launched:0,succeeded:0,failures:[],exit_code:options.signal.aborted?130:2,output:job.output};
           const state=await answerReviewRepository.readTasks(job.output,[]),tasks=selected(state),failures=tasks.filter(task=>state.manifest.states[task.id].status!=='succeeded').map(task=>{
             const p=state.manifest.states[task.id];return {task_id:task.id,stage:task.stage,status:p.status,reason:p.reason??p.failure?.errors??null};});
-          const succeeded=job.records.filter(record=>['score','attribution'].every(stage=>tasks.some(task=>task.stage===stage&&
-            (task.data as {candidate:{trace_id:string}}).candidate.trace_id===record.trace_id&&state.manifest.states[task.id].status==='succeeded'))).length;
+          const progress=await answerReviewProgress(job.output);
+          const succeeded=job.records.filter(record=>progress.some(row=>row.traceId===record.trace_id&&row.status==='succeeded')).length;
           const started=tasks.filter(task=>state.manifest.states[task.id].attempts>(before?.manifest.states[task.id]?.attempts??0));
           return {launched:started.length,succeeded,failures,exit_code:failures.length?2:code,output:job.output,
             stages:Object.fromEntries(['score','attribution'].map(stage=>[stage,{launched:started.filter(task=>task.stage===stage).length,
-              succeeded:tasks.filter(task=>task.stage===stage&&state.manifest.states[task.id].status==='succeeded').length}]))} satisfies AimeEvaluationResult;
+              succeeded:progress.filter(row=>traceIds.has(row.traceId??'')&&row.stages[stage].status==='succeeded').length}]))} satisfies AimeEvaluationResult;
           }finally{activeJobs--;}
         },
       });

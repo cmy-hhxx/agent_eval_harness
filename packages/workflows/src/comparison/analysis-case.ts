@@ -1,4 +1,4 @@
-import type { AnalysisReference } from "@eval/contracts";
+import type { RunReference } from "@eval/contracts";
 import { isToolSpan } from "./adapters.js";
 import { traceCatalog } from "./catalog.js";
 import { locateAnalysisInput } from "./dashboard-view.js";
@@ -6,7 +6,7 @@ import { contentText, locateRecordStream } from "./input.js";
 import type { RawInput } from "./types.js";
 
 /** A navigation map, not a second copy of each model request's input history. */
-export function analysisTraceMap(raw: RawInput, reference: AnalysisReference, finalIndex: number, audience: "model" | "user" = "model") {
+export function analysisTraceMap(raw: RawInput, reference: RunReference, finalIndex: number, audience: "model" | "user" = "model") {
   const previewChars = audience === "user" ? 2000 : 160;
   const catalog = traceCatalog(raw);
   // Some source spans omit call IDs but record the same completion time on both ends.

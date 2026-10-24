@@ -25,7 +25,7 @@ export async function seedSession(scaffold, history, sessionId) {
 }
 export async function launchWebScaffold({paceMs=16,replayContextWindow}) {
  const directory=await mkdtemp(path.join(tmpdir(),'eval-browser-benchmark-'));
- let settle=()=>{},sessions;
+ let settle=()=>{},cancelSettlement=()=>{},sessions;
  const server=await serveAssistant({port:0,userId:'local',webDirectory:process.cwd()+'/dist/agent/web',endpoints:url=>assistantEndpoints(sessions=new AssistantSessions({directory,url,model:{provider:'test',model:'test',contextWindow:replayContextWindow},systemPrompt:'test',tools:[],driver:async({event})=>({
   async prompt(text){
    await event({type:'agent_start'});await event({type:'turn_start'});
@@ -41,5 +41,9 @@ export async function launchWebScaffold({paceMs=16,replayContextWindow}) {
    await event({type:'turn_end'});await event({type:'agent_end'});settle();
   },async steer(){},async abort(){},async dispose(){}
  })}))});
- return {directory,baseUrl:server.url,authenticatedUrl:server.url+'/u/local/',whenTurnSettled:()=>new Promise(resolve=>{settle=resolve;}),close:async()=>{await server.close();await rm(directory,{recursive:true,force:true});}};
+ return {directory,baseUrl:server.url,authenticatedUrl:server.url+'/u/local/',whenTurnSettled:(timeoutMs=30000)=>new Promise((resolve,reject)=>{
+  const timeout=setTimeout(()=>reject(new Error(`Benchmark turn did not settle within ${timeoutMs}ms`)),timeoutMs);
+  settle=()=>{clearTimeout(timeout);resolve();};
+  cancelSettlement=()=>{clearTimeout(timeout);reject(new Error('Benchmark scaffold closed before turn settled'));};
+ }),close:async()=>{cancelSettlement();await server.close();await rm(directory,{recursive:true,force:true});}};
 }

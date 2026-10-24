@@ -4,7 +4,7 @@ import { erisComparisonCheck } from "@eval/prompts";
 import type { AssistantSource, JsonObject } from "@eval/contracts";
 import { erisTools, type ErisDependencies } from "../src/core/tools.js";
 
-const reference = { runId: "run", taskId: "formal-comparison" };
+const reference = { collectionId: "0_wencai/0_daily_eval", runId: "run", taskId: "formal-comparison" };
 const checked = { text: '{"issues":[]}', elapsedMs: 5, usage: { input: 30, output: 8 } };
 const context = { scope: { userId: "alice", sessionId: "session" }, callId: "comparison", signal: new AbortController().signal, progress() {}, async complete() { return checked; } };
 const args = { reference, complete: true, title: "交付差异", candidates: [
@@ -24,7 +24,7 @@ const pair = (first = "a", second = "b", result = "win", winner: string | null =
 const accepted = (comparisons = [pair()]): JsonObject => ({ kind: "accepted-result", reference, evaluatorVersion: "fixture-evaluator",
   result: { evaluation_type: "group_model_comparison", status: "decided" }, comparisonScope: { comparisons } });
 const caseMaterial = (formal = accepted()) => ({ kind: "case", reference, question: "请列出计算过程", formal,
-  answers: ["a", "b", "c"].map(model => ({ model, reference: { runId: reference.runId, inputId: `answer-${model}` },
+  answers: ["a", "b", "c"].map(model => ({ model, reference: { collectionId: "0_wencai/0_daily_eval", runId: reference.runId, inputId: `answer-${model}` },
     answer: { text: `${model} 的完整回答`, complete: true } as JsonObject, trace: { nodes: [] } })) });
 const unexpected = async (): Promise<never> => { throw new Error("Unexpected dependency call"); };
 function comparisonTool(readFormal: ErisDependencies["data"]["read"] = async () => accepted(), readCase?: ErisDependencies["data"]["read"]) {
@@ -32,8 +32,7 @@ function comparisonTool(readFormal: ErisDependencies["data"]["read"] = async () 
     assert.deepEqual(options, { view: "case" }, "the tool loads answers and the formal result in one case read");
     return caseMaterial(await readFormal(ref));
   });
-  const tool = erisTools({ code: { execute: unexpected, read: unexpected }, data: { list: unexpected, read, search: unexpected, image: unexpected },
-    specialists: { invoke: unexpected, read: unexpected }, search: { search: unexpected }, web: { read: unexpected } }, {}).find(tool => tool.name === "show_comparison");
+  const tool = erisTools({ data: { list: unexpected, read, search: unexpected, image: unexpected }, search: { search: unexpected }, web: { read: unexpected } }, {}).find(tool => tool.name === "show_comparison");
   assert(tool, "show_comparison must be a registered Eris tool");
   return tool;
 }
@@ -122,13 +121,13 @@ test("contradictory conclusions cannot publish or terminate before correction", 
 
 test("comparison checks retain this pair's earlier evidence and omit unrelated cases", async () => {
   const source = (tool: string, value: unknown): AssistantSource => ({ tool, content: [{ type: "text", text: JSON.stringify(value) }] });
-  const input = { runId: reference.runId, inputId: "answer-a" };
+  const input = { collectionId: "0_wencai/0_daily_eval", runId: reference.runId, inputId: "answer-a" };
   const node = { kind: "message", reference: { ...input, messageIndex: 4 }, format: "text", offset: 0,
     text: "未被原评语引用的反证", hasMore: true, nextOffset: 10 };
   const evidence = source("read_evidence", { reference: input, items: [node] });
   const current = source("read_case", { reference, answers: [{ reference: input }], question: "本题" });
   const formal = source("read_data", { reference, comparisonScope: { tradeoff: "本题结论" } });
-  const unrelated = source("read_data", { reference: { runId: "run", taskId: "another-case" }, text: "另一题的长评语" });
+  const unrelated = source("read_data", { reference: { collectionId: "0_wencai/0_daily_eval", runId: "run", taskId: "another-case" }, text: "另一题的长评语" });
   const otherRun = source("search_data", { reference: { ...input, runId: "other-run" }, text: "另一运行" });
   await comparisonTool().execute(args, { ...context, async complete(request) {
     const selected = request.selectSources!([unrelated, evidence, otherRun, current, formal]);
@@ -140,7 +139,7 @@ test("comparison checks retain this pair's earlier evidence and omit unrelated c
 
 test("comparison checks deduplicate exact evidence pages without losing changed text, bounds, formats or uncited counterevidence", async () => {
   const source = (tool: string, material: unknown): AssistantSource => ({ tool, content: [{ type: "text", text: JSON.stringify(material) }] });
-  const input = { runId: reference.runId, inputId: "answer-a" };
+  const input = { collectionId: "0_wencai/0_daily_eval", runId: reference.runId, inputId: "answer-a" };
   const page = { kind: "message", reference: { ...input, messageIndex: 4 }, format: "text", offset: 0,
     text: '支持材料\n但存在反证 "边界"', total: 100, hasMore: true, nextOffset: 20 };
   const later = { ...page, offset: 20, text: "后续反证", hasMore: false, nextOffset: null };
@@ -177,7 +176,7 @@ test("comparison checks deduplicate exact evidence pages without losing changed 
 
 test("comparison checks load this pair without a prior read_case and continue incomplete answer pages", async () => {
   const material = caseMaterial();
-  const answerReference = { runId: reference.runId, inputId: "answer-a", messageIndex: 3 };
+  const answerReference = { collectionId: "0_wencai/0_daily_eval", runId: reference.runId, inputId: "answer-a", messageIndex: 3 };
   material.answers[0]!.answer = { reference: answerReference, preview: "截断预览", complete: false };
   const reads: unknown[] = [];
   const tool = comparisonTool(undefined, async (ref, options) => {
@@ -212,14 +211,14 @@ test("missing original answers block comparison checks instead of accepting an u
 
 test("incomplete answer pagination cannot silently bypass evidence checking", async () => {
   const material = caseMaterial();
-  material.answers[0]!.answer = { reference: { runId: reference.runId, inputId: "answer-a", messageIndex: 3 }, complete: false, preview: "只有预览" };
+  material.answers[0]!.answer = { reference: { collectionId: "0_wencai/0_daily_eval", runId: reference.runId, inputId: "answer-a", messageIndex: 3 }, complete: false, preview: "只有预览" };
   const tool = comparisonTool(undefined, async (_ref, options) => options?.view === "case" ? material
     : { kind: "message", text: "缺失后续内容", hasMore: true, nextOffset: 0 });
   await assert.rejects(tool.execute(args, { ...context, complete: unexpected }), /分页不完整/);
 });
 
 test("comparison question lookup persists the resolved receipt for evidence and scene replay", async () => {
-  const lookup = { runId: "run", query: "列出计算过程", comparisonTier: "Expert" };
+  const lookup = { collectionId: "0_wencai/0_daily_eval", runId: "run", query: "列出计算过程", comparisonTier: "Expert" };
   const tool = comparisonTool(async ref => { assert.deepEqual(ref, lookup); return accepted(); });
   const output = await tool.execute({ ...args, reference: lookup }, context);
   assert.deepEqual(output.details, { reference, evaluatorVersion: "fixture-evaluator", consistencyCheck: { ...checked, issues: [] } });
@@ -417,7 +416,7 @@ test("fixed comparison text limits reject excess content instead of truncating i
 
 test("fixed comparisons reject invalid references, missing or undecided results and different candidates", async () => {
   const tool = comparisonTool();
-  for (const invalid of [{ runId: "..", taskId: "task" }, { runId: "run" }, { ...reference, inputId: "input" }, { ...reference, messageIndex: 0 }])
+  for (const invalid of [{ collectionId: "0_wencai/0_daily_eval", runId: "..", taskId: "task" }, { collectionId: "0_wencai/0_daily_eval", runId: "run" }, { ...reference, inputId: "input" }, { ...reference, messageIndex: 0 }])
     await assert.rejects(tool.execute({ ...args, reference: invalid }, context), /参数无效/);
   await assert.rejects(comparisonTool(async () => { throw new Error("正式结果不存在"); }).execute(args, context), /不存在/);
   for (const source of [{}, { ...accepted(), kind: "message" }, { ...accepted(), result: undefined },
