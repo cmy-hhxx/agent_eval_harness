@@ -63,10 +63,11 @@ const evidenceProfile=profile('evidence','evidence',evidenceSchema,['score_mater
   for(const row of value.facts){quotes(request,audit,[row]);if(!row.affected_item_ids.length&&!value.full_rescore_reason||row.affected_item_ids.some(id=>!Object.hasOwn(scoreDirectory.units,id)))fail('/facts','新事实须定位实际相关核心项，不能隔离影响时明确full_rescore_reason。');}
   if(value.full_rescore_reason&&!value.facts.length)fail('/full_rescore_reason','没有新事实不能全量重评；缺口保留待核。');
   const known=new Map(Object.keys(scoreDirectory.units).map(id=>[id,new Set((previous?.facts??[]).filter(row=>row.affected_item_ids.includes(id)).flatMap(row=>row.evidence_ids))]));
-  const changed=value.full_rescore_reason?Object.keys(scoreDirectory.units):[...new Set(value.facts.flatMap(row=>row.affected_item_ids.filter(id=>row.evidence_ids.some(ref=>!known.get(id)!.has(ref)))))];
+  const changed=[...new Set(value.facts.flatMap(row=>row.affected_item_ids.filter(id=>row.evidence_ids.some(ref=>!known.get(id)!.has(ref)))))];
+  if(value.full_rescore_reason&&!changed.length&&value.facts.every(row=>row.evidence_ids.every(id=>previous?.facts.some(old=>old.evidence_ids.includes(id)))))fail('/full_rescore_reason','没有新事实不能全量重评；重复旧引用不构成新事实。');
   if(proof.actions.length>6||new Set(proof.sources.flatMap(s=>typeof s.record.url==='string'?[s.record.url]:[])).size>3)fail('/facts','全题外部核验预算超限。');
   const facts=[...new Map([...(previous?.facts??[]),...value.facts].map(row=>[canonical([[...row.affected_item_ids].sort(),[...row.evidence_ids].sort()]),row])).values()];
-  return {...value,facts,changed_item_ids:changed};
+  return {...value,facts,changed_item_ids:value.full_rescore_reason?Object.keys(scoreDirectory.units):changed};
 });
 const axisProfiles=Object.fromEntries(scoreAxes.map(axis=>[`axis-${axis.toLowerCase()}`,profile(`axis-${axis.toLowerCase()}`,`axis-${axis.toLowerCase()}`,axisSchema,['score_material','read_artifact'],(request,draft,audit)=>{
   const value=draft as ScoreAxisResult;

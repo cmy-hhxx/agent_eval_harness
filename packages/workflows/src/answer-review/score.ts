@@ -13,8 +13,9 @@ export function bindScore(task:PlannedTask,source:ReviewCase&{view:JsonObject},d
   const data=task.data as ReviewTaskData,seed=dependencies.evidence?proof(dependencies.evidence):undefined;
   const current={...source,...(seed?{review_seed:seed}:{} )};
   const feedback=dependencies.feedback?.evaluation as ScoreRepair|undefined;
+  const collected=dependencies.evidence?.evaluation as ScoreEvidence|undefined;
   const input={...source.view,score_phase:data.score_part,repair_used:Boolean(data.score_repair_used),evidence_used:Boolean(data.score_evidence_used),
-    ...(feedback?{repair_request:feedback}:{}),...(dependencies.evidence?{verification:dependencies.evidence.evaluation as unknown as JsonObject}:{}),
+    ...(feedback?{repair_request:feedback}:{}),...(collected?{verification:(data.score_part==='evidence'?collected:{facts:collected.facts}) as unknown as JsonObject}:{}),
     ...(seed?{verified_sources:seed.sources.map(row=>({source_id:row.id,record_type:row.record.record_type??null,url:row.record.url??null,
       scope:row.record.scope??null,verification_role:row.record.verification_role??null,content_chars:Array.from(row.content).length})),shared_quotes:seed.quotes}:{} )} as JsonObject;
   const context={repair_used:Boolean(data.score_repair_used),evidence_used:Boolean(data.score_evidence_used),

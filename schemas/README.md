@@ -37,4 +37,4 @@
 
 修改 Schema 时同步公开 Profile、解析与业务校验、当前调用方、提示词和测试；影响判词时更新 `evaluatorVersion`。验证入口见[开发指南](../docs/development.md#验证)。
 
-Score将取证、分项、总分的精简提交与正式结果分开校验。正式result的evaluations与diagnostics为平级数组；内部片段不导出为正式评分。
+Score将取证、分项、总分的精简提交与正式结果分开校验。取证只提交facts（证据编号及受影响核心项）和unresolved，不提交共用对错判词；unresolved只用于取证恢复，评分阶段仅接收facts。程序补changed_item_ids，补查影响无法隔离时须说明full_rescore_reason，重复旧引用不能触发全量重评。正式result的evaluations与diagnostics为平级数组；内部片段不导出为正式评分。

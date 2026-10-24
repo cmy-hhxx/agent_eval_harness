@@ -111,4 +111,7 @@ test('evidence carries raw references rather than a shared correctness verdict a
   assert.deepEqual(result.changed_item_ids,['E2']);assert.equal(result.facts.length,2);
   const unchanged=profile.resolve!(context,{facts:previous.facts,unresolved:[]},audit()) as any;assert.deepEqual(unchanged.changed_item_ids,[]);
   assert.throws(()=>profile.resolve!(context,{facts:[],unresolved:[],full_rescore_reason:'取证失败'},audit()),/没有新事实/);
+  assert.throws(()=>profile.resolve!(context,{facts:previous.facts,unresolved:[],full_rescore_reason:'重复旧引用'},audit()),/没有新事实/);
+  const broad=profile.resolve!(context,{facts:[{affected_item_ids:[],evidence_ids:['EV_2']}],unresolved:[],full_rescore_reason:'新证据的影响无法隔离'},audit()) as any;
+  assert.equal(broad.changed_item_ids.length,12);
 });

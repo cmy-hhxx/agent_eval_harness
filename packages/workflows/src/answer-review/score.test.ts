@@ -31,6 +31,14 @@ test('late evidence is supplemented once with the original cumulative proof and 
   const directed=advanceScore(rescored[1],receipt({action:'repair',reason:'补查后仍有确定性矛盾',axis_ids:['E'],verification_requests:[]}),{} as RunState,{}).tasks;
   assert.equal(directed.length,2);assert.equal((directed[1].data as any).score_evidence_used,true);assert.equal((directed[1].data as any).score_repair_used,true);
 });
+test('collector gap narratives cannot become shared judgments in an axis prompt',()=>{
+  const first=scoreEvidenceTask(candidate),evidence={facts:[{affected_item_ids:['U2'],evidence_ids:['EV_1']}],unresolved:[{claim:'Collector speculation: two different scopes contradict',affected_item_ids:['U2']}],changed_item_ids:['U2']};
+  const axis=advanceScore(first,receipt(evidence),{} as RunState,{}).tasks[4];
+  const source={case_id:'input',task_question:'题目',candidate_output_id:'A',evidence:{Q:'题目',A:'回答'},availability:{candidate_output:'available' as const},public_requirements:{question:'题目'},view:{case_id:'input',task_question:'题目',availability:{candidate_output:'available'}}};
+  const binding=bindScore(axis,source,{evidence:receipt(evidence,{quotes:[],sources:[],actions:[],viewed:[],searches:[]})});
+  assert.deepEqual(binding.request.input.verification,{facts:evidence.facts});
+  assert(!JSON.stringify(binding.request.input).includes('Collector speculation'));
+});
 test('final material preserves verification evidence coordinates when axes quote a different order and reuse local IDs',()=>{
   const seed:ReviewAudit={quotes:[{evidence_id:'EV_1',source_id:'Q',start:0,end:2,quote:'题目'},{evidence_id:'EV_2',source_id:'A',start:0,end:2,quote:'答案'}],sources:[],actions:[],viewed:[],searches:[]};
   const facts=[{affected_item_ids:['T1'],evidence_ids:['EV_1']}];
@@ -42,6 +50,7 @@ test('final material preserves verification evidence coordinates when axes quote
   }
   const source={case_id:'input',task_question:'题目',candidate_output_id:'A',evidence:{Q:'题目',A:'答案',P:'过程后续'},availability:{candidate_output:'available' as const},public_requirements:{question:'题目'},view:{case_id:'input',task_question:'题目',availability:{candidate_output:'available'}}};
   const binding=bindScore(final,source,dependencies),quotes=(binding.request.sources.case.value as any).review_seed.quotes as ReviewAudit['quotes'];
+  assert.deepEqual(binding.request.input.verification,{facts},'independent total also excludes collector gap narratives');
   for(const initial of seed.quotes)assert.deepEqual(quotes.find(q=>q.evidence_id===initial.evidence_id),initial,'verification references must keep the exact original source span');
   const axes=(binding.request.sources.score.value as any).axes;
   assert.equal(axes[1].evaluations[0].evidence_ids[1],'EV_3');
@@ -60,7 +69,7 @@ test('supplementation reuses unaffected axes and no new facts do not replay six 
   const changed=advanceScore(supplement,receipt({facts:[],unresolved:[],changed_item_ids:['E1','U2']}),{} as RunState,{}).tasks;
   assert.deepEqual(changed.slice(0,-1).map(t=>(t.data as any).score_axis),['E','U']);
   assert.equal(changed.at(-1)!.dependencies.T,final.dependencies.T);
-  const broad=advanceScore(supplement,receipt({facts:[],unresolved:[],changed_item_ids:['E1'],full_rescore_reason:'同一来源同时改变任务对象和所有事实依据，影响无法隔离。'}),{} as RunState,{}).tasks;
+  const broad=advanceScore(supplement,receipt({facts:[{affected_item_ids:[],evidence_ids:['EV_1']}],unresolved:[],changed_item_ids:['T','E','L','A','U','D'].flatMap(axis=>[axis+'1',axis+'2']),full_rescore_reason:'同一来源同时改变任务对象和所有事实依据，影响无法隔离。'}),{} as RunState,{}).tasks;
   assert.equal(broad.length,7);
 });
 test('source catalog is lazy while full provenance remains available to tools',()=>{
