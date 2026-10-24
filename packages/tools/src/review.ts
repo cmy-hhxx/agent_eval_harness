@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import type { ToolDefinition, ToolContext, ReviewCase, ReviewAudit, ReviewQuote } from "@eval/contracts";
 import { calculateExpression } from "./decimal.js";
 import { createWebReader } from "./web-reader.js";
+import { createSerperSearch } from "./serper.js";
 
 const output = (value: unknown) => ({ content: [{ type: "text" as const, text: JSON.stringify(value) }], details: value });
 const text = { type: "string", minLength: 1 };
@@ -11,8 +12,8 @@ export function reviewCase(context: Pick<ToolContext,"inputs">): ReviewCase {
   if (!value?.case_id || !value.evidence) throw new Error("当前任务没有评审材料");
   return value;
 }
-export function reviewAudit(context: Pick<ToolContext,"audit">): ReviewAudit {
-  return context.audit.review ??= { quotes: [], sources: [], actions: [], viewed: [], searches: [] };
+export function reviewAudit(context: Pick<ToolContext,"audit"|"inputs">): ReviewAudit {
+  return context.audit.review ??= structuredClone((context.inputs.get('case') as ReviewCase | undefined)?.review_seed ?? { quotes: [], sources: [], actions: [], viewed: [], searches: [] });
 }
 export function reviewSources(value: ReviewCase, audit?: ReviewAudit) {
   return { ...value.evidence, ...Object.fromEntries((audit?.sources ?? []).map(row => [row.id, row.content])) };
@@ -119,19 +120,21 @@ export const reviewTools: Omit<ToolDefinition,"description">[] = [{
     };
     if (args.action === "admit_search") {
       const search = audit.searches.find(row => row.id === args.search_id);
-      const rows = search?.result.organic as Record<string,unknown>[] | undefined, row = rows?.[args.result_index];
-      if (!row || typeof row.link !== "string") throw new Error("须选择实际搜索返回中的来源");
-      return output(register(row.link, JSON.stringify(row,null,2), { obtained_by:"review_external.search", acquisition_ref:search!.id, scope:"search_snippet",publication_date:row.date ?? null }));
+      const rows = search?.result.results as Record<string,unknown>[] | undefined, row = rows?.[args.result_index];
+      if (!row || typeof row.url !== "string") throw new Error("须选择实际搜索返回中的来源");
+      return output(register(row.url, JSON.stringify(row,null,2), { obtained_by:"review_external.search", acquisition_ref:search!.id, scope:"search_snippet",publication_date:row.date ?? null }));
     }
     if (args.action === "search") {
       if (!process.env.SEARCH_API_KEY) throw new Error("宿主没有配置搜索工具；相关事实保留unverified");
-      const action = recordAction("search",{query:args.query});
+      const actions: ReviewAudit["actions"] = [];
       try {
-        const response = await fetch("https://google.serper.dev/search",{method:"POST",headers:{"content-type":"application/json","X-API-KEY":process.env.SEARCH_API_KEY},body:JSON.stringify({q:args.query,num:5}),signal});
-        if (!response.ok) throw new Error(`搜索返回HTTP ${response.status}`);
-        const result = await response.json() as Record<string,unknown>, id = randomUUID(); action.result = result;
+        const search=createSerperSearch({apiKey:process.env.SEARCH_API_KEY,fetch:async(url,options)=>{
+          actions.push(recordAction('search',{query:args.query}));return fetch(url,options);
+        }});
+        const result = await search.search({queries:[{query:args.query}],limit:5},signal) as unknown as Record<string,unknown>, id = randomUUID();
+        for(const action of actions)action.result=result;
         audit.searches.push({id,result}); return output({search_id:id,result,external_actions_used:audit.actions.length});
-      } catch(error){action.error=String(error);throw error;}
+      } catch(error){for(const action of actions)action.error=String(error);throw error;}
     }
     if (!args.url || !urls.has(args.url) && urls.size >= 3) throw new Error("读取需要URL且不能超过3个关键来源");
     const actions: ReviewAudit["actions"] = [];

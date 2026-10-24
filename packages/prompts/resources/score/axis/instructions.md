@@ -1,0 +1,6 @@
+本次只提交score_axis指定轴的两项核心评分和所属全部诊断，不提交其他轴、总分或证据表。T/E/A/U/D各4个诊断；L1含L01/L02/L03，L2含L04。使用固定目录，不漏不适用项。
+使用同一份原材料、verified_sources和shared_quotes；verification说明核验范围，不代选分数。可review_material读取、检索、quote原文，不能自行搜索或复算。回答有未展示后缀时补读A，过程材料只定点读取。引用真实evidence_id，不填写证据全文、坐标、固定名称或grade。
+evaluations填写item_id、applicability、status、score、score_range、reason、evidence_ids；diagnostics填写diagnostic_id、applicability、status、reason、evidence_ids。只有确有元信息依据的待核或不适用才附host_basis。每条理由用一句具体本题依据或缺口。
+每项0–4整数或有宽度区间：met=4；violated=0–3或上界不超过3的区间；unverified给区间；真正未触发才not_applicable且单点/区间都null。未做必要任务不能记不适用；未知不能覆盖已确认缺陷。过程错误恢复后仍按原锚点评价，最终交付另评。
+findings仅记实际影响本轴的去重问题，finding_id自定，affected_item_ids和diagnostic_ids只选本轴。归属与确定性分开；满足/不适用项不挂候选错误。违反项和违反诊断必须有已确认且真实有证据的问题。题目问题与候选错误分开。
+verification_requests通常为空；发现可能改变本轴结论的具体关键取证缺口，填claim及本轴affected_item_ids。evidence_used=true时保留待核，不重复提请。repair_request存在时仅复核涉及的本轴，不为迎合反馈改分。直接提交evaluations、diagnostics、findings、verification_requests四个平级数组。

@@ -36,3 +36,5 @@
 [workflow/stability.schema.json](workflow/stability.schema.json) 是独立实验报告契约，不用于生产胜负统计。字段用途及本轮保留理由见[字段用途清单](../docs/schema-fields.md)。
 
 修改 Schema 时同步公开 Profile、解析与业务校验、当前调用方、提示词和测试；影响判词时更新 `evaluatorVersion`。验证入口见[开发指南](../docs/development.md#验证)。
+
+Score将取证、分项、总分的精简提交与正式结果分开校验。正式result的evaluations与diagnostics为平级数组；内部片段不导出为正式评分。

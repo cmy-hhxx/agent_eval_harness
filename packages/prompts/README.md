@@ -36,3 +36,5 @@
 测试检查资源来源、工具覆盖、实际装配、材料隔离与预算，不逐句锁定文风。语义变化用[真实模型复核](../../docs/quality.md#真实模型复核)验证；测试 fixture 不进入模型上下文。
 
 Eris 通过 `erisPrompt(toolNames)` 和 [createEris](../../agent/src/core/profile.ts)装配；能力与维护入口见 [Eris](../../agent/README.md#修改-eris)。
+
+Score的evidence、axis、default分别负责统一取证、单轴评分与独立总分，原skill规则统一装配；机械字段由Score组装，最终总分不接收六轴数值分数。

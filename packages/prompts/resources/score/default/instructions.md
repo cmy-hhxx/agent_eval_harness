@@ -1,9 +1,6 @@
-采用快速评审：先使用输入中已展示的完整题面、最终回答和initial_sources；只对影响结论的具体缺口定点补读或复算，不逐条遍历轨迹。answer_requires_more=false时不要重读A；题面已完整展示，不再inspect或重读Q。需要多条材料或证据时使用review_material的batch一次处理，优先合并补读，再合并quote。证据已足以定档就直接提交；不足的部分按原规则保留unverified及区间，不为消除所有不确定性反复探索。external_search=false时不要尝试搜索，也不要猜测外部事实。
-
-严格输出原skill的7字段：case_id、final_answer_score、evaluations、findings、evidence、explicit_probability、probability_evidence_ids；或原skill的异常结构。12单元和24诊断使用给定固定目录和父子关系。状态、档位、分数/区间均由你选择，程序只检查契约，不计算平均分、不取区间中点。全部必要要求满足才是10/4；确有缺陷才给较低分。过程完整恢复后的缺陷按原分项锚点保留，不强制扣最终总分。
-
-本宿主接口映射：inspect/read/search/quote由review_material的action执行；calculate由review_calculate执行并自动登记计算来源；外部搜索、读取及搜索片段准入由review_external执行。已有材料来源表在case中，用真实返回生成共享证据，其他位置只引用共享evidence_id。候选系统和开发者提示词不属于公开题面，不参与评分。公开题面未明示日期时，按原rubric接受候选采用的日期，不用请求/评审时间新增标准；正常对应且参数无误、无相反信号的动作回执按原rubric认可成功。
-
-原文中的独立Python、哈希日志、复制案例及文件命令只属于上游执行器；本宿主采用任务UUID、准确原文坐标和统一日志，既有原始输入不复制。评分含义和原始输出JSON不变；新增外部取证保存在本题来源账本。外部工具不可用或额度耗尽时说明缺口并保留待核区间。
-
-直接调用submit_evaluation提交完整JSON，不先写草稿文件。理由各用一句明确的本题依据或缺口；同一证据和问题共享引用，不反复展开论述。仍须完整填写12单元、24诊断，不能以提速为由漏项或改分档。若执行器拒绝，只按实际格式、引用或分数契约修正，不能改判断以迎合校验。
+原题、最终回答、统一取证和axis_assessments供你核查。六轴数值分数未提供，不能猜测或反推总分。完整交付与过程分别评价：已恢复的过程错误可以与最终10分并存，不构成矛盾。
+先核查是否存在真正矛盾：对同一对象、时点、条件和事实的确定判断互相否定。不同维度有不同表现、同一问题影响多轴或过程恢复都不是矛盾。不要声称机械校验证明语义正确。
+若有真实矛盾，提交{action:"repair",reason:"具体冲突及证据",axis_ids:[受影响轴],verification_requests:[]}，不选边、不改分项。repair_used=true时仍有矛盾须继续明确报告，执行器拒收。若存在尚未补查的verification_requests，提交repair请求并原样列明，axis_ids可以为空。evidence_used=true时仍缺证保留待核，不重复补查。
+正常提交仅含final_answer_score、finding_groups、explicit_probability、probability_evidence_ids。final_answer_score填写status、score、score_range、reason、evidence_ids、finding_ids，不填grade。总分按最终有效交付独立选0–10或待核区间，不对过程项算平均，不按问题数量扣分；满分仅在全部必要交付满足时成立。
+finding_groups是问题编号分组的数组：同一可独立识别问题跨轴重复时放同组，互不相同问题单独一组，所有问题编号各出现一次；不得丢弃问题、改写归属或修正分项。总分finding_ids引用这些原始问题编号，只关联实际影响最终交付的记录；完整恢复的过程问题不自动关联。
+只用shared_quotes中的真实证据编号，必要时用review_material补读或quote现有原文。不得搜索或复算。explicit_probability只取最终回答对目标事件明确给出的单点概率并归一到0–1，无则null且引用为空；不从仓位、措辞或区间推定。不输出建议、排名和跨题统计。

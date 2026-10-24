@@ -18,7 +18,8 @@ function score(caseId:string,q:string,a:string):ScoreResult{
  const judgments=(active:boolean)=>({status:active?'met' as const:'not_applicable' as const,applicability:active?'both' as const:'not_triggered' as const,reason:active?'原题与完整回答支持该项。':'本数学文字回答未触发该项。',evidence_ids:['q','a']});
  const directory=scoreDirectory as {units:Record<string,string>;diagnostics:Record<string,string>;parents:Record<string,string>};
  return {case_id:caseId,final_answer_score:{status:'met',grade:'全部满足',score:10,score_range:null,reason:'计算结果完整正确。',evidence_ids:['q','a'],finding_ids:[]},
-  evaluations:Object.entries(directory.units).map(([item_id,item_name])=>({...judgments(known.has(item_id)),item_id,item_name,score:known.has(item_id)?4:null,score_range:null,grade:known.has(item_id)?'全部必要要求满足':'不适用',diagnostics:Object.entries(directory.parents).filter(([,parent])=>parent===item_id).map(([diagnostic_id])=>({...judgments(known.has(item_id)),diagnostic_id,diagnostic_name:directory.diagnostics[diagnostic_id]}))})),findings:[],evidence,explicit_probability:null,probability_evidence_ids:[]};
+  evaluations:Object.entries(directory.units).map(([item_id,item_name])=>({...judgments(known.has(item_id)),item_id,item_name,score:known.has(item_id)?4:null,score_range:null,grade:known.has(item_id)?'全部必要要求满足':'不适用'})),
+  diagnostics:Object.entries(directory.parents).map(([diagnostic_id,parent])=>({...judgments(known.has(parent)),diagnostic_id,diagnostic_name:directory.diagnostics[diagnostic_id]})),findings:[],evidence,explicit_probability:null,probability_evidence_ids:[]};
 }
 test('Score and direct Attribution run independently, omit SYS/DEV, and rewrite only attribution text',async t=>{
  const trace=sessionRaw('one');trace.traces[0].messages.forEach((message,i)=>Object.assign(message,{role:i===0?'user':'assistant',type:'message'}));
@@ -45,7 +46,17 @@ test('Score and direct Attribution run independently, omit SYS/DEV, and rewrite 
   const q=await read('Q'),a=await read('A');
   const quoted=await options.execute('review_material',{action:'batch',operations:[{action:'quote',source_id:'Q',text:q},{action:'quote',source_id:'A',text:a},{action:'quote',source_id:'A',text:'不存在的原文'}]});
   const rows=(quoted.details as any).results;assert.deepEqual(rows.map((r:any)=>r.ok),[true,true,false]);assert.equal(rows[1].end,Array.from(a).length);
-  const value=id==='score'?score(info.case_id,q,a):{summary:'计算结果正确，没有确认问题。',findings:[{type:'strength',dimension:'correctness',stage:'final_answer',importance:'high',text:'正确计算并交付了结果。',reason:'原文算式与结果相符。',evidence_status:'established',evidence_ids:[rows[1].evidence_id],component:[],label:null,definition:null}]};
+  let value:any=id==='score'?score(info.case_id,q,a):{summary:'计算结果正确，没有确认问题。',findings:[{type:'strength',dimension:'correctness',stage:'final_answer',importance:'high',text:'正确计算并交付了结果。',reason:'原文算式与结果相符。',evidence_status:'established',evidence_ids:[rows[1].evidence_id],component:[],label:null,definition:null}]};
+  if(id==='score'){
+   const profile=options.spec.evaluation.profile;
+   const refs=(ids:string[])=>ids.map(id=>id==='q'?rows[0].evidence_id:rows[1].evidence_id);
+   if(profile==='evidence')value={summary:'已读取完整原题及回答。',checks:[]};
+   else if(profile.startsWith('axis-')){
+    const axis=profile.slice(-1).toUpperCase();
+    value={evaluations:value.evaluations.filter((r:any)=>r.item_id.startsWith(axis)).map(({item_name:_name,grade:_grade,...r}:any)=>({...r,evidence_ids:refs(r.evidence_ids)})),
+     diagnostics:value.diagnostics.filter((r:any)=>r.diagnostic_id.startsWith(axis)).map(({diagnostic_name:_name,...r}:any)=>({...r,evidence_ids:refs(r.evidence_ids)})),findings:[],verification_requests:[]};
+   }else{const {grade:_grade,...rating}=value.final_answer_score;value={final_answer_score:{...rating,evidence_ids:refs(rating.evidence_ids)},finding_groups:[],explicit_probability:null,probability_evidence_ids:[]};}
+  }
   if(id==='attribution'&&!languageRejected.has(options.spec.taskId)){
    languageRejected.add(options.spec.taskId);
    const rejected=await options.execute('submit_evaluation',{...value,summary:'The answer is correct and complete.'});
@@ -57,8 +68,8 @@ test('Score and direct Attribution run independently, omit SYS/DEV, and rewrite 
  const worker=await startWorker(backend,path.join(fixture.directory,'worker'));t.after(()=>worker.close());
  await runEvaluation({...services,agents,taskSource:answerReviewWorkflow,repository:answerReviewRepository,report:reportAnswerReview,runId:'flow',output:config.output,config,plan,
   engine:'pi',identity:fakeIdentity,evaluatorVersion:fakeEvaluatorVersion,modelForStage:stage=>fixture.modelForStage(stage==='score'?'attribution':stage),policy:config.execution,concurrency:3,retries:0,retryDelaySeconds:0,workerUrls:[worker.url]});
- const state=await answerReviewRepository.readRun(path.join(config.output.path,'flow'));assert.equal(Object.keys(state.receipts).length,3,JSON.stringify(state.manifest.states));assert.equal(validateAnswerReview(state).valid,true);
- const s=plan.tasks.find(t=>t.stage==='score')!,a=plan.tasks.find(t=>t.stage==='attribution')!;
+ const state=await answerReviewRepository.readRun(path.join(config.output.path,'flow'));assert.equal(Object.keys(state.receipts).length,10,JSON.stringify(state.manifest.states));assert.equal(validateAnswerReview(state).valid,true);
+ const s=state.manifest.tasks.find(t=>t.stage==='score'&&(t.data as any).score_part==='final')!,a=plan.tasks.find(t=>t.stage==='attribution')!;
  assert.equal((state.receipts[s.id].evaluation as ScoreResult).final_answer_score.score,10);
  assert.equal(state.receipts[a.id].submissionStats?.contentSubmissions,2,'English rejection is repaired in-session and remains counted');
  assert.equal(state.receipts[s.id].exported!.file,'score.jsonl');assert.equal(state.receipts[a.id].exported!.file,'attribution.jsonl');
@@ -67,12 +78,12 @@ test('Score and direct Attribution run independently, omit SYS/DEV, and rewrite 
  assert.equal((state.receipts[a.id].evaluation as any).evidence[0].quote,'2+2=4');
  const exported=state.receipts[a.id].exported!.row;
  assert.equal(exported.trace_id,'trace-one');assert.equal(exported.source_archive,'batch.7z');assert.equal(exported.source_member,'answers.jsonl');assert.equal(exported.source_line,8);assert.equal(exported.source_item,2);
- for(const receipt of Object.values(state.receipts))assert.deepEqual(receipt.exported!.row.meta,trace.meta);
+ for(const receipt of Object.values(state.receipts).filter(r=>r.exported))assert.deepEqual(receipt.exported!.row.meta,trace.meta);
  const before=structuredClone(state.receipts),resumed=await answerReviewWorkflow.reconcile!(path.join(config.output.path,'flow'),state,config);assert.deepEqual(state.receipts,before);
  // Re-export metadata on resume without changing a prior accepted judgment, including rewritten rows.
- for(const receipt of Object.values(state.receipts))delete receipt.exported!.row.meta;
+ for(const receipt of Object.values(state.receipts).filter(r=>r.exported))delete receipt.exported!.row.meta;
  await answerReviewRepository.createResultWriter(path.join(config.output.path,'flow'),resumed.inputs)(state);
- for(const [id,receipt] of Object.entries(state.receipts)){assert.deepEqual(receipt.exported!.row.meta,trace.meta);assert.deepEqual(receipt.evaluation,before[id].evaluation);}
+ for(const [id,receipt] of Object.entries(state.receipts).filter(([,r])=>r.exported)){assert.deepEqual(receipt.exported!.row.meta,trace.meta);assert.deepEqual(receipt.evaluation,before[id].evaluation);}
  // Exercise actual Host dispatch after appending to a saved day, not just checkpoint decoding.
  const version=config.inputs.versions[0],file=version.sources[0].path;
  const next={...sessionRaw('two'),batch_id:'b1'};
@@ -86,7 +97,7 @@ test('Score and direct Attribution run independently, omit SYS/DEV, and rewrite 
   runId:'flow',output:delta.output,config:delta,plan:await planAnswerReview(delta),engine:'pi',identity:fakeIdentity,
   evaluatorVersion:fakeEvaluatorVersion,modelForStage:fixture.modelForStage,policy:delta.execution,concurrency:1,retries:0,retryDelaySeconds:0,workerUrls:[worker.url]});
  const appended=await answerReviewRepository.readRun(run);
- assert.equal(Object.keys(appended.receipts).length,4,JSON.stringify(appended.manifest.states));
+ assert.equal(Object.keys(appended.receipts).length,11,JSON.stringify(appended.manifest.states));
  const added=appended.manifest.tasks.find(t=>(t.data as any).candidate.trace_id==='trace-two')!;
  assert.equal(appended.manifest.states[added.id].status,'succeeded');
  assert.equal(appended.receipts[added.id].exported!.row.trace_id,'trace-two');

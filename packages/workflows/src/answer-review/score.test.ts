@@ -1,0 +1,30 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import {advanceScore,scoreEvidenceTask,bindScore,scoreBlockedReason} from './score.js';
+import type {SubmissionReceipt,RunState,ReviewAudit} from '@eval/contracts';
+import type {Candidate} from '@eval/workflows/comparison';
+const candidate={input_id:'input',case_id:'case',batch_id:'batch'} as Candidate;
+const receipt=(evaluation:unknown,review?:ReviewAudit)=>({evaluation,audit:{review}} as SubmissionReceipt);
+test('Score expands only after evidence acceptance and all six peers depend only on that same snapshot',()=>{
+  const first=scoreEvidenceTask(candidate),next=advanceScore(first,receipt({summary:'ready',checks:[]}),{} as RunState,{}).tasks;
+  assert.equal(next.length,7);
+  for(const axis of next.slice(0,6))assert.deepEqual(axis.dependencies,{evidence:first.id});
+  const final=next[6];assert.equal(Object.keys(final.dependencies).length,7);
+  const repaired=advanceScore(final,receipt({action:'repair',reason:'同一事实的相反判定。',axis_ids:['E','L'],verification_requests:[]}),{} as RunState,{}).tasks;
+  assert.equal(repaired.length,3);assert.equal(repaired[2].dependencies.T,final.dependencies.T);
+  assert.notEqual(repaired[2].dependencies.E,final.dependencies.E);
+  assert.equal((repaired[2].data as any).score_repair_used,true);
+  const repeated=receipt({action:'repair',reason:'仍矛盾',axis_ids:['E'],verification_requests:[]});
+  const rejected=advanceScore(repaired[2],repeated,{} as RunState,{}).tasks[0];
+  assert.match(scoreBlockedReason(rejected,{source:repeated})!,/拒收评分：仍矛盾/);
+});
+test('late evidence is supplemented once with the original cumulative proof and rescoring uses the new snapshot',()=>{
+  const first=scoreEvidenceTask(candidate),final=advanceScore(first,receipt({summary:'ready',checks:[]}),{} as RunState,{}).tasks[6];
+  const correction=receipt({action:'repair',reason:'缺关键事实',axis_ids:[],verification_requests:[{claim:'确认期间',affected_item_ids:['E1']}]});
+  const evidence=advanceScore(final,correction,{} as RunState,{}).tasks[0];assert.equal((evidence.data as any).score_evidence_used,true);
+  const proof:ReviewAudit={quotes:[],sources:[],actions:[{kind:'search',args:{query:'已有请求'},at:'test'}],viewed:[],searches:[]};
+  const source={case_id:'input',task_question:'题目',candidate_output_id:'A',evidence:{Q:'题目',A:'回答'},availability:{candidate_output:'available' as const},public_requirements:{question:'题目'},view:{case_id:'input',task_question:'题目',availability:{candidate_output:'available'}}};
+  const binding=bindScore(evidence,source,{evidence:receipt({summary:'ready',checks:[]},proof),feedback:correction});
+  assert.deepEqual((binding.request.sources.case.value as any).review_seed.actions,proof.actions);
+  assert.equal(advanceScore(evidence,receipt({summary:'补查完成',checks:[]}),{} as RunState,{}).tasks.length,7);
+});

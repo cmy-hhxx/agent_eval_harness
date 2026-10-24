@@ -16,16 +16,15 @@ Score 和 Attribution 都不依赖 Criteria，也不读取彼此的结论。两�
 
 ## Score
 
-评分依据来自用户提供的 `judge_skills/scoring-skill-overview.html` 与 `review-evidence-with-tools`。原始 rubric、scoring、calibration、source-policy 和 question-issue-policy 保存在 [Score 提示资源](../packages/prompts/resources/score/skill/)。正常结果保持原 skill 的七个字段：case_id、final_answer_score、evaluations、findings、evidence、explicit_probability、probability_evidence_ids。
+Score对外接收单题材料并返回一个JSON，内部使用同一Agent的多个profile：统一取证与复算 → T/E/L/A/U/D六轴独立会话 → 独立总分。正常执行8次会话，六轴共享固定证据，不读取彼此判词。总分不读取六轴数值分数，也不平均或逐项扣分。
 
-- 总分为独立的0–10整数或待核区间，不由12项相加或平均。
-- 12项核心单元为0–4整数或待核区间；24项诊断按固定父子关系嵌套，不单独计分。
-- 状态为met、violated、unverified、not_applicable；满分、较低分、区间与不适用按原分档契约校验。程序不代选分数。
-- 题目未明确日期时接受候选采用日期；正常对应、参数适当且无相反信号的动作回执按原rubric认可成功。成品质量与整题完成仍分别检查。
-- 同一问题只保存一条finding；已恢复过程错误在相应过程项保留，最终有效交付独立评分。
-- 共享证据采用Python Unicode码点区间。完整题面缺失、未捕获回答、真实空答及阻断规则冲突保留原异常结构。
+评分含义沿用[原skill规则](../packages/prompts/resources/score/skill/)。总分0–10、12核心单元0–4、24诊断不另计分；过程错误恢复与最终有效交付分别评价。待核使用有宽度区间，不适用不补0，题目未明示日期时接受候选采用日期，正常对应的行动回执按原rubric认可成功。
 
-宿主适配只涉及工具接口、身份和持久化：使用TypeScript、任务UUID及精确原文坐标，不引入独立Python评测器、哈希指纹、输入副本或独立日志。review_material对应inspect/read/search/quote；review_calculate对应受限复算并登记结果；review_external提供实际搜索、读取与搜索片段准入，保留核验角色和取得内容。默认最多6个底层外部动作、3个完整URL，失败与重定向计入动作；工具不可用或缺证时保留待核。执行器的机械接受不证明语义评分准确。
+正常结果有八个顶层字段：case_id、final_answer_score、evaluations、diagnostics、findings、evidence、explicit_probability、probability_evidence_ids。12核心项与24诊断使用平级数组，固定父子关系仍校验。模型只提交实际判断和证据编号，程序补身份、固定名称、分档和准确Unicode码点引文。总分轮仅将同一问题分组，程序合并编号及引用，不改六轴判断或丢弃问题。
+
+统一取证阶段重新复算关键计算，外部事实先使用与Eris相同的Serper搜索，摘要不足再读取原文。SEARCH_API_KEY通过既有配置注入；全题最多6个底层外部请求、3个来源URL，失败和重定向计入，补查不重置预算。六轴仅可读取和引用固定材料。关键新缺口统一补查一次，之后六轴重新评分；仍不足保留待核。真正跨轴矛盾最多定向重评一次，仍不一致则拒收，不由总分轮覆盖分项。
+
+只有最终结果（或原skill异常对象）写入score.jsonl。中间片段仅作续跑草稿，完成后状态只保留结果引用与进度。公开题面缺失、回答未采集、真实空答和阻断规则冲突保留原异常结构，不伪造评分。结构合法不证明语义准确。
 
 ## Attribution 与 Rewrite
 
@@ -50,7 +49,7 @@ npm run eval -- preflight --stage attribution --config configs/host.json --confi
 npm run eval -- run --stage attribution --run-id answer-review-run --config configs/host.json --config configs/answer-review.json --config /absolute/path/source-and-models.json
 ```
 
-来源配置可以只包含一个模型，也可包含多个分别独立评审的模式。`--stage score`或`--stage attribution`可只跑一个阶段，新运行及续跑都限定实际调度范围；不加时两阶段并发。同run切换阶段或开启Attribution Rewrite时，补建缺失任务，保留已接受收据和已用额度。模型bindings分别提供score、attribution、rewrite；并发是整个运行的并发上限，不是各阶段分别再乘一次。
+来源配置可以只包含一个模型，也可包含多个分别独立评审的模式。`--stage score`或`--stage attribution`可只跑一个阶段，新运行及续跑都限定实际调度范围；不加时两阶段并发，Score内部六轴也受同一运行并发上限约束。同run切换阶段或开启Attribution Rewrite时，补建缺失任务，保留已接受收据和已用额度。模型bindings分别提供score、attribution、rewrite；并发是整个运行的并发上限，不是各阶段分别再乘一次。
 
 `--input ID=PATH`、`--batch`、`--case`和`--limit-cases`沿用公共CLI筛选。`--test-eval`将输出放在同来源的eval_output/test_eval；`--pilot-cases N`同样进入test_eval，按业务题目选择N题及其各模型、所选阶段，完整计划仍保留。普通续跑保留试跑范围，验收后用`--discover-inputs`释放其余已登记回答。`--worker`指定Worker，`--resume-stage`解除指定阶段的熔断，`--skip-failed`保留失败任务，`--balance-channels`沿用渠道分配。日常输出使用本来源的eval_output/0_daily_eval。
 

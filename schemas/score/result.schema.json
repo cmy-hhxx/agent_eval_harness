@@ -58,6 +58,14 @@
             "minLength": 1
           },
           "uniqueItems": true
+        },
+        "diagnostics": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/diagnostic"
+          },
+          "minItems": 24,
+          "maxItems": 24
         }
       },
       "required": [
@@ -67,7 +75,8 @@
         "findings",
         "evidence",
         "explicit_probability",
-        "probability_evidence_ids"
+        "probability_evidence_ids",
+        "diagnostics"
       ],
       "additionalProperties": false
     },
@@ -220,14 +229,6 @@
           },
           "uniqueItems": true
         },
-        "diagnostics": {
-          "type": "array",
-          "items": {
-            "$ref": "#/$defs/diagnostic"
-          },
-          "minItems": 1,
-          "maxItems": 3
-        },
         "host_basis": {
           "type": "array",
           "items": {
@@ -245,8 +246,7 @@
         "score",
         "score_range",
         "reason",
-        "evidence_ids",
-        "diagnostics"
+        "evidence_ids"
       ],
       "additionalProperties": false
     },
