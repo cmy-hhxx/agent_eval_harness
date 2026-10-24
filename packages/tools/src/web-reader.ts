@@ -488,7 +488,10 @@ export function createWebReader(options: WebReaderOptions = {}): WebReader {
             for (const address of addresses) {
               controller.signal.throwIfAborted();
               try { options.beforeRequest?.(url.toString()); response = await download(url, address, controller.signal); break; }
-              catch (error) { controller.signal.throwIfAborted(); errors.add(networkErrorCode(error)); }
+              catch (error) {
+                controller.signal.throwIfAborted();const code=networkErrorCode(error);errors.add(code);
+                if(/^PROXY_HTTP_(403|407)$/.test(code))break;
+              }
             }
             if (!response) throw new Error(`读取公共网页网络请求失败（${hostname}，${[...errors].join("、")}）`);
             if (controller.signal.aborted) { response.destroy?.(); controller.signal.throwIfAborted(); }

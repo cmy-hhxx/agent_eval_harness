@@ -231,6 +231,15 @@ test("web reader bounds page titles separately from the body text budget", async
   assert.match(result.limitations.join(""), /标题超过 500/);
 });
 
+test('web reader preserves proxy denial and avoids repeating a forbidden route across DNS addresses',async()=>{
+  let attempts=0;
+  const tool=reader('', 'text/plain',{lookup:async()=>[address,{address:'93.184.216.35',family:4}],download:async()=>{
+    attempts++;throw Object.assign(new Error('proxy denied'),{code:'PROXY_HTTP_403'});
+  }});
+  await assert.rejects(tool.read({url:'https://example.com/report'},signal()),/PROXY_HTTP_403/);
+  assert.equal(attempts,1);
+});
+
 test("web reader passes the validated address to transport exactly once, preventing DNS rebinding", async () => {
   let lookups = 0;
   const tool = reader("safe evidence", "text/plain", {

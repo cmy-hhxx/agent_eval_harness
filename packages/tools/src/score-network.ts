@@ -36,7 +36,12 @@ export async function createScoreNetwork():Promise<ScoreNetwork>{
       response.body.once('close',()=>{void dispatcher.close().catch(()=>{});});
       return {statusCode:response.statusCode,headers:response.headers,body:response.body,
         destroy:()=>{response.body.destroy();void dispatcher.destroy().catch(()=>{});}};
-    }catch(error){await dispatcher.destroy().catch(()=>{});throw error;}
+    }catch(error){
+      await dispatcher.destroy().catch(()=>{});
+      const status=error instanceof Error?/Proxy response \((\d{3})\)/.exec(error.message)?.[1]:undefined;
+      if(status)throw Object.assign(new Error(`来源代理返回HTTP ${status}`),{code:`PROXY_HTTP_${status}`});
+      throw error;
+    }
   };
   return {fetch:fetcher,download,close:async()=>{await searchAgent?.close();}};
 }
