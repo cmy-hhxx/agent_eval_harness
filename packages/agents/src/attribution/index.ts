@@ -1,4 +1,3 @@
-import { responsibilityActorNames } from "./responsibility.js";
 export {checkAttributionLanguage,type AttributionLanguageField,type AttributionLanguageStatus} from './language.js';
 import { agentPrompt, attributionTaxonomy, standardConflictInstructions } from "@eval/prompts";
 import { type AgentDefinition, type AgentProfile } from "@eval/contracts";
@@ -43,7 +42,7 @@ export const attributionProfile: AgentProfile = {
     const { allow_standard_conflict, ...material } = input;
     const shown = { ...material, task_analysis: { ...analysis, requirements },
       responsibility_taxonomy: attributionTaxonomy,
-      responsibility_choices: responsibilityActorNames(answer.catalog as unknown[]),
+      responsibility_choices: (answer.component_catalog as { component: string }[]).map(actor => actor.component),
       ...(allow_standard_conflict === true ? { standard_answer_review: standardConflictInstructions } : {}),
       criterion_check_count: requirements.length+analysis.scoring_points.length+analysis.red_flags.length,
       criterion_checks: [...requirements,...analysis.scoring_points,...analysis.red_flags].map(item => ({ text:item.text })),

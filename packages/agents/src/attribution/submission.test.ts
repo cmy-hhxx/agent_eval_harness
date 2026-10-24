@@ -52,7 +52,7 @@ function captureFixture(marker: string) {
   f.draft.problems=[{basis_index:null,dimension:"format",stage:"final_answer",importance:"low",
     text:"可视交付有缺口。",reason:"所选材料只提供了采集状态。",impact:"图中内容无法交付给用户。",
     evidence_status:"established",evidence_indices:[selectEvidence(f.audit.evidenceBank!,capture).evidence_index],
-    component:[responsibilitySubmissionFixture("交付与呈现",[selectEvidence(f.audit.evidenceBank!,capture).evidence_index])],label:"展示缺失",definition:"原始可视内容无法正常呈现。"}];
+    component:[responsibilitySubmissionFixture("最终作答节点（原始名称未提供）",[selectEvidence(f.audit.evidenceBank!,capture).evidence_index],{technical_domain:"交付与呈现",functional_component:"实际呈现"})],label:"展示缺失",definition:"原始可视内容无法正常呈现。"}];
   return {...f,capture,final};
 }
 
@@ -174,7 +174,7 @@ test("a minor ancillary defect does not contradict a met task requirement, while
   (f.request.sources.answer.value as {messages:{content:string}[]}).messages[1].content+="。。";
   f.draft.problems.push({...f.draft.strengths[0],dimension:"format",importance:"low",text:"句尾重复了句号。",
     reason:"计算值4正确，句尾多写的句号不改变数值。",impact:"不影响计算结果的使用。",
-    component:[responsibilitySubmissionFixture("回答模型",f.draft.strengths[0].evidence_indices)],label:"标点重复",definition:"正确数值之后出现重复句号。"});
+    component:[responsibilitySubmissionFixture("最终作答节点（原始名称未提供）",f.draft.strengths[0].evidence_indices)],label:"标点重复",definition:"正确数值之后出现重复句号。"});
   const result=f.registry.resolve(f.binding,f.draft,f.audit) as AttributionResult;
   assert.equal(result.criterion_assessments[0].status,"met");
   assert.equal(result.findings[1].type,"problem");

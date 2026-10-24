@@ -39,7 +39,8 @@
         "original_answer_timing",
         "table_check_results",
         "note",
-        "norm_directory"
+        "norm_directory",
+        "component_catalog"
       ],
       "properties": {
         "identity": {
@@ -265,6 +266,74 @@
           "type": "array",
           "items": {
             "$ref": "#/$defs/attributionNorm"
+          }
+        },
+        "component_catalog": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "component",
+              "kind",
+              "identity_status",
+              "role",
+              "message_indices",
+              "identity_evidence",
+              "identity_gap"
+            ],
+            "properties": {
+              "component": {
+                "type": "string",
+                "minLength": 1
+              },
+              "kind": {
+                "enum": [
+                  "model",
+                  "tool",
+                  "unknown"
+                ]
+              },
+              "identity_status": {
+                "enum": [
+                  "named",
+                  "role_only",
+                  "unknown_identity"
+                ]
+              },
+              "role": {
+                "enum": [
+                  "final_answer",
+                  "model_call",
+                  "tool",
+                  "unknown"
+                ]
+              },
+              "message_indices": {
+                "type": "array",
+                "minItems": 1,
+                "uniqueItems": true,
+                "items": {
+                  "type": "integer",
+                  "minimum": 0
+                }
+              },
+              "identity_evidence": {
+                "type": "array",
+                "minItems": 1,
+                "items": {
+                  "$ref": "#/$defs/evidence"
+                }
+              },
+              "identity_gap": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "minLength": 1
+              }
+            }
           }
         }
       }

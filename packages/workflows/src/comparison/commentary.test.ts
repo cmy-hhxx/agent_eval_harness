@@ -297,7 +297,7 @@ test("presentation view applies already-unblinded rewrites by slot without inter
       a: { summary: "原归因A", correctness_reason: "原理由A" },
       b: { summary: "原归因B", correctness_reason: "原理由B", findings: [{ text: "原点评", reason: "原理由",
         finding_id: "f0", evidence: [{ evidence_id: "source-coordinate", quote: "原始证据" }],
-        problem: { component: [responsibilityFixture("回答模型", {evidence_ids: ([{ evidence_id: "source-coordinate", quote: "原始证据" }]).map(item=>item.evidence_id)}), responsibilityFixture("工具返回", {evidence_ids: ([{ evidence_id: "source-coordinate", quote: "原始证据" }]).map(item=>item.evidence_id), role: "contributing"})], label: "原问题", definition: "原定义" },
+        problem: { component: [responsibilityFixture("最终作答节点（原始名称未提供）", {evidence_ids: ([{ evidence_id: "source-coordinate", quote: "原始证据" }]).map(item=>item.evidence_id)}), responsibilityFixture("工具返回", {evidence_ids: ([{ evidence_id: "source-coordinate", quote: "原始证据" }]).map(item=>item.evidence_id), role: "contributing"})], label: "原问题", definition: "原定义" },
         assessment: { observation: "原始观察", impact: "独立的原始影响" } }] },
     },
     verdicts: { "a__vs__b": { result: "win", winner_version: "a", winner_name: "A组", reason: "原判决" } },

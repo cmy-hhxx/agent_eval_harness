@@ -1,6 +1,6 @@
-import { ValidationError, type AgentRequest, type ValidationIssue } from "@eval/contracts";
+import { canonical, ValidationError, type AgentRequest, type ValidationIssue } from "@eval/contracts";
 import { attributionTaxonomy } from "@eval/prompts";
-import { answerTurnContexts, evidenceSources, parseEvidenceCoordinates, selectEvidenceSource } from "@eval/tools";
+import { isComponentLocator, traceComponentIdentities, type TraceComponentIdentity, answerTurnContexts, evidenceSources, parseEvidenceCoordinates, selectEvidenceSource } from "@eval/tools";
 import type { Evidence, ProblemProposal } from "./types.js";
 import { isChineseAttributionText } from "./language.js";
 
@@ -9,19 +9,18 @@ const object = (value: unknown): Record<string, unknown> | undefined =>
 const toolRecord = (value: Record<string, unknown>) => value.role === "tool" ||
   ["function_call", "function_call_output", "tool_call", "tool_result"].includes(String(value.type)) ||
   value.type === "span" && String(value.name).startsWith("tool-");
-const functionalComponents = ["回答模型", "控制器", "工具接入层", "知识数据源", "检索服务", "上下文组装与传递", "记忆与状态管理", "协同调度器", "运行环境", "交付与呈现"];
-
-/** Names identify actors; taxonomy identifies the failed technical function. */
-export function responsibilityChoices(request: AgentRequest): string[] {
-  const raw = request.sources.answer?.value as { messages?: unknown[] } | undefined;
-  return responsibilityActorNames(raw?.messages ?? []);
+/** Workflow supplies the directory; no taxonomy labels or raw call IDs become actors. */
+export function responsibilityIdentities(request: AgentRequest): TraceComponentIdentity[] {
+  return (request.input.answer as { component_catalog: TraceComponentIdentity[] }).component_catalog;
 }
-
-export function responsibilityActorNames(messages: unknown[]): string[] {
-  return [...new Set([...functionalComponents, ...messages.flatMap(value => {
-    const row = object(value);
-    return row && typeof row.name === "string" && (toolRecord(row) || row.type === "llm_turn") ? [row.name] : [];
-  })])];
+export function responsibilityChoices(request: AgentRequest): string[] {
+  return responsibilityIdentities(request).map(actor => actor.component);
+}
+export function componentCatalogIssues(request: AgentRequest): ValidationIssue[] {
+  const raw = request.sources.answer.value as { messages: unknown[] };
+  const answer = request.input.answer as { final_message_index: number };
+  return canonical(responsibilityIdentities(request)) === canonical(traceComponentIdentities(raw, request.sources.answer.id, answer.final_message_index)) ? [] :
+    [{ category: "evidence", code: "component_catalog", path: "/answer/component_catalog", message: "组件身份目录必须由本方实际轨迹构建，名称、角色、节点坐标与身份来源均须一致。" }];
 }
 
 /** Library categories describe technical functions, independently of trace-local actor names. */
@@ -53,7 +52,7 @@ export function responsibilitySchema(evidenceField: "evidence_ids" | "evidence_i
 export function responsibilityIssues(request: AgentRequest, problem: unknown, selected: readonly (Evidence | undefined)[], path: string): ValidationIssue[] {
   const rows = object(problem)?.component;
   if (!Array.isArray(rows)) return [];
-  const issues: ValidationIssue[] = [], allowed = new Set(responsibilityChoices(request));
+  const issues: ValidationIssue[] = [...componentCatalogIssues(request)], actors = responsibilityIdentities(request);
   const raw = request.sources.answer?.value as { messages: unknown[] };
   const selectedIds = new Set(selected.flatMap(item => item ? [item.evidence_id] : []));
   const add = (code: string, location: string, message: string, actual?: unknown) =>
@@ -64,10 +63,11 @@ export function responsibilityIssues(request: AgentRequest, problem: unknown, se
   rows.forEach((entry, index) => {
     const row = object(entry); if (!row) return;
     const location = `${path}/component/${index}`;
-    if (!allowed.has(String(row.component))) add("responsibility_actor", `${location}/component`, "责任组件须选择本题真实工具、模型节点或已登记的功能组件。", row.component);
-    const modelActor = row.component === "回答模型" || raw.messages.some(value => {
-      const message = object(value); return message?.type === "llm_turn" && message.name === row.component;
-    });
+    const actor = actors.find(actor => actor.component === row.component);
+    if (typeof row.component === "string" && isComponentLocator(row.component))
+      add("responsibility_actor_locator", `${location}/component`, "调用ID、span ID及UUID只能用于导航，不能作为实际组件名称。", row.component);
+    if (!actor) add("responsibility_actor", `${location}/component`, "实际组件须选择Workflow登记的具体责任主体，不能填写技术分类或自行改名。", row.component);
+    const modelActor = actor?.kind === "model";
     if (modelActor && ["工具业务实现", "工具接入与协议"].includes(String(row.technical_domain)))
       add("responsibility_actor_domain", location, "llm_turn是模型节点，不能因有name而认作工具；定位其推断、控制或实际相关技术功能。", row.component);
     if (!attributionTaxonomy.domains[String(row.technical_domain)]?.includes(String(row.functional_component)) ||
@@ -84,7 +84,7 @@ export function responsibilityIssues(request: AgentRequest, problem: unknown, se
       if (row.evidence_gap !== null) add("responsibility_certainty", `${location}/evidence_gap`, "确证责任的 evidence_gap 为 null；因果关键材料仍缺失时改为 inferred，不改变缺陷确定性。");
       const own = selected.filter((item): item is Evidence => !!item && !item.source && refs.includes(item.evidence_id));
       const messages = own.map(item => ({ item, message: object(raw.messages[item.message_index]), point: parseEvidenceCoordinates(item.evidence_id) }));
-      const actualTool = messages.some(({ message }) => message && toolRecord(message) && message.name === row.component);
+      const actualTool = actor?.kind === "tool" && messages.some(({ message, item }) => message && toolRecord(message) && actor.message_indices.includes(item.message_index));
       if (["工具业务实现", "工具接入与协议"].includes(String(row.technical_domain)) && !actualTool)
         add("responsibility_process_missing", location, "确证工具责任须引用该工具的实际请求、返回或接入过程；只有最终错误时须标推断。");
       const contexts = answerTurnContexts(raw, (request.input.answer as {final_message_index:number}).final_message_index);

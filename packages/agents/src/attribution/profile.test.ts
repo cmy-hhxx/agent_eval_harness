@@ -32,7 +32,7 @@ test("a confirmed wrong answer retains its established defect and an explicitly 
   result.criterion_assessments[0].status = "unmet";
   const finding = result.findings[0];
   finding.type = "problem";
-  finding.problem = { component: [responsibilityFixture("回答模型",{evidence_ids:finding.evidence.map(item=>item.evidence_id)})], label: "取数结果偏差", definition: result.correctness_reason };
+  finding.problem = { component: [responsibilityFixture("最终作答节点（原始名称未提供）",{evidence_ids:finding.evidence.map(item=>item.evidence_id)})], label: "取数结果偏差", definition: result.correctness_reason };
   attributionProfile.validate!(request, result, audit);
   const accepted = resolveJudgment(request, judgmentFixture(result, request), audit) as AttributionResult;
   assert.equal(accepted.is_correct, false);
@@ -282,7 +282,7 @@ test("Attribution judges one answer, conditionally on the standard answer", () =
     findings: { type: string; problem: Record<string, unknown> | null }[];
   };
   incomplete.findings[0]!.type = "problem";
-  incomplete.findings[0]!.problem = { component: [responsibilityFixture("回答模型", {evidence_ids: []})], label: "问题" };
+  incomplete.findings[0]!.problem = { component: [responsibilityFixture("最终作答节点（原始名称未提供）", {evidence_ids: []})], label: "问题" };
   assert.throws(
     () => attributionProfile.validate!(example.request, incomplete, audit),
     /required|输出结构无效/,
@@ -290,7 +290,7 @@ test("Attribution judges one answer, conditionally on the standard answer", () =
 
   const blankLabel = structuredClone(example.result) as unknown as AttributionResult;
   blankLabel.findings[0]!.type = "problem";
-  blankLabel.findings[0]!.problem = { component: [responsibilityFixture("回答模型", {evidence_ids: blankLabel.findings[0]!.evidence.map(item=>item.evidence_id)})], label: "  ", definition: "说明" };
+  blankLabel.findings[0]!.problem = { component: [responsibilityFixture("最终作答节点（原始名称未提供）", {evidence_ids: blankLabel.findings[0]!.evidence.map(item=>item.evidence_id)})], label: "  ", definition: "说明" };
   assert.throws(() => attributionProfile.validate!(example.request, blankLabel, audit), /非空中文字符串/);
 });
 
@@ -500,7 +500,7 @@ test("incoming problem associations cannot coexist with established satisfaction
     .find(source => source.path === "/content")!;
   const normRef = { evidence_id: cite(INPUT_ID, 0, source, 0, source.text.length).evidence_id };
   const problem = { ...draft.findings[0]!, type: "problem" as const,
-    problem: { component: [responsibilityFixture("回答模型", {evidence_ids: ([...draft.findings[0]!.evidence, normRef]).map(item=>item.evidence_id)})], label: "指令执行偏差", definition: "回答未按所关联的规范顺序组织内容。" },
+    problem: { component: [responsibilityFixture("最终作答节点（原始名称未提供）", {evidence_ids: ([...draft.findings[0]!.evidence, normRef]).map(item=>item.evidence_id)})], label: "指令执行偏差", definition: "回答未按所关联的规范顺序组织内容。" },
     evidence: [...draft.findings[0]!.evidence, normRef] };
   const submitted = { ...draft, findings: [problem] };
   const before = structuredClone({ request, submitted, audit });

@@ -88,7 +88,7 @@ test("answer-only and short third-party traces survive independent pairs, formal
               summary: "计算结果为5，未完成求和要求。", evidence: [evidence] };
             evaluation.summary = "最终计算结果错误，责任依据现有材料推断。";
             Object.assign(evaluation.findings[0], { type: "problem", text: "加法结果错误", reason: "2+2应为4，最终回答写成5。",
-              problem: { component: [responsibilityFixture("回答模型",{evidence_ids:evaluation.findings[0].evidence.map(item=>item.evidence_id)})], label: "算术错误", definition: "最终交付的加法结果错误；现有材料不足以定位链路责任。" } });
+              problem: { component: [responsibilityFixture("最终作答节点（原始名称未提供）",{evidence_ids:evaluation.findings[0].evidence.map(item=>item.evidence_id)})], label: "算术错误", definition: "最终交付的加法结果错误；现有材料不足以定位链路责任。" } });
             evaluation.findings[0].assessment.observation = final;
           }
         } else if (task.stage === "comparison") {

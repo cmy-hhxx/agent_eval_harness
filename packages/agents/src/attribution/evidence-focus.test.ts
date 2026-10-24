@@ -36,7 +36,7 @@ test("real long evidence is accepted at every model selection slot without a rep
     const f = fixture(), whole = f.choose(0, f.answer.length);
     if (slot === "problems") f.draft.problems.push({
       ...f.draft.strengths[0]!, dimension: "efficiency", importance: "low", basis_index: null,
-      text: "背景较冗长", reason: "给出结果前重复大量背景。", impact: "增加阅读负担。", component: [responsibilitySubmissionFixture("回答模型",[whole])],
+      text: "背景较冗长", reason: "给出结果前重复大量背景。", impact: "增加阅读负担。", component: [responsibilitySubmissionFixture("最终作答节点（原始名称未提供）",[whole])],
       label: "重复背景", definition: "背景重复而未增加结果依据。",
     });
     if (slot === "correctness") f.draft.correctness_evidence_indices = [whole];

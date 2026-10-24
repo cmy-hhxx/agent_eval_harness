@@ -1,12 +1,17 @@
 import { selectEvidence, type AgentRequest, type TaskAnalysis, type ToolAudit } from "@eval/contracts";
 import { attributionNormDirectory, attributionFindingBasis, numericReferenceDirectory, type AttributionResult, type AttributionSubmission } from "@eval/agents/attribution";
-import { parseEvidenceCoordinates } from "@eval/tools";
+import { parseEvidenceCoordinates, traceComponentIdentities } from "@eval/tools";
 type NormChoice = { norm_index: number; requirement_index: number | null; evidence: { evidence_id: string }[] };
 /** Construct the current program-owned directory for a hand-built request. */
 export function setFixtureNormDirectory(request: AgentRequest) {
+  setFixtureComponentCatalog(request);
   const directory = attributionNormDirectory(request);
   Object.assign(request.input.answer as object, { norm_directory: directory });
   return directory;
+}
+export function setFixtureComponentCatalog(request: AgentRequest) {
+  const answer = request.input.answer as { final_message_index: number; component_catalog?: unknown };
+  answer.component_catalog = traceComponentIdentities(request.sources.answer.value as { messages: unknown[] }, request.sources.answer.id, answer.final_message_index);
 }
 
 /** Invert a known fixture using its genuine requirement owner or unique physical norm, never its prose. */
@@ -32,6 +37,7 @@ export function normSelection(directory: NormChoice[], finding: AttributionResul
 
 /** Build the current model payload directly from a known formal fixture and its provided source directory. */
 export function attributionSubmission(request: AgentRequest, result: AttributionResult, audit: ToolAudit): AttributionSubmission {
+  setFixtureComponentCatalog(request);
   result = structuredClone(result);
   for(const finding of result.findings)for(const cause of finding.problem?.component??[])
     if(!cause.evidence_ids.length)cause.evidence_ids=finding.evidence.map(item=>item.evidence_id);

@@ -47,7 +47,7 @@ test("an independent core failure decides the pair while a minor uncertain aspec
   Object.assign(failed.core_assessment, { meets_core: false, reason: "所求结果应为4，实际给出5。" });
   Object.assign(failed.criterion_assessments[0], { status: "unmet", summary: "错误给出5。", evidence: [evidence] });
   Object.assign(failed.findings[0], { type: "problem", text: "加法结果错误", reason: "2+2应为4，回答给出5。",
-    evidence: [evidence], problem: { component: [responsibilityFixture("回答模型", {evidence_ids: ([evidence]).map(item=>item.evidence_id)})], label: "计算错误", definition: "所求加法结果错误。" } });
+    evidence: [evidence], problem: { component: [responsibilityFixture("最终作答节点（原始名称未提供）", {evidence_ids: ([evidence]).map(item=>item.evidence_id)})], label: "计算错误", definition: "所求加法结果错误。" } });
   Object.assign(failed.findings[0].assessment, { observation: final, impact: "所求结果不可用。" });
   f.input.task_analysis.scoring_points.push({ id: "explanation", text: "附加说明便于理解",
     acceptance_rule: "可附加说明，不影响核心加法结果的完成判定。", applies_to: [] });

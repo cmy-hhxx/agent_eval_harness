@@ -17,6 +17,8 @@
 
 `evaluatorVersion` 是配置中必填、人工维护的判词来源标识；更新要求见 [AGENTS.md](../AGENTS.md#当前契约优先)。状态、Schema 和内部协议不设版本号。
 
+Attribution的`component`是Workflow身份目录中的实际责任主体名称，不能填技术分类或裸调用定位ID。`answer.component_catalog`记录名称来源、身份缺口和原始消息坐标；Agent选名，程序校验名称与目录节点及身份原文的关联，正式结果保留既有证据坐标。匿名调用保留原ID用于导航，缺名的角色名称明确标注“原始名称未提供”；无法确认职责时不补造业务节点名。
+
 收据保存接受时的评测器标识和实际判官模型 `judge`；正式行的 `evaluator_version` 必须与收据一致。改写另存 `rewritten.evaluator_version`，统计汇总 `evaluator_versions` 与 `judge_models`。同 run 可混合版本：已接受结果不变，未完成任务使用当前配置。
 
 ## 输入与输出的分层

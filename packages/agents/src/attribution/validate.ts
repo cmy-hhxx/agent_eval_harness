@@ -18,7 +18,7 @@ import { submissionEvidenceIssues } from "./submission-evidence.js";
 import { captureMarkerProblemIssues, correctnessEvidenceScopeIssues, foreignActualIssues, referenceMaterialIssues, validateAttributionEvidence } from "./source-evidence.js";
 import { numericLedgerIssues } from "./numeric-ledger.js";
 import { normDirectoryIssues, findingNormSelectionIssues, attributionNormDirectory, submissionFindingEntries } from "./norm-directory.js";
-import { responsibilityIssues } from "./responsibility.js";
+import { componentCatalogIssues, responsibilityIssues } from "./responsibility.js";
 
 interface Input {
   candidate_id: string;
@@ -51,7 +51,7 @@ function finalImageReadIssues(request: AgentRequest, audit: ToolAudit): Validati
 
 /** Business rules that can be checked before evidence references are resolved. */
 export function validateJudgment(request: AgentRequest, draft: unknown, audit: ToolAudit): ValidationIssue[] {
-  return [...normDirectoryIssues(request), ...findingNormSelectionIssues(request, draft), ...referenceMaterialIssues(request), ...finalImageReadIssues(request, audit), ...validateIndependentRules(request, draft, "submission"), ...numericSubmissionIssues(draft), ...numericLedgerIssues(request, draft, "submission", audit), ...submissionEvidenceIssues(request, draft, audit),
+  return [...componentCatalogIssues(request), ...normDirectoryIssues(request), ...findingNormSelectionIssues(request, draft), ...referenceMaterialIssues(request), ...finalImageReadIssues(request, audit), ...validateIndependentRules(request, draft, "submission"), ...numericSubmissionIssues(draft), ...numericLedgerIssues(request, draft, "submission", audit), ...submissionEvidenceIssues(request, draft, audit),
     ...instructionSubmissionIssues(request, draft, audit), ...captureMarkerProblemIssues(request, draft)];
 }
 
@@ -305,7 +305,7 @@ export function validateEvaluation(request: AgentRequest, result: unknown, audit
   const value = result as AttributionResult;
   const language = checkAttributionLanguage(value);
   if (language.issues.length) throw new ValidationError(language.issues);
-  const repairErrors = [...referenceMaterialIssues(request), ...validateIndependentRules(request, result, "result"), ...captureMarkerProblemIssues(request, result)];
+  const repairErrors = [...componentCatalogIssues(request), ...referenceMaterialIssues(request), ...validateIndependentRules(request, result, "result"), ...captureMarkerProblemIssues(request, result)];
   repairErrors.push(...attributionTableReview(request, value).errors);
   repairErrors.push(...instructionEvidenceIssues(request, value), ...foreignActualIssues(request, value));
   const issue = (code: string, path: string, message: string, actual?: unknown, expected?: unknown) =>

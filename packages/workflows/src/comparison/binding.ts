@@ -2,7 +2,7 @@ import { isToolSpan } from "./adapters.js";
 import { isDeepStrictEqual } from "node:util";
 import { workflowText } from "@eval/prompts";
 import { canonical, presentSource, type AgentBinding, type PlannedTask, type SubmissionReceipt, type TaskAnalysis } from "@eval/contracts";
-import { cite, images, answerTurnContexts, originalUserTimestamp, displayEvidence, evidenceSources, messageContentSources, parseEvidenceCoordinates, instructionSources, normativeSources, sourceTextBlocks, visualCaptureMarkers, type InstructionSource, type TableCheckResult } from "@eval/tools";
+import { traceComponentIdentities, cite, images, answerTurnContexts, originalUserTimestamp, displayEvidence, evidenceSources, messageContentSources, parseEvidenceCoordinates, instructionSources, normativeSources, sourceTextBlocks, visualCaptureMarkers, type InstructionSource, type TableCheckResult, type TraceComponentIdentity } from "@eval/tools";
 import { acceptedAttributionView } from "./accepted-attribution.js";
 import { presentedMaterialReads, projectComparisonEvidence } from "./evidence-presentation.js";
 import { contentText } from "./input.js";
@@ -110,6 +110,9 @@ function modelMaterial(material: Record<string, unknown>, candidate: string, raw
   }).map((section, index) => ({ section_index: index + 1, ...section })) : [];
   return {
     ...anonymous,
+    ...(material.component_catalog ? { component_catalog: (material.component_catalog as TraceComponentIdentity[]).map(actor => ({ ...actor,
+      identity_evidence: actor.identity_evidence.map(shown),
+    })) } : {}),
     ...(captureGaps.length ? { capture_gaps: captureGaps } : {}),
     ...(imageCount ? { final_images: { image_count: imageCount,
       view_request: { candidate, message_index: finalIndex } } } : {}),
@@ -243,7 +246,8 @@ export function bindAttributionMaterial(candidate: Candidate, original: RawInput
     final_evidence: finalSources.filter(source => source.text.length <= limit).map(source => cite(candidate.input_id, candidate.final_index, source, 0, source.text.length)),
     deferred_final_material: deferred.map(source => ({ message_index: candidate.final_index, path: source.path, total_chars: source.text.length })),
     initial_material: initial, instruction_sources: [], citation_inventory: citationInventory(raw, candidate.input_id, candidate.final_index),
-    catalog: traceCatalog(raw), input_file: "inputs/answer.json", original_answer_timing: { finish_seconds: candidate.answer_timing.finish_seconds },
+    catalog: traceCatalog(raw), component_catalog: traceComponentIdentities(raw, candidate.input_id, candidate.final_index),
+    input_file: "inputs/answer.json", original_answer_timing: { finish_seconds: candidate.answer_timing.finish_seconds },
     answer_generation: getAnswerGeneration(raw, candidate.input_id, candidate.final_index),
     criterion_instruction_sources: criterionInstructionSources(raw, candidate.final_index, task_analysis, candidate.input_id),
     table_check_results: attributionTableChecks(raw, candidate.input_id, candidate.final_index), note: workflowText("attribution-material"),
