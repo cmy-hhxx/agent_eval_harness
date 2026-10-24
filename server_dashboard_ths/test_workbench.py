@@ -384,6 +384,102 @@ class WorkbenchTest(unittest.TestCase):
         self.catalog.discover()
         self.assertEqual(self.catalog.snapshot({})["total"], 2)
 
+    def test_report_reads_committed_publication_while_discovery_is_scanning(self):
+        self.package()
+        batch = self.discover_batches()[0]
+        self.clean([batch["id"]])
+        entered, release, completed = threading.Event(), threading.Event(), threading.Event()
+        result, errors = [], []
+        scan = app.archive_signature
+
+        def scanning(directory):
+            entered.set()
+            release.wait(5)
+            return scan(directory)
+
+        def reading():
+            try:
+                result.append(self.catalog.report(batch["id"], {"section": ["records"]}))
+            except Exception as error:
+                errors.append(error)
+            finally:
+                completed.set()
+
+        with patch.object(app, "archive_signature", side_effect=scanning):
+            writer = threading.Thread(target=self.catalog.discover, daemon=True)
+            writer.start()
+            reader = threading.Thread(target=reading, daemon=True)
+            try:
+                self.assertTrue(entered.wait(5), "discovery must reach the archive scan")
+                reader.start()
+                self.assertTrue(completed.wait(1), "published report must not wait for the archive scan")
+            finally:
+                release.set()
+                writer.join(5)
+                if reader.ident is not None:
+                    reader.join(5)
+        self.assertFalse(writer.is_alive())
+        self.assertFalse(reader.is_alive())
+        self.assertEqual(errors, [])
+        self.assertEqual(result[0]["items"][0]["case_id"], "one")
+
+    def test_report_only_decodes_requested_page_without_creating_dataset_or_index(self):
+        self.package()
+        batch = self.discover_batches()[0]
+        self.clean([batch["id"]])
+        report = self.catalog.published_report(batch)
+        report["records"] = [{**report["records"][0], "case_id": f"case-{index}"} for index in range(2000)]
+        dataset = self.datasets[batch["origin"]]
+        db = dataset.open_archive_index()
+        try:
+            db.execute("UPDATE cleaning_reports SET report=? WHERE name=? AND size=? AND mtime_ns=?",
+                       (json.dumps(report), batch["name"], batch["size"], batch["mtime_ns"]))
+            db.commit()
+        finally:
+            db.close()
+        decode = json.loads
+        decoded_bytes = []
+
+        def page_only(value, *args, **kwargs):
+            decoded_bytes.append(len(value))
+            self.assertLess(len(value), 10_000, "report GET must not decode the complete report")
+            return decode(value, *args, **kwargs)
+
+        with patch("workbench_catalog.json.loads", side_effect=page_only), \
+                patch.object(self.catalog, "dataset", side_effect=AssertionError("GET must not create datasets")), \
+                patch.object(dataset, "open_archive_index", side_effect=AssertionError("GET must not create an index")):
+            page = self.catalog.report(batch["id"], {"section": ["records"], "page": ["2"], "page_size": ["10"]})
+            self.assertEqual((page["total"], page["page_size"], len(page["items"])), (2000, 10, 10))
+            self.assertEqual([row["case_id"] for row in page["items"]], [f"case-{index}" for index in range(10, 20)])
+            empty = self.catalog.report(batch["id"], {"section": ["exclusions"]})
+            self.assertEqual((empty["total"], empty["items"]), (0, []))
+        self.assertLess(sum(decoded_bytes), 20_000)
+
+    def test_catalog_and_report_page_size_controls_real_page_boundaries(self):
+        for index in range(23):
+            self.package(f"batch-{index}.7z")
+        batches = self.discover_batches()
+        expected = [row["id"] for row in batches]
+        pages = [self.catalog.snapshot({"page": [str(page)], "page_size": ["10"]}) for page in range(1, 4)]
+        self.assertEqual([len(page["batches"]) for page in pages], [10, 10, 3])
+        self.assertEqual([row["id"] for page in pages for row in page["batches"]], expected)
+        self.assertTrue(all((page["total"], page["page_size"]) == (23, 10) for page in pages))
+        self.assertEqual(self.catalog.snapshot({"page": ["23"], "page_size": ["1"]})["batches"][0]["id"], expected[-1])
+        self.assertEqual(len(self.catalog.snapshot({"page_size": ["100"]})["batches"]), 23)
+        self.package("excluded.7z", rows=[archive_row("b_fast", f"case-{index}", answer="") for index in range(55)])
+        batch = next(row for row in self.discover_batches() if row["name"] == "excluded.7z")
+        self.clean([batch["id"]])
+        for size in (1, 10, 20, 50, 100):
+            pages = [self.catalog.report(batch["id"], {"page": [str(page)], "page_size": [str(size)]})
+                     for page in range(1, (55 + size - 1) // size + 1)]
+            self.assertEqual([row["case_id"] for page in pages for row in page["items"]], [f"case-{index}" for index in range(55)])
+            self.assertTrue(all((page["total"], page["page_size"]) == (55, size) for page in pages))
+        for size in ("0", "101", "bad"):
+            with self.assertRaises(ValueError):
+                self.catalog.snapshot({"page_size": [size]})
+            with self.assertRaises(ValueError):
+                self.catalog.report(batch["id"], {"page_size": [size]})
+
     def test_catalog_http_reads_the_committed_snapshot_while_discovery_holds_its_lock(self):
         self.package()
         batch = self.discover_batches()[0]

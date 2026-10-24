@@ -2,11 +2,23 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { createAutomationControl } from "../../../apps/host/src/automation-control.js";
 import type { AutomationConfig } from "../../../apps/host/src/automation-config.js";
-import { stopSourceCleaning } from "../../../apps/host/src/daily-ingestion.js";
+import { sourceCatalog, stopSourceCleaning } from "../../../apps/host/src/daily-ingestion.js";
 
 const config = { sourceUrl: "http://data.test/data/wencai", autoClean: true, requestTimeoutMs: 40 } as AutomationConfig;
 const catalog = { tasks: [{ id: "task", dataset: "/data/wencai" }], batches: [], total: 0, page: 1, page_size: 50 };
 const response = (value: object, status = 200) => new Response(JSON.stringify(value), { status });
+
+test("catalog forwards the requested server page size and rejects invalid pagination before reading", async t => {
+  const urls: URL[] = [];
+  t.mock.method(globalThis, "fetch", async (url: URL) => { urls.push(url); return response(catalog); });
+  await sourceCatalog(config, 3, 10);
+  assert.equal(urls[0].searchParams.get("page_size"), "1");
+  assert.equal(urls[1].searchParams.get("page"), "3");
+  assert.equal(urls[1].searchParams.get("page_size"), "10");
+  assert.equal(urls[1].searchParams.get("task"), "task");
+  for (const [page, size] of [[0, 10], [1, 0], [1, 101], [1, 1.5]]) await assert.rejects(sourceCatalog(config, page, size), /分页参数无效/);
+  assert.equal(urls.length, 2);
+});
 
 test("cleaning drain outlives one request deadline and gives each status read a fresh deadline", async t => {
   const signals: AbortSignal[] = [];

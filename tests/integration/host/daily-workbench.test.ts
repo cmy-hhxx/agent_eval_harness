@@ -70,8 +70,15 @@ test("daily HTTP exposes AIME stages and controls without starting evaluations o
 test("daily HTTP reports Mongo complete only when every date has a receipt for its current inputs and ready comparisons", async () => {
   const directory = await mkdtemp(path.join(tmpdir(), "daily-mongo-http-"));
   const previous = process.env.EVAL_CONFIG_FILE;
-  const data = await listen(async (_req, res) => json(res, { tasks: [{ id: "task", source: "wencai", dataset: "/data/wencai", archive_dir: "/daily-inputs" }],
-    batches: [], page: 1, page_size: 50, total: 0 }), 0);
+  const data = await listen(async (_req, res, url) => {
+    const page = Number(url.searchParams.get("page") ?? 1), pageSize = Number(url.searchParams.get("page_size") ?? 50);
+    const indexes = Array.from({ length: 25 }, (_, index) => index).slice((page - 1) * pageSize, page * pageSize);
+    if (url.pathname.endsWith("/report")) json(res, { archive_path: "/daily-inputs/batch.7z", section: "records", page, page_size: pageSize, total: 25,
+      items: indexes.map(index => ({ date: "2026-10-23", model: "a_fast", batch_id: "2026-10-23", case_id: "case-" + index,
+        original_file: "batch.7z/answers.jsonl", original_line: index + 1 })) });
+    else json(res, { tasks: [{ id: "task", source: "wencai", dataset: "/data/wencai", archive_dir: "/daily-inputs" }],
+      batches: indexes.map(index => ({ id: "package-" + index, name: `batch-${index}.7z`, status: "cleaned" })), page, page_size: pageSize, total: 25 });
+  }, 0);
   let server: Awaited<ReturnType<typeof listen>> | undefined;
   const control = createAutomationControl(["remote-evaluation"], async () => assert.fail("reading daily state cannot start a source"));
   try {
@@ -114,6 +121,18 @@ test("daily HTTP reports Mongo complete only when every date has a receipt for i
     assert.equal(await status(), "pending", "a date without a receipt prevents source completion");
     second.mongo = receipt(second);
     assert.equal(await status(), "completed");
+    const initial = await fetch(server.url + "/api/daily?page_size=10").then(response => response.json()) as any;
+    assert.equal(initial.sources[0].packages.pageSize, 10);
+    assert.equal(initial.sources[0].packages.items.length, 10);
+    const next = await fetch(server.url + "/api/daily/wencai/packages?page=2&page_size=10").then(response => response.json()) as any;
+    assert.equal(next.pageSize, 10); assert.equal(next.items[0].id, "package-10");
+    const last = await fetch(server.url + "/api/daily/wencai/packages?page=3&page_size=10").then(response => response.json()) as any;
+    assert.deepEqual([...initial.sources[0].packages.items, ...next.items, ...last.items].map(item => item.id),
+      Array.from({ length: 25 }, (_, index) => "package-" + index), "server page offsets cover every package exactly once");
+    const report = await fetch(server.url + "/api/daily/wencai/packages/package-1/report?section=records&page=2&page_size=10").then(response => response.json()) as any;
+    assert.equal(report.page_size, 10); assert.equal(report.total, 25);
+    assert.deepEqual(report.items.map((item: any) => item.original_line), Array.from({ length: 10 }, (_, index) => index + 11));
+    assert.equal((await fetch(server.url + "/api/daily?page_size=0")).status, 400);
     first.inputsUpdatedAt!++;
     assert.equal(await status(), "pending", "a receipt for an earlier input snapshot is incomplete");
     first.mongo = receipt(first);

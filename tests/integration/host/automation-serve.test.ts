@@ -9,6 +9,7 @@ import path from "node:path";
 import { writeJson } from "@eval/data";
 import { ROOT } from "../../fixtures/services.js";
 import { writeTestSettings } from "../../fixtures/settings.js";
+import { waitForTestState } from "../../fixtures/wait.js";
 
 const delay = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 test("serve starts no source work on startup or restart; only the selected run starts discovery", { timeout: 15000 }, async () => {
@@ -57,7 +58,10 @@ test("serve starts no source work on startup or restart; only the selected run s
     const snapshot = async (id = "a") => await (await fetch(url + "/api/status?source=" + id)).json() as { status: string; control: { status: string; error?: string }; sources: { id: string; control: { status: string } }[] };
     const control = (sourceId: string, action: string, origin = url) => fetch(url + "/api/control", { method: "POST",
       headers: { origin, "content-type": "application/json" }, body: JSON.stringify({ sourceId, action }) });
-    const ready = () => wait(async () => { try { return (await fetch(url + "/api/health")).ok; } catch { return false; } });
+    const ready = () => waitForTestState(async () => {
+      try { return { ready: (await fetch(url + "/api/health")).ok, output }; }
+      catch { return { ready: false, output }; }
+    }, state => state.ready, "automation health becomes ready after cold startup", 10000);
     launch(); await ready(); await delay(150);
     assert.equal(discoveries, 0);
     assert.equal((await fetch(url + "/api/control", { method: "POST", headers: { origin: url, "content-type": "application/json" },

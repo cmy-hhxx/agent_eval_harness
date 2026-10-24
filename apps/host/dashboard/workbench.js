@@ -56,6 +56,7 @@ async function region(id, template, styles, isCurrent = () => true) {
   sheet.textContent = css.join('\n').replaceAll(':root', ':host');
   const content = document.createElement('div');
   content.className = parsed.body.className;
+  content.classList.add('region-content');
   content.append(...parsed.body.childNodes);
   root.replaceChildren(sheet, content);
   host.hidden = false;

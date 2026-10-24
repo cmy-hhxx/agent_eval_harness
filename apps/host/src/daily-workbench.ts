@@ -23,15 +23,15 @@ export function dailyWorkbench(options: {
   const activeSettings = new Map<string, unknown>();
   const wencai = () => options.sources().find(source => new URL(source.config.sourceUrl).pathname === "/data/wencai");
   const sourceId = (id: string) => id === "wencai" ? wencai()?.config.id : id === "aime" ? options.aime?.id : undefined;
-  const packages = async (id: string, page = 1) => {
+  const packages = async (id: string, page = 1, pageSize = 50) => {
     const source = id === "wencai" ? wencai() : undefined;
     const sourceUrl = source?.config.sourceUrl ?? new URL("/data/aime", process.env.EVAL_WORKBENCH_DATA_URL ?? "http://127.0.0.1:8081").href;
-    const data = await sourceCatalog({ sourceUrl }, page);
+    const data = await sourceCatalog({ sourceUrl }, page, pageSize);
     const task = data.tasks.find(task => task.dataset === new URL(sourceUrl).pathname);
     return { items: data.batches.map(item => ({ ...item, name: item.name, accepted: (item.summary as any)?.accepted ?? 0,
       excluded: (item.summary as any)?.excluded ?? 0 })), total: data.total, page: data.page, pageSize: data.page_size, archiveDirectory: task?.archive_dir };
   };
-  async function view(id: string): Promise<Record<string, any>> {
+  async function view(id: string, pageSize = 50): Promise<Record<string, any>> {
     const runtimeId = sourceId(id);
     if (!runtimeId) throw new HttpError(404, "日常来源未登记");
     const allocation = options.llm.snapshot().sources.find(source => source.sourceId === runtimeId)!;
@@ -63,7 +63,7 @@ export function dailyWorkbench(options: {
           inputs: deliveries.reduce((n, item) => n + (item.counts?.inputs ?? 0), 0), outputs: deliveries.reduce((n, item) => n + (item.counts?.comparisons ?? 0), 0),
           error: deliveries.map(item => item.error).filter(Boolean).join("\n") } };
     }
-    try { result.packages = await packages(id); result.archiveDirectory = result.packages.archiveDirectory ?? result.archiveDirectory; }
+    try { result.packages = await packages(id, 1, pageSize); result.archiveDirectory = result.packages.archiveDirectory ?? result.archiveDirectory; }
     catch (error) { result.packageError = errorText(error); result.error = [result.error, result.packageError].filter(Boolean).join("\n"); result.packages = { items: [], total: 0, page: 1, pageSize: 50 }; }
     let modelCatalog: unknown[] = [];
     try { modelCatalog = await discoverDashboardModels(); } catch (error) { result.modelCatalogError = errorText(error); }
@@ -80,8 +80,10 @@ export function dailyWorkbench(options: {
       if (!host || ![`http://${host}`, `https://${host}`].includes(req.headers.origin ?? "")) throw new HttpError(403, "Request origin does not match the dashboard");
     }
     if (req.method === "GET" && url.pathname === "/api/daily") {
+      const pageSize = Number(url.searchParams.get("page_size") ?? 50);
+      if (!Number.isSafeInteger(pageSize) || pageSize < 1 || pageSize > 100) throw new HttpError(400, "批次分页参数无效");
       const sources = await Promise.all([...(wencai() ? ["wencai"] : []), ...(options.aime ? ["aime"] : [])].map(async id => {
-        try { return await view(id); }
+        try { return await view(id, pageSize); }
         catch (error) {
           const runtimeId = sourceId(id)!;
           const allocation = options.llm.snapshot().sources.find(source => source.sourceId === runtimeId)!;
@@ -104,7 +106,7 @@ export function dailyWorkbench(options: {
           sourceUrl: id === "wencai" ? source!.config.sourceUrl : new URL("/data/aime", process.env.EVAL_WORKBENCH_DATA_URL ?? "http://127.0.0.1:8081").href,
           output: id === "wencai" ? source!.output : options.aime!.configuration.outputDirectory,
           automationState: id === "wencai" ? source!.state() : undefined, aime: options.aime }, parts[0], url.searchParams));
-      } else if (!parts.length) send(await packages(id, Number(url.searchParams.get("page") ?? 1)));
+      } else if (!parts.length) send(await packages(id, Number(url.searchParams.get("page") ?? 1), Number(url.searchParams.get("page_size") ?? 50)));
       else throw new HttpError(404, "Not found");
       return true;
     }

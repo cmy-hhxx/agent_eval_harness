@@ -31,11 +31,12 @@ function inputIds(state:Checkpoint,taskId:string,visited=new Set<string>()):Set<
 }
 /** Join one report page to the authoritative day runs; no result bodies or cross-run cache. */
 export async function dailyPackageReport(options:DailyCoverageSource,packageId:string,params:URLSearchParams){
-  const section=params.get('section')??'records',page=Number(params.get('page')??1);
-  if(!['records','exclusions','metadata_issues'].includes(section)||!Number.isSafeInteger(page)||page<1)throw new HttpError(400,'报告分页参数无效');
-  const query=new URLSearchParams({section,page:String(page)}),identifier=safeId(packageId);
+  const section=params.get('section')??'records',page=Number(params.get('page')??1),pageSize=Number(params.get('page_size')??50);
+  if(!['records','exclusions','metadata_issues'].includes(section)||!Number.isSafeInteger(page)||page<1||
+    !Number.isSafeInteger(pageSize)||pageSize<1||pageSize>100)throw new HttpError(400,'报告分页参数无效');
+  const query=new URLSearchParams({section,page:String(page),page_size:String(pageSize)}),identifier=safeId(packageId);
   const report=await dataRequest(options,`/data/workbench/batches/${encodeURIComponent(identifier)}/report?${query}`);
-  const catalog=await dataRequest(options,'/data/workbench/catalog') as CatalogPage;
+  const catalog=await dataRequest(options,'/data/workbench/catalog?page_size=1') as CatalogPage;
   if(!catalog.tasks.some(task=>task.dataset===new URL(options.sourceUrl).pathname&&path.resolve(task.archive_dir)===path.dirname(path.resolve(report.archive_path))))
     throw new HttpError(404,'批次不属于此日常来源');
   if(section!=='records')return report;
@@ -57,35 +58,51 @@ export async function dailyPackageReport(options:DailyCoverageSource,packageId:s
       aimeRuns.set(date,states);
     }
   }
-  const items=records.map(record=>{
-    const coverage:Coverage={runIds:[],stages:{}};
-    if(options.source==='aime'){
-      for(const state of aimeRuns.get(record.date)??[]){
-        const tasks=state.manifest.tasks.filter(task=>matching(record,(task.data as {candidate:Candidate}).candidate));
-        if(tasks.length)coverage.runIds.push(state.manifest.runId);
-        for(const task of tasks)if(['score','attribution'].includes(task.stage))count(coverage,task.stage,state.manifest.states[task.id].status);
+  const selected=records.map(record=>({record,coverage:{runIds:[],stages:{}} as Coverage,comparisonAccepted:false}));
+  const identities=new Map<string,typeof selected>();
+  const identity=(date:string,model:string,batchId:string,caseId:string)=>JSON.stringify([date,model,batchId,caseId]);
+  for(const item of selected){
+    const key=identity(item.record.date,item.record.model,item.record.batch_id,item.record.case_id),group=identities.get(key)??[];
+    group.push(item);identities.set(key,group);
+  }
+  const select=(date:string,candidate:Pick<Candidate,'version'|'batch_id'|'case_id'|'trace_id'>)=>
+    (identities.get(identity(date,candidate.version,candidate.batch_id,candidate.case_id))??[]).filter(item=>matching(item.record,candidate));
+  if(options.source==='aime'){
+    for(const [date,states]of aimeRuns)for(const state of states){
+      const matched=new Set<typeof selected[number]>();
+      for(const task of state.manifest.tasks)for(const item of select(date,(task.data as {candidate:Candidate}).candidate)){
+        matched.add(item);
+        if(['score','attribution'].includes(task.stage))count(item.coverage,task.stage,state.manifest.states[task.id].status);
       }
-      for(const stage of ['score','attribution'])if(!coverage.stages[stage])count(coverage,stage,'pending');
-    }else{
-      let comparisonAccepted=false;
-      const states=runs.get(record.date)??[],readyCount=states.reduce((n,state)=>n+publishable.get(state)!.size,0);
-      for(const state of states){
-        const matched=new Set(Object.entries(state.inputs).filter(([,candidate])=>matching(record,candidate)).map(([id])=>id));
-        if(!matched.size)continue;
-        coverage.runIds.push(state.runId);
-        const ready=publishable.get(state)!;
-        for(const [taskId,task]of Object.entries(state.tasks)){
-          if(!isAutomationTask(task))continue;
-          if(![...inputIds(state,taskId)].some(id=>matched.has(id)))continue;
-          count(coverage,task.stage,task.status==='succeeded'&&!task.receipt?'failed':task.status);
-          if(task.stage==='comparison'&&task.data.comparisonId&&ready.has(task.data.comparisonId))comparisonAccepted=true;
+      for(const item of matched)item.coverage.runIds.push(state.manifest.runId);
+    }
+    for(const item of selected)for(const stage of ['score','attribution'])if(!item.coverage.stages[stage])count(item.coverage,stage,'pending');
+  }else for(const [date,states]of runs){
+    const readyCount=states.reduce((n,state)=>n+publishable.get(state)!.size,0);
+    for(const state of states){
+      const matched=new Map<string,typeof selected>(),included=new Set<typeof selected[number]>();
+      for(const [id,candidate]of Object.entries(state.inputs)){
+        const rows=select(date,candidate);if(!rows.length)continue;
+        matched.set(id,rows);for(const item of rows)included.add(item);
+      }
+      for(const item of included)item.coverage.runIds.push(state.runId);
+      if(!matched.size)continue;
+      const ready=publishable.get(state)!;
+      for(const [taskId,task]of Object.entries(state.tasks)){
+        if(!isAutomationTask(task))continue;
+        const rows=new Set<typeof selected[number]>();
+        for(const id of inputIds(state,taskId))for(const item of matched.get(id)??[])rows.add(item);
+        for(const item of rows){
+          count(item.coverage,task.stage,task.status==='succeeded'&&!task.receipt?'failed':task.status);
+          if(task.stage==='comparison'&&task.data.comparisonId&&ready.has(task.data.comparisonId))item.comparisonAccepted=true;
         }
       }
-      const job=options.automationState?.jobs[record.date],mongo=job?.mongo;
-      coverage.mongoStatus=comparisonAccepted&&mongo?.status==='completed'&&mongo.synced&&mongo.synced.inputsUpdatedAt===(job?.inputsUpdatedAt??0)&&
-        mongo.synced.comparisons===readyCount&&job?.summary?.readyComparisons===readyCount?'completed':comparisonAccepted&&mongo?.status==='retry'?'retry':'pending';
     }
-    return {...record,coverage};
-  });
+    const job=options.automationState?.jobs[date],mongo=job?.mongo;
+    for(const item of selected)if(item.record.date===date)item.coverage.mongoStatus=item.comparisonAccepted&&mongo?.status==='completed'&&mongo.synced&&
+      mongo.synced.inputsUpdatedAt===(job?.inputsUpdatedAt??0)&&mongo.synced.comparisons===readyCount&&job?.summary?.readyComparisons===readyCount
+        ?'completed':item.comparisonAccepted&&mongo?.status==='retry'?'retry':'pending';
+  }
+  const items=selected.map(({record,coverage})=>({...record,coverage}));
   return {...report,items};
 }

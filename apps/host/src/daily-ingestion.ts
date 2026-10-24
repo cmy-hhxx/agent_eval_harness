@@ -14,15 +14,17 @@ export async function dataRequest(config: Pick<AutomationConfig, "sourceUrl">, r
   if (!response.ok) throw new HttpError(response.status, value.error ?? "数据服务请求失败");
   return value;
 }
-export async function sourceCatalog(config: Pick<AutomationConfig, "sourceUrl">, page = 1, signal?: AbortSignal): Promise<CatalogPage> {
-  const initial = await dataRequest(config, "/data/workbench/catalog", signal) as CatalogPage;
+export async function sourceCatalog(config: Pick<AutomationConfig, "sourceUrl">, page = 1, pageSize = 50, signal?: AbortSignal): Promise<CatalogPage> {
+  if (!Number.isSafeInteger(page) || page < 1 || !Number.isSafeInteger(pageSize) || pageSize < 1 || pageSize > 100)
+    throw new HttpError(400, "批次分页参数无效");
+  const initial = await dataRequest(config, "/data/workbench/catalog?page_size=1", signal) as CatalogPage;
   const task = initial.tasks.find(task => task.dataset === new URL(config.sourceUrl).pathname);
   if (!task) throw new HttpError(409, "日常收包任务尚未登记");
-  return dataRequest(config, `/data/workbench/catalog?task=${encodeURIComponent(task.id)}&page=${page}`, signal);
+  return dataRequest(config, `/data/workbench/catalog?task=${encodeURIComponent(task.id)}&page=${page}&page_size=${pageSize}`, signal);
 }
 export async function startSourceCleaning(config: AutomationConfig, signal: AbortSignal) {
   if (!config.autoClean) return;
-  const catalog = await sourceCatalog(config, 1, signal);
+  const catalog = await sourceCatalog(config, 1, 50, signal);
   const task = catalog.tasks.find(task => task.dataset === new URL(config.sourceUrl).pathname)!;
   await dataRequest(config, `/data/workbench/tasks/${task.id}/clean`, signal, {});
 }

@@ -6,14 +6,19 @@ import { createRequire } from 'node:module';
 import { build } from 'esbuild';
 import { ROOT } from '../../fixtures/services.js';
 const { JSDOM } = createRequire(import.meta.url)('jsdom');
+function enableDialogs(dom:any) {
+  dom.window.HTMLDialogElement.prototype.showModal = function(this:HTMLDialogElement) { this.setAttribute('open',''); };
+  dom.window.HTMLDialogElement.prototype.close = function(this:HTMLDialogElement) { this.removeAttribute('open'); this.dispatchEvent(new dom.window.Event('close')); };
+}
+
 
 test('AIME results show score and direct attribution with independent statuses, filters, source coordinates and scoped retry', async () => {
   const directory = path.join(ROOT,'apps/host/dashboard');
-  const dom = new JSDOM(await readFile(path.join(directory,'aime-results.html'),'utf8'),{url:'http://fixture/',runScripts:'outside-only'});
+  const dom = new JSDOM(await readFile(path.join(directory,'aime-results.html'),'utf8'),{url:'http://fixture/',runScripts:'outside-only'}); enableDialogs(dom);
   const compiled = await build({entryPoints:[path.join(directory,'aime-results.js')],bundle:true,write:false,format:'iife',globalName:'Aime',platform:'browser'});
   dom.window.setTimeout = () => 0;
   const calls:{url:string;body:any}[] = [], sample = {inputId:'input-1',batchId:'b',caseId:'case-1',traceId:'trace-1',question:'完整问句 <script>',model:'aime_fast',status:'partial',stages:{score:{status:'succeeded',taskId:'score-1'},attribution:{status:'failed',taskId:'attr-1',error:'证据错误',attempts:2}}};
-  let failed = false, empty = false;
+  let failed = false, empty = false, sampleTotal = 26;
   const fetcher = async (url:string,init:RequestInit={}) => {
     const body = init.body ? JSON.parse(String(init.body)) : undefined; calls.push({url,body});
     if (failed) return Response.json({error:'服务断开'},{status:503});
@@ -22,7 +27,7 @@ test('AIME results show score and direct attribution with independent statuses, 
     if (url.includes('/samples?')) {
       const status = new URL(url,'http://fixture').searchParams.get('status');
       const item = status === 'succeeded' ? {...sample,status:'succeeded',stages:{score:{status:'succeeded',taskId:'score-1'},attribution:{status:'succeeded',taskId:'attr-1'}}} : sample;
-      return Response.json({runId:'1024',items:[item],total:status ? 1 : 26,offset:0,limit:25});
+      return Response.json({runId:'1024',items:[item],total:status ? 1 : sampleTotal,offset:0,limit:25});
     }
     if (url.endsWith('/retry')) return Response.json({});
     throw new Error(url);
@@ -34,7 +39,7 @@ test('AIME results show score and direct attribution with independent statuses, 
     await controller.ready; assert.match(el('aime-sample-rows').textContent,/完整问句.*case-1.*trace-1/s); assert.match(el('aime-sample-rows').textContent,/已完成.*失败/s);
     assert.match(el('aime-run-status').textContent,/问句 13.*回答 26.*完整回答 25 \/ 26.*部分完成 1.*阶段任务 51 \/ 52/);
     assert.equal(el('aime-sample-rows').querySelector('[data-cell=answer-status]').textContent,'部分完成');
-    el('aime-sample-rows').querySelector('button').click(); await wait(()=>!el('aime-detail').hidden);
+    const opener=el('aime-sample-rows').querySelector('button'); opener.focus(); opener.click(); await wait(()=>!el('aime-detail').hidden); assert.equal(el('aime-detail').open,true);
     assert.match(el('aime-results').textContent,/独立评分.*最终回答得分.*8.*回答归因.*中文归因总结.*证据缺失.*真实证据/s);
     assert.equal(el('aime-detail').querySelector('script'),null); assert.match(el('aime-location').textContent,/input.7z.*inside.jsonl:8 \[0\]/s); assert(el('aime-answer').querySelector('strong'));
     el('aime-task-errors').querySelector('button').click(); await wait(()=>calls.some(call=>call.body?.taskIds)); assert.deepEqual(calls.find(call=>call.body?.taskIds)!.body,{taskIds:['attr-1']});
@@ -44,11 +49,29 @@ test('AIME results show score and direct attribution with independent statuses, 
     assert.equal([...el('aime-sample-rows').querySelector('tr').children].slice(3,5).map((cell:any)=>cell.textContent).join(' / '),'已完成 / 已完成');
     el('aime-status').value='';
     el('aime-query').value='trace-1'; el('aime-model').value='aime_fast'; el('aime-filters').dispatchEvent(new dom.window.Event('submit',{cancelable:true})); await wait(()=>calls.some(call=>call.url.includes('query=trace-1')&&call.url.includes('model=aime_fast')));
-    await wait(()=>!el('aime-next').disabled);
-    el('aime-next').click(); await wait(()=>calls.some(call=>call.url.includes('offset=25')));
+    el('aime-page-size').value='20'; el('aime-page-size').dispatchEvent(new dom.window.Event('change')); await wait(()=>calls.some(call=>call.url.includes('limit=20'))); await wait(()=>!el('aime-next').disabled);
+    el('aime-next').click(); await wait(()=>calls.some(call=>call.url.includes('offset=20')));
+    sampleTotal=5;el('aime-refresh').click();await wait(()=>el('aime-page').textContent.includes('1 / 1 · 5 个回答'));assert(calls.at(-1)!.url.includes('offset=0'));
     assert.match(el('aime-artifacts').querySelector('a').href,/file=results%2Fscore.jsonl/);
     failed = true; el('aime-refresh').click(); await wait(()=>!el('aime-error').hidden); assert.match(el('aime-sample-rows').textContent,/trace-1/); assert.equal(el('aime-retry-failed').disabled,true);
     failed = false; empty = true; el('aime-refresh').click(); await wait(()=>el('aime-run-status').textContent === '暂无运行');
     assert.equal(el('aime-detail').hidden,true); assert.equal(el('aime-sample-rows').children.length,0); assert.equal(el('aime-query').value,'trace-1');
   } finally { controller.destroy(); dom.window.close(); }
+});
+
+test('AIME ignores older refreshes and keeps one polling timer', async () => {
+  const directory=path.join(ROOT,'apps/host/dashboard');
+  const dom=new JSDOM(await readFile(path.join(directory,'aime-results.html'),'utf8'),{url:'http://fixture/',runScripts:'outside-only'});enableDialogs(dom);
+  const compiled=await build({entryPoints:[path.join(directory,'aime-results.js')],bundle:true,write:false,format:'iife',globalName:'Aime',platform:'browser'});
+  const timers=new Set<number>();let nextTimer=0,hold=false;const pending:((value:Response)=>void)[]=[];
+  dom.window.setTimeout=(_callback:unknown,ms:number)=>{const id=++nextTimer;if(ms===5000)timers.add(id);return id;};dom.window.clearTimeout=(id:number)=>timers.delete(id);
+  const overview=(answers:number)=>({runs:[{runId:'day',date:'2026-10-24',status:'running',answers,total:answers,succeeded:0,taskTotal:answers*2,taskCompleted:0,stages:{},artifacts:[]}]});
+  const fetcher=async(url:string)=>url.endsWith('/runs') ? hold ? new Promise<Response>(resolve=>pending.push(resolve)) : Response.json(overview(1)) : Response.json({items:[],total:0,offset:0,limit:10});
+  dom.window.eval(compiled.outputFiles[0].text+'\nglobalThis.Aime=Aime;');const controller=dom.window.Aime.mountAimeResults(dom.window.document,{fetch:fetcher});const el=(id:string)=>dom.window.document.getElementById(id);
+  const settle=async()=>{for(let n=0;n<5;n++)await new Promise(setImmediate);};
+  try{
+    await controller.ready;assert.equal(timers.size,1);hold=true;el('aime-refresh').click();el('aime-refresh').click();assert.equal(pending.length,2);
+    pending[1](Response.json(overview(2)));await settle();pending[0](Response.json(overview(1)));await settle();
+    assert.equal(timers.size,1);assert.match(el('aime-run-status').textContent,/回答 2/);
+  }finally{controller.destroy();dom.window.close();}
 });

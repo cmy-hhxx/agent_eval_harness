@@ -47,7 +47,7 @@
 
 | 接口 | 行为 |
 |---|---|
-| `GET /data/workbench/catalog` | 仅读已提交的任务与分页批次索引；支持 source/category/task/status/unassigned/page。目录发现由后台轮询和显式清洗负责 |
+| `GET /data/workbench/catalog` | 仅读已提交的任务与分页批次索引；支持 source/category/task/status/unassigned/page/page_size。page_size 为 1–100，默认 50；目录发现由后台轮询和显式清洗负责 |
 | `POST /data/workbench/tasks` | 创建任务：name、source、category、profile |
 | `POST /data/workbench/assign` | 批量归属：batch_ids、task_id；整组验证后提交 |
 | `POST /data/workbench/evaluation-scope` | Host 内部读取同任务已清洗批次的固定记录坐标、模型组和来源输出路径；不接收浏览器传入路径 |
@@ -56,7 +56,7 @@
 | `POST /data/workbench/tasks/<UUID>/clean` | 空对象；冻结当前 ready/interrupted 范围并异步排空，返回 202；重复请求活动任务返回同一状态，其他清洗占用时返回 409 |
 | `POST /data/workbench/tasks/<UUID>/clean/stop` | 空对象；停止派发后续包，当前包完成后退出，未开始包恢复 ready |
 | `POST /data/workbench/tasks/<UUID>/clean/cancel` | 空对象；同时取消当前包，事务提交前回滚暂存并保留 interrupted 待继续；已提交发布须完成恢复 |
-| `GET /data/workbench/batches/<UUID>/report` | section 为 exclusions、records 或 metadata_issues；page 分页，每页 50 条 |
+| `GET /data/workbench/batches/<UUID>/report` | section 为 exclusions、records 或 metadata_issues；page、page_size 按原报告顺序分页，page_size 为 1–100，默认 50 |
 | `GET /data/workbench/batches/<UUID>/sample` | 按纳入报告的零基 index 读取一个样本；输入改变或缺失明确报错 |
 
 同任务不接受来自不同目录的同名包，避免底层包收据混淆；可建立独立任务区分。任务名称不参与文件路径，输入的业务 `batch_id`、`case_id` 保留原义。

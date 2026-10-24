@@ -1,3 +1,5 @@
+import { stageProgress } from './stage-progress.js';
+
 const sourceLabels = { wencai:'问财日常四路', aime:'AIME 日常全量' };
 const statusLabels = { idle:'待运行', running:'运行中', pausing:'暂停中', paused:'已暂停', stopping:'停止中', failed:'失败', finished:'已完成', completed:'已完成', pending:'待处理', queued:'排队', stable:'待处理', uploading:'上传中', cleaning:'清洗中', cleaned:'清洗完成', evaluating:'评测中', interrupted:'已中断', ready:'已就绪', retry:'等待重试', stopped:'已停止', waiting:'等待数据', waiting_inputs:'等待配对', partial:'部分完成', empty:'无有效数据', cancelling:'取消中', cancelled:'已取消', uploaded:'已上传', blocked:'已暂停' };
 const stageLabels = { criteria:'共同标准', score:'独立评分', attribution:'回答归因', comparison:'对比', rewrite:'改写', clustering:'聚类' };
@@ -8,13 +10,29 @@ const numeric = value => typeof value === 'number' && Number.isFinite(value);
 export function mountDaily(root, options = {}) {
   const $ = id => root.querySelector('#' + id), doc = root.ownerDocument || root;
   const fetcher = options.fetch || globalThis.fetch;
-  let data, selected = 'wencai', formSource, busy = false, connected = false, timer, disposed = false, revision = 0;
+  let data, selected = 'wencai', formSource, busy = false, connected = false, timer, disposed = false, revision = 0, reportDialogSource;
   const sourceBusy = new Set(), drafts = new Map(), settingsMessages = new Map(), packageViews = new Map(), reports = new Map(), reportSections = new Map();
+  const sourceViews = new Map(), dialogFocus = new Map(), packageRequests = new Map();
+  function view(id = selected) { if (!sourceViews.has(id)) sourceViews.set(id,{tab:'packages',packagePage:1,packageSize:10,requestPage:1,requestSize:10,runPage:1,runSize:10}); return sourceViews.get(id); }
+  function openDialog(id) { const dialog = $(id); if (dialog.open) return; dialogFocus.set(id,root.activeElement || doc.activeElement); dialog.showModal(); }
+  for (const id of ['daily-settings','daily-package-report']) $(id).addEventListener('close',() => { const target = dialogFocus.get(id); if (target?.isConnected) target.focus(); else $('daily-settings-open').focus(); });
+  root.querySelectorAll('[data-daily-close]').forEach(item => { item.onclick = () => $(item.dataset.dailyClose).close(); });
+  $('daily-settings-open').onclick = () => openDialog('daily-settings');
+  function renderTab() {
+    const current = view().tab;
+    root.querySelectorAll('[data-daily-tab]').forEach(button => { const active = button.dataset.dailyTab === current; button.setAttribute('aria-selected',String(active)); button.tabIndex = active ? 0 : -1; button.classList.toggle('active',active); $(`daily-panel-${button.dataset.dailyTab}`).hidden = !active; });
+  }
+  function selectTab(tab) { view().tab = tab; renderTab(); }
+  const tabs = [...root.querySelectorAll('[data-daily-tab]')];
+  tabs.forEach((button,index) => {
+    button.onclick = () => selectTab(button.dataset.dailyTab);
+    button.onkeydown = event => { const next = event.key === 'Home' ? 0 : event.key === 'End' ? tabs.length - 1 : event.key === 'ArrowRight' ? (index + 1) % tabs.length : event.key === 'ArrowLeft' ? (index + tabs.length - 1) % tabs.length : undefined; if (next === undefined) return; event.preventDefault(); selectTab(tabs[next].dataset.dailyTab); tabs[next].focus(); };
+  });
   const node = (tag, text) => { const item = doc.createElement(tag); item.textContent = text ?? ''; return item; };
   function button(label, action, disabled = false) { const item = node('button',label); item.type = 'button'; item.className = 'button'; item.disabled = disabled; item.onclick = () => void action(); return item; }
   function error(message) { if (disposed) return; $('daily-error').textContent = message || ''; $('daily-error').hidden = !message; }
-  async function api(path = '', body) {
-    const response = await fetcher('/runtime/api/daily' + path, { cache:'no-store', signal:AbortSignal.timeout(30000), ...(body === undefined ? {} : {method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(body)}) });
+  async function api(path = '', body, signal = AbortSignal.timeout(30000)) {
+    const response = await fetcher('/runtime/api/daily' + path, { cache:'no-store', signal, ...(body === undefined ? {} : {method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(body)}) });
     const value = await response.json(); if (!response.ok) throw new Error(value.error || `HTTP ${response.status}`); return value;
   }
   async function control(id, action) {
@@ -36,7 +54,7 @@ export function mountDaily(root, options = {}) {
       let row = $('daily-source-rows').querySelector(`[data-source="${source.id}"]`);
       if (!row) {
         row = doc.createElement('tr'); row.dataset.source = source.id;
-        const name = doc.createElement('td'); name.append(button(sourceLabels[source.id] || source.name, () => { if (selected !== source.id) { selected = source.id; formSource = undefined; render(); } }));
+        const name = doc.createElement('td'); name.append(button(sourceLabels[source.id] || source.name, () => select(source.id)));
         const state = doc.createElement('td'), pending = doc.createElement('td'), completed = doc.createElement('td'), failed = doc.createElement('td'), requests = doc.createElement('td'), allocation = doc.createElement('td'), actions = doc.createElement('td');
         pending.dataset.cell = 'pending'; completed.dataset.cell = 'completed'; failed.dataset.cell = 'failed'; pending.className = completed.className = failed.className = 'daily-number';
         state.dataset.cell = 'status'; requests.dataset.cell = 'requests'; actions.dataset.cell = 'actions';
@@ -56,11 +74,12 @@ export function mountDaily(root, options = {}) {
       const input = row.querySelector('input'); if (!input.dataset.dirty && root.activeElement !== input) input.value = source.concurrency;
       row.querySelectorAll('input,button').forEach(item => { item.disabled = !connected || sourceBusy.has(source.id); });
       const disabled = !connected || sourceBusy.has(source.id), actions = row.querySelector('[data-cell=actions]');
+      const actionButton = (label,action) => { const item = button(label,() => control(source.id,action),disabled || action === 'stop' && source.status === 'stopping'); if (action === 'run' || action === 'resume') item.classList.add('button-primary'); if (action === 'stop') item.classList.add('button-danger'); return item; };
       actions.replaceChildren();
-      if (source.status === 'paused') actions.append(button('继续',() => control(source.id,'resume'),disabled));
-      else if (!live(source.status)) actions.append(button('评测',() => control(source.id,'run'),disabled));
-      if (source.status === 'running') actions.append(button('暂停',() => control(source.id,'pause'),disabled));
-      if (live(source.status) || source.status === 'paused') actions.append(button('立即停止',() => control(source.id,'stop'),disabled || source.status === 'stopping'));
+      if (source.status === 'paused') actions.append(actionButton('继续','resume'));
+      else if (!live(source.status)) actions.append(actionButton('评测','run'));
+      if (source.status === 'running') actions.append(actionButton('暂停','pause'));
+      if (live(source.status) || source.status === 'paused') actions.append(actionButton('立即停止','stop'));
     }
     $('daily-requests-total').textContent = `实际 LLM 请求 ${data.sources.reduce((sum,source) => sum + (source.activeRequests || 0),0)} · 等待 ${data.sources.reduce((sum,source) => sum + (source.waitingRequests || 0),0)}`;
   }
@@ -84,6 +103,7 @@ export function mountDaily(root, options = {}) {
   function renderDetail() {
     if (disposed) return;
     const source = data?.sources.find(item => item.id === selected); $('daily-detail').hidden = !source; if (!source) return;
+    renderTab();
     $('daily-title').textContent = sourceLabels[source.id] || source.name;
     $('daily-paths').replaceChildren(...[['收包目录',source.archiveDirectory],['结果目录',source.outputDirectory]].map(([label,value]) => { const item = doc.createElement('div'); item.append(node('dt',label),node('dd',value)); return item; }));
     const sourceError = [source.error,source.packageError,source.modelCatalogError].filter(Boolean).join('\n');
@@ -96,82 +116,96 @@ export function mountDaily(root, options = {}) {
     $('daily-aime-coverage').hidden = source.id !== 'aime' || !counts.length && !models.length;
     $('daily-aime-counts').textContent = source.id === 'aime' ? counts.join(' · ') : '';
     $('daily-aime-model-table').hidden = !models.length;
-    $('daily-aime-model-rows').replaceChildren(...models.map(([id,model]) => { const row = doc.createElement('tr'); row.append(node('td',id === 'aime_fast' ? 'Fast' : 'Expert'),...['answers','completed','failed','pending'].map(key => node('td',numeric(model[key]) ? model[key] : ''))); return row; }));
+    $('daily-aime-model-rows').replaceChildren(...models.map(([id,model]) => { const row = doc.createElement('tr'); row.append(node('td',id === 'aime_fast' ? 'Fast' : 'Expert'),...['answers','completed','failed','pending'].map(key => { const cell = node('td',numeric(model[key]) ? model[key] : ''); cell.className = 'daily-number'; return cell; })); return row; }));
     $('daily-settings-heading').textContent = source.activeSettings ? '下次执行配置' : '执行配置';
     $('daily-active-settings').hidden = !source.activeSettings;
     if (source.activeSettings) {
       const current = source.activeSettings, execution = current.execution || {};
       $('daily-active-values').replaceChildren(...[['引擎',current.engine],...Object.entries(current.bindings || {}).filter(([stage]) => stage !== 'clustering').map(([stage,binding]) => [stageLabels[stage] || stage,`${binding.model} · ${binding.thinking}`]),['执行预算',`超时 ${execution.timeoutSeconds} 秒 · 工具 ${execution.maxToolCalls} · 传输重试 ${execution.retries} · 修正 ${execution.repairAttempts} · 尝试 ${execution.maxTaskAttempts ?? '按当前预算'} · 间隔 ${execution.retryDelaySeconds} 秒`],['Debug',current.debug ? '开启' : '关闭']].map(([label,value]) => { const item = doc.createElement('div'); item.append(node('dt',label),node('dd',value)); return item; }));
     }
-    $('daily-settings-form').querySelectorAll('input,select,button').forEach(item => { item.disabled = !connected || busy; });
-    $('daily-stages').replaceChildren(...Object.entries(source.stages || {}).map(([stage,counts]) => {
-      const item = doc.createElement('div'); item.append(node('strong',stageLabels[stage] || stage),node('span',`${counts.completed || 0} / ${counts.total || 0}`),node('span',`进行中 ${counts.running || 0} · 待处理 ${counts.pending || 0} · 失败 ${counts.failed || 0}${counts.blocked ? ` · 阻塞 ${counts.blocked}` : ''}`)); return item;
-    }));
+    $('daily-settings').querySelectorAll('input,select,button[type=submit]').forEach(item => { item.disabled = !connected || busy; });
+    $('daily-stages').replaceChildren(...Object.entries(source.stages || {}).map(([stage,counts]) => stageProgress(doc,stageLabels[stage] || stage,counts)));
     $('daily-mongo').hidden = !source.mongo; $('daily-mongo-status').textContent = source.mongo ? `${textStatus(source.mongo.status)} · 输入 ${source.mongo.inputs || 0} · 结果 ${source.mongo.outputs || 0}${source.mongo.error ? '\n' + source.mongo.error : ''}` : '';
-    const packages = packageViews.get(source.id) || source.packages || {items:[],total:0,page:1,pageSize:40}, pages = Math.max(1,Math.ceil(packages.total / packages.pageSize));
-    $('daily-package-rows').replaceChildren(...packages.items.map(item => { const row = doc.createElement('tr'), actions = doc.createElement('td'); actions.append(button('查看',() => selectReport(source.id,item))); row.append(node('td',item.name),node('td',textStatus(item.status)),node('td',`${item.accepted || 0} / ${item.excluded || 0}`),node('td',item.error),actions); return row; }));
-    $('daily-package-page').textContent = `${packages.page} / ${pages} · ${packages.total} 个包`; $('daily-package-prev').disabled = packages.page <= 1; $('daily-package-next').disabled = packages.page >= pages;
+    const current = view(), packages = packageViews.get(source.id) || source.packages || {items:[],total:0,page:1,pageSize:50}, pages = Math.max(1,Math.ceil(packages.total / current.packageSize)); current.packagePage = Math.min(current.packagePage,pages);
+    $('daily-package-rows').replaceChildren(...packages.items.map(item => { const row = doc.createElement('tr'), actions = doc.createElement('td'), counts = node('td',`${item.accepted || 0} / ${item.excluded || 0}`); counts.className = 'daily-number'; actions.append(button('查看',() => selectReport(source.id,item))); row.append(node('td',item.name),node('td',textStatus(item.status)),counts,node('td',item.error),actions); return row; }));
+    $('daily-package-size').value = current.packageSize; $('daily-package-page').textContent = `${current.packagePage} / ${pages} · ${packages.total} 个包`; $('daily-package-prev').disabled = current.packagePage <= 1; $('daily-package-next').disabled = current.packagePage >= pages;
     renderReport();
-    $('daily-run-rows').replaceChildren(...(source.runs || []).map(run => { const row = doc.createElement('tr'), name = node('td',run.date); name.append(node('div',run.run_id)); const actions = doc.createElement('td'); actions.append(button('查看结果',() => options.onResults?.(source.id,run.run_id))); row.append(name,node('td',textStatus(run.status)),node('td',`${run.completed || 0} / ${run.total || 0}`),actions); return row; }));
+    const runs = source.runs || [], runPages = Math.max(1,Math.ceil(runs.length/current.runSize)); current.runPage = Math.min(current.runPage,runPages);
+    $('daily-run-rows').replaceChildren(...runs.slice((current.runPage-1)*current.runSize,current.runPage*current.runSize).map(run => { const row = doc.createElement('tr'), name = node('td',run.date); name.append(node('div',run.run_id)); const actions = doc.createElement('td'), counts = node('td',`${run.completed || 0} / ${run.total || 0}`); counts.className = 'daily-number'; actions.append(button('查看结果',() => options.onResults?.(source.id,run.run_id))); row.append(name,node('td',textStatus(run.status)),counts,actions); return row; }));
+    $('daily-run-size').value = current.runSize; $('daily-run-page').textContent = `${current.runPage} / ${runPages} · ${runs.length} 个运行`; $('daily-run-prev').disabled = current.runPage <= 1; $('daily-run-next').disabled = current.runPage >= runPages;
+    const requests = (data?.requests || []).filter(request => request.sourceId === selected), requestPages = Math.max(1,Math.ceil(requests.length/current.requestSize)); current.requestPage = Math.min(current.requestPage,requestPages);
+    $('daily-request-section').hidden = requests.length === 0;
+    $('daily-request-rows').replaceChildren(...requests.slice((current.requestPage-1)*current.requestSize,current.requestPage*current.requestSize).map(request => { const row = doc.createElement('tr'), task = node('td',''), code = node('code',request.taskId); code.title = request.taskId; task.append(code); row.append(node('td',sourceLabels[request.sourceId] || request.sourceId),node('td',stageLabels[request.stage] || request.stage),node('td',`${request.model}\n${request.channel || ''}`),node('td',request.startedAt ? new Date(request.startedAt).toLocaleString('zh-CN',{timeZone:'Asia/Shanghai',hour12:false}) : ''),task); return row; }));
+    $('daily-request-size').value = current.requestSize; $('daily-request-page').textContent = `${current.requestPage} / ${requestPages} · ${requests.length} 个请求`; $('daily-request-prev').disabled = current.requestPage <= 1; $('daily-request-next').disabled = current.requestPage >= requestPages;
   }
   function render() {
     if (disposed) return;
     renderSources(); renderDetail();
-    $('daily-request-rows').replaceChildren(...(data?.requests || []).map(request => { const row = doc.createElement('tr'); row.append(node('td',sourceLabels[request.sourceId] || request.sourceId),node('td',stageLabels[request.stage] || request.stage),node('td',`${request.model}\n${request.channel || ''}`),node('td',request.startedAt ? new Date(request.startedAt).toLocaleString('zh-CN',{timeZone:'Asia/Shanghai',hour12:false}) : ''),node('td',request.taskId)); return row; }));
   }
   async function refresh() {
     const current = ++revision;
     clearTimeout(timer);
-    try { const value = await api(); if (disposed || current !== revision) return; data = value; connected = true; error(''); render(); const report = reports.get(selected); if (report) await loadReport(selected,report); }
+    try { const value = await api('?page_size=10'); if (disposed || current !== revision) return; data = value; connected = true; error(''); render(); if (packageViews.has(selected)) await packagePage(0,selected); if (disposed || current !== revision) return; const report = reports.get(selected); if (report && $('daily-package-report').open) await loadReport(selected,report); }
     catch (cause) { if (disposed || current !== revision) return; connected = false; error(`读取失败：${cause.message}`); renderSources(); renderDetail(); }
-    finally { if (!disposed && (data?.sources.some(source => live(source.status)) || !connected)) timer = setTimeout(() => void refresh(),5000); }
+    finally { if (!disposed && current === revision && (data?.sources.some(source => live(source.status)) || !connected)) timer = setTimeout(() => void refresh(),5000); }
   }
-  async function packagePage(step) {
-    const id = selected, source = data?.sources.find(item => item.id === id), current = packageViews.get(id) || source?.packages;
-    if (!current) return;
-    try { const value = await api(`/${id}/packages?page=${current.page + step}`); packageViews.set(id,value); if (selected === id) renderDetail(); }
-    catch (cause) { error(`数据包读取失败：${cause.message}`); }
+  async function packagePage(step, id = selected) {
+    const source = data?.sources.find(item => item.id === id), current = packageViews.get(id) || source?.packages, state = view(id);
+    if (!current) return; const request = (packageRequests.get(id) || 0) + 1; packageRequests.set(id,request);
+    state.packagePage = Math.max(1,Math.min(Math.ceil(current.total/state.packageSize) || 1,state.packagePage+step));
+    try { const value = await api(`/${id}/packages?page=${state.packagePage}&page_size=${state.packageSize}`); if (disposed || packageRequests.get(id) !== request) return; const pages = Math.max(1,Math.ceil(value.total/state.packageSize)); if (state.packagePage > pages) { state.packagePage = pages; return packagePage(0,id); } packageViews.set(id,value); if (selected === id) renderDetail(); }
+    catch (cause) { if (!disposed && selected === id && packageRequests.get(id) === request) error(`数据包读取失败：${cause.message}`); }
   }
   function renderReport() {
     const report = reports.get(selected); $('daily-package-report').hidden = !report; if (!report) return;
     $('daily-package-report').setAttribute('aria-busy',String(report.loading === true));
+    $('daily-report-loading').hidden = !report.loading;
     $('daily-report-title').textContent = report.name; $('daily-report-section').value = report.section;
     $('daily-report-error').textContent = report.error || ''; $('daily-report-error').hidden = !report.error;
     const value = report.value, summary = value?.summary;
     $('daily-report-summary').textContent = summary ? `${textStatus(value.status)} · 读入 ${summary.read || 0} · 纳入 ${summary.accepted || 0} · 排除 ${summary.excluded || 0} · 问句 ${summary.questions || 0} · 元数据异常 ${summary.metadata_issue_count || 0}` : '';
     $('daily-report-file-errors').replaceChildren(...(summary?.file_errors || []).map(item => node('p',`${item.original_file || ''} · ${item.reason || ''}${item.error ? ' · ' + item.error : ''}`)),...(summary?.error ? [node('p',summary.error)] : []));
     $('daily-report-rows').replaceChildren(...(value?.items || []).map(item => {
-      const row = doc.createElement('tr'), location = node('td',item.original_file), coverage = doc.createElement('td'), results = doc.createElement('td');
-      location.append(node('div',`${item.original_line ?? '—'} / ${item.original_item ?? '—'}`));
+      const row = doc.createElement('tr'), location = doc.createElement('td'), coverage = doc.createElement('td'), results = doc.createElement('td'), coordinate = doc.createElement('details'); coordinate.className = 'report-coordinate';
+      coordinate.append(node('summary',`${String(item.original_file || '').split('/').at(-1)} · ${item.original_line ?? '—'} / ${item.original_item ?? '—'}`),node('div',item.original_file)); location.append(coordinate);
       if (report.section === 'records') {
-        for (const [stage,counts] of Object.entries(item.coverage?.stages || {})) coverage.append(node('div',`${stageLabels[stage] || stage} ${counts.completed || 0} / ${counts.total || 0} · 失败 ${counts.failed || 0} · 待处理 ${counts.pending || 0} · 进行中 ${counts.running || 0}`));
+        const stages = doc.createElement('div'); stages.className = 'report-coverage';
+        for (const [stage,counts] of Object.entries(item.coverage?.stages || {})) { const detail = doc.createElement('details'); detail.append(node('summary',`${stageLabels[stage] || stage} ${counts.completed || 0}/${counts.total || 0}${counts.failed ? ` · 失败 ${counts.failed}` : ''}`),node('div',`待处理 ${counts.pending || 0} · 进行中 ${counts.running || 0}`)); stages.append(detail); } coverage.append(stages);
         if (item.coverage?.mongoStatus) coverage.append(node('div',`MongoDB ${textStatus(item.coverage.mongoStatus)}`));
         const id = selected;
-        for (const runId of item.coverage?.runIds || []) results.append(button(runId,() => options.onResults?.(id,runId)));
+        for (const runId of item.coverage?.runIds || []) results.append(button(runId,() => { $('daily-package-report').close(); return options.onResults?.(id,runId); }));
       } else coverage.textContent = report.section === 'metadata_issues' ? `${item.field || ''} · ${item.error || item.reason || ''}` : item.reason || item.error || '';
       row.append(node('td',`${item.model || ''}\n${item.case_id || ''}`),location,coverage,results); return row;
     }));
-    const pages = Math.max(1,Math.ceil((value?.total || 0) / (value?.page_size || 50)));
-    $('daily-report-page').textContent = `${value?.page || report.page} / ${pages} · ${value?.total || 0} 条`;
-    $('daily-report-prev').disabled = report.loading || report.page <= 1; $('daily-report-next').disabled = report.loading || report.page >= pages;
+    const pages = Math.max(1,Math.ceil((value?.total || 0) / report.pageSize));
+    $('daily-report-size').value = report.pageSize; $('daily-report-page').textContent = `${report.page} / ${pages} · ${value?.total || 0} 条`;
+    $('daily-report-prev').disabled = report.page <= 1; $('daily-report-next').disabled = report.page >= pages;
   }
   async function selectReport(id,item) {
-    const report = {id:item.id,name:item.name,section:reportSections.get(id) || 'records',page:1,version:0}; reports.set(id,report); renderReport(); await loadReport(id,report);
+    reports.get(id)?.controller?.abort(); const report = {id:item.id,name:item.name,section:reportSections.get(id) || 'records',page:1,pageSize:reports.get(id)?.pageSize || 10,version:0}; reports.set(id,report); reportDialogSource = id; renderReport(); openDialog('daily-package-report'); await loadReport(id,report);
   }
   async function loadReport(id,report) {
+    report.controller?.abort(); const controller = new AbortController(); report.controller = controller;
     const version = ++report.version; report.loading = true;
     if (selected === id) renderReport();
     try {
-      const value = await api(`/${encodeURIComponent(id)}/packages/${encodeURIComponent(report.id)}/report?${new URLSearchParams({section:report.section,page:String(report.page)})}`);
+      const value = await api(`/${encodeURIComponent(id)}/packages/${encodeURIComponent(report.id)}/report?${new URLSearchParams({section:report.section,page:String(report.page),page_size:String(report.pageSize)})}`,undefined,AbortSignal.any([controller.signal,AbortSignal.timeout(30000)]));
       if (disposed || reports.get(id) !== report || version !== report.version) return;
       report.value = value; report.error = '';
-    } catch (cause) { if (reports.get(id) === report && version === report.version) report.error = `报告读取失败：${cause.message}`; }
+    } catch (cause) { if (!controller.signal.aborted && reports.get(id) === report && version === report.version) report.error = `报告读取失败：${cause.message}`; }
     finally { if (!disposed && reports.get(id) === report && version === report.version) { report.loading = false; if (selected === id) renderReport(); } }
   }
-  function reportPage(step) { const report = reports.get(selected); if (!report || report.loading) return; report.page += step; void loadReport(selected,report); }
+  function reportPage(step) { const report = reports.get(selected); if (!report) return; report.page += step; void loadReport(selected,report); }
   $('daily-report-section').onchange = event => { const report = reports.get(selected); if (!report) return; report.section = event.target.value; reportSections.set(selected,report.section); report.page = 1; report.value = undefined; void loadReport(selected,report); };
   $('daily-report-prev').onclick = () => reportPage(-1); $('daily-report-next').onclick = () => reportPage(1);
+  $('daily-package-report').addEventListener('close',() => { const report = reports.get(reportDialogSource); if (!report) return; report.controller?.abort(); report.version++; report.loading = false; });
+  $('daily-report-size').onchange = event => { const report = reports.get(selected); if (!report) return; report.pageSize = Number(event.target.value); report.page = 1; void loadReport(selected,report); };
   $('daily-refresh').onclick = () => void refresh(); $('daily-package-prev').onclick = () => void packagePage(-1); $('daily-package-next').onclick = () => void packagePage(1);
+  $('daily-package-size').onchange = event => { view().packageSize = Number(event.target.value); view().packagePage = 1; void packagePage(0); };
+  for (const kind of ['run','request']) {
+    $(`daily-${kind}-size`).onchange = event => { view()[`${kind}Size`] = Number(event.target.value); view()[`${kind}Page`] = 1; renderDetail(); };
+    for (const [action,step] of [['prev',-1],['next',1]]) $(`daily-${kind}-${action}`).onclick = () => { view()[`${kind}Page`] += step; renderDetail(); };
+  }
   function settingsValue() {
     const bindings = {}, rewrite = {};
     $('daily-bindings').querySelectorAll('[data-stage]').forEach(input => { const choice = input.value ? JSON.parse(input.value) : []; bindings[input.dataset.stage] = {channel:choice[0] || '',model:choice[1] || '',thinking:$('daily-bindings').querySelector(`[data-thinking="${input.dataset.stage}"]`).value}; });
@@ -188,13 +222,12 @@ export function mountDaily(root, options = {}) {
     finally { busy = false; renderDetail(); }
   };
   const ready = refresh();
-  function select(id) { if (selected !== id) { selected = id; formSource = undefined; render(); } }
+  function select(id) { if (selected !== id) { reports.get(selected)?.controller?.abort(); for (const name of ['daily-settings','daily-package-report']) if ($(name).open) $(name).close(); selected = id; formSource = undefined; render(); } }
   return { ready, refresh, select, async openExclusions(id) {
-    select(id); reportSections.set(id,'exclusions');
+    select(id); selectTab('packages'); reportSections.set(id,'exclusions');
     const source = data?.sources.find(source => source.id === id), packages = packageViews.get(id) || source?.packages;
     const item = packages?.items.find(item => item.excluded > 0) || packages?.items[0];
     if (item) await selectReport(id,item);
     else { reports.delete(id); renderReport(); $('daily-report-section').value = 'exclusions'; }
-    $('daily-package-rows').scrollIntoView({block:'start'});
-  }, destroy() { disposed = true; clearTimeout(timer); } };
+  }, destroy() { disposed = true; clearTimeout(timer); for (const report of reports.values()) report.controller?.abort(); } };
 }

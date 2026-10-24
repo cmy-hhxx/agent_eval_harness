@@ -219,8 +219,9 @@ class WorkbenchCatalog:
 
     def snapshot(self, query):
         page = int(query.get("page", ["1"])[0])
-        if page < 1:
-            raise ValueError("页码无效")
+        page_size = int(query.get("page_size", ["50"])[0])
+        if page < 1 or not 1 <= page_size <= 100:
+            raise ValueError("分页参数无效")
         filters, values = [], []
         for name, column in (("source", "t.source"), ("category", "t.category"), ("task", "b.task_id"), ("status", "b.status")):
             value = query.get(name, [""])[0]
@@ -236,7 +237,7 @@ class WorkbenchCatalog:
             tasks = [{**dict(row), "archive_dir": str(self.datasets[row["dataset"]].archive_dir)} for row in db.execute("SELECT * FROM tasks ORDER BY created_at,id")]
             total = db.execute("SELECT count(*)" + joined, values).fetchone()[0]
             rows = db.execute("SELECT b.*,t.name AS task_name,t.source,t.category,t.dataset" + joined +
-                              " ORDER BY b.discovered_at DESC,b.id LIMIT 50 OFFSET ?", [*values, (page - 1) * 50]).fetchall()
+                              " ORDER BY b.discovered_at DESC,b.id LIMIT ? OFFSET ?", [*values, page_size, (page - 1) * page_size]).fetchall()
             batches = []
             for row in rows:
                 item = dict(row)
@@ -246,25 +247,43 @@ class WorkbenchCatalog:
                 item["archive_path"] = str(self.origins[item["origin"]].archive_dir / item["name"])
                 batches.append(item)
             routes = [dict(row) for row in db.execute("SELECT * FROM routes")]
-        return {"tasks": tasks, "batches": batches, "page": page, "page_size": 50, "total": total,
+        return {"tasks": tasks, "batches": batches, "page": page, "page_size": page_size, "total": total,
                 "routes": [{**route, "archive_dir": str(self.origins[route["origin"]].archive_dir)} for route in routes]}
 
     def report(self, identifier, query):
         page = int(query.get("page", ["1"])[0])
+        page_size = int(query.get("page_size", ["50"])[0])
         section = query.get("section", ["exclusions"])[0]
-        if page < 1 or section not in ("exclusions", "records", "metadata_issues"):
+        if page < 1 or not 1 <= page_size <= 100 or section not in ("exclusions", "records", "metadata_issues"):
             raise ValueError("报告分页参数无效")
-        with self.lock, self.db() as db:
+        with self.db() as db:
+            db.execute("BEGIN")
             row = db.execute("SELECT * FROM batches WHERE id=?", (identifier,)).fetchone()
             if not row:
                 raise KeyError("批次不存在")
             if not row["report"]:
                 raise Conflict("清洗报告尚未生成")
-            report = self.published_report(dict(row))
-        records = report[section]
+            task = db.execute("SELECT dataset FROM tasks WHERE id=?", (row["task_id"],)).fetchone()
+        index = self.datasets[task["dataset"]].state_dir / "archive-records.sqlite"
+        if not index.is_file():
+            raise Conflict("清洗报告缺失")
+        source = sqlite3.connect(index.resolve().as_uri() + "?mode=ro", uri=True)
+        try:
+            source.execute("BEGIN")
+            identity = (row["name"], row["size"], row["mtime_ns"])
+            path = "$." + section
+            saved = source.execute("SELECT json_array_length(report, ?) FROM cleaning_reports WHERE name=? AND size=? AND mtime_ns=?",
+                                   (path, *identity)).fetchone()
+            if saved is None:
+                raise Conflict("清洗报告缺失")
+            records = source.execute("SELECT value FROM cleaning_reports, json_each(report, ?) WHERE name=? AND size=? AND mtime_ns=? LIMIT ? OFFSET ?",
+                                     (path, *identity, page_size, (page - 1) * page_size)).fetchall()
+            items = [json.loads(record[0]) for record in records]
+        finally:
+            source.close()
         return {"batch_id": identifier, "archive_path": str(self.origins[row["origin"]].archive_dir / row["name"]),
-                "status": row["status"], "summary": {k: v for k, v in report.items() if k not in ("records", "exclusions", "metadata_issues")},
-                "section": section, "page": page, "page_size": 50, "total": len(records), "items": records[(page-1)*50:page*50]}
+                "status": row["status"], "summary": json.loads(row["report"]),
+                "section": section, "page": page, "page_size": page_size, "total": saved[0], "items": items}
 
     def published_report(self, batch):
         with self.db() as db:
