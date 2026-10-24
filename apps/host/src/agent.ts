@@ -30,7 +30,7 @@ try {
   await accounts.initialize("cmy", initialPassword);
   const directory = path.join(config.runtimeRoot, "data/assistant");
   const access = await erisAccess(accounts, config.publicOrigin, async userId => {
-    for (const session of await sessions?.list(userId) ?? []) if (session.status === "running") await sessions?.cancel(session);
+    for (const session of await sessions?.list(userId) ?? []) await sessions?.cancel(session);
   });
   const { model, gateways } = assistantModelConfiguration(settings);
   const data = new CatalogAnalysisData(config.dataRoot, {

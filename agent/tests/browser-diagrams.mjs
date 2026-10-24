@@ -150,7 +150,7 @@ async function inspectDiagram(visual, example) {
         .map(node => ({ text: node.textContent, ...box(node), lineHeight: parseFloat(getComputedStyle(node).lineHeight) })),
       texts: read('[data-comparison-question],.eris-comparison-slice-number,[data-comparison-slice-title],[data-comparison-name],[data-comparison-outcome],[data-comparison-usefulness],[data-comparison-path-title],[data-comparison-assessment],[data-comparison-support],.eris-comparison-impact,[data-comparison-summary],[data-comparison-verdict],[data-comparison-reason],[data-comparison-caveat]'),
       highlights: [...element.querySelectorAll('[data-comparison-highlight]')].map(node => ({ text: node.textContent, weight: parseFloat(getComputedStyle(node).fontWeight),
-        background: getComputedStyle(node).backgroundColor, parent: box(node.closest('[data-comparison-support],.eris-comparison-impact,[data-comparison-reason]')),
+        background: getComputedStyle(node).backgroundImage, parent: box(node.closest('[data-comparison-support],.eris-comparison-impact,[data-comparison-reason]')),
         fragments: [...node.getClientRects()].map(rect => ({ left: rect.left, right: rect.right, top: rect.top, bottom: rect.bottom })) })),
       surfaces: [...element.querySelectorAll('[data-comparison-question],[data-comparison-answer],[data-comparison-candidate]')].map(node => getComputedStyle(node).backgroundColor),
       states: [...element.querySelectorAll('[data-comparison-outcome],[data-comparison-assessment]')].map(node => ({ state: node.dataset.comparisonOutcome ?? node.dataset.comparisonAssessment, text: node.textContent, color: getComputedStyle(node).color, background: getComputedStyle(node).backgroundColor })),
@@ -187,8 +187,8 @@ async function inspectDiagram(visual, example) {
   if (!geometry.compact) assert(geometry.answerFlows.every(flow => flow.answer.bottom < flow.arrow.top && flow.arrow.bottom < flow.usefulness.top
     && Math.abs((flow.answer.left + flow.answer.right) / 2 - (flow.arrow.left + flow.arrow.right) / 2) <= 1
     && Math.abs((flow.usefulness.left + flow.usefulness.right) / 2 - (flow.arrow.left + flow.arrow.right) / 2) <= 1), 'desktop arrows run straight between the matching answer and usefulness panels');
-  assert(geometry.highlights.every(item => item.weight >= 600 && item.background === 'rgb(255, 241, 106)' && item.fragments.every(rect =>
-    rect.left >= item.parent.left - 1 && rect.right <= item.parent.right + 1 && rect.top >= item.parent.top - 1 && rect.bottom <= item.parent.bottom + 1)), 'controlled emphasis remains readable and inside its original text at every width');
+  assert(geometry.highlights.every(item => item.weight >= 600 && item.background.startsWith('linear-gradient(') && item.background.includes('rgb(255, 241, 168)') && item.fragments.every(rect =>
+    rect.left >= item.parent.left - 1 && rect.right <= item.parent.right + 1 && rect.top >= item.parent.top - 1 && rect.bottom <= item.parent.bottom + 1)), 'controlled emphasis remains readable and inside its original text at every width: '+JSON.stringify(geometry.highlights));
   assert(geometry.timePhrases.every(phrase => phrase.height <= phrase.lineHeight + 1), 'key time ranges and dates remain unbroken');
   const expected = geometry.compact ? [] : example.candidates.map(candidate => [`${candidate.model}:answer`, `${candidate.model}:usefulness`]);
   assert.deepEqual(geometry.arrows.map(arrow => [arrow.source, arrow.target]).sort(), expected.sort(), 'arrows connect each candidate answer only to its own usefulness section');

@@ -503,7 +503,7 @@ export class AssistantSessions implements AssistantSessionRuntime {
   async cancel(scope: AssistantScope) {
     const value = await this.target(scope);
     if ("url" in value) { await this.forward(value, scope.userId, "session/cancel", { request: { sessionId: scope.sessionId } }); return; }
-    value.stopping = true; await value.driver?.abort();
+    value.stopping = true; value.prediction?.abort(); await value.driver?.abort();
   }
   async rename(scope: AssistantScope, title: string) {
     const value = await this.target(scope);

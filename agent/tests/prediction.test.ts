@@ -54,7 +54,7 @@ test("predictions follow the owning replica, stay out of history, and cancel on 
     assert.equal(JSON.stringify(await sessions.page(scope)), before);
     assert.equal(calls, 1);
     assert.deepEqual(await sessions.predict(scope, 9, [], signal), { text: null });
-    for (const action of ["input", "model", "caller"]) {
+    for (const action of ["input", "model", "caller", "cancel"]) {
       started = deferred<AbortSignal>(); release = deferred<string | null>();
       const caller = new AbortController();
       const pending = sessions.predict(scope, action === "input" ? 1 : 2, [], caller.signal);
@@ -62,6 +62,7 @@ test("predictions follow the owning replica, stay out of history, and cancel on 
       if (action === "input") await send("继续核对");
       if (action === "model") await sessions.selectModel(scope, { provider: "test", model: "test", reasoningEffort: "off" });
       if (action === "caller") caller.abort();
+      if (action === "cancel") await sessions.cancel(scope);
       assert.equal(active.aborted, true, action);
       release.resolve("过期的下一问不应显示？");
       assert.deepEqual(await pending, { text: null });
