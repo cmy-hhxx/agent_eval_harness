@@ -17,6 +17,7 @@ import { DashboardErrors } from "../../../apps/host/src/dashboard-errors.js";
 import { startDashboard } from '../../../apps/host/src/dashboard.js';
 import { ROOT, services } from '../../fixtures/services.js';
 import { fixtureConfig, raw, criteriaResultForTask, attributionResult, fakeIdentity, fakeEvaluatorVersion, emptyAudit, draftFor, submitFor, taskResult } from '../../fixtures/comparison.js';
+import { waitForTestState } from '../../fixtures/wait.js';
 
 async function fixture() {
   const f=await fixtureConfig([[raw('one'),raw('two')],[],[],[]]);
@@ -93,7 +94,8 @@ test('analysis freezes selected accepted receipts, shows unfinished/overlap, res
     engine:'pi' as const,identity:fakeIdentity,evaluatorVersion:fakeEvaluatorVersion,config:prepared.config,plan:prepared.plan,
     policy:f.config.execution,modelForStage:f.modelForStage,concurrency:1,retries:0,retryDelaySeconds:0,workerUrls:[worker.url]};
   await runEvaluation(runOptions);exit!(2,null);
-  await new Promise(resolve=>setTimeout(resolve,30));
+  await waitForTestState(()=>analysis.get(job.id),current=>!!current && !current.pid && !!current.error,
+    'analysis interruption is persisted before resuming');
   assert.equal((await analysis.list())[0].status,'interrupted');assert.equal((await analysis.scope(selected)).counts.reserved,1);
   const errors = await new DashboardErrors(path.join(f.directory,'log')).read(path.join(output.path,job.id),new URLSearchParams());
   assert(errors.tasks.some(task=>task.locations.some(location=>location.case_id==='one')));
@@ -107,7 +109,8 @@ test('analysis freezes selected accepted receipts, shows unfinished/overlap, res
 
   await analysis.launch(job.id,{});
   await runEvaluation({...runOptions,plan:{tasks:[],inputs:{},summary:{}}});exit!(0,null);
-  await new Promise(resolve=>setTimeout(resolve,30));
+  await waitForTestState(()=>analysis.get(job.id),current=>!!current && !current.pid && !!current.completed_at,
+    'analysis completion is persisted before reading its status');
   assert.equal((await analysis.list())[0].status,'completed');assert.equal((await analysis.scope(selected)).counts.included,1);
   await assert.rejects(analysis.preview(selected),/没有新的/);
   assert.equal(await readFile(path.join(f.config.output.path,'newer/state.json'),'utf8'),before);
