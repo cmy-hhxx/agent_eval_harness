@@ -134,8 +134,12 @@ export function investigationIssues(request: AgentRequest, problem: ProblemPropo
         !explicitModelProcess(request, actor, proof))
         add("responsibility_mechanism_source", location, "所选证据只有输入、生成或交付边界，没有该模型的推理、计算或转换过程记录。mechanism_source 应为 boundary_comparison，责任机制标 inferred 并列缺口及替代解释；缺陷仍可 established。数值成十倍或其他资料中的价位不能证明内部执行了乘法。");
     }
-    for (const field of cause.field_names) if (!proof.some(item => item.quote.includes(field) || (() => { const point = parseEvidenceCoordinates(item.evidence_id); return point && point.kind !== "image" && point.path.includes(field); })()))
-      add("responsibility_fields", `${location}/field_names`, `字段 ${field} 未见于该责任所选原文或坐标。`);
+    const fields = cause.field_names.filter(field => proof.some(item => item.quote.includes(field) || (() => {
+      const point = parseEvidenceCoordinates(item.evidence_id); return point && point.kind !== "image" && point.path.includes(field);
+    })()));
+    if (fields.length !== cause.field_names.length)
+      add("responsibility_fields", `${location}/field_names`, "field_names 只保留该责任证据原文或坐标中的实际字段名，不自造概念别名。正文主张或自列计算没有结构化字段时填 []；标的、单位或上下文问题仍须读取并选择实际字段。",
+        fields.length || !chain || !["entity_or_unit", "context_loss"].includes(problem.diagnosis) ? fields : undefined);
     if (cause.mechanism_source === "boundary_comparison" && cause.certainty !== "inferred")
       add("responsibility_mechanism_inferred", location, "输入输出边界可确证缺陷，但不能确证隐藏计算或转换机制；标 inferred 并给出缺口及替代解释。");
     if (chain?.delivery_changed === false && cause.role === "primary" && ["核验与最终交付"].includes(cause.chain_step) && problem.diagnosis === "entity_or_unit")

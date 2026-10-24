@@ -198,3 +198,29 @@ test("a whole final JSON reference cannot bypass its cited business chain", () =
   assert(issues.some(issue => issue.code === "investigation_incomplete"));
   assert(issues.some(issue => issue.code === "responsibility_chain"));
 });
+
+test("field repair feedback lists actual selected names without silently rewriting invented aliases", () => {
+  const f = businessChainFixture();
+  f.cause.field_names = ["Closing Price[20261022]", "target price"];
+  const issue = investigationIssues(f.binding.request, f.problem, f.evidence, f.audit, "/problem")
+    .find(issue => issue.code === "responsibility_fields")!;
+  assert.deepEqual(issue.expected, ["Closing Price[20261022]"]);
+  assert.deepEqual(f.cause.field_names, ["Closing Price[20261022]", "target price"]);
+  f.cause.field_names = issue.expected as string[];
+  assert.deepEqual(codes(f), []);
+});
+
+test("prose calculations can clear invented field names without allowing entity or unit investigations to lose their fields", () => {
+  const f = businessChainFixture();
+  f.problem.diagnosis = "other"; f.cause.field_names = ["target price", "spot price"];
+  const issue = investigationIssues(f.binding.request, f.problem, f.evidence, f.audit, "/problem")
+    .find(issue => issue.code === "responsibility_fields")!;
+  assert.deepEqual(issue.expected, []);
+  f.cause.field_names = issue.expected as string[];
+  assert.deepEqual(codes(f), []);
+  f.problem.diagnosis = "entity_or_unit";
+  assert(codes(f).includes("responsibility_fields"));
+  f.cause.field_names = ["target price"];
+  assert.equal(investigationIssues(f.binding.request, f.problem, f.evidence, f.audit, "/problem")
+    .find(issue => issue.code === "responsibility_fields")!.expected, undefined);
+});
