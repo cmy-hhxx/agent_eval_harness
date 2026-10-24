@@ -178,7 +178,7 @@ function jsonObjects(text: string): { start: number; end: number; value: Record<
 }
 
 /** References identify source material; they do not prove a whole sentence or a rendered view. */
-export function citationInventory(raw: { messages: unknown[] }, inputId: string, finalIndex: number): CitationInventory {
+function buildCitationInventory(raw: { messages: unknown[] }, inputId: string, finalIndex: number, contexts: { message_index: number; path: string }[]): CitationInventory {
   const directory = new Map<string, CitationSource[]>();
   const protocols = new Set<CitationFormat>();
   const add = (format: CitationFormat, reference: string, evidence: Evidence, origin: CitationSource["origin"],
@@ -277,11 +277,11 @@ export function citationInventory(raw: { messages: unknown[] }, inputId: string,
     }
   });
 
-  // B assigns some IDs after the raw tool return. Only the actual final renderer's material
-  // is an eligible directory; planner turns and system instruction examples are excluded.
-  const context = answerTurnContexts(raw, finalIndex).at(-1);
-  const turn = context && record(raw.messages[context.message_index]);
-  if (context && turn) {
+  // B assigns some IDs after the raw return. Callers explicitly select current delivery
+  // or the linked processing history; independent planners and instruction examples stay excluded.
+  for (const context of contexts) {
+    const turn = record(raw.messages[context.message_index]);
+    if (!turn) continue;
     const turnIndex = context.message_index;
     const instructions = turn.input_messages;
     const nested = record(instructions);
@@ -332,4 +332,13 @@ export function citationInventory(raw: { messages: unknown[] }, inputId: string,
     documents.set(group.url, group);
   }
   return { protocols: [...protocols], references: [...references.values()], document_groups: [...documents.values()] };
+}
+
+/** Eligible sources for the current delivery, excluding prior processing snapshots. */
+export function citationInventory(raw: { messages: unknown[] }, inputId: string, finalIndex: number): CitationInventory {
+  return buildCitationInventory(raw, inputId, finalIndex, answerTurnContexts(raw, finalIndex).slice(-1));
+}
+/** Navigation through captured processing inputs; this does not certify final citation eligibility. */
+export function processSourceInventory(raw: { messages: unknown[] }, inputId: string, finalIndex: number): CitationInventory {
+  return buildCitationInventory(raw, inputId, finalIndex, answerTurnContexts(raw, finalIndex));
 }

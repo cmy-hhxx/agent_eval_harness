@@ -1,7 +1,7 @@
 import { attributionTaxonomy } from "@eval/prompts";
 import { answerTurnContexts, cite, evidenceSources, messageContentSources, parseEvidenceCoordinates, selectEvidenceSource, traceComponentIdentities, traceExchanges } from "@eval/tools";
 import type { BusinessChain, Evidence } from "@eval/agents/attribution";
-import { citationInventory } from "./citations.js";
+import { processSourceInventory } from "./citations.js";
 import { getAnswerGeneration } from "./answer-generation.js";
 import type { RawInput } from "./types.js";
 
@@ -9,7 +9,7 @@ const object = (value: unknown): Record<string, unknown> => value && typeof valu
 
 /** Link captured boundaries, not imagined intermediate processing or a causal verdict. */
 export function businessChains(raw: RawInput, inputId: string, finalIndex: number): BusinessChain[] {
-  const inventory = citationInventory(raw, inputId, finalIndex), contexts = answerTurnContexts(raw, finalIndex);
+  const inventory = processSourceInventory(raw, inputId, finalIndex), contexts = answerTurnContexts(raw, finalIndex);
   const actors = traceComponentIdentities(raw, inputId, finalIndex);
   const generation = getAnswerGeneration(raw, inputId, finalIndex);
   const at = (index: number, path: string, limit = 4800): Evidence[] => {
@@ -42,7 +42,9 @@ export function businessChains(raw: RawInput, inputId: string, finalIndex: numbe
     const fallbackInput = contexts.flatMap(context => evidenceSources(raw.messages[context.message_index])
       .filter(source => source.kind === "text" && source.path.startsWith(context.path + "/") && /\/content(?:\/|$)/u.test(source.path))
       .flatMap(source => at(context.message_index, source.path, source.text.length || 4800)));
-    const actualInput: Evidence[] = actual.length ? actual : fallbackInput;
+    const lastContext = contexts.at(-1)?.message_index;
+    const actualInput: Evidence[] = actual.length ? [...actual,
+      ...(!actual.some(source => source.message_index === lastContext) ? fallbackInput.filter(item => item.message_index === lastContext) : [])] : fallbackInput;
     const returns = exchange.return_indices.flatMap(i => {
       const output = object(object(raw.messages[i]).output ?? object(raw.messages[i]).result);
       const prefix = Object.hasOwn(object(raw.messages[i]), "output") ? "/output" : "/result";
@@ -58,8 +60,10 @@ export function businessChains(raw: RawInput, inputId: string, finalIndex: numbe
     const planner = exchange.planner_index === null ? [] : outputs(exchange.planner_index);
     const request = ["/input", "/arguments"].flatMap(path => at(exchange.request_index, path));
     const generated = generation ? outputs(generation.message_index) : [];
+    const intermediates = contexts.filter(context => context.message_index !== generation?.message_index)
+      .flatMap(context => outputs(context.message_index));
     const finals = references.flatMap(reference => reference.occurrences.map(occurrence => occurrence.context));
-    const stepEvidence = [goals, planner, request, returns, [...returns, ...actualInput], actualInput,
+    const stepEvidence = [goals, planner, request, returns, [...returns, ...intermediates, ...actualInput], actualInput,
       [...actualInput, ...generated], [...generated, ...finals]];
     return { chain_index: index + 1, tool_component: actors.find(actor => actor.kind === "tool" && actor.message_indices.includes(exchange.request_index))!.component, ...exchange,
       context_indices: [...new Set(contexts.map(context => context.message_index))],
@@ -68,7 +72,9 @@ export function businessChains(raw: RawInput, inputId: string, finalIndex: numbe
       checkpoints: attributionTaxonomy.investigation_steps.map((step, i) => ({ step,
         availability: stepEvidence[i].length ? "available" as const : "not_collected" as const,
         evidence: [...new Map(stepEvidence[i].map(item => [item.evidence_id, { evidence_id: item.evidence_id, message_index: item.message_index, quote: item.quote }])).values()],
-        note: i === 4 ? "仅登记返回和实际输入边界；中间整理者、摘要规则和换算记录须继续查证，不能由相邻顺序推断。"
+        note: i === 1 ? "分别核对谁选择了标的及选择依据；若计划没有解释代理标的理由，在观察中明确说明未记录，不编造上游责任。"
+          : i === 4 ? "登记已捕获的返回、整理节点输出与最后实际输入；只按已查关键字段描述保留或丢失，不把局部一致写成整个返回原样传入。未记录的规则不能由相邻顺序推断。"
+          : i === 6 ? "同时核对实际输入和生成；只有边界差异不能确证内部乘法、换算或转换步骤。"
           : i === 7 ? "核对生成与交付；未记录独立核验不等于已执行核验，也不自动构成关联责任。" : "材料存在须读取后判断；目录关联不证明因果。",
       })), final_evidence: finals.map(({ evidence_id, message_index, quote }) => ({ evidence_id, message_index, quote })) };
   });

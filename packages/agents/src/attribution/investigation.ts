@@ -1,11 +1,11 @@
 import { canonical, type AgentRequest, type ToolAudit, type TraceRead, type ValidationIssue } from "@eval/contracts";
 import { attributionTaxonomy } from "@eval/prompts";
-import { evidenceSources, isComponentLocator, parseEvidenceCoordinates, traceExchanges, traceReadCoverage } from "@eval/tools";
+import { cite, evidenceSources, isComponentLocator, parseEvidenceCoordinates, selectEvidenceSource, traceExchanges, traceReadCoverage } from "@eval/tools";
 import type { BusinessChain, Evidence, ProblemProposal } from "./types.js";
 
 export const businessChainDirectory = (request: AgentRequest): BusinessChain[] =>
   (request.input.answer as { business_chains: BusinessChain[] }).business_chains;
-const critical = new Set(["查询规划与标的选择", "工具请求参数", "原始返回及字段含义", "模型实际输入"]);
+const critical = new Set(["查询规划与标的选择", "工具请求参数", "原始返回及字段含义", "返回整理与上下文传递", "模型实际输入"]);
 const target = (item: Evidence): TraceRead | undefined => {
   const point = parseEvidenceCoordinates(item.evidence_id);
   return point && point.kind !== "image" ? { candidate: "answer", message_index: point.message_index,
@@ -17,11 +17,23 @@ export function businessChainReads(request: AgentRequest): TraceRead[] {
       const read = target(item); return read ? [[canonical(read), read] as const] : [];
     })))).values()];
 }
-const overlaps = (a: Evidence, b: Evidence) => {
+const overlaps = (a: Evidence, b: Evidence, raw: { messages: unknown[] }) => {
   const x = parseEvidenceCoordinates(a.evidence_id), y = parseEvidenceCoordinates(b.evidence_id);
-  return x && y && x.kind !== "image" && y.kind === x.kind && x.input_id === y.input_id &&
-    x.message_index === y.message_index && x.path === y.path && x.start < y.end && y.start < x.end;
+  if (!x || !y || x.kind === "image" || y.kind === "image" || x.input_id !== y.input_id || x.message_index !== y.message_index) return false;
+  if (x.kind === y.kind) return x.path === y.path && x.start < y.end && y.start < x.end;
+  const text = x.kind === "text" ? x : y, json = x.kind === "json" ? x : y;
+  const range = selectEvidenceSource(evidenceSources(raw.messages[x.message_index]).filter(source => source.kind === "json"), text.path);
+  return !!range && json.path === range.source.path && json.start < range.end && range.start < json.end;
 };
+
+/** A quoted boundary is not an intermediate calculation, even when two values have a simple ratio. */
+function explicitModelProcess(request: AgentRequest, actor: { message_indices: number[] }, proof: readonly Evidence[]): boolean {
+  const raw = request.sources.answer.value as { messages: unknown[] };
+  return proof.some(item => !item.source && actor.message_indices.includes(item.message_index) &&
+    evidenceSources(raw.messages[item.message_index]).some(source => source.kind === "text" && source.text.length > 0 &&
+      !source.path.startsWith("/input_messages/") && /\/(?:reasoning_content|reasoning|thinking|calculation(?:s|_steps)?)(?:\/|$)/u.test(source.path) &&
+      overlaps(item, cite(request.sources.answer.id, item.message_index, source, 0, source.text.length), raw)));
+}
 
 /** Validate the program directory against actual invocations and original source coordinates. */
 export function businessChainDirectoryIssues(request: AgentRequest): ValidationIssue[] {
@@ -53,10 +65,11 @@ export function businessChainDirectoryIssues(request: AgentRequest): ValidationI
 /** An unread captured boundary is a next investigation action, never a missing-source verdict. */
 export function investigationIssues(request: AgentRequest, problem: ProblemProposal, selected: readonly Evidence[], audit: ToolAudit, path: string): ValidationIssue[] {
   const issues = businessChainDirectoryIssues(request), chains = businessChainDirectory(request);
+  const raw = request.sources.answer.value as { messages: unknown[] };
   const add = (code: string, location: string, message: string, expected?: unknown) =>
     issues.push({ category: "evidence", code, path: location, message, ...(expected === undefined ? {} : { expected }) });
   const related = chains.filter(chain => problem.component.some(cause => cause.chain_index === chain.chain_index) ||
-    chain.final_evidence.some(item => selected.some(proof => !proof.source && overlaps(item, proof))));
+    chain.final_evidence.some(item => selected.some(proof => !proof.source && overlaps(item, proof, raw))));
   for (const chain of related) {
     const entries = problem.investigation.filter(entry => entry.chain_index === chain.chain_index);
     const where = `${path}/investigation`;
@@ -64,6 +77,14 @@ export function investigationIssues(request: AgentRequest, problem: ProblemPropo
       add("investigation_incomplete", where, `相关链路 ${chain.chain_index} 必须沿八个环节追查，每步填写观察、证据或明确未采集的材料；不能在最终生成节点结束。`, chain.checkpoints.map(point => ({ step: point.step, availability: point.availability })));
       continue;
     }
+    const returned = chain.checkpoints.find(point => point.step === "原始返回及字段含义")!.evidence;
+    const inputs = chain.checkpoints.find(point => point.step === "模型实际输入")!.evidence;
+    const finalInputs = inputs.filter(item => item.message_index === chain.context_indices.at(-1));
+    const actualInput = finalInputs.length ? finalInputs : inputs;
+    const generated = chain.checkpoints.find(point => point.step === "数据解释与计算")!.evidence
+      .filter(item => !inputs.some(input => input.evidence_id === item.evidence_id));
+    const intermediates = chain.checkpoints.find(point => point.step === "返回整理与上下文传递")!.evidence
+      .filter(item => ![...returned, ...inputs].some(boundary => boundary.evidence_id === item.evidence_id));
     for (const checkpoint of chain.checkpoints) {
       const step = entries[0].steps.find(row => row.step === checkpoint.step)!;
       if (checkpoint.availability === "available" && step.status === "not_collected")
@@ -72,6 +93,15 @@ export function investigationIssues(request: AgentRequest, problem: ProblemPropo
         add("investigation_missing_boundary", where, `${checkpoint.step} 未有该边界的记录，不能用其他环节证据声称已核实；明确未采集及其影响。`);
       if (step.status === "checked" && (!step.evidence_ids.length || step.evidence_ids.some(id => !selected.some(item => item.evidence_id === id))))
         add("investigation_evidence", where, `${checkpoint.step} 已检查须引用本条 finding 的真实证据。`);
+      const groups = checkpoint.step === "返回整理与上下文传递" ? [returned, intermediates, actualInput]
+        : checkpoint.step === "数据解释与计算" ? [actualInput, generated.length ? generated : chain.final_evidence]
+        : checkpoint.step === "核验与最终交付" ? [generated, chain.final_evidence]
+        : checkpoint.step === "模型实际输入" ? [actualInput] : [checkpoint.evidence];
+      if (step.status === "checked") for (const group of groups.filter(group => group.length)) {
+        if (!group.some(point => selected.some(item => !item.source && step.evidence_ids.includes(item.evidence_id) && overlaps(item, point, raw))))
+          add("investigation_stage_evidence", where, `${checkpoint.step} 必须引用该环节的真实来源；传递、解释和交付分别对照前后边界，不能用后续输入代替原始返回，或用最终交付代替生成过程。`,
+            group.map(({evidence_id,message_index}) => ({evidence_id,message_index})));
+      }
       if (critical.has(checkpoint.step)) for (const item of checkpoint.evidence) {
         const read = target(item);
         if (read && !traceReadCoverage(audit, read).covered)
@@ -91,7 +121,7 @@ export function investigationIssues(request: AgentRequest, problem: ProblemPropo
       add("responsibility_fields", location, "标的、单位或上下文问题须列明受影响的实际字段。");
     const proof = selected.filter(item => cause.evidence_ids.includes(item.evidence_id));
     if (chain) {
-      const actor = (request.input.answer as { component_catalog: { component: string; message_indices: number[] }[] })
+      const actor = (request.input.answer as { component_catalog: { kind: string; component: string; message_indices: number[] }[] })
         .component_catalog.find(actor => actor.component === cause.component);
       const nodes = cause.chain_step === "查询规划与标的选择" ? [chain.planner_index]
         : cause.chain_step === "工具请求参数" ? [chain.planner_index, chain.request_index]
@@ -100,6 +130,9 @@ export function investigationIssues(request: AgentRequest, problem: ProblemPropo
         : [...chain.context_indices, chain.planner_index];
       if (!actor?.message_indices.some(index => nodes.includes(index)))
         add("responsibility_chain_actor", location, "执行主体与所选业务环节没有实际节点关联；不能把规划、返回或输入处理责任兜底给最终作答者。");
+      if (actor?.kind === "model" && cause.chain_step === "数据解释与计算" && cause.mechanism_source === "explicit_process" &&
+        !explicitModelProcess(request, actor, proof))
+        add("responsibility_mechanism_source", location, "所选证据只有输入、生成或交付边界，没有该模型的推理、计算或转换过程记录。mechanism_source 应为 boundary_comparison，责任机制标 inferred 并列缺口及替代解释；缺陷仍可 established。数值成十倍或其他资料中的价位不能证明内部执行了乘法。");
     }
     for (const field of cause.field_names) if (!proof.some(item => item.quote.includes(field) || (() => { const point = parseEvidenceCoordinates(item.evidence_id); return point && point.kind !== "image" && point.path.includes(field); })()))
       add("responsibility_fields", `${location}/field_names`, `字段 ${field} 未见于该责任所选原文或坐标。`);
@@ -117,7 +150,7 @@ export function investigationIssues(request: AgentRequest, problem: ProblemPropo
   if (problem.diagnosis === "source_absence") {
     const inventory = (request.input.answer as { citation_inventory?: { references: { reference: string; status: string; sources: Evidence[] }[] } }).citation_inventory;
     if (inventory?.references.some(reference => reference.status !== "unknown" && reference.sources.length &&
-      selected.some(item => item.quote.includes(reference.reference))))
+      selected.some(item => item.quote.includes(reference.reference))) || related.some(chain => chain.references.some(reference => selected.some(item => item.quote.includes(reference)))))
       add("source_absence_contradicted", path, "所引来源已有可读原文，不能判来源不存在或无法追溯；继续核对内容支持、标的口径及实际输入。来源存在不等于支持具体主张。");
   }
   return issues;

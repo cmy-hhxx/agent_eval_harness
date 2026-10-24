@@ -8,6 +8,7 @@ import { attributionSubmission } from "../../../../tests/fixtures/attribution-su
 import { businessChainDirectoryIssues, investigationIssues } from "./investigation.js";
 import { responsibilityIssues } from "./responsibility.js";
 import { bindAttributionMaterial } from "@eval/workflows/comparison";
+import { cite, evidenceSources } from "@eval/tools";
 
 const codes = (f: ReturnType<typeof businessChainFixture>) => investigationIssues(f.binding.request, f.problem, f.evidence, f.audit, "/problem").map(issue => issue.code);
 test("correct tool return followed by wrong interpretation retains the full business location and inferred hidden mechanism", () => {
@@ -140,4 +141,60 @@ test("an explicitly empty return remains readable process evidence instead of an
   assert(returned.evidence.some((item: any) => /"output":\s*""/u.test(item.quote)));
   assert(attributionAgent.profiles.default.requiredReads!(binding.request).every(read => read.end > read.start));
   assert.deepEqual(businessChainDirectoryIssues(binding.request), []);
+});
+
+test("reading all materials does not let an actual-input quote impersonate the raw return or either generated boundary", () => {
+  const f = businessChainFixture();
+  const input = f.chain.checkpoints.find(point => point.step === "模型实际输入")!.evidence.map(item => item.evidence_id);
+  for (const stepName of ["原始返回及字段含义", "返回整理与上下文传递", "数据解释与计算", "核验与最终交付"]) {
+    const step = f.problem.investigation[0].steps.find(step => step.step === stepName)!, before = step.evidence_ids;
+    step.evidence_ids = input;
+    assert(codes(f).includes("investigation_stage_evidence"), stepName);
+    step.evidence_ids = before;
+  }
+  assert.deepEqual(codes(f), []);
+});
+test("a tenfold boundary relation cannot self-declare an explicit confirmed process, while recorded calculation can", () => {
+  const f = businessChainFixture();
+  Object.assign(f.cause, { mechanism_source: "explicit_process", certainty: "confirmed", evidence_gap: null, alternatives: [] });
+  assert(codes(f).includes("responsibility_mechanism_source"));
+  const index = f.raw.messages.length - 2;
+  f.raw.messages[index].reasoning_content = "将369乘10得到3690，再写为XAU/USD。";
+  f.binding = bindAttributionMaterial(f.candidate, f.raw);
+  const source = evidenceSources(f.raw.messages[index]).find(source => source.path === "/reasoning_content")!;
+  const point = cite(f.candidate.input_id, index, source, 0, source.text.length);
+  f.evidence.push(point); f.cause.evidence_ids.push(point.evidence_id);
+  f.cause.mechanism = "记录的推理明确将369乘10得到3690，并作为XAU/USD报价输出。";
+  f.cause.reason = "该节点的reasoning_content直接记录了转换步骤，输入及生成边界与之相符。";
+  assert.deepEqual(codes(f), []);
+});
+test("an earlier preparer's complete source never substitutes for the final model's input after the source was dropped", () => {
+  const f = businessChainFixture(true, undefined, true), last = f.chain.context_indices.at(-1)!;
+  f.problem.diagnosis = "context_loss";
+  Object.assign(f.cause, { component: "结果整理 Agent", technical_domain: "上下文工程", functional_component: "压缩摘要",
+    business_component: "finquery 返回整理时删除身份与单位", chain_step: "返回整理与上下文传递", certainty: "confirmed", mechanism_source: "explicit_process",
+    evidence_gap: null, alternatives: [], mechanism: "整理前含ETF身份和美元单位，整理输出仅保留price且最后实际输入没有恢复身份与单位。" });
+  assert(f.chain.references.includes("pfJtupL"));
+  assert.equal((f.binding.request.input.answer as any).citation_inventory.references[0].status, "unknown");
+  const inputs = f.chain.checkpoints.find(point => point.step === "模型实际输入")!.evidence;
+  assert(inputs.some(item => item.message_index < last && item.quote.includes("SPDR Gold Shares")));
+  assert(inputs.some(item => item.message_index === last && item.quote.includes("use the preceding summary")));
+  assert.deepEqual(codes(f), []);
+  f.problem.diagnosis = "source_absence";
+  assert(codes(f).includes("source_absence_contradicted"));
+  f.problem.diagnosis = "context_loss";
+  const step = f.problem.investigation[0].steps.find(step => step.step === "模型实际输入")!;
+  step.evidence_ids = inputs.filter(item => item.message_index < last).map(item => item.evidence_id);
+  assert(codes(f).includes("investigation_stage_evidence"));
+  f.audit.traceReads = f.audit.traceReads.filter(read => read.message_index !== last);
+  assert(codes(f).includes("investigation_read_required"));
+});
+test("a whole final JSON reference cannot bypass its cited business chain", () => {
+  const f = businessChainFixture(), index = f.candidate.final_index;
+  const source = evidenceSources(f.raw.messages[index]).find(source => source.kind === "json")!;
+  const point = cite(f.candidate.input_id, index, source, 0, source.text.length);
+  f.problem.investigation = []; f.cause.chain_index = null;
+  const issues = investigationIssues(f.binding.request, f.problem, [point], f.audit, "/problem");
+  assert(issues.some(issue => issue.code === "investigation_incomplete"));
+  assert(issues.some(issue => issue.code === "responsibility_chain"));
 });
