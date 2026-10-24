@@ -43,7 +43,7 @@ test("two local processes forward one Session, deduplicate UUIDs and replace a d
   const inspected=await rpc(b.url,"alice","assistant/toolResult",{sessionId:id,callId:"lookup-hold"});
   assert.equal((inspected.content as {text:string}[])[0].text,String(a.child.pid),"source inspection forwards to the current owner");
 
-  relay=new RemoteStreamMuxClient(`${b.url.replace(/^http/,"ws")}/u/alice/api/remote.mux`);relay.start();
+  relay=new RemoteStreamMuxClient(()=>new WebSocket(`${b.url.replace(/^http/,"ws")}/u/alice/api/remote.mux`));relay.start();
   const controller=new AbortController(),follow=relay.open("session/follow",{args:{request:{address,assistantStream:true}}},AbortSignal.any([controller.signal,AbortSignal.timeout(5000)]))[Symbol.asyncIterator]();
   assert.equal(object((await follow.next()).value).type,"snapshot");
   // Committed events can still be in flight after the baseline. Only a physical

@@ -23,7 +23,7 @@ async function rpc(method, request = {}) {
 }
 let client;
 const follow = async sessionId => {
-  client = new RemoteStreamMuxClient(`${base.replace(/^http/, "ws")}/u/${user.id}/api/remote.mux`, url => new WebSocket(url, { origin, headers: { cookie } }));
+  client = new RemoteStreamMuxClient(() => new WebSocket(`${base.replace(/^http/, "ws")}/u/${user.id}/api/remote.mux`, { origin, headers: { cookie } }));
   client.start();
   const controller = new AbortController(), stream = client.open("session/follow", { args: { request: { address: { kind: "session", sessionId }, assistantStream: true } } }, controller.signal)[Symbol.asyncIterator]();
   const first = await Promise.race([stream.next(), delay(15000, undefined, { ref: false }).then(() => { throw new Error("stream timeout"); })]);

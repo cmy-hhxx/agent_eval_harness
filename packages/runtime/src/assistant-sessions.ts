@@ -163,6 +163,11 @@ export class AssistantSessions implements AssistantSessionRuntime {
     value.writes = next.then(() => {});
     return next;
   }
+  private async readCommitted<T>(value: Owned, read: () => T): Promise<T> {
+    let writes: Promise<void>;
+    do { writes = value.writes; await writes; } while (writes !== value.writes);
+    return read();
+  }
   private async closeStep(value: Owned) {
     await value.writes;
     const boundary = value.journal.events.findLast((event) => event.type === "step/start" || event.type === "step/end");
@@ -429,7 +434,7 @@ export class AssistantSessions implements AssistantSessionRuntime {
   async projections(scope: AssistantScope) {
     const value = await this.target(scope);
     if ("url" in value) return this.forward(value, scope.userId, "session/projections", { request: { sessionId: scope.sessionId } });
-    return sessionProjections(value.journal.state, value.journal, value.metrics);
+    return this.readCommitted(value, () => ({ kind: "sequenced", ...sessionProjections(value.journal.state, value.journal, value.metrics) }));
   }
   async predict(scope: AssistantScope, sourceTurn: number, recentSuggestions: string[], signal: AbortSignal): Promise<{ text: string | null }> {
     signal.throwIfAborted();
@@ -541,20 +546,34 @@ export class AssistantSessions implements AssistantSessionRuntime {
     if ("url" in value) {
       const base = `${value.url}/u/${scope.userId}/`;
       let relay = this.relays.get(base);
-      if (!relay) { relay = new RemoteStreamMuxClient(new URL("api/remote.mux", base).href.replace(/^http/, "ws"), this.options.internalAuthorization ? (url) => new WebSocket(url, { headers: { authorization: this.options.internalAuthorization!(scope.userId) } }) as unknown as globalThis.WebSocket : undefined); this.relays.set(base, relay); }
+      if (!relay) { relay = new RemoteStreamMuxClient(() => new WebSocket(new URL("api/remote.mux", base).href.replace(/^http/, "ws"), this.options.internalAuthorization ? { headers: { authorization: this.options.internalAuthorization(scope.userId) } } : undefined)); this.relays.set(base, relay); }
       relay.start();
       yield* relay.open("session/follow", { args: { request: { address: { kind: "session", sessionId: scope.sessionId }, assistantStream: true } } }, signal);
       return;
     }
-    const following = value.feed.open(signal);
-    const events = value.journal.events, start = Math.max(0, events.length - 100);
-    yield { type: "snapshot", header: this.header(value), cursor: value.journal.state.lastSeq, records: events.slice(start).map((event) => ({ type: "event", event: this.publicEvent(event) })), hasMore: start > 0, projections: sessionProjections(value.journal.state, value.journal, value.metrics), assistantStream: value.stream.snapshot() };
+    const { following, snapshot } = await this.readCommitted(value, () => {
+      const following = value.feed.open(signal);
+      const events = value.journal.events, start = Math.max(0, events.length - 100);
+      const snapshot = { type: "snapshot", header: this.header(value), cursor: value.journal.state.lastSeq, records: events.slice(start).map((event) => ({ type: "event", event: this.publicEvent(event) })), hasMore: start > 0, projections: sessionProjections(value.journal.state, value.journal, value.metrics), assistantStream: value.stream.snapshot() };
+      return { following, snapshot };
+    });
+    yield snapshot;
     yield* following;
   }
   async *changes(userId: string, signal: AbortSignal, kind: "events" | "control") {
     const states = await this.list(userId);
+    const projectionCuts = new Map<string, number>();
+    const readProjection = async (state: AssistantSessionState) => {
+      const snapshot = object(await this.projections(state)), seq = snapshot.asOfSeq;
+      if (typeof seq !== "number" || !Number.isSafeInteger(seq) || seq < -1) throw new Error("Invalid session projection cut");
+      return { snapshot, seq };
+    };
     if (kind === "events") yield { type: "ready", clientId: randomUUID(), host: { home: this.options.directory } };
-    else yield { type: "baseline", value: { projections: Object.fromEntries(await Promise.all(states.map(async (state) => [state.sessionId, await this.projections(state)]))) } };
+    else yield { type: "baseline", value: { projections: Object.fromEntries(await Promise.all(states.map(async (state) => {
+      const { snapshot, seq } = await readProjection(state);
+      projectionCuts.set(state.sessionId, seq);
+      return [state.sessionId, snapshot];
+    }))) } };
     let favorites = JSON.stringify(await this.options.models?.readFavorites(userId));
     let settingsRevision = (await readAssistantPreferences(this.options.directory, userId)).revision;
     const seen = new Map(states.map((state) => [state.sessionId, JSON.stringify(state)]));
@@ -577,7 +596,12 @@ export class AssistantSessions implements AssistantSessionRuntime {
           yield { type: "emit", event: "api-session/added", args: [sessionSummary(state)] };
           yield { type: "emit", event: "api-session/status", args: [state.sessionId, state.status === "running"] };
         }
-        else if (state.lastSeq >= 0) for (const [key, value] of Object.entries(object(object(await this.projections(state)).values))) yield { type: "projection", sessionId: state.sessionId, key, value, seq: state.lastSeq };
+        else {
+          const { snapshot, seq } = await readProjection(state);
+          if (seq <= (projectionCuts.get(state.sessionId) ?? -1)) continue;
+          projectionCuts.set(state.sessionId, seq);
+          for (const [key, value] of Object.entries(object(snapshot.values))) yield { type: "projection", sessionId: state.sessionId, key, value, seq };
+        }
       }
     }
   }

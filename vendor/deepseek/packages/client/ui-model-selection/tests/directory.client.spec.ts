@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
-import type { ModelSelection, ModelSelectionProjection } from '@deepseek-ai/dsh-api-session-controller/types'
+import type { ModelSelectionProjection } from '@deepseek-ai/dsh-agent/types'
+import type { ModelSelection } from '@deepseek-ai/dsh-api-remotes/client'
 import type { SessionId } from '@deepseek-ai/dsh-session/types'
 import { createSnapshotStore } from '@deepseek-ai/dsh-client-store'
 import { ModelCatalogDirectory } from '../src/client/catalog.ts'

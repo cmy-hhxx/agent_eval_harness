@@ -31,7 +31,11 @@ export async function erisAccess(accounts: AssistantAccounts, publicOrigin: stri
       const [userId, expiry, proof] = authorization.slice(5).split(".");
       if (!userId || !proof || !Number.isSafeInteger(Number(expiry)) || Number(expiry) <= Date.now() || Number(expiry) > Date.now() + 30000) return;
       const expected = Buffer.from(sign(`${userId}.${expiry}`)), actual = Buffer.from(proof);
-      if (expected.length !== actual.length || !timingSafeEqual(expected, actual) || !await accounts.account(userId)) return;
+      if (expected.length !== actual.length || !timingSafeEqual(expected, actual)) return;
+      const account = (await accounts.list()).find(user => user.id === userId);
+      // Suspension must still reach a foreign owner to abort its work.
+      const cancellation = req.method === "POST" && req.url === `/u/${userId}/api/session/cancel`;
+      if (!account || account.disabled && !cancellation) return;
       return { userId, loginId: "internal", expiresAt: Number(expiry), internal: true };
     }
     const login = await accounts.authenticate(cookieValue(req.headers.cookie, "eris_session"));

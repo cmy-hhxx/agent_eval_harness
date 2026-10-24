@@ -46,7 +46,9 @@
 
 Pi 源码检查用 `npm --prefix vendor/pi run check:sources`；上游 `check` 依赖已裁剪模型目录，不作为本项目回归入口。Prime 构建不下载模型或 MCP 目录，集成测试使用 `PI_OFFLINE=1`。
 
-Eris 普通构建只读本仓库 [Deepseek 源码映射](../vendor/deepseek/sources.json)与[补丁](../vendor/deepseek/local.patch)。显式 `node scripts/vendor-deepseek.mjs <上游仓库>` 才同步选定源码与测试，不引入上游桌面构建。
+Eris 普通构建只读本仓库 [Deepseek 源码映射](../vendor/deepseek/sources.json)与[本地补丁](../vendor/deepseek/local.patch)。显式 `node scripts/vendor-deepseek.mjs <上游仓库>` 从干净的上游 checkout 同步选定源码与测试，不引入上游桌面构建。测试入口从 `agent/vitest.config.mjs` 读取，公开源导出与上游声明的 npm 依赖补丁随映射保存；本地改动清单以 `vendor/upstream.json` 为唯一维护位置。
+
+`bootstrap`、Eris 构建和上游测试通过 `scripts/apply-agent-dependency-patches.mjs` 应用这些 npm 补丁。安装包的名称、版本和补丁内容必须匹配；已经应用时保持幂等，不匹配直接失败。补丁文件保留原始上下文，源码继续接受空白检查。
 
 ## 文档维护
 

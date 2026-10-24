@@ -8,6 +8,9 @@ import * as typert from "@deepseek-ai/dsh-typert-registry/client";
 import * as session from "@deepseek-ai/dsh-api-session-controller/client";
 import * as workspace from "@deepseek-ai/dsh-api-workspace-controller/client";
 import * as fileUpload from "@deepseek-ai/dsh-client-file-upload/client";
+import * as fileDrag from "@deepseek-ai/dsh-client-ui-file-drag/client";
+import * as attachments from "@deepseek-ai/dsh-client-ui-attachment/client";
+import { mountAccess } from "../../../vendor/deepseek/packages/api/remote-access/src/client/mount.ts";
 import * as settings from "@deepseek-ai/dsh-client-ui-settings/client";
 import * as settingsGeneral from "@deepseek-ai/dsh-client-ui-settings-general/client";
 import * as locale from "@deepseek-ai/dsh-client-locale/client";
@@ -31,7 +34,7 @@ import * as modelFavorites from "./models.js";
 import * as analysisToolViews from "./tools.js";
 import * as erisBrand from "./brand.js";
 import * as prediction from "./prediction.js";
-import { contribution } from "../core/remote-contract.js";
+import { contribution, accessContribution } from "../core/remote-contract.js";
 
 // All presentation, stores, subscriptions and transport are the upstream plugins.
 const ctx = new Context();
@@ -39,11 +42,12 @@ ctx.on("internal/error", (error) => { console.error(error); });
 const pending = [renderer, typert, connection, gateway].map((plugin) => ctx.plugin(plugin.default ?? plugin));
 await Promise.all(pending);
 await ctx.remote.$mount(contribution);
+await ctx.plugin({ inject: ["remote", "slots"], apply: ctx => mountAccess(ctx, accessContribution) });
 await Promise.all([
   ctx.plugin(theme, { appearanceSelector: false }),
   ctx.plugin(settingsGeneral, { technicalRows: false }),
   ...[
-  session, workspace, fileUpload, settings, locale, shortcuts, resources,
+  session, workspace, fileUpload, fileDrag, attachments, settings, locale, shortcuts, resources,
   layout, sidebar, erisBrand, uiSession, sidebarRight, chat, tool, trajectory, analysisToolViews, inputTriggers, commands, modelSelection, modelFavorites, prediction,
   ].map((plugin) => ctx.plugin(plugin.default ?? plugin)),
 ]);

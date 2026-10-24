@@ -223,7 +223,8 @@ test('the conversation picker keeps every channel visible when favorites only co
     const session=await sessions.create('alice');
     await sessions.selectModel({userId:'alice',sessionId:session.sessionId},{provider:'openai',model:'gpt-6-luna',reasoningEffort:'high'});
     assert.equal((await sessions.list('alice'))[0].modelSelection?.provider,'openai');
-    const projections=await sessions.projections({userId:'alice',sessionId:session.sessionId}) as {values:{contextPressure:{contextWindow:number}}};
+    const projections=await sessions.projections({userId:'alice',sessionId:session.sessionId}) as {kind:string;values:{contextPressure:{contextWindow:number}}};
+    assert.equal(projections.kind,'sequenced','the current client requires an explicit projection-baseline discriminator');
     assert.equal(projections.values.contextPressure.contextWindow,131072,'the selected model refreshes capacity without requiring a model request');
     await models.favorites('alice',[modelIdentity('openai','gpt-6-luna')]);
     assert((await catalog()).groups.every(group=>group.models.length===2),'changing favorites must never hide other channels');

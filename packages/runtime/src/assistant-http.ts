@@ -1,10 +1,9 @@
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import path from "node:path";
-import { randomUUID } from "node:crypto";
 import { once } from "node:events";
 import { localFiles, assistantUser } from "@eval/data";
 import { errorText } from "@eval/contracts";
-import { Context, RemoteStreamMuxServer, rpcFetchHandler, bootThemeInjections, RemoteStreamCarrierError } from "./deepseek.js";
+import { Context, Peer, RemoteStreamMuxServer, rpcFetchHandler, bootThemeInjections, RemoteStreamCarrierError } from "./deepseek.js";
 
 export interface AssistantEndpoints {
   call(userId: string, endpoint: string, payload: unknown, signal: AbortSignal): Promise<unknown>;
@@ -38,7 +37,7 @@ export async function serveAssistant(options: { host?: string; access?: Assistan
         throw error;
       }
     })();
-  }, failure, 2000, 8 * 1024 * 1024);
+  }, failure, { heartbeatIntervalMs: 2000, streamInboxBytes: 8 * 1024 * 1024, compression: true });
   const parse = (url: URL) => {
     const match = /^\/u\/([^/]+)\/(.*)$/.exec(url.pathname);
     if (!match) return undefined;
@@ -66,7 +65,7 @@ export async function serveAssistant(options: { host?: string; access?: Assistan
         const connection = principal && { principal, close: () => { abort.abort(); res.destroy(); } };
         if (connection) connections.add(connection);
         const expiry = principal && setTimeout(() => connection?.close(), Math.max(1, principal.expiresAt - Date.now()));
-        const ctx = new Context(), peer = { id: randomUUID(), ctx, dispose: () => ctx.fiber.dispose() };
+        const ctx = new Context(), peer = new Peer(ctx, { principal: { kind: "owner" }, interactions: "none" });
         try {
           const chunks: Buffer[] = []; let size = 0;
           for await (const chunk of req) { size += chunk.length; if (size > 2 * 1024 * 1024) throw new Error("Request too large"); chunks.push(chunk); }
@@ -74,7 +73,7 @@ export async function serveAssistant(options: { host?: string; access?: Assistan
           const result = await rpcFetchHandler(`${route.base}api`, async (endpoint, payload, signal) => {
             try { return { ok: true, value: await endpoints.call(route.userId, endpoint, payload, signal) }; }
             catch (error) { return { ok: false, error: failure(error) }; }
-          }, peer).fetch(request);
+          }).fetch(request, peer);
           res.writeHead(result.status, Object.fromEntries(result.headers));
           res.end(Buffer.from(await result.arrayBuffer()));
         } finally { if (expiry) clearTimeout(expiry); if (connection) connections.delete(connection); await ctx.fiber.dispose(); }
@@ -105,15 +104,14 @@ export async function serveAssistant(options: { host?: string; access?: Assistan
       const principal = await options.access?.authenticate(req);
       if (options.access && (!principal || !principal.internal && req.headers.origin !== options.access.publicOrigin || route?.userId !== principal.userId)) { socket.destroy(); return; }
       if (!route || route.resource !== "api/remote.mux") { socket.destroy(); return; }
-      const ctx = new Context(), id = randomUUID();
-      contexts.add(ctx); peers.set(id, route.userId);
-      const peer = { id, ctx, dispose: async () => { contexts.delete(ctx); peers.delete(id); await ctx.fiber.dispose(); } };
+      const ctx = new Context(), peer = new Peer(ctx, { principal: { kind: "owner" }, interactions: "none" });
+      contexts.add(ctx); peers.set(peer.id, route.userId);
       const connection = principal && { principal, close: () => { socket.destroy(); void peer.dispose(); } };
       if (connection) connections.add(connection);
       // Internal owner streams reauthenticate the account while browser streams expire with their login.
       const expiry = principal && !principal.internal ? setTimeout(() => connection?.close(), Math.max(1, principal.expiresAt - Date.now())) : undefined;
       const validation = options.access ? setInterval(() => { void (options.access!.active ? options.access!.active(principal!) : options.access!.authenticate(req)).then(current => { if (!current) connection?.close(); }).catch(() => connection?.close()); }, 1000) : undefined;
-      socket.once("close", () => { if (expiry) clearTimeout(expiry); if (validation) clearInterval(validation); if (connection) connections.delete(connection); void peer.dispose(); });
+      socket.once("close", () => { if (expiry) clearTimeout(expiry); if (validation) clearInterval(validation); if (connection) connections.delete(connection); contexts.delete(ctx); peers.delete(peer.id); void ctx.fiber.dispose(); });
       mux.handleUpgrade(req, socket, head, peer);
     } catch { socket.destroy(); }
   });

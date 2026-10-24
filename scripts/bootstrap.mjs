@@ -2,8 +2,10 @@ import { root, upstream, run } from "./lib.mjs";
 import path from "node:path";
 import { execFileSync } from "node:child_process";
 import { writeFile } from "node:fs/promises";
+import { applyAgentDependencyPatches } from "./apply-agent-dependency-patches.mjs";
 
 await run("npm", ["ci", "--ignore-scripts"]);
+await applyAgentDependencyPatches();
 for (const item of [upstream.pi, upstream.prime])
   await run("npm", ["ci", "--ignore-scripts"], path.join(root, item.directory));
 

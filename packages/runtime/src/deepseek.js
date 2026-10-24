@@ -7,6 +7,7 @@ export { AssistantStreamAccumulator } from "@deepseek-ai/dsh-llm/assistant-strea
 export { bootThemeInjections } from "../../../vendor/deepseek/packages/client/ui-theme/src/boot-theme.ts";
 
 export { rpcFetchHandler } from "../../../vendor/deepseek/packages/client/connection/src/rpc-host.ts";
+export { Peer } from "../../../vendor/deepseek/packages/client/connection/src/peer.ts";
 export { RemoteStreamMuxClient, RemoteStreamCarrierError } from "../../../vendor/deepseek/packages/api/gateway/src/client/stream-client.ts";
 export { SessionAssistantStreamAccumulator } from "../../../vendor/deepseek/packages/api/session-controller/src/assistant-stream.ts";
 import { DeveloperToolsSettingsSchema } from "../../../vendor/deepseek/packages/client/ui-settings/src/developer-tools-settings.ts";
@@ -17,9 +18,9 @@ import { ChatSettingsSchema, TRANSCRIPT_VIEW_MODES, DEFAULT_TRANSCRIPT_VIEW_MODE
 const settingsSections = [
   {ns: "ui-settings", schema: DeveloperToolsSettingsSchema, base: {enabled: true}, fields: []},
   {ns: "locale", schema: LocaleSettingsSchema, base: {}, fields: ["preference"]},
-  {ns: "ui-theme", schema: ThemeSettingsSchema, base: {preference: "light", fontSize: 14}, fields: ["fontSize"]},
+  {ns: "ui-theme", schema: ThemeSettingsSchema, base: ThemeSettingsSchema({preference: "light"}), fields: ["fontSize", "codeFontSize", "terminalFontSize", "textFontFamily", "codeFontFamily", "terminalFontFamily"]},
   {ns: "ui-conversation", schema: ConversationSettingsSchema, base: {busyEnter: "queue"}, fields: ["busyEnter"]},
-  {ns: "ui-chat", schema: ChatSettingsSchema, base: {transcriptView: DEFAULT_TRANSCRIPT_VIEW_MODE, performanceUsage: "detailed", linkOpening: "new-tab"}, fields: ["transcriptView", "performanceUsage"]},
+  {ns: "ui-chat", schema: ChatSettingsSchema, base: ChatSettingsSchema({transcriptView: DEFAULT_TRANSCRIPT_VIEW_MODE, performanceUsage: "detailed", linkOpening: "new-tab"}), fields: ["transcriptView", "performanceUsage", "collapseTiming", "foldedReplies"]},
 ];
 export function assistantSettingsDescribe(document) {
   return { writable: true, hasDocument: false, namespaces: settingsSections.map(({ns, schema, base}) => ({
@@ -42,7 +43,6 @@ export function assistantSettingsMutation(document, namespace, ops, expectedRevi
   }
   section.schema({...section.base, ...user});
   if (namespace === "ui-chat" && user.transcriptView !== undefined && !TRANSCRIPT_VIEW_MODES.includes(user.transcriptView)) throw new Error("Unsupported work details mode");
-  if (namespace === "locale" && user.preference !== undefined && !["zh", "en"].includes(user.preference)) throw new Error("Unsupported language");
   return {revision: document.revision + 1, revisions: {...document.revisions, [namespace]: revision + 1}, values: {...document.values, [namespace]: user}};
 }
 
