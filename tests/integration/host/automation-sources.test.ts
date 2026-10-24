@@ -198,6 +198,10 @@ test("one automation command serves all sources on one dashboard and releases it
   const dashboardUrl = reservation.url, port = new URL(dashboardUrl).port;
   await reservation.close();
   const previousExitCode = process.exitCode;
+  const previousFiles = { EVAL_AUTOMATION_SCHEDULING_FILE: process.env.EVAL_AUTOMATION_SCHEDULING_FILE,
+    EVAL_STATISTICS_DELIVERY_FILE: process.env.EVAL_STATISTICS_DELIVERY_FILE };
+  process.env.EVAL_AUTOMATION_SCHEDULING_FILE = path.join(directory, "scheduling.json");
+  process.env.EVAL_STATISTICS_DELIVERY_FILE = path.join(directory, "statistics-delivery.json");
   const listeners = [process.listenerCount("SIGINT"), process.listenerCount("SIGTERM")];
   try {
     const files: string[] = [], states: string[] = [];
@@ -212,6 +216,7 @@ test("one automation command serves all sources on one dashboard and releases it
       config.hostConfigs = [path.join(ROOT, "configs/host.json"), ...(index ? [path.join(ROOT, index === 1 ? "configs/six-models.json" : "configs/post-training-models.json")] : []), models];
       config.channelConcurrency = undefined;
       config.publication.mongoUriEnv = "PATH";
+      config.publication.logFile = path.join(directory, `statistics-${index}.jsonl`);
       await writeJson(file, config); files.push(file); states.push(config.stateDirectory);
     }
     const running = automationCommand(["run", "--once", "--dashboard", "--port", port, ...files.flatMap(file => ["--config", file])]);
@@ -238,5 +243,11 @@ test("one automation command serves all sources on one dashboard and releases it
     await assert.rejects(fetch(dashboardUrl + "/api/status"), /fetch failed/);
     for (const directory of states) assert.equal(await hasLiveRunOwner(directory), false);
     assert.deepEqual([process.listenerCount("SIGINT"), process.listenerCount("SIGTERM")], listeners);
-  } finally { release(); process.exitCode = previousExitCode; await server.close(); await rm(directory, { recursive: true, force: true }); }
+  } finally {
+    release(); process.exitCode = previousExitCode;
+    for (const [key, value] of Object.entries(previousFiles)) {
+      if (value === undefined) delete process.env[key]; else process.env[key] = value;
+    }
+    await server.close(); await rm(directory, { recursive: true, force: true });
+  }
 });
