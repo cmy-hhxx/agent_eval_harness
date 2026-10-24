@@ -15,7 +15,9 @@ test('Score proxy routing checks the original hostname, protocol and NO_PROXY po
 test('Score source transport tunnels to the validated IP and retains the original Host',async()=>{
   const proxy=createServer(),requests:string[]=[];
   proxy.on('connect',(request,socket)=>{
-    requests.push(request.url!);socket.write('HTTP/1.1 200 Connection Established\r\n\r\n');
+    requests.push(request.url!);
+    if(request.url==='93.184.216.35:80'){socket.end('HTTP/1.1 403 Forbidden\r\nContent-Length: 0\r\n\r\n');return;}
+    socket.write('HTTP/1.1 200 Connection Established\r\n\r\n');
     socket.once('data',bytes=>{
       const text=bytes.toString();assert.match(text,/host: issuer\.example\.com/i);
       socket.end('HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Length: 8\r\nConnection: close\r\n\r\nevidence');
@@ -29,6 +31,7 @@ test('Score source transport tunnels to the validated IP and retains the origina
     const response=await transport.download(new URL('http://issuer.example.com/report'),{address:'93.184.216.34',family:4},AbortSignal.timeout(3000));
     const chunks:Uint8Array[]=[];for await(const chunk of response.body)chunks.push(chunk);
     assert.equal(Buffer.concat(chunks).toString(),'evidence');assert.deepEqual(requests,['93.184.216.34:80']);
+    await assert.rejects(transport.download(new URL('http://issuer.example.com/report'),{address:'93.184.216.35',family:4},AbortSignal.timeout(3000)),{code:'PROXY_HTTP_403'});
   }finally{
     await transport.close();keys.forEach((key,index)=>{if(previous[index]===undefined)delete process.env[key];else process.env[key]=previous[index];});
     proxy.closeAllConnections();await new Promise<void>(resolve=>proxy.close(()=>resolve()));
