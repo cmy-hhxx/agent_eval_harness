@@ -150,7 +150,7 @@ unset ERIS_ADMIN_PASSWORD
 
 部署优先使用 mise；服务器已通过系统路径安装同一组锁定版本时直接复用，启动和部署均校验 Node/npm/Python/uv 的精确版本，不允许版本降级。
 
-初始化只在缺失时创建 `runtime/config/eris.ini`、`runtime/config/eris.json` 和 `runtime/secrets/eris/accounts.json`。渠道取服务器 `post-training.ini`，独立绑定实际模型 `deepseek-v4.1-flash`；不会改写原配置。已有账号不重置密码。后续更新可不传初始化密码。
+初始化只在缺失时创建 `runtime/config/eris.ini`、`runtime/config/eris.json` 和 `runtime/secrets/eris/accounts.json`。渠道取服务器 `post-training.ini`，独立绑定实际模型 `deepseek-v4.1-flash`，推理默认 `high`、支持 `low / high / xhigh / max`；不会改写原配置。已有账号不重置密码。后续更新可不传初始化密码。
 
 `eris` tmux 会话内前台运行 `bash agent/run.sh --config <runtime/config/eris.json>`；内部 `0.0.0.0:5004`，外部既有映射为 `http://117.50.195.94:3928`。启动使用实例锁，端口冲突直接报错。部署不自动关闭旧 `eris` 会话，更新前应只停止该会话中的 Eris。
 

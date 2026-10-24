@@ -29,8 +29,12 @@ test("catalog reads current AIME without overviews, namespaces equal run IDs and
     const run = path.join(root, relative); await mkdir(run, { recursive: true });
     await answerReviewRepository.createResultWriter(run, plan.inputs)(state); await answerReviewRepository.writeRun(run, state);
   }
+  const clustering = path.join(root, "0_wencai/eval_output/1_task_eval/task/clustering/job");
+  await mkdir(clustering, { recursive: true });
+  await writeFile(path.join(clustering, "state.json"), JSON.stringify({ kind: "clustering-job" }));
   const catalog = new CatalogAnalysisData(root);
   const directory = await catalog.list({});
+  assert.equal((directory.runDirectory as { complete: boolean }).complete, true, "standalone clustering jobs are not evaluation runs");
   assert.equal((directory.items as unknown[]).length, 2);
   assert.equal((await catalog.list({ includeTests: true })).total, 3);
   const run = path.join(root, runs[0]), before = await readFile(path.join(run, "state.json"));
@@ -53,4 +57,10 @@ test("catalog reads current AIME without overviews, namespaces equal run IDs and
   await assert.rejects(catalog.read({ collectionId: "../escape", runId: "same", taskId: task.id }), /不存在/);
   assert.deepEqual(await readFile(path.join(run, "state.json")), before);
   assert.deepEqual(await readFile(resultFile), result);
+  const broken = path.join(root, "2_ifind/eval_output/0_daily_eval/broken");
+  await mkdir(broken, { recursive: true }); await writeFile(path.join(broken, "state.json"), "{}");
+  const partial = (await catalog.list({})).runDirectory as { complete: boolean; errors: { runId: string; message: string }[] };
+  assert.equal(partial.complete, false);
+  assert.deepEqual(partial.errors.map(item => item.runId), ["broken"]);
+  assert.match(partial.errors[0].message, /缺少 overview/);
 });

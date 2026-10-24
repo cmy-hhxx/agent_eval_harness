@@ -19,7 +19,8 @@ export async function assistantRunLocations(root: string, includeTests = false) 
           const runId = path.basename(directory);
           if (await exists(path.join(directory, "overview.json"))) runs.push({ collectionId, runId, directory, workflow: "comparison" });
           else {
-            const state = await readJson<{ workflow?: string }>(path.join(directory, "state.json"));
+            const state = await readJson<{ workflow?: string; kind?: string }>(path.join(directory, "state.json"));
+            if (state.kind === "clustering-job") return;
             if (state.workflow !== "answer-review") throw new Error("Comparison 运行缺少 overview.json");
             runs.push({ collectionId, runId, directory, workflow: "answer-review" });
           }

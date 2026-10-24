@@ -48,7 +48,7 @@ try {
   }
   const requests = records.filter(record => record.event?.type === "assistant/request" && record.event.data.requestId === requestId);
   assert.equal(requests.at(-1)?.event.data.status, "completed", "model completion");
-  assert.equal(requests.filter(record => record.event.data.status === "queued").length, 1, "reconnect does not resubmit");
+  assert.equal(records.filter(record => record.kind === "command" && record.prompt.requestId === requestId).length, 1, "reconnect does not resubmit");
   const toolResults = records.filter(record => record.event?.type === "tool/result");
   assert(toolResults.length > 0, "real model used read-only data tools");
   const pages = toolResults.flatMap(record => record.event.data.message.content ?? []).filter(block => block.type === "text").flatMap(block => { try { return [JSON.parse(block.text)]; } catch { return []; } });

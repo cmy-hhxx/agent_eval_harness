@@ -17,7 +17,7 @@ const gateway = sections.find(row => row[1] === "channel.evaluation-gateway");
 if (!gateway) throw new Error("Source INI has no evaluation-gateway channel");
 const environment = sections.find(row => row[1] === "environment")?.[2] ?? "";
 const search = environment.split(/\r?\n/).filter(line => /^SEARCH_API_KEY\s*=/.test(line)).join("\n");
-await writeOnce(path.join(configDirectory, "eris.ini"), `[channel.evaluation-gateway]\n${gateway[2].replace(/^models?\s*=.*$/gm, "")}\nmodel = deepseek-v4.1-flash\nmodels = deepseek-v4.1-flash\n[agent]\nchannel = evaluation-gateway\nmodel = deepseek-v4.1-flash\n[environment]\n${search}\n`, 0o600);
+await writeOnce(path.join(configDirectory, "eris.ini"), `[channel.evaluation-gateway]\n${gateway[2].replace(/^(?:models?|thinking|efforts)\s*=.*$/gm, "")}\nmodel = deepseek-v4.1-flash\nmodels = deepseek-v4.1-flash\nthinking = high\nefforts = low,high,xhigh,max\n[agent]\nchannel = evaluation-gateway\nmodel = deepseek-v4.1-flash\n[environment]\n${search}\n`, 0o600);
 await writeOnce(path.join(configDirectory, "eris.json"), JSON.stringify({
   runtimeRoot: runtime, dataRoot: path.resolve(values["data-root"]), evalConfigFile: path.join(configDirectory, "eris.ini"),
   publicOrigin: "http://117.50.195.94:3928", listen: { host: "0.0.0.0", port: 5004 },

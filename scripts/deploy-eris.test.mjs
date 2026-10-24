@@ -5,6 +5,27 @@ import { spawn } from "node:child_process";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { root } from "./lib.mjs";
+import { parseSettings } from "../dist/apps/host/src/settings.js";
+import { assistantModelConfiguration } from "../dist/apps/host/src/assistant-models.js";
+
+test("Eris initializes only its own configuration with the DeepSeek V4.1 supported reasoning levels", async t => {
+  const directory = await mkdtemp(path.join(tmpdir(), "eris-init-")); t.after(() => rm(directory, { recursive: true, force: true }));
+  const sourceFile = path.join(directory, "source.ini"), runtime = path.join(directory, "runtime");
+  const source = "[channel.evaluation-gateway]\nbase_url=http://fixture/v1\napi_key=fixture-secret\napi=openai-responses\nmodels=previous-model\nthinking=medium\nefforts=low,medium,high\ncontext_window=524288\nmax_output_tokens=32768\n[environment]\nSEARCH_API_KEY=search-fixture\n";
+  await writeFile(sourceFile, source);
+  const child = spawn(process.execPath, [path.join(root, "scripts/eris-init.mjs"), "--runtime-root", runtime, "--source-ini", sourceFile], {
+    env: { ...process.env, ERIS_ADMIN_PASSWORD: "fixture-password" }, stdio: ["ignore", "pipe", "pipe"],
+  });
+  let output = ""; for (const stream of [child.stdout, child.stderr]) stream.on("data", chunk => { output += chunk; });
+  const code = await new Promise((resolve, reject) => { child.once("error", reject); child.once("exit", resolve); });
+  assert.equal(code, 0, output);
+  assert(!/fixture-password|fixture-secret|search-fixture/.test(output));
+  assert.equal(await readFile(sourceFile, "utf8"), source);
+  const { model, gateways } = assistantModelConfiguration(parseSettings(await readFile(path.join(runtime, "config/eris.ini"), "utf8")));
+  assert.equal(model.model, "deepseek-v4.1-flash"); assert.equal(model.thinking, "high");
+  assert.deepEqual(gateways[0].efforts, ["low", "high", "xhigh", "max"]);
+  assert.equal(model.contextWindow, 524288); assert.equal(model.maxOutputTokens, 32768);
+});
 
 test("Eris deployment sends secrets only through stdin and distributes isolated code through Git", async t => {
   const directory = await mkdtemp(path.join(tmpdir(), "eris-deploy-")); t.after(() => rm(directory, { recursive: true, force: true }));
