@@ -34,7 +34,8 @@ export function analyticsView(value,range='30') {
   }
   const trendRows=selected.map(date=>[date,intakeDates.get(date)?.answers??0,evaluationDates.get(date)?.completed??0]);
   const unknownDates=(evaluation.dates||[]).filter(row=>!row.date).reduce((total,row)=>total+row.total,0);
-  const trendScope=`按数据日期 · 当前完成覆盖${unknownDates?` · 未知日期 ${format(unknownDates)} ${unit}`:''}`;
+  const years=selected.length?selected[0].slice(0,4)+(selected[0].slice(0,4)!==selected.at(-1).slice(0,4)?`—${selected.at(-1).slice(0,4)}`:''):'';
+  const trendScope=[years,unknownDates?`未知日期 ${format(unknownDates)} ${unit}`:''].filter(Boolean).join(' · ');
   const modelRows=(intake.models||[]).map(row=>[modelNames[row.model]||row.model,row.answers]);
   const stateRows=Object.entries(statusNames).map(([key,label])=>[label,evaluation.totals?.[key]]).filter(([,count])=>number(count));
   const exclusionRows=(intake.exclusions||[]).map(row=>[cleaningReason(row.reason),row.count]).sort((a,b)=>b[1]-a[1]);
@@ -48,17 +49,17 @@ export function analyticsView(value,range='30') {
     yAxis:[{...valueAxis,name:'回答',nameTextStyle:{...valueAxis.nameTextStyle,align:'left'},splitLine:{lineStyle:{color:'#eceef0'}}},
       ...(evaluation.unit==='comparisons'?[{...valueAxis,name:'对局',nameTextStyle:{...valueAxis.nameTextStyle,align:'right'},splitLine:{show:false}}]:[])],
     series:[{name:'有效回答',type:'bar',data:trendRows.map(row=>row[1]),barMaxWidth:24,itemStyle:{color:gray}},
-      {name:`完整完成${unit}`,type:'line',yAxisIndex:evaluation.unit==='comparisons'?1:0,data:trendRows.map(row=>row[2]),symbol:'circle',symbolSize:5,lineStyle:{width:2,color:blue},itemStyle:{color:blue},connectNulls:false}]};
+      {name:`当前完成${unit}`,type:'line',yAxisIndex:evaluation.unit==='comparisons'?1:0,data:trendRows.map(row=>row[2]),symbol:'circle',symbolSize:5,lineStyle:{width:2,color:blue},itemStyle:{color:blue},connectNulls:false}]};
   return {
     scope:`已清洗数据 · ${format(intake.totals?.questions)} 问句${dates.length?` · ${dates[0]} — ${dates.at(-1)}`:''}`,
-    metrics:[{label:'有效回答',value:format(intake.totals?.answers),unit:'条'},{label:`完整完成${unit}`,value:format(completed),unit:`${evaluation.unit==='comparisons'?'场':'条'} · 纳入 ${format(total)} ${unit}`},
-      {label:'已纳入评测完成率',value:number(total)&&total>0&&number(completed)?`${(completed/total*100).toFixed(1)}%`:'—',unit:number(total)?`${format(completed)} / ${format(total)}`:''},
-      {label:'清洗排除',value:format(intake.totals?.excluded),unit:intake.reportsComplete===false?'清洗报告未覆盖全量':'条'}],
+    metrics:[{label:'有效回答',value:format(intake.totals?.answers),unit:`条 · ${format(intake.totals?.questions)} 问句`},{label:`完整完成${unit}`,value:format(completed),unit:evaluation.unit==='comparisons'?'场':'条'},
+      {label:'评测完成率',value:number(total)&&total>0&&number(completed)?`${(completed/total*100).toFixed(1)}%`:'—',unit:number(total)?`${format(completed)} / ${format(total)} ${unit}`:''},
+      {label:'清洗排除',value:format(intake.totals?.excluded),unit:intake.reportsComplete===false?'部分报告':'条'}],
     charts:[
-      {id:'trend',title:'每日数据与评测覆盖',scope:trendScope,columns:['数据日期','有效回答',`完整完成${unit}`],rows:trendRows,empty:dates.length?'':'暂无日期数据',option:trend},
-      {id:'models',title:'回答模式分布',scope:'全部有效回答',columns:['回答模式','有效回答'],rows:modelRows,empty:modelRows.length?'':'暂无有效回答',option:bar(modelRows.map(row=>row[0]),modelRows.map(row=>row[1]),'回答')},
-      {id:'statuses',title:'评测状态分布',scope:`已纳入评测 · ${format(total)} ${unit}`,columns:['评测状态',unit],rows:stateRows,empty:number(total)&&total>0?'':'暂无已纳入评测数据',option:bar(stateRows.map(row=>row[0]),stateRows.map(row=>row[1]),unit)},
-      {id:'exclusions',title:'清洗排除原因',scope:(intake.reportsComplete===false?'已有清洗报告':'全部清洗报告')+(exclusionRows.length>8?' · 前 7 项与其他':''),columns:['排除原因','记录'],rows:exclusionRows,empty:exclusionRows.length?'':intake.reportsComplete===false?'暂无可用排除记录':'无排除记录',option:bar(exclusionBars.map(row=>row[0]),exclusionBars.map(row=>row[1]),'记录')},
+      {id:'trend',title:'数据日期趋势',scope:trendScope,columns:['数据日期','有效回答',`当前完成${unit}`],rows:trendRows,empty:dates.length?'':'暂无日期数据',option:trend},
+      {id:'models',title:'模式分布',scope:'',columns:['回答模式','有效回答'],rows:modelRows,empty:modelRows.length?'':'暂无有效回答',option:bar(modelRows.map(row=>row[0]),modelRows.map(row=>row[1]),'回答')},
+      {id:'statuses',title:'评测状态',scope:`${format(total)} ${unit}`,columns:['评测状态',unit],rows:stateRows,empty:number(total)&&total>0?'':'暂无已纳入评测数据',option:bar(stateRows.map(row=>row[0]),stateRows.map(row=>row[1]),unit)},
+      {id:'exclusions',title:'排除原因',scope:intake.reportsComplete===false?'部分报告':'',columns:['排除原因','记录'],rows:exclusionRows,empty:exclusionRows.length?'':intake.reportsComplete===false?'暂无可用排除记录':'无排除记录',option:bar(exclusionBars.map(row=>row[0]),exclusionBars.map(row=>row[1]),'记录')},
     ],
   };
 }

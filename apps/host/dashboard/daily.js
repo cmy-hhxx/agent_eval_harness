@@ -24,6 +24,7 @@ export function mountDaily(root, options = {}) {
   function renderTab() {
     const current = view().tab;
     root.querySelectorAll('[data-daily-tab]').forEach(button => { const active = button.dataset.dailyTab === current; button.setAttribute('aria-selected',String(active)); button.tabIndex = active ? 0 : -1; button.classList.toggle('active',active); $(`daily-panel-${button.dataset.dailyTab}`).hidden = !active; });
+    $('daily-analytics-toolbar').hidden = current !== 'overview';
     if (current === 'overview') analytics.activate(selected); else analytics.hide();
   }
   function selectTab(tab) { view().tab = tab; renderTab(); }
@@ -86,7 +87,7 @@ export function mountDaily(root, options = {}) {
       if (source.status === 'running') actions.append(actionButton('暂停','pause'));
       if (live(source.status) || source.status === 'paused') actions.append(actionButton('立即停止','stop'));
     }
-    $('daily-requests-total').textContent = `实际 LLM 请求 ${data.sources.reduce((sum,source) => sum + (source.activeRequests || 0),0)} · 等待 ${data.sources.reduce((sum,source) => sum + (source.waitingRequests || 0),0)}`;
+    $('daily-requests-total').textContent = `LLM ${data.sources.reduce((sum,source) => sum + (source.activeRequests || 0),0)} · 排队 ${data.sources.reduce((sum,source) => sum + (source.waitingRequests || 0),0)}`;
   }
   function renderSettings(source) {
     if (formSource === source.id) return;
@@ -123,6 +124,7 @@ export function mountDaily(root, options = {}) {
     $('daily-aime-model-table').hidden = !models.length;
     $('daily-aime-model-rows').replaceChildren(...models.map(([id,model]) => { const row = doc.createElement('tr'); row.append(node('td',id === 'aime_fast' ? 'Fast' : 'Expert'),...['answers','completed','failed','pending'].map(key => { const cell = node('td',numeric(model[key]) ? model[key] : ''); cell.className = 'daily-number'; return cell; })); return row; }));
     $('daily-settings-heading').textContent = source.activeSettings ? '下次执行配置' : '执行配置';
+    $('daily-settings-heading').classList.toggle('visually-hidden',!source.activeSettings);
     $('daily-active-settings').hidden = !source.activeSettings;
     if (source.activeSettings) {
       const current = source.activeSettings, execution = current.execution || {};

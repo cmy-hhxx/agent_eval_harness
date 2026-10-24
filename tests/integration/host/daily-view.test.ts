@@ -37,13 +37,15 @@ test('daily sources control independently and preserve configuration drafts, pac
   const el = (id:string) => dom.window.document.getElementById(id), row = (id:string) => el('daily-source-rows').querySelector(`[data-source="${id}"]`);
   const click = (id:string,label:string) => [...row(id).querySelectorAll('button')].find((item:any)=>item.textContent===label).click();
   try {
-    await controller.ready; assert.match(el('daily-requests-total').textContent,/请求 5.*等待 2/);
-    assert.equal(el('daily-panel-overview').hidden,false); assert.equal(el('daily-panel-packages').hidden,true); el('daily-tab-packages').click(); el('daily-tab-packages').dispatchEvent(new dom.window.KeyboardEvent('keydown',{key:'ArrowLeft',cancelable:true})); assert.equal(el('daily-panel-progress').hidden,false); assert.equal(el('daily-request-section').hidden,true);
+    await controller.ready; assert.equal(el('daily-requests-total').textContent,'LLM 5 · 排队 2');
+    assert.equal(el('daily-title').classList.contains('visually-hidden'),true); assert.equal(el('daily-analytics-scope').classList.contains('visually-hidden'),true);
+    assert.equal(el('daily-analytics-toolbar').parentElement.classList.contains('daily-detail-heading'),true); assert.equal(el('daily-analytics-toolbar').hidden,false);
+    assert.equal(el('daily-panel-overview').hidden,false); assert.equal(el('daily-panel-packages').hidden,true); el('daily-tab-packages').click(); assert.equal(el('daily-analytics-toolbar').hidden,true); el('daily-tab-packages').dispatchEvent(new dom.window.KeyboardEvent('keydown',{key:'ArrowLeft',cancelable:true})); assert.equal(el('daily-panel-progress').hidden,false); assert.equal(el('daily-request-section').hidden,true);
     assert.equal(el('daily-stages').querySelector('[role=progressbar]').getAttribute('aria-valuenow'),'5'); assert.equal(el('daily-stages').querySelector('.progress-bar').style.width,'50%');
     el('daily-settings-open').focus(); el('daily-settings-open').click(); assert.equal(el('daily-settings').open,true); dom.window.document.querySelector('[data-daily-close="daily-settings"]').click(); assert.equal(dom.window.document.activeElement,el('daily-settings-open'));
     assert.equal(el('daily-aime-coverage').hidden,true);
     assert.equal(row('wencai').querySelector('[data-cell=pending]').textContent,'3'); assert.equal(row('wencai').querySelector('[data-cell=completed]').textContent,'5');
-    assert.equal(el('daily-settings-heading').textContent,'下次执行配置'); assert.match(el('daily-active-values').textContent,/judge-model.*600/s);
+    assert.equal(el('daily-settings-heading').textContent,'下次执行配置'); assert.equal(el('daily-settings-heading').classList.contains('visually-hidden'),false); assert.match(el('daily-active-values').textContent,/judge-model.*600/s);
     click('wencai','评测'); await wait(()=>row('wencai').textContent.includes('运行中'));
     assert.equal(sources[1].status,'idle'); click('aime','评测'); await wait(()=>sources[1].status==='running');
     click('wencai','暂停'); await wait(()=>row('wencai').textContent.includes('已暂停')); assert.equal(sources[1].status,'running');
@@ -51,7 +53,7 @@ test('daily sources control independently and preserve configuration drafts, pac
     click('aime','立即停止'); await wait(()=>sources[1].status==='idle' && !row('aime').querySelector('input').disabled); assert.equal(sources[0].status,'running');
     el('daily-timeout').value='901'; el('daily-timeout').dispatchEvent(new dom.window.Event('input',{bubbles:true}));
     controller.select('aime'); assert.equal(el('daily-timeout').value,'600'); assert.equal(el('daily-mongo').hidden,true);
-    assert.equal(el('daily-panel-overview').hidden,false);
+    assert.equal(el('daily-panel-overview').hidden,false); assert.equal(el('daily-analytics-toolbar').hidden,false);
     assert.equal(row('aime').querySelector('[data-cell=completed]').textContent,'0', 'accepted attribution tasks cannot stand in for complete answers');
     assert.equal(row('aime').querySelector('[data-cell=pending]').textContent,'9'); assert.equal(row('aime').querySelector('[data-cell=failed]').textContent,'1');
     assert.equal(el('daily-aime-coverage').hidden,false); assert.match(el('daily-aime-counts').textContent,/问句 7.*回答 10.*完整回答 0.*部分完成回答 5.*阶段任务 5 \/ 10/);

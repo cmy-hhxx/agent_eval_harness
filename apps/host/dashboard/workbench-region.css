@@ -210,7 +210,7 @@ input.form-check-input[type=radio] { border-radius:50%; }
 .daily-concurrency input { width:64px; min-width:0; }
 .daily-concurrency output { color:var(--danger); max-width:180px; white-space:normal; }
 #daily-detail { flex:1; display:flex; flex-direction:column; min-height:0; gap:8px; }
-.daily-detail-heading { flex:none; justify-content:space-between; padding-bottom:6px; }
+.daily-detail-heading { flex:none; padding-bottom:6px; }
 .daily-detail-heading h2 { margin-right:8px; }
 .daily-tabs { gap:4px; margin-right:auto; }
 .daily-tabs .nav-link { padding:6px 12px; font-size:14px; }
@@ -231,8 +231,9 @@ input.form-check-input[type=radio] { border-radius:50%; }
 .daily-charts { flex:1; min-height:360px; display:grid; grid-template-columns:minmax(0,1.4fr) minmax(0,1fr); grid-template-rows:repeat(2,minmax(170px,1fr)); gap:16px 28px; }
 .daily-chart-card { min-width:0; min-height:0; }
 .daily-chart-card>.card-body { display:flex; flex-direction:column; min-height:0; padding:0; }
-.daily-chart-heading { display:grid; align-content:start; gap:2px; flex:none; min-height:40px; margin-bottom:6px; }
+.daily-chart-heading { display:flex; flex-wrap:wrap; align-items:baseline; justify-content:space-between; gap:6px 12px; flex:none; min-height:22px; margin-bottom:8px; }
 .daily-chart-heading span { color:var(--muted); font-size:12px; line-height:18px; overflow-wrap:anywhere; }
+.daily-chart-heading span:empty { display:none; }
 .daily-chart { flex:1; min-height:140px; width:100%; }
 .daily-chart-empty { padding:16px 0; color:var(--muted); }
 .daily-analytics-tables { flex:1; min-height:0; overflow:auto; }
@@ -329,6 +330,11 @@ input.form-check-input[type=radio] { border-radius:50%; }
 .aime-fields>.aime-scalar>dd { margin:0; }
 @container workbench (max-width:600px) { .daily-detail-heading { gap:6px; }.daily-detail-heading h2 { width:100%; }.daily-tabs { margin-right:0; }.daily-stages>div { grid-template-columns:88px 110px minmax(40px,1fr); }.daily-stage-status { grid-column:1/-1; }.daily-facts>div { grid-template-columns:1fr; gap:3px; }.aime-fields>.aime-scalar { grid-template-columns:90px minmax(0,1fr); } }
 @media(min-width:768px) and (max-height:700px) {
+  .daily-workspace { gap:6px; }
+  #daily-detail { gap:6px; }
+  .daily-analytics { gap:8px; }
+  .daily-detail-heading { padding-bottom:2px; }
+  .daily-source-scroll :is(th,td) { padding-block:4px!important; }
   #daily-panel-progress { overflow-y:auto; overflow-x:hidden; overscroll-behavior:contain; }
   #daily-panel-progress>* { flex-shrink:0; }
   #daily-request-section { flex:none; min-height:0; }
