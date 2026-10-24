@@ -264,7 +264,7 @@ test("two workers execute dependency graph, archive receipts and reuse only same
     assert.equal((await readFile(businessLog, "utf8")).trim().split("\n").length, 11);
     const cached = await runEvaluation({ ...options, runId: "second" });
     assert.equal(calls, 22, "a new run must evaluate independently");
-    assert.equal((await readFile(businessLog, "utf8")).trim().split("\n").length, 14);
+    assert.equal((await readFile(businessLog, "utf8")).trim().split("\n").length, 22);
     assert.deepEqual(cached.cache, {
       model_input: { hit_rate: 0.6 },
     });
@@ -504,7 +504,7 @@ test("one host routes tasks to both engines without sharing sessions or workspac
     });
     assert.equal(summary.completed_comparisons, 2);
     assert.deepEqual(calls, { pi: 5, prime: 6 });
-    assert.equal(workdirs.size, 7);
+    assert.equal(workdirs.size, 11);
     const run = path.join(config.output.path, "mixed");
     assert.deepEqual((await readdir(run)).sort(), [
       "model-behavior.jsonl",
@@ -1129,10 +1129,11 @@ for (const debug of [false, true])
         assert.equal(receipt.judge, receipt.evaluatorVersion === fakeEvaluatorVersion ? "fixture" : "changed-model");
       }
       assert.deepEqual(
-        completedState.manifest.tasks,
+        completedState.manifest.tasks.filter(task => saved.manifest.tasks.some(original => original.id === task.id)),
         saved.manifest.tasks,
         "resume preserves tasks and blind assignments",
       );
+      assert.equal(completedState.manifest.tasks.filter(task => task.stage === "instruction-review").length, 4);
       for (const version of config.inputs.versions)
         await writeJsonl(
           version.sources[0].path,
@@ -1146,7 +1147,7 @@ for (const debug of [false, true])
       assert.equal(unchanged.completed_comparisons, 2);
       assert.equal((unchanged.planned as { cases: number }).cases, 2);
       assert.deepEqual(Object.keys(unchanged.by_batch as object), ["2026-09-23", "2026-09-24"]);
-      assert.deepEqual(Object.values(calls).sort(), [1, 1, 1, 1, 1, 1, 1, 2]);
+      assert.deepEqual(Object.values(calls).sort(), [1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 2]);
       const validation = await validateRun(run);
       assert.equal(validation.results.valid, true);
       assert.equal(

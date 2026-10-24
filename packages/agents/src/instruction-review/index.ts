@@ -4,6 +4,7 @@ import { schemaIssues, ValidationError, type AgentDefinition, type AgentProfile,
 import { reviewSources } from "@eval/tools";
 import submissionSchema from "../../../../schemas/instruction-review/submission.schema.json" with {type:"json"};
 import resultSchema from "../../../../schemas/instruction-review/result.schema.json" with {type:"json"};
+import requestSchema from "../../../../schemas/instruction-review/request.schema.json" with {type:"json"};
 
 export interface InstructionCheck {rule:string;status:"met"|"violated"|"unverified"|"not_applicable";reason:string;rule_evidence_ids:string[];behavior_evidence_ids:string[]}
 export interface InstructionReview {summary:string;checks:InstructionCheck[];evidence:ReviewQuote[]}
@@ -30,7 +31,7 @@ export function validateInstructionReview(request:AgentRequest,value:unknown,aud
 }
 const prompt=agentPrompt('instruction-review',['review_material','read_artifact']);
 export const instructionReviewProfile:AgentProfile={id:'default',...prompt,
-  requestSchema:{type:'object',required:['case_id','task_question','norm_catalog'],additionalProperties:true},submissionSchema,resultSchema,
+  requestSchema,submissionSchema,resultSchema,
   toolNames:['review_material','read_artifact'],
   resolve(request,draft,audit){const value=draft as Omit<InstructionReview,'evidence'>;
     const used=new Set(value.checks.flatMap(row=>[...row.rule_evidence_ids,...row.behavior_evidence_ids]));

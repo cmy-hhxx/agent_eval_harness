@@ -171,6 +171,19 @@
               "chars": {
                 "type": "integer",
                 "minimum": 0
+              },
+              "semantic_role": {
+                "enum": [
+                  "model_call",
+                  "tool_call",
+                  "tool_return",
+                  "final_delivery",
+                  "conversation"
+                ]
+              },
+              "invoking_model_message_index": {
+                "type": "integer",
+                "minimum": 0
               }
             }
           }
@@ -961,6 +974,19 @@
                 "minimum": 0
               },
               "chars": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "semantic_role": {
+                "enum": [
+                  "model_call",
+                  "tool_call",
+                  "tool_return",
+                  "final_delivery",
+                  "conversation"
+                ]
+              },
+              "invoking_model_message_index": {
                 "type": "integer",
                 "minimum": 0
               }

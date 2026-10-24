@@ -242,7 +242,7 @@ test("clustering builds a bounded per-model library and recalls classes across r
       runId: "cluster-second",
       plan: await buildPlan(config),
     });
-    assert.equal(calls.value, 20);
+    assert.equal(calls.value, 28);
     const recalled = await readJson<{ classes: Record<string, unknown>; occurrences: { classification: string }[] }>(
       path.join(config.problemLibrary.path, "a_fast.json"),
     );

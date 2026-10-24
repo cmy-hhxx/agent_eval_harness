@@ -4,8 +4,11 @@ import type { RawInput } from "./types.js";
 
 /** Task-local view: preserve message positions and factual leaf paths while excluding private instructions. */
 export function attributionTrace(raw: RawInput, inputId: string, finalIndex: number): RawInput {
-  const hiddenSkills = new Set(instructionSources(raw, inputId, finalIndex).filter(source => source.role === "tool").map(source => source.message_index));
+  const skills = instructionSources(raw, inputId, finalIndex).filter(source => source.role === "tool");
+  const hiddenSkills = new Set(skills.map(source => source.message_index));
+  const skillContents = new Set(skills.flatMap(source => typeof source.content === "string" ? [source.content] : []));
   const visit = (value: unknown): unknown => {
+    if (typeof value === "string" && skillContents.has(value)) return "[内部技能规范由独立指令会话检查]";
     if (Array.isArray(value)) return value.map(visit);
     if (!value || typeof value !== "object") return value;
     const row = value as Record<string, unknown>;

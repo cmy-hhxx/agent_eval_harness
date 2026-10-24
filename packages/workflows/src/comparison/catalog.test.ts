@@ -23,3 +23,24 @@ test("tool catalog links interleaved unnamed returns by call id, never adjacency
   assert.equal(catalog[6]!.name, "Other");
   assert.equal(catalog[6]!.call_message_index, undefined);
 });
+
+test("catalog distinguishes named model nodes from tools and links only an unambiguous invoking model span", () => {
+  const catalog = traceCatalog({ messages: [
+    { type: "llm_turn", name: "planner-finquery", parent_span: "planner" },
+    { type: "tool_call", name: "finquery", parent_span: "planner", input: { query: "黄金价格" } },
+    { type: "tool_result", name: "finquery", output: { code_count: 0 } },
+    { type: "tool_call", name: "other", parent_span: "missing" },
+    { type: "llm_turn", name: "answer", parent_span: "duplicate" },
+    { type: "llm_turn", name: "answer-retry", parent_span: "duplicate" },
+    { type: "tool_call", name: "finquery", parent_span: "duplicate" },
+    { type: "final_answer", role: "assistant", content: "实际交付" },
+  ] });
+  assert.equal(catalog[0].semantic_role, "model_call");
+  assert.equal(catalog[1].semantic_role, "tool_call");
+  assert.equal(catalog[1].invoking_model_message_index, 0);
+  assert.equal(catalog[2].semantic_role, "tool_return");
+  assert.equal(catalog[2].call_message_index, undefined);
+  assert.equal(catalog[3].invoking_model_message_index, undefined);
+  assert.equal(catalog[6].invoking_model_message_index, undefined);
+  assert.equal(catalog[7].semantic_role, "final_delivery");
+});

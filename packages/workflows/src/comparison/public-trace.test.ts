@@ -17,7 +17,7 @@ test("main attribution excludes private rules from both prompt and readable sour
     { type: "tool_result", name: "view_skill", output: '<skill_content name="price">SKILL_PRIVATE_SENTINEL</skill_content>' },
     { type: "tool_result", name: "prices", output: fact },
     { type: "llm_turn", name: "llm-call-1", input_messages: [{ role: "developer", content: "DEV_PRIVATE_SENTINEL" },
-      { role: "tool", content: fact }], output: [{role:"assistant",content:"现货金价为3690美元。"}] },
+      { role: "tool", content: fact }, { role: "tool", content: '<skill_content name="price">SKILL_PRIVATE_SENTINEL</skill_content>' }], output: [{role:"assistant",content:"现货金价为3690美元。"}] },
     { type:"final_answer", role: "assistant", content: "现货金价为3690美元。" },
   ] };
   const candidate = { input_id: id, question, final_index: 6, reference: null, answer_timing: { finish_seconds: null } } as Candidate;
@@ -45,6 +45,9 @@ test("main attribution excludes private rules from both prompt and readable sour
   assert.deepEqual(raw, before);
   const serialized = { messages: [{ type: "llm_turn", input_messages: JSON.stringify(raw.messages[5].input_messages) }] };
   assert(!JSON.stringify(attributionTrace(serialized, id, 0)).includes("DEV_PRIVATE_SENTINEL"));
+  const skillCopy = structuredClone(raw);
+  skillCopy.messages[5].input_messages = JSON.stringify([{ role: "tool", content: raw.messages[3].output }]);
+  assert(!JSON.stringify(attributionTrace(skillCopy, id, 6)).includes("SKILL_PRIVATE_SENTINEL"));
 });
 
 test("each accepted attribution schedules exactly one separate instruction session without joining comparison dependencies", () => {
