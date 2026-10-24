@@ -11,6 +11,17 @@ const target = (item: Evidence): TraceRead | undefined => {
   return point && point.kind !== "image" ? { candidate: "answer", message_index: point.message_index,
     kind: point.kind, path: point.path, start: point.start, end: point.end } : undefined;
 };
+function readCovered(audit: ToolAudit, read: TraceRead, raw: { messages: unknown[] }): boolean {
+  if (traceReadCoverage(audit, read).covered) return true;
+  if (read.kind !== "text") return false;
+  const sources = evidenceSources(raw.messages[read.message_index]);
+  if (!sources.some(source => source.kind === "text" && source.path === read.path && read.end <= source.text.length)) return false;
+  // A complete physical JSON leaf includes its decoded text. A partial literal,
+  // matching value elsewhere or an initially presented preview does not prove a read.
+  const leaf = selectEvidenceSource(sources.filter(source => source.kind === "json"), read.path);
+  return !!leaf && traceReadCoverage(audit, { ...read, kind: "json", path: leaf.source.path,
+    start: leaf.start, end: leaf.end }).covered;
+}
 export function businessChainReads(request: AgentRequest): TraceRead[] {
   return [...new Map(businessChainDirectory(request).filter(chain => chain.references.length).flatMap(chain => chain.checkpoints
     .filter(point => critical.has(point.step)).flatMap(point => point.evidence.flatMap(item => {
@@ -110,7 +121,7 @@ export function investigationIssues(request: AgentRequest, problem: ProblemPropo
       }
       if (critical.has(checkpoint.step)) for (const item of checkpoint.evidence) {
         const read = target(item);
-        if (read && !traceReadCoverage(audit, read).covered)
+        if (read && !readCovered(audit, read, raw))
           add("investigation_read_required", where, `继续读取链路 ${chain.chain_index} 的${checkpoint.step}；材料存在但尚未完整读取，不能据此形成来源缺失、上下文丢失或标的口径结论。`, read);
       }
     }

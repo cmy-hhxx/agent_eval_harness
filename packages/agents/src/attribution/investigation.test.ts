@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { ValidationError } from "@eval/contracts";
+import { parseEvidenceCoordinates, ValidationError } from "@eval/contracts";
 import { AgentRegistry } from "@eval/host";
 import { attributionAgent, type AttributionResult } from "./index.js";
 import { businessChainFixture } from "../../../../tests/fixtures/business-chain.js";
@@ -8,7 +8,7 @@ import { attributionSubmission } from "../../../../tests/fixtures/attribution-su
 import { businessChainDirectoryIssues, investigationIssues } from "./investigation.js";
 import { responsibilityIssues } from "./responsibility.js";
 import { bindAttributionMaterial } from "@eval/workflows/review";
-import { cite, evidenceSources } from "@eval/tools";
+import { cite, evidenceSources, selectEvidenceSource } from "@eval/tools";
 
 const codes = (f: ReturnType<typeof businessChainFixture>) => investigationIssues(f.binding.request, f.problem, f.evidence, f.audit, "/problem").map(issue => issue.code);
 test("correct tool return followed by wrong interpretation retains the full business location and inferred hidden mechanism", () => {
@@ -59,6 +59,30 @@ test("readable but unread actual input cannot be called missing, including an un
   f.result.findings[0].assessment.evidence_status = "uncertain";
   assert.throws(() => registry.resolve(f.binding, attributionSubmission(f.binding.request, f.result, f.audit), f.audit),
     error => error instanceof ValidationError && error.issues!.some(issue => issue.code === "investigation_read_required"));
+});
+test("complete serialized return coverage proves its real text leaves without requiring an impossible duplicate read", () => {
+  const f = businessChainFixture(), message_index = f.chain.return_indices[0];
+  const sources = evidenceSources(f.raw.messages[message_index]);
+  const json = sources.find(source => source.kind === "json")!;
+  const point = f.chain.checkpoints.find(row => row.step === "原始返回及字段含义")!.evidence
+    .map(row => parseEvidenceCoordinates(row.evidence_id)!).find(row => row.kind === "text")!;
+  assert(point?.kind === "text");
+  const leaf = selectEvidenceSource([json], point.path)!;
+  const otherReads = f.audit.traceReads.filter(read => read.message_index !== message_index);
+  const read = { candidate: "answer", message_index, kind: "json" as const, path: json.path, start: 0, end: json.text.length };
+  f.audit.traceReads = [...otherReads, { ...read, end: leaf.start }, { ...read, start: leaf.start }];
+  assert.deepEqual(codes(f), [], "adjacent physical JSON reads cover the complete leaf");
+  const registry = new AgentRegistry([attributionAgent]);
+  const accepted = registry.resolve(f.binding, attributionSubmission(f.binding.request, f.result, f.audit), f.audit) as AttributionResult;
+  registry.validate(f.binding, accepted, f.audit);
+  const missing = () => investigationIssues(f.binding.request, f.problem, f.evidence, f.audit, "/problem")
+    .some(issue => issue.code === "investigation_read_required" && (issue.expected as { path: string }).path === point.path);
+  f.audit.traceReads = [...otherReads, { ...read, end: leaf.end - 1 }];
+  assert(missing(), "partial serialized leaf must still be read");
+  for (const changed of [{ candidate: "other" }, { message_index: message_index + 1 }, { path: "/other" }]) {
+    f.audit.traceReads = [...otherReads, { ...read, ...changed }];
+    assert(missing(), "coverage cannot come from another physical source");
+  }
 });
 test("specific actors, business operation and call coordinates stay distinct and forged links or final-only fallback fail", () => {
   const f = businessChainFixture();
