@@ -36,7 +36,7 @@ function problemAttribution(answer: string, inputId: string): AttributionResult 
 function proposedClass(): ClusteringResult {
   return {
     assignments: [{ item_id: "o1", new_class_key: "new" }],
-    new_classes: [{ key: "new", component: "模型推断与生成/事实关系推导", label: "算术错误", definition: "计算不符。", closest_existing: null, novelty: "首次出现。", category_paths: [["数值可靠性"]] }],
+    new_classes: [{ key: "new", component: "未命名终稿生成调用（消息 1） / 数据解释与计算 / 事实关系推导", label: "算术错误", definition: "计算不符。", closest_existing: null, novelty: "首次出现。", category_paths: [["数值可靠性"]] }],
     merges: [],
   };
 }
@@ -91,7 +91,7 @@ test("a batch may create every component its own observations use", async () => 
 
     const known = structuredClone(task);
     (known.data as { projection: unknown }).projection = {
-      components: [{ id: "c1", label: "工具业务实现/结果完整性", definition: "", aliases: ["搜索"], classes: [] }],
+      components: [{ id: "c1", label: "Search / 数据解释与计算 / 结果完整性", definition: "", aliases: ["搜索"], classes: [] }],
     };
     const narrowed = comparisonWorkflow.bind(known, {}, dependencies, { tasks: plan.tasks.map(item => item.id === known.id ? known : item) }).request.input as {
       budget: { max_new_components: number };
@@ -337,7 +337,7 @@ test("a model over the library cap cannot partially commit another model", async
     const modelA = (first.data as { scope: { version: string } }).scope.version;
     const modelB = (second.data as { scope: { version: string } }).scope.version;
     const previous = emptyLibrary(modelB);
-    previous.components.c1 = { id: "c1", label: "模型推断与生成/事实关系推导", definition: "", aliases: [], first_seen: null };
+    previous.components.c1 = { id: "c1", label: "未命名终稿生成调用（消息 1） / 数据解释与计算 / 事实关系推导", definition: "", aliases: [], first_seen: null };
     previous.classes.k1 = { id: "k1", component_id: "c1", label: "其他问题", definition: "d", aliases: [], status: "active", merged_into: null, first_seen: null };
     await writeJson(path.join(config.problemLibrary.path, `${modelB}.json`), previous);
     const receipts: Record<string, unknown> = {};

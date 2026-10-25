@@ -74,7 +74,7 @@ export function groupObservations(sources: ProblemSource[]): ClusteringObservati
             stage: finding.stage,
             evidence_status: finding.assessment.evidence_status,
             responsibilities: finding.problem.component.filter(cause =>
-              `${cause.technical_domain}/${cause.functional_component}` === component)
+              responsibilityLabels({component:[cause]})[0] === component)
               .map(({ technical_domain: _domain, functional_component: _function, evidence_ids: _evidence, ...cause }) => cause),
           },
         });

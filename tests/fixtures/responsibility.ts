@@ -7,11 +7,11 @@ import type { AgentRequest } from "@eval/contracts";
 export function responsibilityFixture(component = "最终回答组织", patch: Partial<Responsibility> = {}): Responsibility {
   const [technical_domain, functional_component] = component === "最终回答组织"
     ? ["模型推断与生成", "事实关系推导"] : ["工具业务实现", "结果完整性"];
-  return { actor_index:1, role: "primary", technical_domain, functional_component, component, failure_stage: "信息使用与核验",
+  return { actor_index:1, role: "primary", technical_domain, functional_component,
+    component:component==='最终回答组织'?'未命名终稿生成调用（消息 1）':component, failure_stage: "信息使用与核验",
     business_component: "本题事实关系推导与结果使用", chain_index: null, chain_step: "数据解释与计算", field_names: [], mechanism_source: patch.certainty === "confirmed" ? "explicit_process" : "boundary_comparison",
     mechanism: "当前步骤偏离了本题要求。", certainty: "inferred", reason: "实际交付与过程记录支持该组件最可能造成缺陷。",
-    evidence_ids: [], evidence_gap: "未采集完整内部执行快照。", alternatives: ["其他过程环节也可能造成该缺陷。"], ...patch,
-    ...(['最终回答组织','中间推理处理','工具执行','流程处理'].includes(component)?{component:patch.business_component??'本题事实关系推导与结果使用'}:{}) };
+    evidence_ids: [], evidence_gap: "未采集完整内部执行快照。", alternatives: ["其他过程环节也可能造成该缺陷。"], ...patch };
 }
 export function responsibilitySubmissionFixture(request: AgentRequest, component = "最终回答组织", evidence_indices: number[] = [1], patch: Partial<Responsibility> = {}): ResponsibilitySubmission {
   const cause = responsibilityFixture(component, patch);

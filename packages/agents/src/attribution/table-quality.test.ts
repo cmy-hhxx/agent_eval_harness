@@ -8,7 +8,7 @@ import { Ajv2020 } from "ajv/dist/2020.js";
 import type { AgentRequest, ToolAudit } from "@eval/contracts";
 import { ValidationError } from "@eval/contracts";
 import { parseTraceTables, type TableCheckResult } from "@eval/tools";
-import { attributionProfile } from "./index.js";
+import { attributionProfile, responsibilityComponentName } from "./index.js";
 import { attributionTableChecks, attributionTablePlan, attributionTableReview } from "./table-review.js";
 import type { AttributionResult } from "./types.js";
 import example from "./fixtures/example.json" with { type: "json" };
@@ -275,7 +275,7 @@ test("a conflict can be accepted when both original rows support an explicit pro
     evidence: [...[row.evidence, data.tables[0].rows[index].evidence].map(({ evidence_id, message_index, quote }) => ({ evidence_id, message_index, quote })),
       canonicalEvidence(INPUT_ID, 0, requirement.requirements[0]!.text)],
     assessment: { requirement_index: 0, observation: "代码错配", evidence_status: "established", impact: "影响标的识别" },
-    problem: { diagnosis: "other" as const, investigation: [], component: [responsibilityFixture("最终回答组织", {actor_index:2,evidence_ids: ([...[row.evidence, data.tables[0].rows[index].evidence].map(({ evidence_id, message_index, quote }) => ({ evidence_id, message_index, quote })),
+    problem: { diagnosis: "other" as const, investigation: [], component: [responsibilityFixture("最终回答组织", {actor_index:2,component:responsibilityComponentName((data.request.input.answer as any).component_catalog[1]),evidence_ids: ([...[row.evidence, data.tables[0].rows[index].evidence].map(({ evidence_id, message_index, quote }) => ({ evidence_id, message_index, quote })),
       canonicalEvidence(INPUT_ID, 0, requirement.requirements[0]!.text)]).map(item=>item.evidence_id)})], label: "代码错配", definition: "最终表替换了原始查询中的代码。" },
   }));
   attributionProfile.validate!(data.request, data.result, data.audit);

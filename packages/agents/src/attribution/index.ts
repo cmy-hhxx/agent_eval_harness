@@ -11,7 +11,7 @@ import { findingIssueContext } from "./finding-feedback.js";
 import { attributionSubmissionSchema } from "./submission-schema.js";
 import { attributionFindingBasis } from "./finding-basis.js";
 import { investigationMaterial } from "./investigation-material.js";
-import { responsibilityFunctions } from "./responsibility.js";
+import { responsibilityFunctions, responsibilityComponentName } from "./responsibility.js";
 export { attributionFindingBasis } from "./finding-basis.js";
 export { attributionNormDirectory, type AttributionNorm } from "./norm-directory.js";
 export { numericReferenceDirectory } from "./units.js";
@@ -45,12 +45,12 @@ export const attributionProfile: AgentProfile = {
       responsibility_functions: responsibilityFunctions.map((row, index) => ({ function_index: index + 1, ...row })),
       responsibility_stages: attributionTaxonomy.stages.map((stage, index) => ({ failure_stage_index: index + 1, stage })),
       investigation_steps: attributionTaxonomy.investigation_steps.map((step, index) => ({ step_index: index + 1, step })),
-      responsibility_actors: (answer.component_catalog as { component: string;identity_status:string; kind: string; role: string; message_indices: number[];generated_call_indices?:number[] }[])
-        .map(({component,identity_status,kind,role,message_indices,generated_call_indices},index)=>({actor_index:index+1,
-          ...(identity_status==='named'?{component}:{}),kind,role,message_indices,generated_call_indices,
+      responsibility_actors: (answer.component_catalog as import('@eval/tools').TraceComponentIdentity[])
+        .map((actor,index)=>{const {identity_status,identity_gap,kind,role,message_indices,generated_call_indices}=actor;return {actor_index:index+1,
+          component:responsibilityComponentName(actor),identity_status,identity_gap,kind,role,message_indices,generated_call_indices,
           ...(kind==='model'?{read_requests:message_indices.filter(i=>(answer.catalog as {type:string}[])[i]?.type==='llm_turn')
             .map(message_index=>({candidate:'answer',message_index,kind:'json',path:'/output',offset:0,max_chars:16000}))}:{}),
-        })),
+        };}),
       ...(allow_standard_conflict === true ? { standard_answer_review: standardConflictInstructions } : {}),
       criterion_check_count: requirements.length+analysis.scoring_points.length+analysis.red_flags.length,
       criterion_checks: [...requirements,...analysis.scoring_points,...analysis.red_flags].map(item => ({ text:item.text })),

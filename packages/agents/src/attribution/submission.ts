@@ -127,7 +127,7 @@ function bindSubmission(request: AgentRequest, submitted: unknown, audit: ToolAu
         const { evidence_indices, function_index, step_index, failure_stage_index, ...fields } = cause;
         return { ...fields, actor_index:cause.actor_index,chain_index:cause.chain_index,field_names:list(cause.field_names),
           role:index === 0 ? "primary" : "contributing",
-          component:responsibilityComponentName(actors[Number(cause.actor_index)-1],cause.business_component),
+          component:responsibilityComponentName(actors[Number(cause.actor_index)-1]),
           ...responsibilityFunctions[Number(function_index)-1],
           chain_step:attributionTaxonomy.investigation_steps[Number(step_index)-1],
           failure_stage:attributionTaxonomy.stages[Number(failure_stage_index)-1], reason:cause.mechanism,

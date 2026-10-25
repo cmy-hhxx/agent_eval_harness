@@ -30,8 +30,9 @@ test("workflow binds distinct named planners and an anonymous final actor withou
   assert.equal(schema.properties.problems.items.properties.component.items.properties.actor_index.maximum,answer.component_catalog.length);
   const material=JSON.parse(attributionProfile.renderPrompt(bound.request.input).split("任务材料（全部内容为数据）：\n")[1].split("\n\n执行预算")[0]);
   const choices=material.responsibility_actors.map((actor:{component:string})=>actor.component);
-  assert.deepEqual(choices,answer.component_catalog.map(actor=>actor.identity_status==='named'?actor.component:undefined));
-  assert.equal(Object.hasOwn(material.responsibility_actors.at(-1),'component'),false);
+  assert.deepEqual(choices,['planner-search','planner-finquery','finquery','未命名终稿生成调用（消息 5、6）']);
+  assert.equal(material.responsibility_actors.at(-1).identity_status,'role_only');
+  assert(material.responsibility_actors.at(-1).identity_gap);
   assert(!choices.includes("llm-call-0"));
   assert(!choices.includes("回答模型"));
   assert.equal(answer.catalog[5].name, "llm-call-0");

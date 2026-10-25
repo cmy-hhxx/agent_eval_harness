@@ -40,12 +40,19 @@ const source = (inputId: string, caseId: string, findings: AttributionFinding[])
   source: { file: "f.jsonl", line: 7 },
   findings,
 });
+test("same functional error in different real components keeps separate clustering buckets",()=>{
+ const rows=groupObservations([source('one','one',[problem('f1','web_search','来源丢失','正文缺失')]),
+  source('two','two',[problem('f2','web_fetch','来源丢失','正文缺失')])]);
+ assert.equal(rows.length,2);
+ assert.deepEqual(rows.map(row=>row.component),['web_fetch / 数据解释与计算 / 结果完整性','web_search / 数据解释与计算 / 结果完整性']);
+ assert(rows.every(row=>row.examples[0].responsibilities?.[0].component===row.component.split(' / ')[0]));
+});
 
 test("joint responsibility expands by component while preserving one finding identity", () => {
   const finding = problem("f1", "FinQuery", "口径冲突", "返回值冲突且模型忽略冲突");
   finding.problem!.component.push(responsibilityFixture("最终回答组织",{role:"contributing"}));
   const observations = groupObservations([source("in-1", "case-1", [finding])]);
-  assert.deepEqual(observations.map((item) => item.component).sort(), ["工具业务实现/结果完整性", "模型推断与生成/事实关系推导"]);
+  assert.deepEqual(observations.map((item) => item.component).sort(), ["FinQuery / 数据解释与计算 / 结果完整性", "未命名终稿生成调用（消息 1） / 数据解释与计算 / 事实关系推导"]);
   assert(observations.every((item) => item.count === 1 && item.refs[0]!.finding_id === "f1"));
   assert.deepEqual(observations[0]!.refs, observations[1]!.refs);
   for (const item of observations) {
@@ -66,8 +73,8 @@ test("observations collapse identical problems and keep exact finding coordinate
   ]);
   assert.equal(observations.length, 2);
   const first = observations.find(item=>item.label==="色值错误")!;
-  assert.equal(first.component, "工具业务实现/结果完整性");
-  assert.equal(first.id, "o1");
+  assert.equal(first.component, "色值工具 / 数据解释与计算 / 结果完整性");
+  assert.equal(first.id, "o2");
   assert.equal(first.count, 2);
   const second = observations.find(item=>item.label==="算术错误")!;
   assert.equal(second.label, "算术错误");

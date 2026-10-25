@@ -1,6 +1,10 @@
 评审本方 answer 的完整执行轨迹及最终交付是否完成原题。读取工具参数 candidate 填 answer，参考材料使用各自的 key；submit_evaluation 的判断对象禁止附加 candidate、case_id、findings 或其他导出包装字段，严格按该工具 Schema 的 required 与 properties 提交。
 先理解任务要求，通过 trace_overview、catalog 和 business_chains 梳理实际执行链；检查会影响任务的关键决策、调用参数、代码、返回和消费，再结合最终交付判断实际影响。轨迹本身是评测对象，不是最终答案的附属证据。错误可能已在日期规范化、事件窗口匹配、字段选择、统计汇总、筛选判断或停止决策中形成，也可能已被恢复；围绕实际疑点追到有证据支持的起点或断点，不机械遍历所有步骤。同一事实和证据共用一次核查，证据充分就提交。
 
+最终责任结论必须包含实际节点、处理环节、具体失败机制和证据。“模型推理问题”“模型能力不足”“模型推断与生成”“模型理解错误”不能作为责任结论；技术域只是目录标签。模型有责也要定位哪次规划或生成调用，在参数构造、证据取舍、口径对齐、计算、引用或交付的哪个动作偏离了什么输入。实际组件名由 actor_index 绑定，business_component 只写业务位置，mechanism 写输入如何被处理及产生何种偏离，三者不能互换。
+按疑点选择七种检查视角：模型规划（实际 planner-search、planner-finquery、Expert 规划轮的目标、选工具、参数和恢复）；检索抓取（web_search/web_fetch 的召回、日期、提取与失败）；金融取数（实际 finquery、finquery.py 或后端的实体、字段、日期、SQL、覆盖和状态）；代码执行（真实脚本、环境、计算、文件与并发）；上下文记忆（实际整理、截断、注入与记忆节点的前后事实）；终稿生成（最后实际输入到生成输出的证据取舍、补写、计算、引用）；渲染运行时（生成到交付之间的变化、工具调度和呈现）。这些是调查视角，沿用现有 function_index、step_index 和节点目录，不机械建立七条责任或补八步。
+风险信号不是定罪规则：正常0行、仅摘要、旧来源、长上下文、原句直送 finquery 或工具合理拒绝错误参数，均不能单独证明组件失败；HTML 展示截断不证明真实输入被截断。参数错误先核对实际产生参数的调用；请求正确而执行换错对象再调查工具；原始返回到最后输入的确实丢失先定位传递边界；正确材料已进入最后输入而生成出错再定位该生成调用。信号与答案问题同时出现不证明因果。故障恢复后区分过程成本与交付影响。
+
 1. 理解要求与实际执行链，只调查会影响任务和归因的关键关系。
 - catalog/trace_overview 与 business_chains 描述实际调用、计算、结果和异常；review 描述最终交付。先定位执行中的关键行为与输入输出，再核对结论成立的条件及传播或恢复。原值抄对不等于窗口、统计、筛选或解释成立；同时核对指标含义、符号、事件期间和推断强度，不重复搜索已有原值来证明读过。
 - 简单题且证据已充分时直接提交完整判断，不先写空草稿或重复读取已展示正文。多轮取证只在当前会话记录待查关系及证据编号；没有疑点时不制造问题，不为填满字段增加工具调用。
@@ -40,7 +44,7 @@
 - 在顶层 investigation_facts 集中提交已核实的公共事实，每行只填 chain_index、step_index、field_names、observation、evidence_indices。step_index 选择 investigation_steps；只提交已采集且实际核实的边界，不生成未采集行或八步空模板，程序保留这些已核实事实及原始坐标。每条问题以 investigation_fact_indices 引用自己的相关事实，编号为数组的1起始位置；同一事实可被多个问题引用，但各自涉及的字段须有实际核查。diagnosis 与 investigation_fact_indices 为每个问题的必填选择；无需公共事实时明确提交空数组，不自动填值。已采集而未读的必要边界须继续取证，不能当作未采集。无相关调用时引用数组为空。diagnosis 仍区分 entity_or_unit、source_absence、context_loss、other。
 - 每条事实的证据必须属于它所选链路和环节：step_index=4 引用原始工具返回，不能以模型实际输入替代；step_index=6 引用最后生成节点实际输入，不能以较早节点替代。step_index=5 的传递结论须核对相关返回、已采集整理节点与实际输入；step_index=7 的解释/计算结论须同时有相关实际输入与生成记录。只描述输入中的已有材料时选6，不因材料涉及规则或计算就选7；不需要这些结论时不机械补齐5或7。同一真实证据可支持多个环节，但须分别符合对应边界。已展示完整原文无需重复读取；目录编号和预览不能替代未展示正文。
 - 共享事实的 field_names 与责任字段一样，只填该事实所引边界原文或路径里实际存在的字段。纯正文分析填 []；例如引用 summary 的正文叶子不能把仅存在于父对象的 title、url 一并当作已查字段，也不能把模型输入中的字段冒充原始返回。修复反馈的 fact_indices 为1起始事实编号，repair_paths 指向需修正的具体事实；按 required_sources/read_request 核对缺少的边界，不改成另一张编号目录或删掉真实缺陷来消除报错。
-- actor_index 选择实际执行主体；真实节点名称由程序保留，匿名节点按 business_component 的具体行为展示，调用身份仍由 actor_index、message_indices 及证据坐标确定，不把行为虚构成独立Agent。business_component 写可行动的具体业务行为，例如“交易日期规范化与窗口匹配”或“修正后的汇总更新”；chain_index 关联具体调用，step_index 标明责任形成、传播或未恢复的步骤，field_names 列实际受影响字段。技术分类或“最终回答组织”不能代替业务定位。没有相关调用时 chain_index=null，仍说明具体错误动作。
+- actor_index 选择实际执行主体；真实节点名称由程序保留，匿名节点明确显示未命名、角色与消息坐标，不能用 business_component 冒充组件名，也不能把多个匿名调用合成一个回答模型。business_component 写可行动的具体业务行为，例如“交易日期规范化与窗口匹配”或“修正后的汇总更新”；chain_index 关联具体调用，step_index 标明责任形成、传播或未恢复的步骤，field_names 列实际受影响字段。技术分类不能代替节点和业务定位。没有相关调用时 chain_index=null，仍说明具体错误动作。
 - 找到重复交易窗口、错误汇总、日期口径或字段映射的上游返回后，继续读取对应调用代码、参数及原始返回；已采集而未读取不是证据断点。即使责任先选 chain_index=null，已引用的真实请求和返回仍触发该链路核查。脚本由模型编写且工具忠实执行时，追责实际代码生成或参数处理节点，不把错误归为工具执行实现，也不只追责最终沿用。
 - 筛选、比较与名单题逐行核对全部必要条件：每家实体的每个阈值、单位、币种与期间分别验证，不在发现首个不合格实体后停止。来源没读到、没有找到计算记录只说明支持尚未核实，不能写成确认不存在来源；能读的对应代码和返回应先读完。
 - 最早引入错误不自动永远是最终缺陷的唯一主责：逐笔或中间结果已修正时，分别核实修正传播、汇总更新及后续消费的实际行为，再按仍残留缺陷的因果作用选主责与关联责任。季度收入不一致可确认取值错误；字段选择、累计值转换或无依据填入等机制仍须看实际取值和代码，未查明就保留具体断点。
@@ -57,7 +61,7 @@
 - catalog.semantic_role 区分模型调用、工具调用与工具返回；名称带 query、planner 或 API 不改变记录身份。invoking_model_message_index 只导航到有唯一明确关联的调用模型；目录未给关联时不凭相邻位置猜配。
 - 按“请求参数 → 实际执行与返回 → 模型实际输入 → 最终交付”追查与缺陷直接相关的偏离、传播和恢复。最早异常不自动等于主因；已恢复错误按真实过程损失保留，不能继续解释已修复的最终缺陷。
 - 已登记且可读取的请求、返回或实际输入，尚未读取不等于材料缺失。优先补查能区分候选原因的那段材料，再确定主责；不以“未查看返回”结束本可完成的追查。若取证预算已耗尽，明确区分“已采集但本次未核验”与“未采集”，责任保留推断，不能声称数据不存在。确认模型误用来源时，核对相应实际输入；仅有原始工具返回时，不把“完整收到后误读”写成确证。
-- 每条 problem.component 按责任顺序列出：第一项为主责，其后为各自有独立证据的关联责任，role 由程序填充。每项提交 actor_index、function_index、business_component、chain_index、step_index、field_names、mechanism_source、failure_stage_index、mechanism、certainty、evidence_indices。分别选择 responsibility_actors、responsibility_functions、investigation_steps、responsibility_stages 的编号；主体真实名称、技术域、功能组件和步骤名称由程序解析，不抄写名称、身份缺口或调用ID。同名节点按 actor_index 与实际证据坐标区分；匿名主体按已选节点的具体业务行为展示，不以阶段名称代替责任结论。mechanism 用中文说明具体错误动作、因果支持及边界，不另写重复 reason；definition 由程序依据问题 reason 组装，label 保留简短诊断标题。
+- 每条 problem.component 按责任顺序列出：第一项为主责，其后为各自有独立证据的关联责任，role 由程序填充。每项提交 actor_index、function_index、business_component、chain_index、step_index、field_names、mechanism_source、failure_stage_index、mechanism、certainty、evidence_indices。分别选择 responsibility_actors、responsibility_functions、investigation_steps、responsibility_stages 的编号；主体名称和匿名坐标、技术域、功能及步骤由程序解析，不抄写名称、身份缺口或调用ID。同名节点按 actor_index 与实际证据坐标区分。mechanism 用中文说明具体错误动作、因果支持及边界，不另写重复 reason；definition 由程序依据问题 reason 组装，label 保留简短诊断标题。未知上游处理者不能虚构成新节点，也不能据此兜底确证终稿模型；保留已定位的前后边界、缺失的处理记录、机制推断及替代解释。
 - 每个责任分别引用自己的evidence_indices，形成“观察到的偏离 → 如何导致或放大本条缺陷”的简短解释。关联责任须有独立作用；正确工具不因为被引用就有责任。相同失误及直接后果只记一次，不为配平责任遍历整棵目录。
 - certainty=confirmed 须有该具体主体的直接过程依据，不提交 evidence_gap、alternatives，程序回填 null、[]。certainty=inferred 须填写关键 evidence_gap 和已考虑的 alternatives，不把隐藏机制写成确证。缺陷已确认而责任仍推断时，evidence_status 保持 established；不能以空责任结束，也不能将“未看到依据”写成“确认无依据”。
 - 分别检验缺陷与责任的证据强度。仅凭 URL、标题、异常指标或发布时间推测外部状态，尚无正文、直接记录或确定性反证时，相关缺陷也是 uncertain；给责任加 inferred 不能替代缺陷核验。可另行确认的缺陷仍独立保留，例如引用正文实际不支持回答的具体主张。不要在理由中把“待核状态”改写为已发生事实，也不要给原句补上“仅”“全部”等更强限定后再反驳。

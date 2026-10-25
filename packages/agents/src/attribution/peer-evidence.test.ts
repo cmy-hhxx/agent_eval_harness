@@ -8,7 +8,7 @@ import { AgentRegistry } from "@eval/host";
 import { prepareFixtureEvidence } from "../../../../tests/fixtures/evidence.js";
 import { parseEvidenceCoordinates, ValidationError, type AgentBinding, type AgentRequest, type EvidenceReference, type ToolAudit } from "@eval/contracts";
 import { cite, evidenceSources, selectEvidenceSource } from "@eval/tools";
-import { attributionAgent, attributionTableChecks, attributionTableReview } from "./index.js";
+import { attributionAgent, attributionTableChecks, attributionTableReview, responsibilityComponentName } from "./index.js";
 import type { AttributionResult } from "./types.js";
 import example from "./fixtures/example.json" with { type: "json" };
 import { setFixtureNormDirectory } from "../../../../tests/fixtures/attribution-submission.js";
@@ -46,16 +46,16 @@ function fixture() {
   };
   (request.input.reference_materials as any).B.final_evidence = [{ ...ref("B", 1, "/content"),
     message_index: 1, quote: peer.messages[1]!.content }];
+  setFixtureNormDirectory(request);
   const ownRef = ref("answer", 1, "/content"), peerRef = ref("B", 0, "/timestamp");
   const draft = { summary: "原UTC日期与回答相差一天。", numeric_checks: [],  findings: [{
     type: "problem", dimension: "correctness", stage: "final_answer", importance: "high",
     text: "UTC日期错误", reason: "原请求UTC日期为12日，实际回答为13日。", evidence: [ownRef, peerRef],
     assessment: { requirement_index: 0, observation: "UTC日期相差一天", evidence_status: "established", impact: "核心日期不可用" },
-    problem: { diagnosis: "other" as const, investigation: [], component: [responsibilityFixture("最终回答组织",{evidence_ids:[ownRef.evidence_id]})], label: "日期错误", definition: "最终日期与原请求UTC日期不一致。" },
+    problem: { diagnosis: "other" as const, investigation: [], component: [responsibilityFixture("最终回答组织",{component:responsibilityComponentName((request.input.answer as any).component_catalog[0]),evidence_ids:[ownRef.evidence_id]})], label: "日期错误", definition: "最终日期与原请求UTC日期不一致。" },
   }], criterion_assessments: [{ criterion_id: "r1", status: "unmet", evidence_status: "established",
     summary: "回答日期与原请求UTC日期不一致。", evidence: [ownRef, peerRef] }],
     core_assessment: { meets_core: false, reason: "日期错误。", requirement_indices: [0] } };
-  setFixtureNormDirectory(request);
   return { request, binding: { agent: "attribution", profile: "default", request } as AgentBinding, draft, ref };
 }
 function hasIssue(action: () => unknown, code: string, path?: string) {

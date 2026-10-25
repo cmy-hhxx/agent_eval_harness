@@ -38,6 +38,15 @@ test("model behavior counts mixed and unknown responsibility once without attrib
   assert(!JSON.stringify(result.rows).includes('"evidence"'));
   assert.equal(result.rows[0].findings[3].responsibility, "unknown");
 });
+test("separate planning and generation calls remain model responsibility rather than reducing the model count",()=>{
+ const item=finding('f1',['最终回答组织']);
+ item.problem!.component.push({...item.problem!.component[0],actor_index:2,component:'planner-finquery',
+  role:'contributing',functional_component:'动作参数生成',chain_step:'工具请求参数',mechanism:'规划输出生成了错误查询参数。'});
+ const result=modelBehavior([task('source')],{source:receipt('source',[item])});
+ assert.equal(result.rows[0].findings[0].components.length,2);
+ assert.equal(result.summary.by_version.a.problems.model,1);
+ assert.equal(result.summary.by_version.a.problems.mixed,0);
+});
 
 test("model behavior follows current attribution references and stays independent of the product winner", () => {
   const tasks = [task("old"), task("current"), task("other", "b-answer", "b")];

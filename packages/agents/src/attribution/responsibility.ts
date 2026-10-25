@@ -18,9 +18,11 @@ export function responsibilityChoices(request: AgentRequest): string[] {
 }
 export const responsibilityFunctions = Object.entries(attributionTaxonomy.domains).flatMap(([technical_domain, components]) =>
   components.map(functional_component => ({ technical_domain, functional_component })));
-/** Anonymous names describe the observed business action, not an invented Agent. */
-export function responsibilityComponentName(actor:TraceComponentIdentity|undefined,business:string){
-  return actor?.identity_status==='named'?actor.component:business;
+/** Names identify captured actors; the business position never becomes an invented component. */
+export function responsibilityComponentName(actor:TraceComponentIdentity|undefined){
+  if(!actor)return '';
+  const role={model_call:'模型调用',final_answer:'终稿生成调用',tool:'工具调用',unknown:'处理节点'}[actor.role];
+  return actor.identity_status==='named'?actor.component:`未命名${role}（消息 ${actor.message_indices.join('、')}）`;
 }
 export function componentCatalogIssues(request: AgentRequest): ValidationIssue[] {
   const raw = request.sources.answer.value as { messages: unknown[] };
@@ -29,9 +31,9 @@ export function componentCatalogIssues(request: AgentRequest): ValidationIssue[]
     [{ category: "evidence", code: "component_catalog", path: "/answer/component_catalog", message: "组件身份目录必须由本方实际轨迹构建，名称、角色、节点坐标与身份来源均须一致。" }];
 }
 
-/** Library categories describe technical functions, independently of trace-local actor names. */
+/** A class cannot erase which captured component performed the failed function. */
 export function responsibilityLabels(problem: Pick<ProblemProposal, "component">): string[] {
-  return [...new Set(problem.component.map(row => `${row.technical_domain}/${row.functional_component}`))];
+  return [...new Set(problem.component.map(row => `${row.component.trim()} / ${row.chain_step} / ${row.functional_component}`))];
 }
 
 export function responsibilitySchema(evidenceField: "evidence_ids" | "evidence_indices") {
@@ -76,7 +78,7 @@ export function responsibilityIssues(request: AgentRequest, problem: unknown, se
     const actor = Number.isSafeInteger(row.actor_index) ? actors[Number(row.actor_index) - 1] : undefined;
     if (typeof row.component === "string" && isComponentLocator(row.component))
       add("responsibility_actor_locator", `${location}/component`, "调用ID、span ID及UUID只能用于导航，不能作为实际组件名称。", row.component);
-    if (!actor || responsibilityComponentName(actor,String(row.business_component??'')) !== row.component) add("responsibility_actor", `${location}/actor_index`, "主体按节点编号和来源定位；真实名称原样保留，匿名主体按具体行为展示，不能用其他节点替代。", row.actor_index);
+    if (!actor || responsibilityComponentName(actor) !== row.component) add("responsibility_actor", `${location}/actor_index`, "主体按节点编号和来源定位；真实名称原样保留，匿名主体保留角色、未命名状态和消息坐标；业务位置不能冒充组件名称。", row.actor_index);
     const modelActor = actor?.kind === "model";
     if (modelActor && ["工具业务实现", "工具接入与协议"].includes(String(row.technical_domain)))
       add("responsibility_actor_domain", location, "llm_turn是模型节点，不能因有name而认作工具；定位其推断、控制或实际相关技术功能。", row.component);
@@ -86,6 +88,10 @@ export function responsibilityIssues(request: AgentRequest, problem: unknown, se
     const refs = Array.isArray(row.evidence_ids) ? row.evidence_ids : [];
     if (typeof row.mechanism === "string" && !isChineseAttributionText(row.mechanism))
       add("responsibility_mechanism_language", `${location}/mechanism`, "具体失误机制须用中文短文说明本次错误动作，保留必要的专有名词。");
+    if(typeof row.mechanism==='string'&&['模型推理问题','模型能力不足','模型推断与生成','模型理解错误','模型推理错误','模型生成错误']
+      .includes(row.mechanism.replace(/[\s。！!；;，,：:]/gu,'')))
+      add('responsibility_mechanism_generic',`${location}/mechanism`,
+        '不能用模型推理或能力标签结束归因。说明所选节点对哪个实际输入，在参数构造、证据取舍、口径、计算、引用或交付中做了什么错误处理，并引用该边界；隐藏动作保留推断、缺口及替代解释。',row.mechanism);
     if (!refs.length || refs.some(id => !selectedIds.has(String(id))))
       add("responsibility_evidence", `${location}/evidence_ids`, "每个责任分别引用本条 finding 已选择的真实证据，不能编造编号。");
     if (row.certainty === "inferred" && (typeof row.evidence_gap !== "string" || !row.evidence_gap.trim() || !Array.isArray(row.alternatives) || !row.alternatives.length))

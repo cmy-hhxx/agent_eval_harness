@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { bindAttributionMaterial } from "@eval/workflows/review";
 import { type Candidate, type RawInput } from "@eval/workflows/inputs";
 import type { AttributionResult, BusinessChain, ProblemProposal } from "@eval/agents/attribution";
+import { responsibilityComponentName } from "@eval/agents/attribution";
 import { parseEvidenceCoordinates } from "@eval/tools";
 import { emptyAudit } from "./comparison.js";
 import { responsibilityFixture } from "./responsibility.js";
@@ -51,6 +52,8 @@ export function businessChainFixture(loss = false, question = "Gold prediction f
       text: "ETF份额价格被写成现货黄金报价。", reason: "实际输入保留身份和369美元，最终回答引用同一来源却声明XAU/USD为3690美元。", evidence,
       assessment: { requirement_index: 0, observation: "标的及价格口径错配已确认。", evidence_status: "established", impact: "预测收益与阈值基准不可直接使用。" }, problem }] };
   const audit = emptyAudit();
+  cause.component=responsibilityComponentName((binding.request.input.answer as {component_catalog:import('@eval/tools').TraceComponentIdentity[]})
+    .component_catalog[cause.actor_index-1]);
   audit.traceReads = evidence.flatMap(item => {
     const point=parseEvidenceCoordinates(item.evidence_id)!;
     return point.kind==='image'?[]:[{candidate:'answer',message_index:point.message_index,kind:point.kind,path:point.path,start:point.start,end:point.end}];

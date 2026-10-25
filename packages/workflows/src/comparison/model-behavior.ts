@@ -86,8 +86,8 @@ export function modelBehavior(tasks: readonly PlannedTask[], receipts: Readonly<
       if (finding.type !== "problem" || !finding.problem) continue;
       const components = technicalResponsibilityLabels(finding.problem).sort();
       const responsibility: ResponsibilityGroup = finding.assessment.evidence_status !== "established" ? "unconfirmed"
-        : !components.length ? "unknown" : components.some(component => component.startsWith("模型推断与生成/"))
-          ? components.length === 1 ? "model" : "mixed" : "other";
+        : !components.length ? "unknown" : finding.problem.component.some(cause=>cause.technical_domain==='模型推断与生成')
+          ? finding.problem.component.every(cause=>cause.technical_domain==='模型推断与生成') ? "model" : "mixed" : "other";
       const observation = { finding_id: finding.finding_id, responsibility, components, text: finding.text,
         impact: finding.assessment.impact, source_conflict: false };
       const existing = row.findings.find(item => item.finding_id === finding.finding_id);

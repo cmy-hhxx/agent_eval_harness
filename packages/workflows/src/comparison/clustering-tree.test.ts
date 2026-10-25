@@ -11,7 +11,7 @@ function fixture() {
   const source: ClusteringJobSource = { run: "/source", run_id: "answers", task_id: randomUUID(), submission_id: randomUUID(),
     evaluator_version: "fixture", input_id: inputId, model, batch_id: "day", case_id: "case", source: { file: "/source.jsonl", line: 1 } };
   const { run, run_id, task_id, submission_id, evaluator_version } = source;
-  const components = ["模型推断与生成/事实关系推导", "工具业务实现/结果完整性"];
+  const components = ["planner-finquery / 工具请求参数 / 动作参数生成", "finquery / 原始返回及字段含义 / 实体映射"];
   const ref: ProblemObservationRef = { version: model, input_id: inputId, finding_id: "f0", batch_id: "day", case_id: "case",
     source: source.source, attribution: { run, run_id, task_id, submission_id, evaluator_version },
     components, evidence_status: "established", importance: "high", summary: "返回不完整且结论缺少支持。" };
