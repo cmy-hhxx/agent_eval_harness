@@ -17,8 +17,7 @@ import { comparisonSubmission } from "./comparison-submission.js";
 import { normSelection } from "./attribution-submission.js";
 import type { ComparisonSlot } from "@eval/agents/comparison";
 import { comparisonWorkflow } from "@eval/workflows/comparison";
-import { responsibilityFunctions, type AttributionSubmission } from "@eval/agents/attribution";
-import { attributionTaxonomy } from "@eval/prompts";
+import { responsibilityFunctions } from "@eval/agents/attribution";
 
 export const fakeIdentity: EngineIdentity = {
   engine: "pi",
@@ -150,6 +149,14 @@ export async function fixtureConfig(
 
 export function attributionResult(correct = true, answer = "2+2=4", available = true, inputId = "7c4e3ba8-8f7c-46cc-b8fb-3016e10ea2dd"): AttributionResult {
   const task_analysis = criteriaResult({ question: "计算2+2", candidates: [{ candidate_id: inputId, instructions: [], context: [] }] });
+  // This two-message fixture records only question and delivery; no generation call is captured.
+  const deliveredId=evidenceId(inputId,1,"text","/content",0,answer.length);
+  const formation={calculations:[],investigation:[{transition_index:1,kind:"delivery" as const,outcome:"unresolved" as const,
+    observation:"已核对交付答案，未采集实际生成输入输出与中间处理记录。",before_evidence_ids:[],after_evidence_ids:[deliveredId]}],
+    component:[responsibilityFixture("处理者未采集：加法答案形成边界",{transition_index:1,actor_index:null,basis:"unknown_transition",
+      chain_step:"核验与最终交付",failure_stage:"结果组织与交付",business_component:"加法答案形成边界",evidence_ids:[deliveredId],
+      mechanism:"推测偏离形成于未采集的计算、生成或交付环节，现有记录无法区分。",
+      evidence_gap:"未采集生成输入、处理过程与实际输出。",alternatives:["上游计算结果错误。","生成或交付引入数值错误。"]})]};
   return {
     has_standard_answer: available,
     is_correct: available ? correct : null,
@@ -180,7 +187,7 @@ export function attributionResult(correct = true, answer = "2+2=4", available = 
         },
         problem: correct
           ? null
-          : { diagnosis: "other" as const, investigation: [], component: [responsibilityFixture("最终回答组织", {evidence_ids: ([{ evidence_id: evidenceId(inputId, 1, "text", "/content", 0, answer.length), message_index: 1, quote: answer }]).map(item=>item.evidence_id)})], label: "算术错误", definition: "计算与事实不符。" },
+          : { diagnosis: "other" as const, ...formation, label: "算术错误", definition: "计算与事实不符。" },
       },
     ],
   };
@@ -490,12 +497,10 @@ export function draftFor(spec: Pick<AttemptSpec, "inputs" | "prompt" | "evidence
       evidence_status:row.assessment.evidence_status,evidence_indices:selections(row.evidence),
       basis_index:row.dimension==="instruction_following"?normSelection(norms,row):row.assessment.requirement_index===null?null:row.assessment.requirement_index+1,
     });
-    const investigation_facts:AttributionSubmission["investigation_facts"]=[];
     return {
       summary:result.summary,meets_core:core.meets_core,core_reason:core.reason,
       core_requirements:core.criterion_ids.map(id => material.task_analysis.requirements.find(item => item.id === id)!.requirement_index),
       ...(material.ground_truth.available?{is_correct:result.is_correct,correctness_reason:result.correctness_reason,correctness_evidence_indices:correctness}:{}),
-      investigation_facts,
       criterion_assessments:(result.criterion_assessments as AttributionResult["criterion_assessments"]).filter(row => row.status !== "not_applicable")
         .map(row => ({status:row.status,evidence_status:row.evidence_status,summary:row.summary,evidence_indices:selections(row.evidence)})),
       numeric_checks:(result.numeric_checks as AttributionResult["numeric_checks"]).map(({expected,matches:_matches,...row}) => ({...row,
@@ -503,23 +508,16 @@ export function draftFor(spec: Pick<AttemptSpec, "inputs" | "prompt" | "evidence
       strengths:(result.findings as AttributionResult["findings"]).filter(row=>row.type==="strength").map(observation),
       problems:(result.findings as AttributionResult["findings"]).filter(row=>row.type==="problem").map(row=>{
         const observed=observation(row),problem=structuredClone(row.problem!);
-        const investigation_fact_indices=problem.investigation.flatMap(chain=>chain.steps.flatMap(step=>{
-          if(step.status==='not_collected')return [];
-          const proof=row.evidence.filter(item=>step.evidence_ids.includes(item.evidence_id));
-          const fact={chain_index:chain.chain_index,step_index:attributionTaxonomy.investigation_steps.indexOf(step.step)+1,
-            field_names:[...new Set(problem.component.filter(cause=>cause.chain_index===chain.chain_index).flatMap(cause=>cause.field_names))]
-              .filter(field=>proof.some(item=>item.quote.includes(field))),observation:step.observation,evidence_indices:selections(proof)};
-          const prior=investigation_facts.findIndex(item=>JSON.stringify(item)===JSON.stringify(fact));
-          if(prior>=0)return [prior+1];investigation_facts.push(fact);return [investigation_facts.length];
-        }));
-        return {...observed,impact:row.assessment.impact,diagnosis:problem.diagnosis,label:problem.label,investigation_fact_indices,
-          component:problem.component.map(cause=>({actor_index:cause.actor_index,
+        const checks=problem.investigation.map(check=>({transition_index:check.transition_index,outcome:check.outcome,
+          observation:check.observation,before_evidence_indices:selections(row.evidence.filter(item=>check.before_evidence_ids.includes(item.evidence_id))),
+          after_evidence_indices:selections(row.evidence.filter(item=>check.after_evidence_ids.includes(item.evidence_id)))}));
+        return {...observed,impact:row.assessment.impact,diagnosis:problem.diagnosis,label:problem.label,checks,
+          calculations:problem.calculations.map(calculation=>({...calculation,operands:Object.fromEntries(Object.entries(calculation.operands)
+            .map(([name,{evidence_id,...operand}])=>[name,{...operand,evidence_index:choose(evidence_id).evidence_index}]))})),
+          causes:problem.component.map(cause=>({transition_index:cause.transition_index,basis:cause.basis,
             function_index:responsibilityFunctions.findIndex(item=>item.technical_domain===cause.technical_domain&&item.functional_component===cause.functional_component)+1,
-            step_index:attributionTaxonomy.investigation_steps.indexOf(cause.chain_step)+1,failure_stage_index:attributionTaxonomy.stages.indexOf(cause.failure_stage)+1,
-            business_component:cause.business_component,chain_index:cause.chain_index,field_names:cause.field_names,
-            mechanism_source:cause.mechanism_source,mechanism:cause.mechanism,certainty:cause.certainty,
-            ...(cause.certainty==='inferred'?{evidence_gap:cause.evidence_gap,alternatives:cause.alternatives}:{}),
-            evidence_indices:selections(row.evidence.filter(item=>!cause.evidence_ids.length||cause.evidence_ids.includes(item.evidence_id)))}))};
+            business_component:cause.business_component,mechanism_source:cause.mechanism_source,mechanism:cause.mechanism,certainty:cause.certainty,
+            ...(cause.certainty==='inferred'?{evidence_gap:cause.evidence_gap,alternatives:cause.alternatives}:{})}))};
       }),
       image_observations:[...new Map([...images(result.correctness_evidence ?? []),...(result.findings as AttributionResult["findings"]).flatMap(row=>images(row.evidence))].map(item=>[item.image_number,item])).values()],
     };

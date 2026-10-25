@@ -217,7 +217,8 @@ function buildCitationInventory(raw: { messages: unknown[] }, inputId: string, f
       // Separate a following literal JSON result from this field block.
       const jsonStart = tail.search(/\n\{"serial_number"\s*:/u);
       const end = jsonStart < 0 ? next : start + jsonStart;
-      add("trace", match[1], cite(inputId, messageIndex, source, from + start, from + end), origin);
+      const query = /^query:\s*([^\r\n]+)$/mu.exec(match[0])?.[1];
+      add("trace", match[1], cite(inputId, messageIndex, source, from + start, from + end), origin, "ref", undefined, query);
     }
   };
   raw.messages.slice(0, finalIndex).forEach((value, messageIndex) => {

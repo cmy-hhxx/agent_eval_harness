@@ -1,4 +1,3 @@
-import { responsibilityFixture } from "../../fixtures/responsibility.js";
 import { canonicalEvidence } from "../../fixtures/evidence.js";
 import test from "node:test";
 import assert from "node:assert/strict";
@@ -11,7 +10,7 @@ import { runEvaluation } from "@eval/host";
 import { buildPlan, reportRun, readRunState, readRunTasks, readCaseDetail, readTaskResult, stageResult, prepareComparisonRewrites } from "@eval/workflows/comparison";
 import type { TaskData, AttributionResult } from "@eval/workflows/comparison";
 import { services, validateRun } from "../../fixtures/services.js";
-import { submitFor, inspectFor, draftFor, fakeEvaluatorVersion, fakeIdentity, fixtureConfig, taskResult, parsedMaterial, raw } from "../../fixtures/comparison.js";
+import { submitFor, inspectFor, draftFor, fakeEvaluatorVersion, fakeIdentity, fixtureConfig, taskResult, parsedMaterial, raw, attributionResult } from "../../fixtures/comparison.js";
 
 async function rows(file: string): Promise<JsonObject[]> {
   const result: JsonObject[] = [];
@@ -61,7 +60,9 @@ for (const clustering of [false, true]) test(`rewrite embeds named text in stage
             finding.reason = "原文给出5，正确结果应为4。";
             finding.assessment.observation = material.answer.final_answer;
             finding.assessment.impact = "唯一所求结果错误，未完成计算要求。";
-            finding.problem = { diagnosis: "other" as const, investigation: [], component: [responsibilityFixture("最终回答组织", {evidence_ids: []})], label: "计算错误", definition: "计算与事实不符。" };
+            finding.problem = { ...attributionResult(false, material.answer.final_answer, true,
+              options.spec.inputs.find(input => input.name === "answer")!.id).findings[0]!.problem!,
+              label: "计算错误", definition: "计算与事实不符。" };
           }
           const result = await submitFor(options, draftFor(options.spec, evaluation));
           assert.equal(result.isError, undefined, JSON.stringify(result));

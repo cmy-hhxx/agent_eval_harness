@@ -272,7 +272,8 @@
               "label",
               "definition",
               "diagnosis",
-              "investigation"
+              "investigation",
+              "calculations"
             ],
             "properties": {
               "component": {
@@ -299,7 +300,9 @@
                     "chain_step",
                     "field_names",
                     "mechanism_source",
-                    "actor_index"
+                    "actor_index",
+                    "transition_index",
+                    "basis"
                   ],
                   "properties": {
                     "technical_domain": {
@@ -405,6 +408,17 @@
                         "null"
                       ],
                       "minimum": 1
+                    },
+                    "transition_index": {
+                      "type": "integer",
+                      "minimum": 1
+                    },
+                    "basis": {
+                      "enum": [
+                        "input_deviation",
+                        "independent_addition",
+                        "unknown_transition"
+                      ]
                     }
                   }
                 }
@@ -427,64 +441,216 @@
               },
               "investigation": {
                 "type": "array",
+                "minItems": 1,
                 "items": {
                   "type": "object",
                   "additionalProperties": false,
                   "required": [
-                    "chain_index",
-                    "steps"
+                    "transition_index",
+                    "kind",
+                    "outcome",
+                    "observation",
+                    "before_evidence_ids",
+                    "after_evidence_ids"
                   ],
                   "properties": {
-                    "chain_index": {
+                    "transition_index": {
                       "type": "integer",
                       "minimum": 1
                     },
-                    "steps": {
+                    "kind": {
+                      "enum": [
+                        "request_formation",
+                        "execution",
+                        "transfer",
+                        "generation",
+                        "delivery"
+                      ]
+                    },
+                    "outcome": {
+                      "enum": [
+                        "preserved",
+                        "changed",
+                        "recovered",
+                        "unresolved"
+                      ]
+                    },
+                    "observation": {
+                      "type": "string",
+                      "minLength": 1
+                    },
+                    "before_evidence_ids": {
                       "type": "array",
-                      "minItems": 1,
-                      "maxItems": 8,
+                      "uniqueItems": true,
                       "items": {
+                        "type": "string",
+                        "minLength": 1
+                      }
+                    },
+                    "after_evidence_ids": {
+                      "type": "array",
+                      "uniqueItems": true,
+                      "items": {
+                        "type": "string",
+                        "minLength": 1
+                      }
+                    }
+                  }
+                }
+              },
+              "calculations": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": [
+                    "label",
+                    "operation",
+                    "operands",
+                    "result",
+                    "scale",
+                    "decimal_places",
+                    "result_unit",
+                    "result_period",
+                    "assumptions"
+                  ],
+                  "properties": {
+                    "label": {
+                      "type": "string",
+                      "minLength": 1
+                    },
+                    "operation": {
+                      "enum": [
+                        "ratio",
+                        "relative_change",
+                        "compound_growth",
+                        "annualization",
+                        "arithmetic"
+                      ]
+                    },
+                    "operands": {
+                      "type": "object",
+                      "minProperties": 1,
+                      "additionalProperties": {
                         "type": "object",
                         "additionalProperties": false,
                         "required": [
-                          "step",
-                          "status",
-                          "observation",
-                          "evidence_ids"
+                          "value",
+                          "evidence_id",
+                          "unit",
+                          "period",
+                          "role"
                         ],
                         "properties": {
-                          "step": {
-                            "enum": [
-                              "用户目标",
-                              "查询规划与标的选择",
-                              "工具请求参数",
-                              "原始返回及字段含义",
-                              "返回整理与上下文传递",
-                              "模型实际输入",
-                              "数据解释与计算",
-                              "核验与最终交付"
-                            ]
-                          },
-                          "status": {
-                            "enum": [
-                              "checked",
-                              "not_collected"
-                            ]
-                          },
-                          "observation": {
+                          "value": {
                             "type": "string",
                             "minLength": 1
                           },
-                          "evidence_ids": {
-                            "type": "array",
-                            "uniqueItems": true,
-                            "items": {
+                          "evidence_id": {
+                            "type": "string",
+                            "minLength": 1
+                          },
+                          "unit": {
+                            "type": "string",
+                            "minLength": 1
+                          },
+                          "period": {
+                            "type": "string",
+                            "minLength": 1
+                          },
+                          "role": {
+                            "type": "string",
+                            "minLength": 1
+                          }
+                        }
+                      },
+                      "description": "每项value为对应evidence中的完整原数token（可含千分位），unit/period/role明确原始单位、期间及业务角色。ratio仅numerator+denominator，区间比值仅numerator+denominator_lower+denominator_upper（分子非负、分母为有序正数、两端同单位同期间），denominator_role精确等于分母role；relative_change仅base+observed（同单位，期间可不同），公式(observed-base)/base，denominator_role=base.role；compound_growth必需rate+periods，可选base；rate.unit为ratio或%（%自动精确除100），periods.unit=periods且1—20整数（有界资源限制）；有base时结果=base*(1+每期增长率)^periods且与base同单位，无base计算增长倍数且result_unit=ratio，不需编造值为1的来源；非CAGR；annualization仅value，须有正factor、observation_period=value.period、target_period=result_period、result_basis=run_rate及非空assumptions，结果单位与value一致；arithmetic用自选合法变量名且每项均参与formula，display_scale为保留名。"
+                    },
+                    "result": {
+                      "oneOf": [
+                        {
+                          "type": "string",
+                          "minLength": 1
+                        },
+                        {
+                          "type": "object",
+                          "additionalProperties": false,
+                          "required": [
+                            "lower",
+                            "upper",
+                            "include_lower",
+                            "include_upper"
+                          ],
+                          "properties": {
+                            "lower": {
                               "type": "string",
                               "minLength": 1
+                            },
+                            "upper": {
+                              "type": "string",
+                              "minLength": 1
+                            },
+                            "include_lower": {
+                              "type": "boolean"
+                            },
+                            "include_upper": {
+                              "type": "boolean"
                             }
                           }
                         }
+                      ]
+                    },
+                    "scale": {
+                      "enum": [
+                        "1",
+                        "100"
+                      ],
+                      "description": "结果显示倍率，仅1或100，不是容差。ratio/relative_change的scale=100当且仅当result_unit=%；其他运算也按此倍率乘在公式结果之后。"
+                    },
+                    "decimal_places": {
+                      "type": "integer",
+                      "minimum": 0,
+                      "maximum": 12,
+                      "description": "结果小数位数0—12：对源数字的精确有理数运算结果一次性按四舍六入五成双舍入，提交result须与该精度相符。区间两端分别核算；不会自动改写模型提交的结果。"
+                    },
+                    "result_unit": {
+                      "type": "string",
+                      "minLength": 1
+                    },
+                    "result_period": {
+                      "type": "string",
+                      "minLength": 1
+                    },
+                    "assumptions": {
+                      "type": "array",
+                      "items": {
+                        "type": "string",
+                        "minLength": 1
                       }
+                    },
+                    "denominator_role": {
+                      "type": "string",
+                      "minLength": 1
+                    },
+                    "formula": {
+                      "type": "string",
+                      "minLength": 1,
+                      "description": "仅arithmetic使用具名源数操作数、四则运算和括号。数学常数0/1可直接写；10的整数次幂可作单位换算倍率（如/1000或*1e-3），须用assumptions声明原/目标单位及换算依据。其他数值必须来自operands，不得通过常数绕过证据绑定；数学常量不证明被评模型执行过对应动作。"
+                    },
+                    "factor": {
+                      "type": "string",
+                      "minLength": 1
+                    },
+                    "observation_period": {
+                      "type": "string",
+                      "minLength": 1
+                    },
+                    "target_period": {
+                      "type": "string",
+                      "minLength": 1
+                    },
+                    "result_basis": {
+                      "const": "run_rate"
                     }
                   }
                 }

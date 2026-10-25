@@ -2,7 +2,7 @@ import type { AgentRequest, JsonObject, ValidationIssue } from "@eval/contracts"
 import { attributionSubmissionSchema } from "./submission-schema.js";
 /** Repair context describes the current shallow tool field, never an internal judgment container. */
 export function findingIssueContext(request: AgentRequest, _value: unknown, issue: ValidationIssue): JsonObject | undefined {
-  if (issue.category !== "structure" && !["investigation_incomplete", "investigation_stage_evidence"].includes(issue.code)) return undefined;
+  if (issue.category !== "structure" && !["investigation_boundary_evidence", "responsibility_upstream_required", "responsibility_check_required"].includes(issue.code)) return undefined;
   const path = issue.path;
   const schema = attributionSubmissionSchema(request) as any;
   if(issue.code==="schema_additionalProperties"){
@@ -17,6 +17,6 @@ export function findingIssueContext(request: AgentRequest, _value: unknown, issu
   for (const part of path.split('/').filter(Boolean)) current = /^\d+$/u.test(part) ? current?.items : current?.properties?.[part];
   if (current===undefined) return undefined;
   return { target: {path},submission_shape:current,
-    ...(["investigation_incomplete","investigation_stage_evidence"].includes(issue.code)
-      ? { investigation_fact_shape:schema.properties.investigation_facts.items } : {}) };
+    ...(["investigation_boundary_evidence","responsibility_upstream_required","responsibility_check_required"].includes(issue.code)
+      ? { check_shape:schema.properties.problems.items.properties.checks.items } : {}) };
 }

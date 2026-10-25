@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { validateEvidenceBankSources } from "@eval/contracts";
 import { cite, evidenceSources, selectEvidenceSource } from "@eval/tools";
 import { businessChains } from "./business-chains.js";
+import { getAnswerGeneration } from "./answer-generation.js";
 
 test("financial return navigation retains failure status and execution identity beside rows",()=>{
   const id="19b0f4da-601f-46d2-83bc-1adec8758217";
@@ -20,10 +21,77 @@ test("financial return navigation retains failure status and execution identity 
       assert(returned.some(item=>item.evidence_id===expected.evidence_id),field);
     }
     assert(returned.some(item=>item.quote.includes(status_msg)));
-    const actual=chain.checkpoints[5].evidence.map(item=>item.quote).join('\n');
-    assert(actual.includes('row_count=0'));assert(!actual.includes(status_msg));
+    assert.deepEqual(chain.checkpoints[5].evidence,[],"a similar summary without a source identity is not a proven transfer");
+    assert.deepEqual(chain.context_indices,[]);
+    assert.equal(getAnswerGeneration(raw,id,4)?.input_contexts[0].message_index,3,"unlinked actual input remains independently navigable");
     validateEvidenceBankSources(returned.map(item=>item.evidence_id),new Map([[id,raw]]));
   }
+});
+
+test("pure generated rendering arguments stay attached to their actual request and return",()=>{
+  const id="19b0f4da-601f-46d2-83bc-1adec8758217",command='render --title "P/E vs drawdown" --series "P/E"';
+  const generated={role:'assistant',content:'',tool_calls:[{id:'render',type:'function',function:{name:'shell',arguments:JSON.stringify({command})}}]};
+  const output={action_id:'draw001',stdout:JSON.stringify({type:'vis-html',id:'chart-1'})};
+  const raw={messages:[{role:'user',content:'Compare the stocks'},
+    {type:'llm_turn',input_messages:[{role:'user',content:'Compare the stocks'}],output:[generated]},
+    {type:'tool_call',name:'shell',call_id:'render',input:{command}},
+    {type:'tool_result',name:'shell',call_id:'render',output},
+    {type:'llm_turn',input_messages:[generated,{role:'tool',tool_call_id:'render',content:JSON.stringify(output)}],
+      output:[{role:'assistant',content:'Chart. <vis-html ref="chart-1"/>'}]},
+    {type:'final_answer',content:[{type:'output_text',text:'Chart.'},{type:'output_image',image_url:'data:image/png;base64,AA=='}]}]};
+  const chain=businessChains(raw,id,5)[0];
+  assert.equal(chain.planner_index,1);assert.equal(chain.request_index,2);assert.deepEqual(chain.return_indices,[3]);
+  assert(chain.checkpoints[1].evidence.some(e=>e.message_index===1&&e.evidence_id.endsWith('/output/0/tool_calls/0/function/arguments')&&e.quote.includes(command.replaceAll('"','\\"'))));
+  assert.deepEqual(chain.context_indices,[4],"the parameter creator is not a consumer of its later return");
+  assert(chain.checkpoints[5].evidence.some(e=>e.message_index===4&&e.quote.includes('chart-1')));
+  assert(chain.checkpoints[6].evidence.some(e=>e.message_index===4&&e.quote.includes('<vis-html')));
+  validateEvidenceBankSources(chain.checkpoints.flatMap(p=>p.evidence.map(e=>e.evidence_id)),new Map([[id,raw]]));
+});
+
+test("financial truncated projection remains a boundary without importing unrelated final inputs",()=>{
+  const id="19b0f4da-601f-46d2-83bc-1adec8758217",query='XOM MA50 support resistance';
+  const projection='Financial data you fetched:\nfinquery_result:\nserial_number: xom0001\nquery: '+query+'\nrow_count: 1\nis_truncated: true\n\n|Closing Price|\n|183.22|\n';
+  const raw={messages:[{role:'user',content:'XOM outlook'},
+    {type:'tool_call',name:'finquery',call_id:'q',input:{query}},
+    {type:'tool_result',name:'finquery',call_id:'q',output:{query,columns:[{key:'MA50'}],datas:[{MA50:165.7899,Support:157.95,Resistance:169.635}]}},
+    {type:'llm_turn',input_messages:[{role:'user',content:projection},{role:'tool',content:'unrelated sector data'}],
+      output:[{role:'assistant',content:'170–172 is MA50 support. <trace ref="xom0001"/>'}]},
+    {type:'final_answer',content:'170–172 is MA50 support. <trace ref="xom0001"/>'}]};
+  const chain=businessChains(raw,id,4)[0];
+  assert.deepEqual(chain.context_indices,[3]);
+  assert(chain.checkpoints[3].evidence.some(e=>e.quote.includes('165.7899')));
+  assert(chain.checkpoints[5].evidence.some(e=>e.quote.includes('is_truncated: true')));
+  assert(chain.checkpoints[5].evidence.every(e=>!e.quote.includes('165.7899')&&!e.quote.includes('unrelated sector data')));
+});
+
+test("separate return consumers and their verbatim summaries do not mix sibling chains",()=>{
+  const id="19b0f4da-601f-46d2-83bc-1adec8758217";
+  const a={role:'assistant',content:'Alpha summary'},b={role:'assistant',content:'Beta summary'};
+  const raw={messages:[{role:'user',content:'Compare'},
+    {type:'tool_call',name:'lookup',call_id:'a',input:{}},
+    {type:'tool_result',name:'lookup',call_id:'a',output:{action_id:'alpha01',stdout:'Alpha return'}},
+    {type:'tool_call',name:'lookup',call_id:'b',input:{}},
+    {type:'tool_result',name:'lookup',call_id:'b',output:{action_id:'beta001',stdout:'Beta return'}},
+    {type:'llm_turn',input_messages:[{role:'tool',content:JSON.stringify({action_id:'alpha01',stdout:'Alpha return'})}],output:[a]},
+    {type:'llm_turn',input_messages:[{role:'tool',content:'Beta return'}],output:[b]},
+    {type:'llm_turn',input_messages:[a,b],output:[{role:'assistant',content:'Compared'}]},
+    {type:'final_answer',content:'Compared'}]};
+  const chains=businessChains(raw,id,8);
+  assert.deepEqual(chains.map(c=>c.context_indices),[[5,7],[6,7]]);
+  for(const [index,excluded]of [[0,'Beta'],[1,'Alpha']] as const){
+    assert(chains[index].checkpoints[4].evidence.every(e=>!e.quote.includes(excluded)));
+    assert(chains[index].checkpoints[5].evidence.every(e=>!e.quote.includes(excluded)));
+  }
+});
+
+test("identical unlabelled tool bodies do not guess which return was consumed",()=>{
+  const id="19b0f4da-601f-46d2-83bc-1adec8758217";
+  const raw={messages:[{role:'user',content:'Check'},
+    {type:'tool_call',name:'lookup',call_id:'a',input:{}},{type:'tool_result',name:'lookup',call_id:'a',output:'ok'},
+    {type:'tool_call',name:'lookup',call_id:'b',input:{}},{type:'tool_result',name:'lookup',call_id:'b',output:'ok'},
+    {type:'llm_turn',input_messages:[{role:'tool',content:'ok'}],output:[{role:'assistant',content:'Done'}]},
+    {type:'final_answer',content:'Done'}]};
+  assert(businessChains(raw,id,6).every(chain=>!chain.context_indices.length&&!chain.checkpoints[5].evidence.length));
 });
 
 test("multimodal tool returns expose original text without citing image placeholders", () => {

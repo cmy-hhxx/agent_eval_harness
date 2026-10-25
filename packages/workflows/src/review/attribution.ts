@@ -1,4 +1,4 @@
-import { businessChains, businessChainNavigation } from "./business-chains.js";
+import { businessChains } from "./business-chains.js";
 import { isToolSpan } from "../inputs/adapters.js";
 import { workflowText } from "@eval/prompts";
 import { canonical, type AgentBinding, type TaskAnalysis } from "@eval/contracts";
@@ -7,7 +7,8 @@ import { presentedMaterialReads, projectComparisonEvidence } from "./evidence-pr
 import { contentText } from "../inputs/records.js";
 import type { RawInput, Candidate } from "../inputs/types.js";
 import { attributionTrace } from "./public-trace.js";
-import { attributionNormDirectory, attributionTableChecks } from "@eval/agents/attribution";
+import { attributionNormDirectory, attributionTableChecks, buildAttributionTransitions, responsibilityComponentName,
+  type AttributionTransition } from "@eval/agents/attribution";
 import { traceCatalog } from "./catalog.js";
 import { traceOverview } from "./trace-overview.js";
 import { citationInventory, citationSourceParts, type CitationContext, type CitationInventory } from "./citations.js";
@@ -19,7 +20,7 @@ import { getAnswerGeneration, answerGenerationPresentation, type AnswerGeneratio
 /** Project only generated evidence directories; original message values stay untouched. */
 export function modelMaterial(material: Record<string, unknown>, candidate: string, raw: RawInput, inputId: string, compactChars?: number) {
   const compact = compactChars !== undefined;
-  const { identity: _identity, ...anonymous } = material;
+  const { identity: _identity, business_chains: _chains, transitions: _transitions, ...anonymous } = material;
   const shown = <T extends { evidence_id: string }>(value: T) => displayEvidence(value);
   const finalEvidence = material.final_evidence as ReturnType<typeof cite>[];
   const initial = material.initial_material as { message_index: number; value: unknown; evidence: ReturnType<typeof cite>[] }[];
@@ -30,6 +31,9 @@ export function modelMaterial(material: Record<string, unknown>, candidate: stri
     evidence_id: string; message_index: number; path: string; quote: string;
   }[]> | undefined;
   const norms = material.norm_directory as ReturnType<typeof attributionNormDirectory> | undefined;
+  const transitions = material.transitions as AttributionTransition[] | undefined;
+  const transitionEvidence = new Map(transitions?.flatMap(transition => [...transition.before, ...transition.after])
+    .map(evidence => [evidence.evidence_id, evidence] as const));
   let outlineChars = 0;
   const outlined = new Set<string>();
   const instructionOutline = (quote: string, start: number) => {
@@ -101,7 +105,25 @@ export function modelMaterial(material: Record<string, unknown>, candidate: stri
     ...(material.component_catalog ? { component_catalog: (material.component_catalog as TraceComponentIdentity[]).map(actor => ({ ...actor,
       identity_evidence: actor.identity_evidence.map(shown),
     })) } : {}),
-    ...(material.business_chains ? { business_chains: businessChainNavigation(material.business_chains as import("@eval/agents/attribution").BusinessChain[], candidate) } : {}),
+    ...(transitions ? {
+      transitions: transitions.map(transition => {
+        const actor = transition.actor_index === null ? undefined : (material.component_catalog as TraceComponentIdentity[])[transition.actor_index - 1];
+        return { transition_index: transition.transition_index, kind: transition.kind,
+          predecessors: transition.predecessors, relation: transition.relation,
+          owner: actor ? { component: responsibilityComponentName(actor), kind: actor.kind, role: actor.role, message_indices: actor.message_indices } : null,
+          before: transition.before.map(evidence => ({ reference: { evidence_id: evidence.evidence_id } })),
+          after: transition.after.map(evidence => ({ reference: { evidence_id: evidence.evidence_id } })),
+        };
+      }),
+      transition_evidence: [...transitionEvidence.values()].map(evidence => {
+        const point = parseEvidenceCoordinates(evidence.evidence_id)!;
+        if (point.kind === "image") return { message_index: evidence.message_index, reference: { evidence_id: evidence.evidence_id },
+          view_request: { candidate, message_index: evidence.message_index } };
+        return { message_index: evidence.message_index, reference: { evidence_id: evidence.evidence_id },
+          read_request: { candidate, message_index: evidence.message_index, kind: point.kind, path: point.path,
+            offset: point.start, max_chars: Math.min(16000, point.end - point.start) }, end_offset: point.end };
+      }),
+    } : {}),
     ...(captureGaps.length ? { capture_gaps: captureGaps } : {}),
     ...(imageCount ? { final_images: { image_count: imageCount,
       view_request: { candidate, message_index: finalIndex } } } : {}),
@@ -228,6 +250,8 @@ export function bindAttributionMaterial(candidate: Candidate, original: RawInput
     addInitial(i, value, evidence);
   }
   initial.sort((a, b) => a.message_index - b.message_index);
+  const actors = traceComponentIdentities(raw, candidate.input_id, candidate.final_index);
+  const chains = businessChains(raw, candidate.input_id, candidate.final_index);
   const answer = {
     identity: { version_id: candidate.version, display_name: candidate.name, answer_model: candidate.llm },
     question: candidate.question, final_message_index: candidate.final_index,
@@ -235,8 +259,9 @@ export function bindAttributionMaterial(candidate: Candidate, original: RawInput
     final_evidence: finalSources.filter(source => source.text.length <= limit).map(source => cite(candidate.input_id, candidate.final_index, source, 0, source.text.length)),
     deferred_final_material: deferred.map(source => ({ message_index: candidate.final_index, path: source.path, total_chars: source.text.length })),
     initial_material: initial, instruction_sources: [], citation_inventory: citationInventory(raw, candidate.input_id, candidate.final_index),
-    business_chains: businessChains(raw, candidate.input_id, candidate.final_index),
-    catalog: traceCatalog(raw), component_catalog: traceComponentIdentities(raw, candidate.input_id, candidate.final_index),
+    business_chains: chains,
+    transitions: buildAttributionTransitions({ raw, inputId: candidate.input_id, finalIndex: candidate.final_index, actors, chains }),
+    catalog: traceCatalog(raw), component_catalog: actors,
     input_file: "inputs/answer.json", original_answer_timing: { finish_seconds: candidate.answer_timing.finish_seconds },
     answer_generation: getAnswerGeneration(raw, candidate.input_id, candidate.final_index),
     criterion_instruction_sources: criterionInstructionSources(raw, candidate.final_index, task_analysis, candidate.input_id),

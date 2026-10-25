@@ -1,4 +1,4 @@
-import { responsibilityFixture } from "../../../../tests/fixtures/responsibility.js";
+import { unknownFormationFixture } from "../../../../tests/fixtures/responsibility.js";
 import { attributionSubmission } from "../../../../tests/fixtures/attribution-submission.js";
 import { resolveJudgment } from "./resolve.js";
 const INPUT_ID = "11111111-1111-4111-8111-111111111111";
@@ -7,22 +7,34 @@ import assert from "node:assert/strict";
 import { AgentRegistry } from "@eval/host";
 import { prepareFixtureEvidence } from "../../../../tests/fixtures/evidence.js";
 import { parseEvidenceCoordinates, ValidationError, type AgentBinding, type AgentRequest, type EvidenceReference, type ToolAudit } from "@eval/contracts";
-import { cite, evidenceSources, selectEvidenceSource } from "@eval/tools";
-import { attributionAgent, attributionTableChecks, attributionTableReview, responsibilityComponentName } from "./index.js";
+import { cite, evidenceSources, selectEvidenceSource, traceComponentIdentities } from "@eval/tools";
+import { attributionAgent, attributionTableChecks, attributionTableReview, buildAttributionTransitions } from "./index.js";
+import { businessChains } from "@eval/workflows/review";
+import type { RawInput } from "@eval/workflows/inputs";
 import type { AttributionResult } from "./types.js";
 import example from "./fixtures/example.json" with { type: "json" };
 import { setFixtureNormDirectory } from "../../../../tests/fixtures/attribution-submission.js";
 
 const peerId = "22222222-2222-4222-8222-222222222222";
 const timestamp = "2025-03-12T16:35:00.000Z";
-const audit = (): ToolAudit => ({ calls: 0, requiredReadCalls: 0, viewedImages: [], traceReads: [], calculations: [], artifacts: [] });
+const ownAnswer = "今天是2025年3月13日。";
+const audit = (): ToolAudit => ({ calls: 0, requiredReadCalls: 0, viewedImages: [],
+  traceReads: [{candidate:"answer",message_index:1,kind:"text",path:"/content",start:0,end:ownAnswer.length}],
+  calculations: [], artifacts: [] });
+function setPeerTransitions(request: AgentRequest) {
+  const peer=request.sources.B.value as RawInput;
+  const material=(request.input.reference_materials as Record<string,any>).B;
+  const finalIndex=material.final_message_index;
+  const actors=traceComponentIdentities(peer,peerId,finalIndex),chains=businessChains(peer,peerId,finalIndex);
+  Object.assign(material,{business_chains:chains,transitions:buildAttributionTransitions({raw:peer,inputId:peerId,finalIndex,actors,chains})});
+}
 const registry = new AgentRegistry([attributionAgent]);
 function fixture() {
   const request = structuredClone(example.request) as AgentRequest;
   const own = request.sources.answer.value as { messages: Record<string, unknown>[] };
   own.messages[0]!.content = "按原请求时间说明今天日期";
   own.messages[0]!.timestamp = timestamp;
-  own.messages[1]!.content = "今天是2025年3月13日。";
+  own.messages[1]!.content = ownAnswer;
   request.input.ground_truth = { available: false, value: null };
   const answer = request.input.answer as Record<string, unknown>;
   answer.question = "按原请求时间说明今天日期";
@@ -47,12 +59,13 @@ function fixture() {
   (request.input.reference_materials as any).B.final_evidence = [{ ...ref("B", 1, "/content"),
     message_index: 1, quote: peer.messages[1]!.content }];
   setFixtureNormDirectory(request);
+  setPeerTransitions(request);
   const ownRef = ref("answer", 1, "/content"), peerRef = ref("B", 0, "/timestamp");
   const draft = { summary: "原UTC日期与回答相差一天。", numeric_checks: [],  findings: [{
     type: "problem", dimension: "correctness", stage: "final_answer", importance: "high",
     text: "UTC日期错误", reason: "原请求UTC日期为12日，实际回答为13日。", evidence: [ownRef, peerRef],
     assessment: { requirement_index: 0, observation: "UTC日期相差一天", evidence_status: "established", impact: "核心日期不可用" },
-    problem: { diagnosis: "other" as const, investigation: [], component: [responsibilityFixture("最终回答组织",{component:responsibilityComponentName((request.input.answer as any).component_catalog[0],"本题事实关系推导与结果使用"),evidence_ids:[ownRef.evidence_id]})], label: "日期错误", definition: "最终日期与原请求UTC日期不一致。" },
+    problem: { diagnosis: "other" as const, ...unknownFormationFixture(request,[{...ownRef,message_index:1,quote:ownAnswer}]), label: "日期错误", definition: "最终日期与原请求UTC日期不一致。" },
   }], criterion_assessments: [{ criterion_id: "r1", status: "unmet", evidence_status: "established",
     summary: "回答日期与原请求UTC日期不一致。", evidence: [ownRef, peerRef] }],
     core_assessment: { meets_core: false, reason: "日期错误。", requirement_indices: [0] } };
@@ -86,6 +99,7 @@ test("model schema uses numeric selections for both peer and self evidence", () 
   const { binding } = fixture();
   const prepared = prepareFixtureEvidence(registry, binding);
   const own = structuredClone(example.request);
+  setFixtureNormDirectory(own);
   const plain = prepareFixtureEvidence(registry, { ...binding, request: own });
   for (const preparedSchema of [prepared,plain]) {
     const refs=(preparedSchema.evaluation.outputSchema.properties as any).strengths.items.properties.evidence_indices;
@@ -210,6 +224,7 @@ test("peer deferred final leaves and JSON excerpts cannot bypass the source boun
     material.final_answer = "";
     material.final_evidence = [];
     material.deferred_final_material = [{ message_index: 1, path: "/content", total_chars: text.length }];
+    setPeerTransitions(request);
     const leaf = evidenceSources(peer.messages[1]).find(source => source.kind === (json ? "json" : "text") && source.path === (json ? "" : "/content"))!;
     draft.findings[0]!.evidence = [ref("answer", 1, "/content"), {
       evidence_id: cite(peerId, 1, leaf, 0, json ? leaf.text.length : 80).evidence_id,
@@ -256,6 +271,7 @@ test("registered original answer generation is final prose while its sibling too
     captured_final_message_index: 2, matches_captured_final: true, blocks: [{ path: "/output/0/content/0/text", text,
       total_chars: String(text).length, reference: generation,
       read_request: { message_index: 1, path: "/output/0/content/0/text", offset: 0, max_chars: 16000 } }] };
+  setPeerTransitions(request);
   draft.findings[0]!.evidence = [ref("answer", 1, "/content"), ref("B", 1, "/tool_return/content")];
   prepareFixtureEvidence(registry, binding);
   registry.validate(binding, resolveJudgment(binding.request, draft, audit()), audit());
@@ -312,6 +328,7 @@ test("peer private instructions cannot close this candidate's instruction eviden
 test("peer image observation requires the peer's actual view audit and keeps source-qualified repair suggestions", () => {
   const { request, binding, draft } = fixture();
   (request.sources.B!.value as any).messages[1].content = [{ type: "image", mimeType: "image/png", data: "AA==" }];
+  setPeerTransitions(request);
   draft.findings[0]!.evidence[1] = { evidence_id: `ev_${peerId}_1_image`, observation: "图中日期为12日" } as EvidenceReference;
   hasIssue(() => resolveJudgment(binding.request, draft, { ...audit(), viewedImages: ["answer:1"] }), "image_not_viewed");
   const inspected = { ...audit(), viewedImages: ["B:1"] };
@@ -355,6 +372,7 @@ test("review peer independent tool facts resolve missing table rows without posi
   material.input_file = "inputs/peer_B.json";
   delete material.identity;
   setFixtureNormDirectory(request);
+  setPeerTransitions(request);
   prepareFixtureEvidence(registry, binding);
   const row = answer.table_check_results[0].rows[0];
   const draft = { summary: "缺失来源行由同题独立返回核实。", findings: [], numeric_checks: [],

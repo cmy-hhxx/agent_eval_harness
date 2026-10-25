@@ -1,3 +1,5 @@
+import type { DerivationSubmission, ResolvedDerivation } from "./derivations.js";
+export type TransitionKind = "request_formation" | "execution" | "transfer" | "generation" | "delivery";
 import type { ResolvedEvidence, TaskAnalysis } from "@eval/contracts";
 export type { TaskAnalysis, TaskCriterion } from "@eval/contracts";
 export interface Evidence extends ResolvedEvidence {
@@ -53,11 +55,14 @@ export interface ProblemProposal {
   /** Exactly one primary cause, followed by independently supported contributing causes. */
   component: Responsibility[];
   diagnosis: "entity_or_unit" | "source_absence" | "context_loss" | "other";
-  investigation: ChainInvestigation[];
+  investigation: TransitionCheck[];
+  calculations: ResolvedDerivation[];
   label: string;
   definition: string;
 }
 export interface Responsibility {
+  transition_index: number;
+  basis: "input_deviation" | "independent_addition" | "unknown_transition";
   /** One-based source-directory selection; identical display names remain distinct. */
   actor_index: number | null;
   role: "primary" | "contributing";
@@ -78,9 +83,21 @@ export interface Responsibility {
   evidence_gap: string | null;
   alternatives: string[];
 }
-export interface ChainInvestigation {
-  chain_index: number;
-  steps: { step: string; status: "checked" | "not_collected"; observation: string; evidence_ids: string[] }[];
+export type CheckOutcome = "preserved" | "changed" | "recovered" | "unresolved";
+export interface TransitionCheck {
+  transition_index: number;
+  kind: TransitionKind;
+  outcome: CheckOutcome;
+  observation: string;
+  before_evidence_ids: string[];
+  after_evidence_ids: string[];
+}
+export interface TransitionCheckSubmission {
+  transition_index: number;
+  outcome: CheckOutcome;
+  observation: string;
+  before_evidence_indices: number[];
+  after_evidence_indices: number[];
 }
 /** Program-owned navigation, always pointing into the original public process records. */
 export interface BusinessChain {
@@ -97,26 +114,15 @@ export interface BusinessChain {
   final_evidence: Evidence[];
 }
 export interface ResponsibilitySubmission {
-  actor_index: number | null;
+  transition_index: number;
   function_index: number;
   business_component: string;
-  chain_index: number | null;
-  step_index: number;
-  failure_stage_index: number;
-  field_names: string[];
+  basis: Responsibility["basis"];
   mechanism_source: Responsibility["mechanism_source"];
   mechanism: string;
   certainty: Responsibility["certainty"];
-  evidence_indices: number[];
   evidence_gap?: string;
   alternatives?: string[];
-}
-export interface InvestigationFactSubmission {
-  chain_index: number;
-  step_index: number;
-  field_names: string[];
-  observation: string;
-  evidence_indices: number[];
 }
 export interface AttributionFinding extends Finding {
   /** Stable within this answer; used to preserve problem-library occurrence lineage. */
@@ -181,10 +187,10 @@ export interface AttributionSubmission {
     evidence_indices: number[];
   }[];
   strengths: ObservationSubmission[];
-  investigation_facts: InvestigationFactSubmission[];
   problems: (ObservationSubmission & Pick<ProblemProposal,"diagnosis" | "label"> & {
-    component:ResponsibilitySubmission[]; impact:string;
-    investigation_fact_indices: number[];
+    causes:ResponsibilitySubmission[]; impact:string;
+    checks: TransitionCheckSubmission[];
+    calculations: DerivationSubmission[];
   })[];
   numeric_checks: {
     label: string; reference_index: number; actual: string | number | null; scale: string;

@@ -1,4 +1,4 @@
-import { responsibilitySubmissionFixture } from "../../../../tests/fixtures/responsibility.js";
+import { responsibilitySubmissionFixture, unknownFormationFixture } from "../../../../tests/fixtures/responsibility.js";
 import test from "node:test";
 import assert from "node:assert/strict";
 import { AgentRegistry } from "@eval/host";
@@ -34,9 +34,12 @@ const rejects = (run: () => unknown, code: string, path?: string) => assert.thro
 test("real long evidence is accepted at every model selection slot without a repair or silent clipping", () => {
   for (const slot of ["strengths", "problems", "criterion_assessments", "correctness"] as const) {
     const f = fixture(), whole = f.choose(0, f.answer.length);
+    const leaf=evidenceSources(f.raw.messages[1]).find(item=>item.path==='/content')!;
+    const boundary=unknownFormationFixture(f.request,[cite(f.request.sources.answer.id,1,leaf,0,leaf.text.length)]);
+    if(slot==='problems')f.audit.traceReads.push({candidate:'answer',message_index:1,kind:'text',path:'/content',start:0,end:f.answer.length});
     if (slot === "problems") f.draft.problems.push({
       ...f.draft.strengths[0]!, dimension: "efficiency", importance: "low", basis_index: null,
-      text: "背景较冗长", reason: "给出结果前重复大量背景。", impact: "增加阅读负担。", diagnosis: "other", investigation_fact_indices: [], component: [responsibilitySubmissionFixture(f.request,"最终回答组织",[whole])],
+      text: "背景较冗长", reason: "给出结果前重复大量背景。", impact: "增加阅读负担。", diagnosis: "other", calculations: [], causes: boundary.component.map(responsibilitySubmissionFixture), checks: [{transition_index:boundary.component[0].transition_index,outcome:'unresolved',observation:'生成过程未采集，只确认交付缺陷。',before_evidence_indices:[],after_evidence_indices:[whole]}],
       label: "重复背景",
     });
     if (slot === "correctness") f.draft.correctness_evidence_indices = [whole];

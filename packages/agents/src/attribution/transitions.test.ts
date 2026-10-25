@@ -1,0 +1,127 @@
+import test from "node:test";
+import assert from "node:assert/strict";
+import { validateEvidenceBankSources } from "@eval/contracts";
+import { cite, evidenceSources, selectEvidenceSource, traceComponentIdentities } from "@eval/tools";
+import { buildAttributionTransitions } from "./transitions.js";
+import type { BusinessChain } from "./types.js";
+
+const inputId = "11ff7f2a-382f-442c-8903-fce0b57e4c63";
+type Raw = { messages: unknown[] };
+const proof = (raw: Raw, index: number, path: string) => {
+  const selected = selectEvidenceSource(evidenceSources(raw.messages[index]), path)!;
+  return cite(inputId, index, selected.source, selected.start, selected.end);
+};
+function chain(raw: Raw, index: number, request: number, returned: number, consumed: [number, string][]): BusinessChain {
+  return { chain_index: index, tool_component: "lookup", request_index: request, return_indices: [returned], planner_index: null,
+    context_indices: [...new Set(consumed.map(([message]) => message))], link_basis: "call_id", references: [], delivery_changed: false,
+    checkpoints: Array.from({ length: 8 }, (_, step) => ({ step: String(step), availability: "available",
+      evidence: step === 3 ? [proof(raw, returned, "/output")] : step === 5 ? consumed.map(([message, path]) => proof(raw, message, path)) : [], note: "" })),
+    final_evidence: [] };
+}
+function build(raw: Raw, chains: BusinessChain[]) {
+  const finalIndex = raw.messages.length - 1, actors = traceComponentIdentities(raw, inputId, finalIndex);
+  return { actors, transitions: buildAttributionTransitions({ raw, inputId, finalIndex, actors, chains }) };
+}
+
+test("BE quarterly mislabelling belongs to captured code formation before correct shell execution", () => {
+  const data = { action_id: "quarter", stdout: "Q3 NetIncome=248976000; Q2 NetIncome=198856000" };
+  const command = "print('q3_ni', 198856000)", generated = { role: "assistant", content: null,
+    tool_calls: [{ id: "calc", function: { name: "shell", arguments: JSON.stringify({ command }) } }] };
+  const result = { action_id: "calc001", stdout: "q3_ni 198856000" };
+  const raw = { messages: [
+    { role: "user", content: "Review Q3" },
+    { type: "tool_call", name: "finquery", call_id: "query", input: { query: "Q3 and Q2" } },
+    { type: "tool_result", name: "finquery", call_id: "query", output: data },
+    { type: "llm_turn", input_messages: [{ role: "tool", content: JSON.stringify(data) }], output: [generated] },
+    { type: "tool_call", name: "shell", call_id: "calc", input: { command } },
+    { type: "tool_result", name: "shell", call_id: "calc", output: result },
+    { type: "llm_turn", input_messages: [{ role: "tool", content: JSON.stringify(data) }, generated,
+      { role: "tool", content: JSON.stringify(result) }], output: [{ role: "assistant", content: "Q3 net income is 199M" }] },
+    { type: "final_answer", content: "Q3 net income is 199M" },
+  ] };
+  const chains = [chain(raw, 1, 1, 2, [[3, "/input_messages/0/content"], [6, "/input_messages/0/content"], [6, "/input_messages/1/tool_calls"]]),
+    chain(raw, 2, 4, 5, [[6, "/input_messages/2/content"]])];
+  const { actors, transitions } = build(raw, chains);
+  const formation = transitions.find(event => event.kind === "request_formation")!;
+  assert.deepEqual(actors[formation.actor_index! - 1].message_indices, [3]);
+  assert(formation.before.some(item => item.quote?.includes("248976000")));
+  assert(formation.after.some(item => item.message_index === 3 && item.quote?.includes("q3_ni")));
+  const execution = transitions.find(event => event.kind === "execution" && event.chain_index === 2)!;
+  assert.equal(actors[execution.actor_index! - 1].kind, "tool");
+  assert(execution.predecessors.includes(formation.transition_index));
+  const final = transitions.find(event => event.kind === "generation" && event.after.some(item => item.message_index === 6))!;
+  assert(final.before.some(item => item.quote?.includes("248976000")));
+  assert(final.before.some(item => item.quote?.includes("q3_ni 198856000")));
+  assert(final.predecessors.some(index => transitions[index - 1].before.some(item => item.message_index === 5)));
+  const propagated = transitions.find(event => event.kind === "transfer" && event.after.some(item => item.evidence_id.endsWith("/input_messages/1/tool_calls")))
+    ?? transitions.find(event => event.kind === "transfer" && event.before.some(item => item.message_index === 3));
+  assert(propagated);
+  assert(propagated.before.every(item => item.message_index === 3), "a captured model output is not relabelled as the original tool return");
+  assert(propagated.predecessors.includes(formation.transition_index));
+  for (const event of transitions) assert(event.predecessors.every(index => index < event.transition_index), "all predecessor edges point to earlier observations");
+  validateEvidenceBankSources(transitions.flatMap(event => [...event.before, ...event.after].map(item => item.evidence_id)), new Map([[inputId, raw]]));
+});
+
+test("chart parameters, rendering execution, model generation and final delivery remain distinct", () => {
+  const command = 'render --title "P/E vs drawdown" --series P/E';
+  const generated = { role: "assistant", content: "", tool_calls: [{ id: "draw", function: { name: "shell", arguments: JSON.stringify({ command }) } }] };
+  const result = { action_id: "chart01", stdout: JSON.stringify({ type: "vis-html", id: "html-chart" }) };
+  const raw = { messages: [
+    { role: "user", content: "Compare stocks" },
+    { type: "llm_turn", input_messages: [{ role: "user", content: "Compare stocks" }], output: [generated] },
+    { type: "tool_call", name: "shell", call_id: "draw", input: { command } },
+    { type: "tool_result", name: "shell", call_id: "draw", output: result },
+    { type: "llm_turn", input_messages: [generated, { role: "tool", content: JSON.stringify(result) }],
+      output: [{ role: "assistant", content: 'Chart. <vis-html ref="html-chart"/>' }] },
+    { type: "final_answer", content: [{ type: "output_text", text: "Chart." }, { type: "output_image", image_url: "data:image/png;base64,AA==" }] },
+  ] };
+  const { actors, transitions } = build(raw, [chain(raw, 1, 2, 3, [[4, "/input_messages/1/content"]])]);
+  const formation = transitions.find(event => event.kind === "request_formation")!;
+  assert.deepEqual(actors[formation.actor_index! - 1].message_indices, [1]);
+  assert(formation.after.some(item => item.evidence_id.endsWith("/output/0/tool_calls/0/function/arguments")));
+  const generation = transitions.find(event => event.kind === "generation")!, delivery = transitions.find(event => event.kind === "delivery")!;
+  assert(generation.after.every(item => item.message_index === 4));
+  assert(delivery.after.every(item => item.message_index === 5));
+  assert.equal(delivery.actor_index, null, "the final capture does not identify a renderer");
+  assert.deepEqual(delivery.predecessors, [generation.transition_index]);
+  assert(transitions.filter(event => event.kind === "transfer").every(event => event.actor_index === null));
+});
+
+test("field-loss transfer stays unknown while actual generation is separately owned", () => {
+  const raw = { messages: [{ role: "user", content: "Technical levels" },
+    { type: "tool_call", name: "finquery", call_id: "q", input: { query: "MA50" } },
+    { type: "tool_result", name: "finquery", call_id: "q", output: { MA50: 165.7899, price: 183.22 } },
+    { type: "llm_turn", input_messages: [{ role: "user", content: "source=q; price=183.22; is_truncated=true" }],
+      output: [{ role: "assistant", content: "MA50 supports 170–172" }] },
+    { type: "final_answer", content: "MA50 supports 170–172" }] };
+  const { transitions } = build(raw, [chain(raw, 1, 1, 2, [[3, "/input_messages/0/content"]])]);
+  const transfer = transitions.find(event => event.kind === "transfer")!;
+  assert.equal(transfer.actor_index, null); assert.equal(transfer.relation, "unresolved");
+  assert(transfer.before.some(item => item.quote?.includes("165.7899")));
+  assert(transfer.after.every(item => !item.quote?.includes("165.7899")));
+  assert.notEqual(transitions.find(event => event.kind === "generation")?.actor_index, null);
+});
+
+test("an unlinked source has no invented transfer and a final capture is never generation", () => {
+  const raw = { messages: [{ role: "user", content: "Question" },
+    { type: "tool_call", name: "lookup", call_id: "q", input: {} },
+    { type: "tool_result", name: "lookup", call_id: "q", output: "source" },
+    { type: "final_answer", content: "Delivered without captured generation" }] };
+  const { transitions } = build(raw, [chain(raw, 1, 1, 2, [])]);
+  assert.deepEqual(transitions.map(event => event.kind), ["execution", "delivery"]);
+  assert.deepEqual(transitions[1].before, []); assert.deepEqual(transitions[1].predecessors, []);
+});
+
+test("captured process fields are generation evidence while input reasoning stays before the boundary", () => {
+  for (const field of ["reasoning_content", "analysis", "thinking", "calculation_steps"]) {
+    const raw = { messages: [{ role: "user", content: "Calculate growth" },
+      { type: "llm_turn", input_messages: [{ role: "user", content: "Input: 100 and 110" }],
+        output: [{ role: "assistant", content: "Growth is 20%", [field]: "(110-100)/100=0.2" }] },
+      { type: "final_answer", content: "Growth is 20%" }] };
+    const { transitions } = build(raw, []);
+    const generation = transitions.find(event => event.kind === "generation")!;
+    assert(generation.after.some(item => item.quote === "(110-100)/100=0.2"), field);
+    assert(generation.after.every(item => !item.quote?.includes("Input:")));
+    assert(generation.before.some(item => item.quote?.includes("Input:")));
+  }
+});

@@ -456,7 +456,9 @@
                       "chain_step",
                       "field_names",
                       "mechanism_source",
-                      "actor_index"
+                      "actor_index",
+                      "transition_index",
+                      "basis"
                     ],
                     "properties": {
                       "role": {
@@ -538,6 +540,17 @@
                           "null"
                         ],
                         "minimum": 1
+                      },
+                      "transition_index": {
+                        "type": "integer",
+                        "minimum": 1
+                      },
+                      "basis": {
+                        "enum": [
+                          "input_deviation",
+                          "independent_addition",
+                          "unknown_transition"
+                        ]
                       }
                     }
                   }

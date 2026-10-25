@@ -14,9 +14,9 @@
 | requirements / scoring_points / red_flags | Criteria | Attribution、Comparison | 有不同验收含义；统一作用域和来源绑定避免私规外溢。 |
 | criterion_assessments / core_assessment.meets_core / is_correct | Attribution | 判决、报告、统计 | 逐项事实、关键交付和标准一致性互相独立，不能合并为单分数。 |
 | findings / problem / problem.component | Attribution | Comparison、Clustering、责任摘要 | 事实、责任和问题定义分工明确；每条问题恰有一个主责，缺少直接过程证据时保留推断、关键缺口与替代解释。 |
-| actor_index / function_index / step_index / failure_stage_index | Attribution 模型选择、程序解析 | 归因校验与正式组装 | 模型选目录编号，程序填名称与分类；正式责任保留 actor_index，真实同名主体按来源坐标区分。 |
+| transition_index / function_index | Attribution 模型选择、程序绑定 | 归因校验与正式组装 | 转换固定真实主体、前后证据及链路；function_index只选技术功能，不能改身份。 |
 | accepted_attribution / problem_assignments | Workflow、Score | 单次评分及程序导出 | 完成情况、已确认或待核的问题和恢复状态来自接受收据；模型仅映射选档，程序保留源问题、责任确定性及证据。 |
-| investigation_facts / investigation_fact_indices | Attribution 模型提交 | 程序逐问题组装 investigation | 公共事实只生成一次，各问题关联自己的链路、字段及边界证据；未采集状态来自来源目录，不能替代实际核查。 |
+| checks / causes / calculations | Attribution 每问题案卷 | 程序验证并组装 investigation、component、calculations | 核查实际前后边界；责任绑定自身核查；源数字与公式复算，不代写因果判断。 |
 | evidence_id / evidence refs | Agent 与 Host | 引用校验、复核、查看原文 | 可解析坐标，必需；位置合法不证明语义正确。 |
 | numeric checks / table checks | Attribution 与确定性代码 | 数值及实体核查 | 保存口径、换算和对应关系，不能只留下最终布尔值。 |
 | comparisons / importance / better_candidate | Comparison | 排名派生、逐项展示 | 共同且可比的差异是判决依据，不能靠问题数替代。 |

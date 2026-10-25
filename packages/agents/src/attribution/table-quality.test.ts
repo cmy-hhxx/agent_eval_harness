@@ -1,4 +1,4 @@
-import { responsibilityFixture } from "../../../../tests/fixtures/responsibility.js";
+import { unknownFormationFixture } from "../../../../tests/fixtures/responsibility.js";
 import { canonicalEvidence } from "../../../../tests/fixtures/evidence.js";
 import { setFixtureComponentCatalog } from "../../../../tests/fixtures/attribution-submission.js";
 const INPUT_ID = "11111111-1111-4111-8111-111111111111";
@@ -8,7 +8,7 @@ import { Ajv2020 } from "ajv/dist/2020.js";
 import type { AgentRequest, ToolAudit } from "@eval/contracts";
 import { ValidationError } from "@eval/contracts";
 import { parseTraceTables, type TableCheckResult } from "@eval/tools";
-import { attributionProfile, responsibilityComponentName } from "./index.js";
+import { attributionProfile } from "./index.js";
 import { attributionTableChecks, attributionTablePlan, attributionTableReview } from "./table-review.js";
 import type { AttributionResult } from "./types.js";
 import example from "./fixtures/example.json" with { type: "json" };
@@ -261,6 +261,8 @@ test("an explicit unknown cell is not mistaken for an asserted code without a so
 
 test("a conflict can be accepted when both original rows support an explicit problem", () => {
   const data = fixture();
+  data.audit.traceReads.push({ candidate: "answer", message_index: 2, kind: "text", path: "/content", start: 0,
+    end: (data.request.input.answer as { final_answer: string }).final_answer.length });
   const requirement = data.request.input.task_analysis as unknown as AttributionResult["task_analysis"];
   requirement.requirements[0]!.text = "按查询结果列出股票代码与名称。";
   requirement.requirements[0]!.acceptance_rule = requirement.requirements[0]!.text + "\n\n逐项保持原查询中的代码与名称对应。";
@@ -275,8 +277,7 @@ test("a conflict can be accepted when both original rows support an explicit pro
     evidence: [...[row.evidence, data.tables[0].rows[index].evidence].map(({ evidence_id, message_index, quote }) => ({ evidence_id, message_index, quote })),
       canonicalEvidence(INPUT_ID, 0, requirement.requirements[0]!.text)],
     assessment: { requirement_index: 0, observation: "代码错配", evidence_status: "established", impact: "影响标的识别" },
-    problem: { diagnosis: "other" as const, investigation: [], component: [responsibilityFixture("最终回答组织", {actor_index:2,component:responsibilityComponentName((data.request.input.answer as any).component_catalog[1],"本题事实关系推导与结果使用"),evidence_ids: ([...[row.evidence, data.tables[0].rows[index].evidence].map(({ evidence_id, message_index, quote }) => ({ evidence_id, message_index, quote })),
-      canonicalEvidence(INPUT_ID, 0, requirement.requirements[0]!.text)]).map(item=>item.evidence_id)})], label: "代码错配", definition: "最终表替换了原始查询中的代码。" },
+    problem: { diagnosis: "other" as const, ...unknownFormationFixture(data.request, [row.evidence]), label: "代码错配", definition: "最终表的代码与原始查询不一致；形成位置尚无记录。" },
   }));
   attributionProfile.validate!(data.request, data.result, data.audit);
   assert.deepEqual(attributionTableReview(data.request, data.result).concerns, []);

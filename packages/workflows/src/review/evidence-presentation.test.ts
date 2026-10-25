@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { canonical, emptyUsage, evidenceId, type JsonObject, type PlannedTask, type SubmissionReceipt } from "@eval/contracts";
-import { resolveEvidence } from "@eval/tools";
+import { parseEvidenceCoordinates, resolveEvidence } from "@eval/tools";
 import { presentedMaterialReads, projectComparisonEvidence } from "./evidence-presentation.js";
 import { comparisonWorkflow } from "../comparison/workflow.js";
 import { criteriaResult, emptyAudit } from "../../../../tests/fixtures/comparison.js";
@@ -107,6 +107,42 @@ test("bound citation previews use original content leaves and preserve usable re
   assert.equal(resolveEvidence(source, { evidence_id: bank[shown[0].reference.evidence_index - 1] },
     "answer", emptyAudit(), "/evidence", id).quote, body);
   assert(binding.presentedReads!.some(read => read.path === "/content/1/text" && read.start === 0 && read.end >= 200));
+});
+
+test("transition projection has one readable evidence directory and owned identities without leaking internal actor choices", () => {
+  const output = { action_id: "query01", stdout: "Q3=249; Q2=199" };
+  const source: RawInput = { messages: [
+    { role: "user", content: "Review Q3" },
+    { type: "tool_call", name: "finquery", call_id: "query", input: { query: "Q3" } },
+    { type: "tool_result", name: "finquery", call_id: "query", output },
+    { type: "llm_turn", input_messages: [{ role: "tool", tool_call_id: "query", content: JSON.stringify(output) }],
+      output: [{ role: "assistant", content: "Q3=199" }] },
+    { type: "final_answer", content: "Q3=199" },
+  ] };
+  const binding = bindMaterial(source, 0), bank: string[] = [];
+  const canonical = binding.request.input.answer as any;
+  const shown = binding.projectModelInput!(binding.modelInput!, bank).answer as any;
+  assert(canonical.transitions.length > 0);
+  assert(!Object.hasOwn(shown, "business_chains"));
+  assert.equal(new Set(shown.transition_evidence.map((entry: any) => entry.reference.evidence_index)).size, shown.transition_evidence.length);
+  const navigation = new Map<number, any>(shown.transition_evidence.map((entry: any) => [entry.reference.evidence_index, entry]));
+  for (const transition of shown.transitions) {
+    assert(!Object.hasOwn(transition, "actor_index")); assert(!Object.hasOwn(transition, "chain_index"));
+    if (transition.kind === "generation") {
+      assert(transition.owner.message_indices.includes(3));
+      assert(!transition.owner.component.includes("未命名"));
+    }
+    for (const boundary of [...transition.before, ...transition.after]) {
+      const entry = navigation.get(boundary.reference.evidence_index)!;
+      assert(entry); assert(!Object.hasOwn(entry, "quote"));
+      const point = parseEvidenceCoordinates(bank[boundary.reference.evidence_index - 1])!;
+      assert(point.kind !== "image");
+      assert.deepEqual(entry.read_request, { candidate: "answer", message_index: point.message_index,
+        kind: point.kind, path: point.path, offset: point.start, max_chars: Math.min(16000, point.end - point.start) });
+    }
+  }
+  assert.deepEqual(presentedMaterialReads({ transitions: shown.transitions, transition_evidence: shown.transition_evidence }, "answer", id), [],
+    "a navigation reference is not a fabricated read receipt");
 });
 
 test("compact citation navigation does not repeat paragraphs already displayed in the answer", () => {

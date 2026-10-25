@@ -1,10 +1,12 @@
-import { responsibilityFixture, responsibilitySubmissionFixture } from "../../../../tests/fixtures/responsibility.js";
+import { unknownFormationFixture, responsibilitySubmissionFixture } from "../../../../tests/fixtures/responsibility.js";
 import { canonicalEvidence } from "../../../../tests/fixtures/evidence.js";
 import test from "node:test";
 import assert from "node:assert/strict";
 import { AgentRegistry } from "@eval/host";
 import { ValidationError, evidenceId, selectEvidence, type AgentRequest, type ToolAudit } from "@eval/contracts";
 import { attributionAgent, attributionProfile, type AttributionResult } from "./index.js";
+import { businessChainFixture } from "../../../../tests/fixtures/business-chain.js";
+import { captureMarkerProblemIssues } from "./source-evidence.js";
 import example from "./fixtures/example.json" with { type: "json" };
 import { attributionSubmission, setFixtureNormDirectory } from "../../../../tests/fixtures/attribution-submission.js";
 
@@ -49,31 +51,30 @@ function captureFixture(marker: string) {
   result.criterion_assessments.forEach(row=>{row.evidence=[final];});
   result.findings[0].evidence=[final];
   const f=fixture(request,result),capture=canonicalEvidence(id,1,marker,"/content/1/text");
+  const problem=unknownFormationFixture(request,[final]);
+  const cause=responsibilitySubmissionFixture(problem.component[0]);
+  f.audit.traceReads.push({candidate:"answer",message_index:1,kind:"text",path:"/content/0/text",start:0,end:5});
   f.draft.problems=[{basis_index:null,dimension:"format",stage:"final_answer",importance:"low",
     text:"可视交付有缺口。",reason:"所选材料只提供了采集状态。",impact:"图中内容无法交付给用户。",
     evidence_status:"established",evidence_indices:[selectEvidence(f.audit.evidenceBank!,capture).evidence_index],
-    diagnosis: "other", investigation_fact_indices: [], component:[responsibilitySubmissionFixture(f.request,"最终回答组织",[selectEvidence(f.audit.evidenceBank!,capture).evidence_index],{technical_domain:"交付与呈现",functional_component:"实际呈现"})],label:"展示缺失"}];
+    diagnosis:"other",checks:problem.investigation.map(check=>({transition_index:check.transition_index,outcome:check.outcome,
+      observation:check.observation,before_evidence_indices:[],after_evidence_indices:[selectEvidence(f.audit.evidenceBank!,final).evidence_index]})),
+    calculations:[],causes:[cause],label:"展示缺失"}];
   return {...f,capture,final};
 }
 
-test("exact capture markers alone cannot establish a candidate problem through the public resolve path",()=>{
+test("exact capture markers alone cannot establish a candidate problem",()=>{
   for(const marker of ['{"jgy_visual":"skipped","ref":"jgy-test"}','{"visual":"unsupported","ref":"html-test"}']) {
     const f=captureFixture(marker);
-    const rejected=(error:unknown)=>error instanceof ValidationError&&error.issues!.some(issue=>
-      issue.code==="capture_marker_not_candidate_evidence"&&issue.path==="/problems/0/evidence_indices");
-    assert.throws(()=>f.registry.resolve(f.binding,f.draft,f.audit),rejected);
+    const finding={type:"problem",assessment:{evidence_status:"established"},evidence:[f.capture]};
+    assert(captureMarkerProblemIssues(f.request,{findings:[finding]}).some(issue=>issue.code==="capture_marker_not_candidate_evidence"));
     const excerpt=canonicalEvidence(f.request.sources.answer.id,1,marker.slice(2,12),"/content/1/text",2);
-    f.draft.problems[0].evidence_indices=[selectEvidence(f.audit.evidenceBank!,excerpt).evidence_index];
-    assert.throws(()=>f.registry.resolve(f.binding,f.draft,f.audit),rejected,"a substring still belongs to the exact capture leaf");
-    f.draft.problems[0].evidence_status="uncertain";
-    f.registry.validate(f.binding,f.registry.resolve(f.binding,f.draft,f.audit),f.audit);
-    f.draft.problems[0].evidence_status="established";
-    f.draft.problems[0].evidence_indices.push(selectEvidence(f.audit.evidenceBank!,f.final).evidence_index);
-    const accepted=f.registry.resolve(f.binding,f.draft,f.audit) as AttributionResult;
-    f.registry.validate(f.binding,accepted,f.audit);
-    accepted.findings.find(row=>row.type==="problem")!.evidence=[f.capture];
-    assert.throws(()=>f.registry.validate(f.binding,accepted,f.audit),error=>error instanceof ValidationError&&
-      error.issues!.some(issue=>issue.code==="capture_marker_not_candidate_evidence"),"persisted results use the same evidence boundary");
+    finding.evidence=[excerpt];
+    assert.equal(captureMarkerProblemIssues(f.request,{findings:[finding]}).length,1);
+    finding.assessment.evidence_status="uncertain";
+    assert.equal(captureMarkerProblemIssues(f.request,{findings:[finding]}).length,0);
+    finding.assessment.evidence_status="established";finding.evidence.push(f.final);
+    assert.equal(captureMarkerProblemIssues(f.request,{findings:[finding]}).length,0);
   }
 });
 
@@ -113,23 +114,15 @@ test("model-returned objects keep a bounded responsibility layer and program-own
     return Math.max(next,...Object.values(value.properties??{}).map(item=>depth(item,next)),value.items?depth(value.items,next):next,
       ...(value.allOf??[]).map((item:any)=>depth(item,next)));
   }
-  assert.equal(depth(schema),3); // Root → problem → responsibility; shared facts are parallel rows.
+  assert.equal(depth(schema),4); // Root → problem → calculation → explicit result range.
   assert(!JSON.stringify(schema).includes('"evidence_id"'));
   assert(!JSON.stringify(schema).includes('"criterion_id"'));
 });
 
 function toolFixture() {
-  const request=structuredClone(example.request) as AgentRequest,id=request.sources.answer.id;
-  const messages=[{role:"user",content:"计算2+2"},{role:"tool",type:"function_call_output",name:"Calc",content:"2+2=5"},{role:"assistant",content:"2+2=5"}];
-  (request.sources.answer.value as {messages:unknown[]}).messages=messages;
-  Object.assign(request.input.answer as object,{final_message_index:2,final_answer:"2+2=5",catalog:messages.map((message,message_index)=>({message_index,type:message.type??"message",role:message.role,name:message.name,chars:JSON.stringify(message).length}))});
-  const result=structuredClone(example.result) as AttributionResult,final=canonicalEvidence(id,2,"2+2=5"),tool=canonicalEvidence(id,1,"2+2=5");
-  result.is_correct=false;result.correctness_reason="结果5与标准4不同。";result.correctness_evidence=[final];
-  result.core_assessment.meets_core=false;result.core_assessment.reason="唯一所求计算结果错误。";
-  result.criterion_assessments.forEach(row=>{row.evidence=[final];if(row.criterion_id==="r1")row.status="unmet";});
-  Object.assign(result.findings[0],{type:"problem",text:"把2+2答成5。",reason:"工具返回5并进入最终结论。",evidence:[final,tool],
-    problem:{diagnosis: "other" as const, investigation: [], component:[responsibilityFixture("Calc", {evidence_ids: ([final,tool]).map(item=>item.evidence_id)})],label:"计算错误",definition:"工具结果错误并传入最终答案。"}});
-  return fixture(request,result);
+  const f=businessChainFixture();
+  return {request:f.binding.request,audit:f.audit,draft:attributionSubmission(f.binding.request,f.result,f.audit),
+    registry:new AgentRegistry([attributionAgent]),binding:f.binding};
 }
 
 test("requirement links are explicit choices while verdict, prose and evidence fields remain required",()=>{
@@ -171,10 +164,18 @@ test("core uncertainty preserves confirmed local findings without a status-align
 
 test("a minor ancillary defect does not contradict a met task requirement, while material defects still do",()=>{
   const f=fixture();
-  (f.request.sources.answer.value as {messages:{content:string}[]}).messages[1].content+="。。";
+  const source=f.request.sources.answer.value as {messages:{content:string}[]};
+  source.messages[1].content+="。。";
+  setFixtureNormDirectory(f.request);
+  const final=canonicalEvidence(f.request.sources.answer.id,1,source.messages[1].content);
+  const formation=unknownFormationFixture(f.request,[final]);
+  const index=selectEvidence(f.audit.evidenceBank!,final).evidence_index;
+  f.audit.traceReads.push({candidate:"answer",message_index:1,kind:"text",path:"/content",start:0,end:source.messages[1].content.length});
   f.draft.problems.push({...f.draft.strengths[0],dimension:"format",importance:"low",text:"句尾重复了句号。",
-    reason:"计算值4正确，句尾多写的句号不改变数值。",impact:"不影响计算结果的使用。",
-    diagnosis: "other", investigation_fact_indices: [], component:[responsibilitySubmissionFixture(f.request,"最终回答组织",f.draft.strengths[0].evidence_indices)],label:"标点重复"});
+    reason:"计算值4正确，句尾多写的句号不改变数值。",impact:"不影响计算结果的使用。",evidence_indices:[index],
+    diagnosis:"other",checks:formation.investigation.map(check=>({transition_index:check.transition_index,outcome:check.outcome,
+      observation:check.observation,before_evidence_indices:[],after_evidence_indices:[index]})),
+    calculations:[],causes:formation.component.map(responsibilitySubmissionFixture),label:"标点重复"});
   const result=f.registry.resolve(f.binding,f.draft,f.audit) as AttributionResult;
   assert.equal(result.criterion_assessments[0].status,"met");
   assert.equal(result.findings[1].type,"problem");

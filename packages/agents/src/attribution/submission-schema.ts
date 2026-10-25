@@ -4,27 +4,23 @@ import { numericReferenceDirectory } from "./units.js";
 import { normDirectoryIssues } from "./norm-directory.js";
 import { attributionFindingBasis } from "./finding-basis.js";
 import type { TaskAnalysis } from "@eval/contracts";
-import { componentCatalogIssues, responsibilityIdentities, responsibilityFunctions } from "./responsibility.js";
-import { attributionTaxonomy } from "@eval/prompts";
+import { componentCatalogIssues, responsibilityFunctions } from "./responsibility.js";
 import { parseTraceTables, type TableCheckResult } from "@eval/tools";
-import { businessChainDirectory } from "./investigation.js";
+import type { AttributionTransition } from "./transitions.js";
 
 /** The tool contract and repair feedback share the same request-derived shape. */
 export function attributionSubmissionSchema(request: AgentRequest) {
   const issues = [...normDirectoryIssues(request), ...componentCatalogIssues(request)];
   if (issues.length) throw new ValidationError(issues);
   const schema = structuredClone(submissionSchema);
-  const boundaries = businessChainDirectory(request).map(chain => ({ properties: {
-    chain_index: { const: chain.chain_index }, step_index: { enum: chain.checkpoints.flatMap((point, i) => point.availability === "available" ? [i + 1] : []) },
-  } }));
-  if (boundaries.length) Object.assign(schema.properties.investigation_facts.items, { anyOf: boundaries });
-  else Object.assign(schema.properties.investigation_facts, { maxItems: 0 });
+  const transitions = (request.input.answer as {transitions: AttributionTransition[]}).transitions;
+  const transitionChoices = transitions.map(item => item.transition_index);
+  for (const field of ["checks", "causes"] as const)
+    Object.assign(schema.properties.problems.items.properties[field].items.properties.transition_index, { enum: transitionChoices });
   if (request.input.allow_standard_conflict !== true)
     delete (schema.properties as Record<string, unknown>).standard_conflict;
-  const responsibility = schema.properties.problems.items.properties.component.items;
-  Object.assign(responsibility.properties.actor_index, { maximum: responsibilityIdentities(request).length });
-  Object.assign(responsibility.properties.function_index, { maximum: responsibilityFunctions.length });
-  Object.assign(responsibility.properties.failure_stage_index, { maximum: attributionTaxonomy.stages.length });
+  Object.assign(schema.properties.problems.items.properties.causes.items.properties.function_index,
+    { maximum: responsibilityFunctions.length });
   const analysis=request.input.task_analysis as unknown as TaskAnalysis;
   const checkCount=[...analysis.requirements,...analysis.scoring_points,...analysis.red_flags]
     .filter(item=>!item.applies_to.length||item.applies_to.includes(request.input.candidate_id as string)).length;

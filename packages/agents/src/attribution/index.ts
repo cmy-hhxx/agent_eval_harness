@@ -1,5 +1,5 @@
 export {checkAttributionLanguage,type AttributionLanguageField,type AttributionLanguageStatus} from './language.js';
-import { agentPrompt, attributionConditionalRules, attributionTaxonomy, standardConflictInstructions } from "@eval/prompts";
+import { agentPrompt, attributionConditionalRules, standardConflictInstructions } from "@eval/prompts";
 import { type AgentDefinition, type AgentProfile } from "@eval/contracts";
 import requestSchema from "../../../../schemas/attribution/request.schema.json" with { type: "json" };
 import submissionSchema from "../../../../schemas/attribution/submission.schema.json" with { type: "json" };
@@ -11,8 +11,9 @@ import { findingIssueContext } from "./finding-feedback.js";
 import { attributionSubmissionSchema } from "./submission-schema.js";
 import { attributionFindingBasis } from "./finding-basis.js";
 import { investigationMaterial } from "./investigation-material.js";
-import { responsibilityFunctions, responsibilityComponentName } from "./responsibility.js";
+import { responsibilityFunctions } from "./responsibility.js";
 export { attributionFindingBasis } from "./finding-basis.js";
+export { buildAttributionTransitions, type AttributionTransition, type TransitionKind, type TransitionBoundary } from "./transitions.js";
 export { attributionNormDirectory, type AttributionNorm } from "./norm-directory.js";
 export { numericReferenceDirectory } from "./units.js";
 export * from "./types.js";
@@ -37,20 +38,12 @@ export const attributionProfile: AgentProfile = {
   renderPrompt(input, policy, failure) {
     const analysis = input.task_analysis as { requirements: Record<string, unknown>[]; scoring_points: Record<string, unknown>[]; red_flags: Record<string, unknown>[] };
     const answer = input.answer as Record<string, unknown>;
-    const { norm_directory: _norms, component_catalog: _actors, ...answerMaterial } = answer;
+    const { norm_directory: _norms, component_catalog: _actors, business_chains: _chains, ...answerMaterial } = answer;
     const requirements: Record<string, unknown>[] = analysis.requirements.map((item,index) => ({ ...item,
       requirement_index: Number(item.requirement_index ?? index) + 1 }));
     const { allow_standard_conflict, ...material } = input;
     const shown = { ...material, task_analysis: { ...analysis, requirements },
       responsibility_functions: responsibilityFunctions.map((row, index) => ({ function_index: index + 1, ...row })),
-      responsibility_stages: attributionTaxonomy.stages.map((stage, index) => ({ failure_stage_index: index + 1, stage })),
-      investigation_steps: attributionTaxonomy.investigation_steps.map((step, index) => ({ step_index: index + 1, step })),
-      responsibility_actors: (answer.component_catalog as import('@eval/tools').TraceComponentIdentity[])
-        .map((actor,index)=>{const {identity_status,identity_gap,kind,role,message_indices,generated_call_indices}=actor;return {actor_index:index+1,
-          component:responsibilityComponentName(actor),identity_status,identity_gap,kind,role,message_indices,generated_call_indices,
-          ...(kind==='model'?{read_requests:message_indices.filter(i=>(answer.catalog as {type:string}[])[i]?.type==='llm_turn')
-            .map(message_index=>({candidate:'answer',message_index,kind:'json',path:'/output',offset:0,max_chars:16000}))}:{}),
-        };}),
       ...(allow_standard_conflict === true ? { standard_answer_review: standardConflictInstructions } : {}),
       criterion_check_count: requirements.length+analysis.scoring_points.length+analysis.red_flags.length,
       criterion_checks: [...requirements,...analysis.scoring_points,...analysis.red_flags].map(item => ({ text:item.text })),

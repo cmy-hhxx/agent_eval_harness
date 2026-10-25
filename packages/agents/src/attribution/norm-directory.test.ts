@@ -1,4 +1,4 @@
-import { responsibilityFixture } from "../../../../tests/fixtures/responsibility.js";
+import { unknownFormationFixture } from "../../../../tests/fixtures/responsibility.js";
 import { attributionJudgment } from "../../../../tests/fixtures/attribution-judgment.js";
 import { resolveJudgment } from "./resolve.js";
 import test from "node:test";
@@ -6,7 +6,7 @@ import assert from "node:assert/strict";
 import { AgentRegistry } from "@eval/host";
 import { ValidationError, type AgentRequest, type ToolAudit } from "@eval/contracts";
 import { cite, evidenceSources } from "@eval/tools";
-import { attributionAgent, attributionNormDirectory, responsibilityComponentName, type AttributionResult } from "./index.js";
+import { attributionAgent, attributionNormDirectory, type AttributionResult } from "./index.js";
 import example from "./fixtures/example.json" with { type: "json" };
 import { setFixtureNormDirectory } from "../../../../tests/fixtures/attribution-submission.js";
 import { comparisonScope } from "@eval/agents/comparison";
@@ -187,14 +187,17 @@ test("final scope ignores forged request evidence and requires actual image view
 test("explicit responsibility requires selected own evidence independently of normative context; every finding keeps its own program ID", () => {
   const value = scenario([{ role: "system", content: rule }, { role: "user", content: "计算2+2" },
     { role: "tool", type: "tool_result", name: "Calc", content: "2+2=4" }, { role: "assistant", content: "2+2=4" }]);
+  const final = cite(value.request.sources.answer.id, 3, evidenceSources(value.messages[3]).find(source => source.path === "/content")!, 0, 5);
+  value.audit.traceReads.push({ candidate: "answer", message_index: 3, kind: "text", path: "/content", start: 0, end: final.quote.length });
   const problem = { ...value.finding, type: "problem" as const, evidence: [value.ref(2), value.ref(3)],
-    problem: { diagnosis: "other" as const, investigation: [], component: [responsibilityFixture("最终回答组织", {actor_index:2,component:responsibilityComponentName((value.request.input.answer as any).component_catalog[1],"本题事实关系推导与结果使用"),evidence_ids: ([value.ref(2), value.ref(3)]).map(item=>item.evidence_id)}), responsibilityFixture("Calc", {evidence_ids: ([value.ref(2), value.ref(3)]).map(item=>item.evidence_id), role: "contributing"})], label: "执行交付偏差", definition: "模型和工具责任分别核对。" } };
+    problem: { diagnosis: "other" as const, ...unknownFormationFixture(value.request, [final]),
+      label: "执行交付偏差", definition: "缺少实际生成记录，保留未知形成边界。" } };
   value.submitted.findings = Array.from({ length: 9 }, () => structuredClone(problem));
   const result = resolve(value);
   assert.equal(result.findings.length, 9); assert.equal(result.findings[8]!.finding_id, "f8");
-  assert.deepEqual(result.findings[8]!.problem!.component.map(c=>c.component), ["回答生成：本题事实关系推导与结果使用（消息 3）", "Calc"]);
+  assert.deepEqual(result.findings[8]!.problem!.component.map(c=>c.actor_index), [null]);
   assert.deepEqual(result.findings[8]!.evidence.map(item => item.quote), ["2+2=4", "2+2=4"]);
-  problem.evidence = [value.ref(3)]; value.submitted.findings = [problem];
+  problem.evidence = [value.ref(2)]; value.submitted.findings = [problem];
   assert.throws(() => resolve(value), issue("responsibility_evidence"));
 });
 

@@ -15,7 +15,7 @@ function fixture(problem=false,recovered=false){
   if(problem){const finding=attribution.findings[0];finding.type='problem';finding.stage=recovered?'execution':'final_answer';
     finding.text=recovered?'取数失败后已重试恢复。':'最终回答仍有已确认的非核心展示缺陷。';
     finding.assessment.impact=recovered?'已经恢复，最终结果完整正确。':'最终交付存在局部展示缺陷，核心数值仍可用。';
-    finding.problem={diagnosis:'other',investigation:[],component:[responsibilityFixture()],label:'本条缺陷',definition:finding.text};}
+    finding.problem={diagnosis:'other',investigation:[],calculations:[],component:[responsibilityFixture()],label:'本条缺陷',definition:finding.text};}
   const receipt={taskId:'attribution',evaluatorVersion:'test',evaluation:attribution} as SubmissionReceipt;
   const raw=structuredClone(example.request.sources.answer.value),candidate={input_id:'case',question:String(raw.messages[0].content),final_index:1} as unknown as Candidate;
   const task=scoreTask(candidate,receipt.taskId),binding=bindScore(task,raw,{attribution:receipt}),registry=new AgentRegistry([scoreAgent]);

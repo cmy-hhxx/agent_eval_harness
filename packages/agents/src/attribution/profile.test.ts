@@ -1,11 +1,11 @@
-import { responsibilityFixture } from "../../../../tests/fixtures/responsibility.js";
+import { unknownFormationFixture } from "../../../../tests/fixtures/responsibility.js";
 import { attributionJudgment } from "../../../../tests/fixtures/attribution-judgment.js";
 import { validateJudgment } from "./validate.js";
 import { resolveJudgment } from "./resolve.js";
 const INPUT_ID = "11111111-1111-4111-8111-111111111111";
 import test from "node:test";
 import assert from "node:assert/strict";
-import { attributionAgent, attributionProfile, responsibilityComponentName } from "./index.js";
+import { attributionAgent, attributionProfile } from "./index.js";
 import type { AttributionResult } from "./types.js";
 import example from "./fixtures/example.json" with { type: "json" };
 import { cite, evidenceSources } from "@eval/tools";
@@ -32,9 +32,11 @@ test("a confirmed wrong answer retains its established defect and an explicitly 
   result.criterion_assessments[0].status = "unmet";
   const finding = result.findings[0];
   finding.type = "problem";
-  finding.problem = { diagnosis: "other" as const, investigation: [], component: [responsibilityFixture("最终回答组织",{component:responsibilityComponentName((request.input.answer as any).component_catalog[0],"本题事实关系推导与结果使用"),evidence_ids:finding.evidence.map(item=>item.evidence_id)})], label: "取数结果偏差", definition: result.correctness_reason };
-  attributionProfile.validate!(request, result, audit);
-  const accepted = resolveJudgment(request, judgmentFixture(result, request), audit) as AttributionResult;
+  setFixtureNormDirectory(request);
+  finding.problem = { diagnosis: "other" as const, ...unknownFormationFixture(request, finding.evidence), label: "取数结果偏差", definition: result.correctness_reason };
+  const checkedAudit: ToolAudit = { ...audit, traceReads: [{ candidate: "answer", message_index: 1, kind: "text", path: "/content", start: 0, end: 5 }] };
+  attributionProfile.validate!(request, result, checkedAudit);
+  const accepted = resolveJudgment(request, judgmentFixture(result, request), checkedAudit) as AttributionResult;
   assert.equal(accepted.is_correct, false);
   assert.equal(accepted.core_assessment.meets_core, false);
   assert.equal(accepted.findings[0].problem!.component[0].certainty,"inferred");
@@ -279,7 +281,7 @@ test("Attribution judges one answer, conditionally on the standard answer", () =
     findings: { type: string; problem: Record<string, unknown> | null }[];
   };
   incomplete.findings[0]!.type = "problem";
-  incomplete.findings[0]!.problem = { diagnosis: "other" as const, investigation: [], component: [responsibilityFixture("最终回答组织", {evidence_ids: []})], label: "问题" };
+  incomplete.findings[0]!.problem = { diagnosis: "other" as const, ...unknownFormationFixture(example.request, example.result.findings[0]!.evidence), label: "问题" };
   assert.throws(
     () => attributionProfile.validate!(example.request, incomplete, audit),
     /required|输出结构无效/,
@@ -287,7 +289,7 @@ test("Attribution judges one answer, conditionally on the standard answer", () =
 
   const blankLabel = structuredClone(example.result) as unknown as AttributionResult;
   blankLabel.findings[0]!.type = "problem";
-  blankLabel.findings[0]!.problem = { diagnosis: "other" as const, investigation: [], component: [responsibilityFixture("最终回答组织", {evidence_ids: blankLabel.findings[0]!.evidence.map(item=>item.evidence_id)})], label: "  ", definition: "说明" };
+  blankLabel.findings[0]!.problem = { diagnosis: "other" as const, ...unknownFormationFixture(example.request, blankLabel.findings[0]!.evidence), label: "  ", definition: "说明" };
   assert.throws(() => attributionProfile.validate!(example.request, blankLabel, audit), /非空中文字符串/);
 });
 
@@ -492,12 +494,14 @@ const instructionCase = () => {
 };
 
 test("incoming problem associations cannot coexist with established satisfaction of the same requirement", () => {
-  const { request, draft } = instructionCase();
+  const { request, draft, final } = instructionCase();
+  const audit: ToolAudit = { calls: 0, requiredReadCalls: 0, viewedImages: [], calculations: [], artifacts: [],
+    traceReads: [{ candidate: "answer", message_index: final.message_index, kind: "text", path: "/content", start: 0, end: final.quote.length }] };
   const source = evidenceSources((request.sources.answer!.value as { messages: unknown[] }).messages[0])
     .find(source => source.path === "/content")!;
   const normRef = { evidence_id: cite(INPUT_ID, 0, source, 0, source.text.length).evidence_id };
   const problem = { ...draft.findings[0]!, type: "problem" as const,
-    problem: { diagnosis: "other" as const, investigation: [], component: [responsibilityFixture("最终回答组织", {component:responsibilityComponentName((request.input.answer as any).component_catalog[0],"本题事实关系推导与结果使用"),evidence_ids: ([...draft.findings[0]!.evidence, normRef]).map(item=>item.evidence_id)})], label: "指令执行偏差", definition: "回答未按所关联的规范顺序组织内容。" },
+    problem: { diagnosis: "other" as const, ...unknownFormationFixture(request, [final]), label: "指令执行偏差", definition: "回答未按所关联的规范顺序组织内容。" },
     evidence: [...draft.findings[0]!.evidence, normRef] };
   const submitted = { ...draft, findings: [problem] };
   const before = structuredClone({ request, submitted, audit });

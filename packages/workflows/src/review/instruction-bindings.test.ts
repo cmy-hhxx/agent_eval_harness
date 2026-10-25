@@ -106,7 +106,7 @@ for (const normFirst of [true, false]) test(`accepted merged Criteria retains no
     criterion_instruction_sources: Record<string, { reference: { evidence_id: string } }[]> };
   const finalRef = shown.final_evidence[0]!.reference;
   const reads=emptyAudit(),choose=(ref:{evidence_id:string})=>selectEvidence(reads.evidenceBank!,ref).evidence_index;
-  const draft:AttributionSubmission = { investigation_facts:[],numeric_checks: [],
+  const draft:AttributionSubmission = { numeric_checks: [],
     criterion_assessments: rubric.requirements.map(() => ({ status: "met", evidence_status: "established", summary: "按共同要求以JSON给出4。", evidence_indices: [choose(finalRef)] })),
     meets_core: true, core_reason: "给出可用结果。", core_requirements: [1], summary: "完成计算。", strengths: [], problems: [] };
   const result = registry.resolve(binding,draft,reads) as AttributionResult;
@@ -202,7 +202,7 @@ test("01868 public USER leaf closes attribution without absorbing its private jo
   assert.equal(resolveEvidence(trace, finalRef, "answer", emptyAudit(), "/evidence", candidates.A!.input_id).quote, final);
   const reads=emptyAudit(),choose=(ref:{evidence_id:string})=>selectEvidence(reads.evidenceBank!,ref).evidence_index;
   const finalNumber=choose(finalRef);
-  const draft:AttributionSubmission = { investigation_facts:[],is_correct:false,correctness_reason:"回答1.25个百分点与标准-0.6不同。",correctness_evidence_indices:[finalNumber],
+  const draft:AttributionSubmission = { is_correct:false,correctness_reason:"回答1.25个百分点与标准-0.6不同。",correctness_evidence_indices:[finalNumber],
     numeric_checks:[{label:"利率变化百分点",reference_index:1,actual:"1.25",scale:"1",mode:"rounded",evidence_index:finalNumber}],
     criterion_assessments:rubric.requirements.map(item=>({status:item.id==="r2"?"met":"unmet",evidence_status:"established",summary:"核对真实问题、结果及条件。",evidence_indices:[finalNumber]})),
     meets_core:false,core_reason:"所求数值与标准不一致。",core_requirements:[1],summary:"所求数值未对齐标准。",strengths:[],problems:[] };

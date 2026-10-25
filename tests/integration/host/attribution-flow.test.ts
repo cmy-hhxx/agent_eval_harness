@@ -1,4 +1,4 @@
-import { responsibilityFixture } from "../../fixtures/responsibility.js";
+import { unknownFormationFixture } from "../../fixtures/responsibility.js";
 import test from "node:test";
 import assert from "node:assert/strict";
 import path from "node:path";
@@ -6,6 +6,8 @@ import { rm } from "node:fs/promises";
 import type { AgentBackend } from "@eval/contracts";
 import { runEvaluation } from "@eval/host";
 import { startWorker } from "@eval/runtime/worker";
+import { bindAttributionMaterial } from "@eval/workflows/review";
+import type { RawInput } from "@eval/workflows/inputs";
 import { buildPlan, readRunState, type AttributionResult, type TaskData } from "@eval/workflows/comparison";
 import { draftFor, fakeEvaluatorVersion, fakeIdentity, fixtureConfig, inspectFor, parsedMaterial, submitFor, taskResult } from "../../fixtures/comparison.js";
 import { services, validateRun } from "../../fixtures/services.js";
@@ -17,6 +19,7 @@ test("Host preserves one attribution per answer and records unresolved compariso
     if (phase !== "complete") t.diagnostic(JSON.stringify({ phase, calls, callsByStage, lastProgress }));
   }, { once: true });
   const fixture = await fixtureConfig(undefined, true), originalCompletions: string[] = [];
+  const plan = await buildPlan(fixture.config);
   const backend: AgentBackend = { identity: fakeIdentity, async createSession(options) {
     return { async run() {
       await inspectFor(options); calls++;
@@ -28,7 +31,12 @@ test("Host preserves one attribution per answer and records unresolved compariso
         finding.finding_id = "f-extra"; finding.type = "problem"; finding.dimension = "reasoning"; finding.importance = "medium";
         finding.text = "计算过程缺少展开。"; finding.reason = "直接给出结果，缺少中间计算说明。";
         finding.assessment.requirement_index = null; finding.assessment.impact = "过程的可检查性不足。";
-        finding.problem = { diagnosis: "other" as const, investigation: [], component: [responsibilityFixture("最终回答组织", {evidence_ids: []})], label: "计算过程缺口", definition: "缺少中间计算说明。" };
+        const task=plan.tasks.find(task=>task.id===options.spec.taskId)!;
+        const candidate=Object.values((task.data as TaskData).candidates).find(candidate=>candidate.input_id===task.inputIds.answer)!;
+        const binding=bindAttributionMaterial(candidate,plan.inputs[candidate.input_id] as RawInput,result.task_analysis);
+        const read=await options.execute("read_trace",{candidate:"answer",message_index:candidate.final_index,path:"/content",offset:0,max_chars:16000});
+        assert.equal(read.isError,undefined,JSON.stringify(read));
+        finding.problem = { diagnosis: "other" as const, ...unknownFormationFixture(binding.request,finding.evidence), label: "计算过程缺口", definition: "缺少中间计算说明。" };
         result.findings.push(finding);
       }
       const submitted = await submitFor(options, draftFor(options.spec, evaluation));
@@ -38,7 +46,7 @@ test("Host preserves one attribution per answer and records unresolved compariso
   } };
   const worker = await startWorker(backend, path.join(fixture.directory, "worker"));
   try {
-    const plan = await buildPlan(fixture.config), options = {
+    const options = {
       runId: "coverage-rewrite", output: fixture.config.output, config: fixture.config,
       engine: "pi" as const, identity: fakeIdentity, evaluatorVersion: fakeEvaluatorVersion, ...services,
       plan, policy: fixture.config.execution, modelForStage: fixture.modelForStage,

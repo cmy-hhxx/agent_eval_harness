@@ -1,4 +1,4 @@
-import { responsibilitySubmissionFixture } from "../../../../tests/fixtures/responsibility.js";
+import { responsibilitySubmissionFixture, unknownFormationFixture } from "../../../../tests/fixtures/responsibility.js";
 import test from "node:test";
 import assert from "node:assert/strict";
 import { AgentRegistry } from "@eval/host";
@@ -37,7 +37,7 @@ function fixture(sourceCount = 1, noteChars = 1040, finalNoteChars = 0, sourceCo
   const finalExcerpt = choose(excerpt(finalIndex, answer.indexOf("588000.SH"), answer.indexOf("588000.SH") + 9));
   const draft: AttributionSubmission = {
     summary: "代码一致，来源使用简称，回答使用基金全称。", meets_core: true, core_reason: "代码与基金对象可对应。", core_requirements: [1],
-    numeric_checks: [], investigation_facts: [],
+    numeric_checks: [],
     criterion_assessments: [{ status: "met", evidence_status: "established", summary: "列出原查询对象。", evidence_indices: [finalExcerpt] }],
     strengths: [], problems: [], table_resolutions: [{
       table_index: parseTraceTables(raw, inputId).findIndex(table => table.table_id === checks[0].answer_table_id) + 1,
@@ -131,10 +131,13 @@ function conflictFixture() {
   f.draft.meets_core = false;
   f.draft.core_reason = "基金代码与原查询不一致，无法用于目标对象。";
   f.draft.criterion_assessments[0].status = "unmet";
+  const point=f.raw.messages.length-1, content=f.raw.messages[point].content;
+  const boundary=unknownFormationFixture(f.request,[f.excerpt(point,content.indexOf('58800'),content.indexOf('ETF')+3)]);
+  f.audit.traceReads.push({candidate:'answer',message_index:point,kind:'text',path:'/content',start:0,end:content.length});
   f.draft.problems.push({ dimension: "correctness", stage: "final_answer", importance: "high", text: "基金代码与原查询不同",
     reason: "相同基金全称，原查询为588001.SH，回答为588000.SH。", impact: "核心标的代码不可用。",
     evidence_status: "established", basis_index: 1, evidence_indices: indices,
-    diagnosis: "other", investigation_fact_indices: [], component: [responsibilitySubmissionFixture(f.request,"最终回答组织", indices)], label: "基金代码错误" });
+    diagnosis: "other", calculations: [], causes: boundary.component.map(responsibilitySubmissionFixture), checks: [{transition_index:boundary.component[0].transition_index,outcome:'unresolved',observation:'交付代码有误但生成处理未采集。',before_evidence_indices:[],after_evidence_indices:[indices[0]]}], label: "基金代码错误" });
   f.draft.table_resolutions![0].outcome = "conflict";
   f.draft.table_resolutions![0].reason = "完整行与聚焦代码、名称证据均确认同一基金的代码冲突。";
   return f;

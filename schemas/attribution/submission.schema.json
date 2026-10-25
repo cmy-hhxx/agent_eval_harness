@@ -353,32 +353,31 @@
             "type": "string",
             "minLength": 1
           },
-          "component": {
+          "diagnosis": {
+            "enum": [
+              "entity_or_unit",
+              "source_absence",
+              "context_loss",
+              "other"
+            ]
+          },
+          "causes": {
             "type": "array",
+            "minItems": 1,
             "uniqueItems": true,
             "items": {
               "type": "object",
               "additionalProperties": false,
               "required": [
-                "actor_index",
+                "transition_index",
                 "function_index",
                 "business_component",
-                "chain_index",
-                "step_index",
-                "failure_stage_index",
+                "basis",
                 "mechanism_source",
                 "mechanism",
-                "certainty",
-                "evidence_indices"
+                "certainty"
               ],
               "properties": {
-                "actor_index": {
-                  "type": [
-                    "integer",
-                    "null"
-                  ],
-                  "minimum": 1
-                },
                 "function_index": {
                   "type": "integer",
                   "minimum": 1
@@ -386,32 +385,6 @@
                 "business_component": {
                   "type": "string",
                   "minLength": 1
-                },
-                "chain_index": {
-                  "type": [
-                    "integer",
-                    "null"
-                  ],
-                  "minimum": 1
-                },
-                "step_index": {
-                  "type": "integer",
-                  "minimum": 1,
-                  "maximum": 8
-                },
-                "failure_stage_index": {
-                  "type": "integer",
-                  "minimum": 1,
-                  "description": "必填；选择 responsibility_stages 的1起始编号，与 investigation_steps 的 step_index 分别填写。"
-                },
-                "field_names": {
-                  "description": "可省略，程序组装为空数组；填写时须来自所引原文或坐标，不新增判断。",
-                  "type": "array",
-                  "uniqueItems": true,
-                  "items": {
-                    "type": "string",
-                    "minLength": 1
-                  }
                 },
                 "mechanism_source": {
                   "enum": [
@@ -430,15 +403,6 @@
                     "inferred"
                   ]
                 },
-                "evidence_indices": {
-                  "type": "array",
-                  "uniqueItems": true,
-                  "items": {
-                    "type": "integer",
-                    "minimum": 1
-                  },
-                  "minItems": 1
-                },
                 "evidence_gap": {
                   "type": "string",
                   "minLength": 1
@@ -451,6 +415,17 @@
                     "type": "string",
                     "minLength": 1
                   }
+                },
+                "transition_index": {
+                  "type": "integer",
+                  "minimum": 1
+                },
+                "basis": {
+                  "enum": [
+                    "input_deviation",
+                    "independent_addition",
+                    "unknown_transition"
+                  ]
                 }
               },
               "allOf": [
@@ -479,23 +454,212 @@
                   }
                 }
               ]
-            },
-            "minItems": 1
+            }
           },
-          "diagnosis": {
-            "enum": [
-              "entity_or_unit",
-              "source_absence",
-              "context_loss",
-              "other"
-            ]
-          },
-          "investigation_fact_indices": {
+          "checks": {
             "type": "array",
-            "uniqueItems": true,
+            "minItems": 1,
             "items": {
-              "type": "integer",
-              "minimum": 1
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "transition_index",
+                "outcome",
+                "observation",
+                "before_evidence_indices",
+                "after_evidence_indices"
+              ],
+              "properties": {
+                "transition_index": {
+                  "type": "integer",
+                  "minimum": 1
+                },
+                "outcome": {
+                  "enum": [
+                    "preserved",
+                    "changed",
+                    "recovered",
+                    "unresolved"
+                  ]
+                },
+                "observation": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "before_evidence_indices": {
+                  "type": "array",
+                  "uniqueItems": true,
+                  "items": {
+                    "type": "integer",
+                    "minimum": 1
+                  }
+                },
+                "after_evidence_indices": {
+                  "type": "array",
+                  "uniqueItems": true,
+                  "items": {
+                    "type": "integer",
+                    "minimum": 1
+                  }
+                }
+              }
+            }
+          },
+          "calculations": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "label",
+                "operation",
+                "operands",
+                "result",
+                "scale",
+                "decimal_places",
+                "result_unit",
+                "result_period",
+                "assumptions"
+              ],
+              "properties": {
+                "label": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "operation": {
+                  "enum": [
+                    "ratio",
+                    "relative_change",
+                    "compound_growth",
+                    "annualization",
+                    "arithmetic"
+                  ]
+                },
+                "operands": {
+                  "type": "object",
+                  "minProperties": 1,
+                  "additionalProperties": {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "required": [
+                      "value",
+                      "evidence_index",
+                      "unit",
+                      "period",
+                      "role"
+                    ],
+                    "properties": {
+                      "value": {
+                        "type": "string",
+                        "minLength": 1
+                      },
+                      "evidence_index": {
+                        "type": "integer",
+                        "minimum": 1
+                      },
+                      "unit": {
+                        "type": "string",
+                        "minLength": 1
+                      },
+                      "period": {
+                        "type": "string",
+                        "minLength": 1
+                      },
+                      "role": {
+                        "type": "string",
+                        "minLength": 1
+                      }
+                    }
+                  },
+                  "description": "每项value为对应evidence中的完整原数token（可含千分位），unit/period/role明确原始单位、期间及业务角色。ratio仅numerator+denominator，区间比值仅numerator+denominator_lower+denominator_upper（分子非负、分母为有序正数、两端同单位同期间），denominator_role精确等于分母role；relative_change仅base+observed（同单位，期间可不同），公式(observed-base)/base，denominator_role=base.role；compound_growth必需rate+periods，可选base；rate.unit为ratio或%（%自动精确除100），periods.unit=periods且1—20整数（有界资源限制）；有base时结果=base*(1+每期增长率)^periods且与base同单位，无base计算增长倍数且result_unit=ratio，不需编造值为1的来源；非CAGR；annualization仅value，须有正factor、observation_period=value.period、target_period=result_period、result_basis=run_rate及非空assumptions，结果单位与value一致；arithmetic用自选合法变量名且每项均参与formula，display_scale为保留名。"
+                },
+                "result": {
+                  "oneOf": [
+                    {
+                      "type": "string",
+                      "minLength": 1
+                    },
+                    {
+                      "type": "object",
+                      "additionalProperties": false,
+                      "required": [
+                        "lower",
+                        "upper",
+                        "include_lower",
+                        "include_upper"
+                      ],
+                      "properties": {
+                        "lower": {
+                          "type": "string",
+                          "minLength": 1
+                        },
+                        "upper": {
+                          "type": "string",
+                          "minLength": 1
+                        },
+                        "include_lower": {
+                          "type": "boolean"
+                        },
+                        "include_upper": {
+                          "type": "boolean"
+                        }
+                      }
+                    }
+                  ]
+                },
+                "scale": {
+                  "enum": [
+                    "1",
+                    "100"
+                  ],
+                  "description": "结果显示倍率，仅1或100，不是容差。ratio/relative_change的scale=100当且仅当result_unit=%；其他运算也按此倍率乘在公式结果之后。"
+                },
+                "decimal_places": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "maximum": 12,
+                  "description": "结果小数位数0—12：对源数字的精确有理数运算结果一次性按四舍六入五成双舍入，提交result须与该精度相符。区间两端分别核算；不会自动改写模型提交的结果。"
+                },
+                "result_unit": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "result_period": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "assumptions": {
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "minLength": 1
+                  }
+                },
+                "denominator_role": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "formula": {
+                  "type": "string",
+                  "minLength": 1,
+                  "description": "仅arithmetic使用具名源数操作数、四则运算和括号。数学常数0/1可直接写；10的整数次幂可作单位换算倍率（如/1000或*1e-3），须用assumptions声明原/目标单位及换算依据。其他数值必须来自operands，不得通过常数绕过证据绑定；数学常量不证明被评模型执行过对应动作。"
+                },
+                "factor": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "observation_period": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "target_period": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "result_basis": {
+                  "const": "run_rate"
+                }
+              }
             }
           }
         },
@@ -510,57 +674,11 @@
           "evidence_indices",
           "basis_index",
           "label",
-          "component",
           "diagnosis",
-          "investigation_fact_indices"
+          "checks",
+          "causes",
+          "calculations"
         ]
-      }
-    },
-    "investigation_facts": {
-      "description": "只填写已核实且与问题有关的边界，不补八步空模板。每行提交 chain_index、step_index、observation、evidence_indices，field_names 可省略，禁止额外字段；相同事实可供多个问题引用。",
-      "type": "array",
-      "items": {
-        "type": "object",
-        "additionalProperties": false,
-        "required": [
-          "chain_index",
-          "step_index",
-          "observation",
-          "evidence_indices"
-        ],
-        "properties": {
-          "chain_index": {
-            "type": "integer",
-            "minimum": 1
-          },
-          "step_index": {
-            "type": "integer",
-            "minimum": 1,
-            "maximum": 8
-          },
-          "field_names": {
-            "description": "可省略，程序组装为空数组；主动填写时仅列本事实所引原文或路径实际存在的字段，不能借用父对象未引用的字段或其他边界字段。",
-            "type": "array",
-            "uniqueItems": true,
-            "items": {
-              "type": "string",
-              "minLength": 1
-            }
-          },
-          "observation": {
-            "type": "string",
-            "minLength": 1
-          },
-          "evidence_indices": {
-            "type": "array",
-            "uniqueItems": true,
-            "items": {
-              "type": "integer",
-              "minimum": 1
-            },
-            "minItems": 1
-          }
-        }
       }
     }
   },
@@ -572,7 +690,6 @@
     "core_requirements",
     "numeric_checks",
     "strengths",
-    "problems",
-    "investigation_facts"
+    "problems"
   ]
 }

@@ -1,4 +1,4 @@
-import { responsibilityFixture } from "../../fixtures/responsibility.js";
+import { unknownFormationFixture } from "../../fixtures/responsibility.js";
 import { testSettings } from "../../fixtures/settings.js";
 import { canonicalEvidence } from "../../fixtures/evidence.js";
 import { services as appServices } from "@eval/host-app/composition";
@@ -11,6 +11,7 @@ import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { loadComparisonConfig, loadComparisonEvaluation, createModelResolver } from "@eval/host-app/config";
 import { adapt, createInputScanCache, inputAdapterIds, inputAdapters } from "@eval/workflows/inputs";
 import { buildPlan, expandComparisonPairs, reconcileRun } from "@eval/workflows/comparison";
+import { bindAttributionMaterial } from "@eval/workflows/review";
 import { prepare, validateEvaluation } from "../../fixtures/services.js";
 import { annotateFindings } from "@eval/workflows/comparison";
 import type { Finding } from "@eval/workflows/comparison";
@@ -536,7 +537,11 @@ test("image observations require an actual image tool audit", async () => {
     });
     result.findings[0].evidence[0] = { evidence_id: evidenceId(task.inputIds.answer!, 1, "image"), message_index: 1, quote: "[图像观察]图片呈现结果" };
     result.findings[0].evidence.push(canonicalEvidence(task.inputIds.answer!, 0, "计算2+2"));
-    for(const cause of result.findings[0].problem?.component??[])cause.evidence_ids=result.findings[0].evidence.map(item=>item.evidence_id);
+    const delivered=canonicalEvidence(task.inputIds.answer!,1,"2+2=4","/content/0/text");
+    result.findings[0].evidence.push(delivered);
+    const candidate=Object.values((task.data as TaskData).candidates).find(candidate=>candidate.input_id===task.inputIds.answer)!;
+    const binding=bindAttributionMaterial(candidate,input,result.task_analysis);
+    Object.assign(result.findings[0].problem!,unknownFormationFixture(binding.request,[delivered]));
     assert.throws(() => validateEvaluation(task, plan.inputs, result, audit, {}), /未查看/);
     const runtime = new ToolRuntime(
       {
@@ -788,8 +793,12 @@ test("subjective inputs still run attribution and direct evidence needs no force
     forged.findings[0] = {
       ...forged.findings[0],
       type: "problem",
-      problem: { diagnosis: "other" as const, investigation: [], component: [responsibilityFixture("组件", {evidence_ids: forged.findings[0].evidence.map(item=>item.evidence_id)})], label: "问题", definition: "描述" },
+      problem: { diagnosis: "other" as const, ...unknownFormationFixture(bindAttributionMaterial(
+        Object.values((task.data as TaskData).candidates).find(candidate=>candidate.input_id===task.inputIds.answer)!,
+        plan.inputs[task.inputIds.answer] as RawInput,forged.task_analysis).request,forged.findings[0].evidence),
+        label: "问题", definition: "描述" },
     } as (typeof forged.findings)[number];
+    forged.findings[0].problem!.component[0].actor_index=99999;
     assert.throws(
       () => validateEvaluation(task, plan.inputs, forged, emptyAudit(), {}),
       (error: unknown) => error instanceof ValidationError && error.issues!.some(issue => issue.code === "responsibility_actor"),

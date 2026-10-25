@@ -16,7 +16,7 @@ function finding(id: string, component: string[], options: { uncertain?: boolean
   return { finding_id: id, type: options.strength ? "strength" : "problem", text: options.text ?? `具体行为 ${id}`, reason: "来源可核对",
     dimension: "reasoning", stage: "final_answer", importance: "medium", evidence: [],
     assessment: { requirement_index: null, observation: "已观察行为", evidence_status: options.uncertain ? "uncertain" : "established", impact: "影响交付" },
-    problem: options.strength ? null : { diagnosis: "other", investigation: [], component:component.map((name,index)=>responsibilityFixture(name,{role:index?"contributing":"primary"})), label: "问题", definition: "已记录问题" } };
+    problem: options.strength ? null : { diagnosis: "other", investigation: [], calculations: [], component:component.map((name,index)=>responsibilityFixture(name,{role:index?"contributing":"primary"})), label: "问题", definition: "已记录问题" } };
 }
 function receipt(id: string, findings: AttributionResult["findings"]): SubmissionReceipt {
   return { taskId: id, submissionId: `${id}-receipt`, evaluatorVersion: "test", judge: "judge", acceptedAt: 1,

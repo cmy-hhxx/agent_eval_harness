@@ -1,4 +1,4 @@
-import { responsibilityFixture } from "../../../../tests/fixtures/responsibility.js";
+import { unknownFormationFixture } from "../../../../tests/fixtures/responsibility.js";
 import test from "node:test";
 import assert from "node:assert/strict";
 import { rm } from "node:fs/promises";
@@ -7,6 +7,8 @@ import { attributionResult, criteriaResult, emptyAudit, fixtureConfig, raw } fro
 import { buildPlan } from "./input.js";
 import { comparisonWorkflow } from "./workflow.js";
 import type { TaskData } from "./types.js";
+import { bindAttributionMaterial } from "@eval/workflows/review";
+import type { RawInput } from "@eval/workflows/inputs";
 
 for(const [modelCount,findingType] of [[2,"strength"],[2,"problem"],[3,"problem"]] as const)test(`each of ${modelCount} models owns one attribution despite unmatched ${findingType} findings`,async()=>{
  const fixture=await fixtureConfig([[raw()],[],[raw()],[]],false,true);
@@ -28,7 +30,12 @@ for(const [modelCount,findingType] of [[2,"strength"],[2,"problem"],[3,"problem"
   for(const task of attributes){
    const value=attributionResult(true,"2+2=4",true,task.inputIds.answer);value.findings[0].assessment.requirement_index=null;
    value.findings[0].type=findingType;
-   if(findingType==="problem")value.findings[0].problem={diagnosis: "other" as const, investigation: [], component:[responsibilityFixture("最终回答组织", {evidence_ids: []})],label:"计算过程缺口",definition:"中间计算与最终结果的关系缺少说明。"};
+   if(findingType==="problem"){
+    const candidate=Object.values((task.data as TaskData).candidates).find(candidate=>candidate.input_id===task.inputIds.answer)!;
+    const binding=bindAttributionMaterial(candidate,plan.inputs[candidate.input_id] as RawInput,value.task_analysis);
+    value.findings[0].problem={diagnosis:"other",...unknownFormationFixture(binding.request,value.findings[0].evidence),
+      label:"计算过程缺口",definition:"中间计算与最终结果的关系缺少说明。"};
+   }
    receipts[task.id]=receipt(task.id,value);state.manifest.states[task.id].status="succeeded";
    apply(comparisonWorkflow.advance!(task,receipts[task.id],state,plan.inputs));
   }

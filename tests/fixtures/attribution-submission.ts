@@ -1,9 +1,8 @@
 import { selectEvidence, type AgentRequest, type TaskAnalysis, type ToolAudit } from "@eval/contracts";
-import { attributionNormDirectory, attributionFindingBasis, numericReferenceDirectory, type AttributionResult, type AttributionSubmission } from "@eval/agents/attribution";
+import { attributionNormDirectory, attributionFindingBasis, numericReferenceDirectory, buildAttributionTransitions, type AttributionResult, type AttributionSubmission } from "@eval/agents/attribution";
 import { parseEvidenceCoordinates, traceComponentIdentities } from "@eval/tools";
 import { businessChains } from "@eval/workflows/review";
 import { responsibilitySubmissionFixture } from "./responsibility.js";
-import { attributionTaxonomy } from "@eval/prompts";
 type NormChoice = { norm_index: number; requirement_index: number | null; evidence: { evidence_id: string }[] };
 /** Construct the current program-owned directory for a hand-built request. */
 export function setFixtureNormDirectory(request: AgentRequest) {
@@ -14,8 +13,11 @@ export function setFixtureNormDirectory(request: AgentRequest) {
 }
 export function setFixtureComponentCatalog(request: AgentRequest) {
   const answer = request.input.answer as { final_message_index: number; component_catalog?: unknown };
-  Object.assign(answer, { business_chains: businessChains(request.sources.answer.value as import("@eval/workflows/inputs").RawInput, request.sources.answer.id, answer.final_message_index) });
-  answer.component_catalog = traceComponentIdentities(request.sources.answer.value as { messages: unknown[] }, request.sources.answer.id, answer.final_message_index);
+  const raw = request.sources.answer.value as import("@eval/workflows/inputs").RawInput;
+  const chains = businessChains(raw, request.sources.answer.id, answer.final_message_index);
+  const actors = traceComponentIdentities(raw, request.sources.answer.id, answer.final_message_index);
+  Object.assign(answer, {business_chains:chains,component_catalog:actors,transitions:buildAttributionTransitions({
+    raw,inputId:request.sources.answer.id,finalIndex:answer.final_message_index,actors,chains})});
 }
 
 /** Invert a known fixture using its genuine requirement owner or unique physical norm, never its prose. */
@@ -61,7 +63,6 @@ export function attributionSubmission(request: AgentRequest, result: Attribution
     return {dimension:row.dimension,stage:row.stage,importance:row.importance,text:row.text,reason:row.reason,
       evidence_status:row.assessment.evidence_status,evidence_indices:refs(row.evidence),basis_index};
   };
-  const investigation_facts:AttributionSubmission["investigation_facts"]=[];
   const submission:AttributionSubmission={
     summary:result.summary,meets_core:result.core_assessment.meets_core,core_reason:result.core_assessment.reason,
     core_requirements:result.core_assessment.criterion_ids.map(id=>task.requirements.findIndex(item=>item.id===id)+1),
@@ -70,22 +71,15 @@ export function attributionSubmission(request: AgentRequest, result: Attribution
     criterion_assessments:result.criterion_assessments.flatMap(row=>row.status==="not_applicable"?[]:[{
       status:row.status,evidence_status:row.evidence_status,summary:row.summary,evidence_indices:refs(row.evidence)}]),
     strengths:result.findings.filter(row=>row.type==="strength").map(observation),
-    investigation_facts,
     problems:result.findings.filter(row=>row.type==="problem").map(row=>{
       const observed=observation(row),problem=structuredClone(row.problem!);
-      const investigation_fact_indices=problem.investigation.flatMap(chain=>chain.steps.flatMap(step=>{
-        if(step.status === "not_collected")return [];
-        const evidence=row.evidence.filter(item=>step.evidence_ids.includes(item.evidence_id));
-        const fact={chain_index:chain.chain_index,step_index:attributionTaxonomy.investigation_steps.indexOf(step.step)+1,
-          field_names:[...new Set(problem.component.filter(cause=>cause.chain_index===chain.chain_index).flatMap(cause=>cause.field_names))]
-            .filter(field=>evidence.some(item=>{const point=parseEvidenceCoordinates(item.evidence_id);return item.quote.includes(field)||point&&point.kind!=="image"&&point.path.includes(field);})),
-          observation:step.observation,evidence_indices:refs(evidence)};
-        const found=investigation_facts.findIndex(row=>JSON.stringify(row)===JSON.stringify(fact));
-        if(found>=0)return [found+1];investigation_facts.push(fact);return [investigation_facts.length];
-      }));
-      return {...observed,impact:row.assessment.impact,diagnosis:problem.diagnosis,label:problem.label,investigation_fact_indices,
-        component:problem.component.map(cause=>responsibilitySubmissionFixture(request,cause.component,
-          refs(row.evidence.filter(item=>cause.evidence_ids.includes(item.evidence_id))),cause))};
+      const checks=problem.investigation.map(check=>({transition_index:check.transition_index,outcome:check.outcome,
+        observation:check.observation,before_evidence_indices:refs(row.evidence.filter(item=>check.before_evidence_ids.includes(item.evidence_id))),
+        after_evidence_indices:refs(row.evidence.filter(item=>check.after_evidence_ids.includes(item.evidence_id)))}));
+      return {...observed,impact:row.assessment.impact,diagnosis:problem.diagnosis,label:problem.label,checks,
+        calculations:problem.calculations.map(calculation=>({...calculation,operands:Object.fromEntries(Object.entries(calculation.operands)
+          .map(([name,{evidence_id,...operand}])=>[name,{...operand,evidence_index:selectEvidence(bank,{evidence_id}).evidence_index}]))})),
+        causes:problem.component.map(cause=>responsibilitySubmissionFixture(cause))};
     }),
     numeric_checks:result.numeric_checks.map(({expected,matches:_matches,...row})=>({...row,
       reference_index:directory.findIndex(item=>item.expected===expected)+1,evidence_index:correctness[row.evidence_index]})),

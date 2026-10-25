@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { numericReferenceDirectory } from "./units.js";
 import { attributionProfile } from "./index.js";
 import example from "./fixtures/example.json" with { type: "json" };
+import { setFixtureComponentCatalog } from "../../../../tests/fixtures/attribution-submission.js";
 
 test("index names and month ranges do not become numerical answer targets", () => {
   assert.deepEqual(numericReferenceDirectory("上证50的年涨幅+12.90%，相对上证-5.51%；中证2000年涨幅+36.42%，相对上证+18.01%")
@@ -19,6 +20,7 @@ test("quantities beside index identities remain available with original precisio
 
 test("candidate wording cannot alter which standard values are selectable", () => {
   const request = structuredClone(example.request);
+  setFixtureComponentCatalog(request);
   request.input.ground_truth.value = "上证50年涨幅12.90%，相对上证-5.51%；中证2000年涨幅36.42%，相对上证18.01%";
   assert.deepEqual(numericReferenceDirectory(request.input.ground_truth.value).map(item => item.expected),
     ["12.90", "-5.51", "36.42", "18.01"]);

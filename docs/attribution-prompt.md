@@ -8,7 +8,7 @@ Attribution 使用固定五步流程：确定公开任务和调查范围、核�
 |---|---|
 | 固定 system | `attribution/default/system.md` 与 `instructions.md`；包含五步流程、唯一责任决策表、证据强度、点评和停止条件，不再次叠加共享 commentary/evidence |
 | 本次适用规则 | `attributionConditionalRules` 按已有材料选择 `attribution/conditional/`，由 Attribution 的 `renderPrompt` 放在任务材料之前；不改变固定 system 或运行协议 |
-| 任务材料 | 保留任务焦点、原始证据导航、真实主体/功能/步骤目录、判据和预算；材料本身不是指令或判决 |
+| 任务材料 | 保留任务焦点、原始证据导航、真实执行转换与去重来源导航、功能目录、判据和预算；材料本身不是指令或判决 |
 | 工具说明 | 通用工具使用集中说明；直接提交的 Attribution 使用本阶段 `execute_code.md`，仅用于有界提取和计算，不要求不存在的草稿编辑工具 |
 | 提交契约 | `attributionSubmissionSchema` 按请求缩窄根 Schema，实际交给 Worker/SDK 的提交工具；必填项、类型、额外字段和枚举由 Schema 严格约束 |
 | 业务验收 | 证据坐标、阅读覆盖、责任主体、边界、判据冲突及核心状态仍由业务校验拒收；提示词不替代验收 |
@@ -31,7 +31,7 @@ Attribution 使用固定五步流程：确定公开任务和调查范围、核�
 
 责任决策表区分参数生成、执行返回、整理传递、生成新增、渲染交付、恢复和真正缺失的处理记录。它要求先看真实请求和前后边界，不将最后接收者替代未知整理者，不将 shell 等执行载体自动当成内部业务实现。关联责任需独立作用证据，不按分布或数量分配。
 
-直接过程记录支持 `explicit_process`；输入输出差异只能支持 `boundary_comparison` 与 `inferred`。缺陷成立与责任机制确定性分别判断。`actor_index=null` 只表示真实处理者未采集，不能用来回避已有可读调用。
+直接过程记录支持 `explicit_process`；输入输出差异只能支持 `boundary_comparison` 与 `inferred`。缺陷成立与责任机制确定性分别判断。主体由转换目录绑定；空主体只表示处理者未采集，模型不能用它回避已有可读调用。每个问题提交本地 checks、causes、calculations，不再同时维护主体、链路、步骤及公共事实编号。
 
 五步流程定义何时证据足够、何时还有独立疑点、何时停止无进展探索。动态必读的受保护额度、页数和字符上限、内容修复次数、有界停止及失败原因由 Host/Worker 实现；模型不能通过改称“未采集”、删问题或重复提交绕过它们。
 

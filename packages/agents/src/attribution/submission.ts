@@ -5,15 +5,16 @@ import { resolveJudgment } from "./resolve.js";
 import { validateJudgment, validateEvaluation } from "./validate.js";
 import { attributionFindingBasis } from "./finding-basis.js";
 import { responsibilityFunctions, responsibilityIdentities,responsibilityComponentName } from "./responsibility.js";
-import { attributionTaxonomy } from "@eval/prompts";
-import { businessChainDirectory, investigationIssues } from "./investigation.js";
+import { investigationIssues } from "./investigation.js";
 import type { ProblemProposal, Evidence } from "./types.js";
 import { resolveAttributionEvidence } from "./source-evidence.js";
+import { resolveDerivations, type ResolvedDerivation, type DerivationSubmission } from "./derivations.js";
+import type { AttributionTransition } from "./transitions.js";
 
 const object = (value: unknown): Record<string, any> => value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, any> : {};
 const list = (value: unknown): any[] => Array.isArray(value) ? value : [];
 const validateShape = new Ajv2020({allErrors:true,strict:false}).compile(schema);
-const validateFactShape = new Ajv2020({allErrors:true,strict:false}).compile(schema.properties.investigation_facts.items);
+const validateCalculationShape = new Ajv2020({allErrors:true,strict:false}).compile(schema.properties.problems.items.properties.calculations);
 
 /** Bind the shallow model choices once. All evidence and judgment checks use the bound representation. */
 function bindSubmission(request: AgentRequest, submitted: unknown, audit: ToolAudit) {
@@ -65,40 +66,14 @@ function bindSubmission(request: AgentRequest, submitted: unknown, audit: ToolAu
     catch (error) { if (!(error instanceof ValidationError)) throw error; issues.push(...error.issues!); return { evidence_id: "" }; }
   };
   const references = (numbers: unknown, path: string) => list(numbers).map((number,index) => reference(number,`${path}/${index}`));
-  const actors = responsibilityIdentities(request), chains = businessChainDirectory(request);
-  const facts = list(value.investigation_facts).map(object).map((fact, index):Record<string,any> => {
-    const path = `/investigation_facts/${index}`;
-    if(!validateFactShape(fact))return {...fact,step:undefined,evidence_ids:[],source_proofs:[]};
-    const evidence = references(fact.evidence_indices, `${path}/evidence_indices`);
-    const proofs = evidence.flatMap(ref => {
-      try { return [resolveAttributionEvidence(request, ref, audit, path)]; }
-      catch (error) { if (!(error instanceof ValidationError)) throw error; issues.push(...error.issues!); return []; }
-    });
-    const step = attributionTaxonomy.investigation_steps[Number(fact.step_index) - 1];
-    const chain = chains.find(chain => chain.chain_index === fact.chain_index);
-    const checkpoint = chain?.checkpoints.find(point => point.step === step);
-    if (!chain || !step || checkpoint?.availability !== "available")
-      issues.push({category:"evidence",code:"investigation_fact_boundary",path,
-        message:"调查事实只能关联本方已采集的真实链路边界；未采集环节由程序说明，不用其他环节替代。"});
-    const fields = list(fact.field_names).filter(field => proofs.some(proof => {
-      const point = parseEvidenceCoordinates(proof.evidence_id);
-      return !proof.source && checkpoint?.evidence.some(boundary=>boundary.message_index===proof.message_index) &&
-        (proof.quote.includes(field) || point && point.kind !== "image" && point.path.includes(field));
-    }));
-    if (fields.length !== list(fact.field_names).length)
-      issues.push({category:"evidence",code:"investigation_fact_fields",path:`${path}/field_names`,
-        actual:fact.field_names,expected:{fact_index:index+1,chain_index:fact.chain_index,step_index:fact.step_index,
-          invalid_fields:list(fact.field_names).filter(field=>!fields.includes(field)),retained_fields:fields,
-          evidence_indices:fact.evidence_indices,
-          evidence_boundaries:chains.flatMap(other=>other.checkpoints.flatMap((boundary,i)=>
-            boundary.evidence.some(item=>proofs.some(proof=>!proof.source&&proof.message_index===item.message_index))
-              ? [{chain_index:other.chain_index,step_index:i+1,step:boundary.step}] : [])),
-          required_sources:checkpoint?.evidence.map(item=>({message_index:item.message_index,reference:{evidence_id:item.evidence_id}}))??[]},
-        message:"本事实字段须来自所选 chain_index/step_index 边界的所引原文或路径。先核对证据是否属于该边界，再保留实际字段；普通正文没有结构化字段时填 []，不能借用其他事实或用清空字段掩盖边界错配。"});
-    return {...fact, chain_index:fact.chain_index,field_names:list(fact.field_names),observation:fact.observation,
-      source_proofs:proofs.filter(proof=>!proof.source&&checkpoint?.evidence.some(boundary=>boundary.message_index===proof.message_index)),
-      evidence_indices:fact.evidence_indices,step,evidence_ids:evidence.map(ref=>ref.evidence_id)};
-  });
+  const actors = responsibilityIdentities(request);
+  const transitions = (request.input.answer as {transitions: AttributionTransition[]}).transitions ?? [];
+  const transition = (index: unknown, path: string) => {
+    const found = transitions.find(item => item.transition_index === index);
+    if (!found) issues.push({category:"evidence",code:"transition_invalid",path,actual:index,
+      expected:transitions.map(item=>item.transition_index),message:"只选择当前执行边界目录中的 transition_index。"});
+    return found;
+  };
   const numericRows=list(value.numeric_checks).map(object);
   const correctnessNumbers = [...new Set([...list(value.correctness_evidence_indices), ...numericRows.filter(row=>Object.hasOwn(row,"evidence_index")).map(row => row.evidence_index)])];
   const correctness = correctnessNumbers.map(number => reference(number, list(value.correctness_evidence_indices).includes(number)
@@ -127,57 +102,49 @@ function bindSubmission(request: AgentRequest, submitted: unknown, audit: ToolAu
           expected:basis.filter(item=>item.norm_index !== null).map(item=>item.basis_index),
           message:"指令遵循须选择有真实规范来源的依据。"});
       const ruleBound=row.dimension === "instruction_following" || selected?.kind === "own_rule";
-      const component = type === "problem" ? list(row.component).map(object).map((cause, index) => {
-        const { evidence_indices, function_index, step_index, failure_stage_index, ...fields } = cause;
-        return { ...fields, actor_index:cause.actor_index,chain_index:cause.chain_index,field_names:list(cause.field_names),
-          role:index === 0 ? "primary" : "contributing",
-          component:responsibilityComponentName(actors[Number(cause.actor_index)-1],String(cause.business_component??"")),
-          ...responsibilityFunctions[Number(function_index)-1],
-          chain_step:attributionTaxonomy.investigation_steps[Number(step_index)-1],
-          failure_stage:attributionTaxonomy.stages[Number(failure_stage_index)-1], reason:cause.mechanism,
-          evidence_gap:cause.certainty === "confirmed" ? null : cause.evidence_gap,
-          alternatives:cause.certainty === "confirmed" ? [] : cause.alternatives,
-          evidence_ids: references(evidence_indices, `${path}/component/${index}/evidence_indices`).map(ref => ref.evidence_id) };
+      const checks = type === "problem" ? list(row.checks).map(object).map((check,index) => {
+        const edge = transition(check.transition_index, `${path}/checks/${index}/transition_index`);
+        return { transition_index:check.transition_index,kind:edge?.kind,outcome:check.outcome,observation:check.observation,
+          before_evidence_ids:references(check.before_evidence_indices,`${path}/checks/${index}/before_evidence_indices`).map(ref=>ref.evidence_id),
+          after_evidence_ids:references(check.after_evidence_indices,`${path}/checks/${index}/after_evidence_indices`).map(ref=>ref.evidence_id) };
       }) : [];
-      const investigationReady = type === 'problem' && ['entity_or_unit','source_absence','context_loss','other'].includes(row.diagnosis) && Array.isArray(row.investigation_fact_indices);
-      const linkedFacts = investigationReady ? list(row.investigation_fact_indices).flatMap((number, index) => {
-        const fact = Number.isSafeInteger(number) ? facts[Number(number)-1] : undefined;
-        if (fact) return [fact];
-        issues.push({category:"evidence",code:"investigation_fact_reference",path:`${path}/investigation_fact_indices/${index}`,
-          message:"选择 investigation_facts 中已有事实的正整数序号，不能引用缺失行或另一张目录。",actual:number});
-        return [];
+      const component = type === "problem" ? list(row.causes).map(object).map((cause,index) => {
+        const edge = transition(cause.transition_index,`${path}/causes/${index}/transition_index`);
+        const check = checks.find(check=>check.transition_index===cause.transition_index);
+        const stages = {request_formation:["工具请求参数","工具选择与调用"],execution:["原始返回及字段含义","工具执行与数据获取"],
+          transfer:["返回整理与上下文传递","上下文组装与传递"],generation:["数据解释与计算","信息使用与核验"],delivery:["核验与最终交付","结果组织与交付"]};
+        const stage = edge ? stages[edge.kind] : [];
+        return {transition_index:cause.transition_index,basis:cause.basis,actor_index:edge?.actor_index,chain_index:edge?.chain_index,
+          role:index===0?"primary":"contributing",business_component:cause.business_component,field_names:[],
+          component:responsibilityComponentName(actors[Number(edge?.actor_index)-1],String(cause.business_component??"")),
+          ...responsibilityFunctions[Number(cause.function_index)-1],chain_step:stage[0],failure_stage:stage[1],
+          mechanism_source:cause.mechanism_source,mechanism:cause.mechanism,certainty:cause.certainty,reason:cause.mechanism,
+          evidence_gap:cause.certainty==="confirmed"?null:cause.evidence_gap,alternatives:cause.certainty==="confirmed"?[]:cause.alternatives,
+          evidence_ids:[...new Set([...(check?.before_evidence_ids??[]),...(check?.after_evidence_ids??[])])]};
       }) : [];
-      const investigation = [...new Set(linkedFacts.map(fact=>fact.chain_index))].map(chain_index => ({
-        chain_index, steps: attributionTaxonomy.investigation_steps.flatMap(step => {
-          const checked = linkedFacts.filter(fact=>fact.chain_index === chain_index && fact.step === step);
-          const checkpoint = chains.find(chain=>chain.chain_index === chain_index)?.checkpoints.find(point=>point.step === step);
-          if (checked.length) return [{step,status:"checked",observation:checked.map(fact=>fact.observation).join("；"),
-            evidence_ids:[...new Set(checked.flatMap(fact=>fact.evidence_ids))]}];
-          return checkpoint?.availability === "not_collected" ? [{step,status:"not_collected",observation:checkpoint.note,evidence_ids:[]}] : [];
-        }),
-      }));
-      const evidence = references([...new Set([...list(row.evidence_indices), ...list(row.component).flatMap(cause => list(object(cause).evidence_indices)),
-        ...linkedFacts.flatMap(fact=>list(fact.evidence_indices))])], `${path}/evidence_indices`);
-      if(investigationReady) {
-        const selected:Evidence[]=evidence.flatMap(ref=>{try{return [resolveAttributionEvidence(request,ref,audit,path)];}
-          catch(error){if(!(error instanceof ValidationError))throw error;issues.push(...error.issues!);return [];}});
-        issues.push(...investigationIssues(request,{component,diagnosis:row.diagnosis,investigation,label:row.label,definition:row.reason} as ProblemProposal,selected,audit,path)
-          .map(issue=>{
-            const expected=object(issue.expected);
-            const indices=list(row.investigation_fact_indices).filter(number=>{
-              const fact=facts[Number(number)-1];
-              return fact&&fact.chain_index===expected.chain_index&&fact.step===expected.step;
-            });
-            return {...issue,...(indices.length?{expected:{...expected,fact_indices:indices,
-              repair_paths:indices.map(number=>`/investigation_facts/${Number(number)-1}/evidence_indices`)}}:{}),
-              path:issue.path.replace(/\/investigation(?:\/.*)?$/u,"/investigation_fact_indices")};
-          }));
+      const calculationIndices = list(row.calculations).flatMap(calculation=>Object.values(object(object(calculation).operands)).map(operand=>object(operand).evidence_index));
+      const evidence = references([...new Set([...list(row.evidence_indices),...list(row.checks).flatMap(check=>[
+        ...list(object(check).before_evidence_indices),...list(object(check).after_evidence_indices)]),...calculationIndices])],`${path}/evidence_indices`);
+      const selectedEvidence:Evidence[]=evidence.flatMap(ref=>{try{return [resolveAttributionEvidence(request,ref,audit,path)];}
+        catch(error){if(!(error instanceof ValidationError))throw error;issues.push(...error.issues!);return [];}});
+      let calculations: ResolvedDerivation[] = [];
+      if(type === "problem" && validateCalculationShape(row.calculations)) {
+        try { calculations=resolveDerivations(row.calculations as DerivationSubmission[],(index,location)=>{
+          const ref=reference(index,location);
+          return resolveAttributionEvidence(request,ref,audit,location);
+        },`${path}/calculations`); }
+        catch(error){if(!(error instanceof ValidationError))throw error;issues.push(...error.issues!);}
       }
+      const problem={component,diagnosis:row.diagnosis,investigation:checks,calculations,label:row.label,definition:row.reason};
+      if(type === "problem" && Array.isArray(row.checks) && Array.isArray(row.causes))
+        issues.push(...investigationIssues(request,problem as ProblemProposal,selectedEvidence,audit,path).map(issue=>({...issue,
+          path:issue.path.replace(/\/investigation(?=\/|$)/u,"/checks").replace(/\/component(?=\/|$)/u,"/causes")
+            .replace(/\/before_evidence_ids(?=\/|$)/u,"/before_evidence_indices").replace(/\/after_evidence_ids(?=\/|$)/u,"/after_evidence_indices")})));
       return { type, dimension: row.dimension, stage: row.stage, importance: row.importance, text: row.text, reason: row.reason, evidence,
         ...(ruleBound ? {norm_index:selected?.norm_index ?? null} : {}),
         assessment: { observation: row.text, evidence_status: row.evidence_status, impact: type === "strength" ? row.reason : row.impact,
           ...(ruleBound ? {} : {requirement_index:selected?.requirement_index ?? null}) },
-        ...(type === "problem" ? {problem: {component,diagnosis:row.diagnosis,investigation,label:row.label,definition:row.reason}} : {}),
+        ...(type === "problem" ? {problem} : {}),
       };
     }),
     ...(Object.hasOwn(value,"table_resolutions") ? { table_resolutions: list(value.table_resolutions).map(object).map((row,index) => ({
@@ -235,10 +202,12 @@ function modelIssues(issues: ValidationIssue[], bound: ReturnType<typeof bindSub
       .replace(/^\/core_assessment\/(?:requirement_indices|criterion_ids)/u,"/core_requirements")
       .replace(/^\/core_assessment$/u,"/core_requirements")
       .replace(/^\/correctness_evidence/u,"/correctness_evidence_indices")
-      .replace(/\/investigation(?:\/.*)?$/u,"/investigation_fact_indices")
-      .replace(/\/component\/(\d+)\/(?:technical_domain|functional_component)$/u,"/component/$1/function_index")
-      .replace(/\/component\/(\d+)\/chain_step$/u,"/component/$1/step_index")
-      .replace(/\/component\/(\d+)\/failure_stage$/u,"/component/$1/failure_stage_index")
+      .replace(/\/investigation(?=\/|$)/u,"/checks")
+      .replace(/\/component\/(\d+)\/(?:technical_domain|functional_component)$/u,"/causes/$1/function_index")
+      .replace(/\/component\/(\d+)\/(?:actor_index|chain_index|chain_step|failure_stage)$/u,"/causes/$1/transition_index")
+      .replace(/\/component(?=\/|$)/u,"/causes")
+      .replace(/\/before_evidence_ids(?=\/|$)/u,"/before_evidence_indices")
+      .replace(/\/after_evidence_ids(?=\/|$)/u,"/after_evidence_indices")
       .replace(/(\/findings\/\d+)\/(?:assessment|problem)\//u,"$1/")
       .replace(/\/evidence(?=\/|$)/u,"/evidence_indices").replace(/\/criterion_id$/u,"")
       .replace(/\/observation$/u,"/text").replace(/\/problem$/u,"")};

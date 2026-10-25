@@ -920,7 +920,7 @@ export * from "./table-correspondence.js";
 export * from "./citation-markup.js";
 export * from "./serper.js";
 export * from "./web-reader.js";
-export { calculate } from "./decimal.js";
+export { calculate, calculateExpression } from "./decimal.js";
 export * from "./source-blocks.js";
 export * from "./visual-capture.js";
 

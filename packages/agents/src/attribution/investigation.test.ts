@@ -1,200 +1,77 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { parseEvidenceCoordinates, ValidationError } from "@eval/contracts";
 import { AgentRegistry } from "@eval/host";
-import { attributionAgent, attributionProfile, type AttributionResult } from "./index.js";
+import { attributionAgent, type AttributionResult } from "./index.js";
 import { businessChainFixture } from "../../../../tests/fixtures/business-chain.js";
 import { attributionSubmission } from "../../../../tests/fixtures/attribution-submission.js";
-import { businessChainDirectoryIssues, businessChainReads, investigationIssues } from "./investigation.js";
-import { responsibilityIssues,responsibilityComponentName } from "./responsibility.js";
-import { validateModelSubmission } from "./submission.js";
+import { businessChainDirectoryIssues, investigationIssues } from "./investigation.js";
 import { bindAttributionMaterial } from "@eval/workflows/review";
-import { cite, evidenceSources, selectEvidenceSource } from "@eval/tools";
-
+import { evidenceSources } from "@eval/tools";
 const codes = (f: ReturnType<typeof businessChainFixture>) => investigationIssues(f.binding.request, f.problem, f.evidence, f.audit, "/problem").map(issue => issue.code);
-test("optional field metadata is assembled without rewriting the responsibility judgment",()=>{
-  const f=businessChainFixture(),registry=new AgentRegistry([attributionAgent]);
-  const draft=attributionSubmission(f.binding.request,f.result,f.audit) as any;
-  for(const fact of draft.investigation_facts)delete fact.field_names;
-  for(const cause of draft.problems[0].component)delete cause.field_names;
-  const accepted=registry.resolve(f.binding,draft,f.audit) as AttributionResult;
-  registry.validate(f.binding,accepted,f.audit);
-  const cause=accepted.findings.find(f=>f.type==='problem')!.problem!.component[0];
-  assert.deepEqual(cause.field_names,[]);assert.equal(cause.mechanism,f.cause.mechanism);
+
+test('generation primary requires its own boundary check and every relevant upstream check',()=>{
+ const f=businessChainFixture(); assert.deepEqual(codes(f),[]);
+ const complete=structuredClone(f.problem.investigation);
+ f.problem.investigation=[]; assert(codes(f).includes('responsibility_check_required'));
+ f.problem.investigation=complete.filter(check=>check.transition_index===f.generated.transition_index);
+ assert(codes(f).includes('responsibility_upstream_required'));
+ f.problem.investigation=complete;
+ assert.deepEqual(codes(f),[]);
 });
-test("a read original return leaf after a long preceding result stays in its actual boundary",()=>{
-  const seed=businessChainFixture(),question='查找 MU 的杠杆 ETF。',title='MULL - Leveraged Micron Technology ETF';
-  const messages=[{type:'user_question',role:'user',content:question},
-    {type:'llm_turn',name:'planner-search',parent_span:'plan',input_messages:[{role:'user',content:question}],output:[{role:'assistant',content:'搜索 MU 杠杆 ETF。'}]},
-    {type:'tool_call',name:'web_search',parent_span:'plan',call_id:'search',input:{query:'MU leveraged ETF'}},
-    {type:'tool_result',name:'web_search',call_id:'search',output:{items:[{content:'前一条结果正文。'.repeat(10000)},{title,content:'Privacy Policy'}]}},
-    {type:'llm_turn',name:'llm-call-0',input_messages:[{role:'user',content:title}],output:[{role:'assistant',content:'仅有 MUU。'}]},
-    {type:'final_answer',content:'仅有 MUU。'}];
-  const binding=bindAttributionMaterial({...seed.candidate,question,final_index:5},{messages});
-  const source=evidenceSources(messages[3]).find(s=>s.kind==='text'&&s.path==='/output/items/1/title')!;
-  const proof=cite(seed.candidate.input_id,3,source,0,source.text.length);
-  const chain=(binding.request.input.answer as any).business_chains[0];
-  const boundary=parseEvidenceCoordinates(chain.checkpoints[3].evidence[0].evidence_id)!;
-  const range=selectEvidenceSource(evidenceSources(messages[3]).filter(s=>s.kind==='json'),source.path)!;
-  assert(range.start>4800);
-  assert(boundary.kind!=='image'&&boundary.start<=range.start&&boundary.end>=range.end);
-  const problem={...seed.problem,component:[],investigation:[{chain_index:1,steps:[{step:'原始返回及字段含义',status:'checked' as const,
-    observation:'返回的产品标题为 MULL，正文为隐私政策。',evidence_ids:[proof.evidence_id]}]}]};
-  const audit={...seed.audit,traceReads:[{candidate:'answer',message_index:3,kind:'text' as const,path:source.path,start:0,end:source.text.length}]};
-  assert.deepEqual(investigationIssues(binding.request,problem,[proof],audit,'/problem'),[]);
-  assert(investigationIssues(binding.request,problem,[proof],{...audit,traceReads:[]},'/problem')
-    .some(issue=>issue.code==='investigation_read_required'));
-  for(const [index,path]of [[4,'/input_messages/0/content'],[3,'/name'],[2,'/input/query']] as const){
-    const wrongSource=evidenceSources(messages[index]).find(s=>s.kind==='text'&&s.path===path)!;
-    const wrong=cite(seed.candidate.input_id,index,wrongSource,0,wrongSource.text.length);
-    problem.investigation[0].steps[0].evidence_ids=[wrong.evidence_id];
-    const read={candidate:'answer',message_index:index,kind:'text' as const,path,start:0,end:wrongSource.text.length};
-    assert(investigationIssues(binding.request,problem,[wrong],{...audit,traceReads:[read]},'/problem')
-      .some(issue=>issue.code==='investigation_stage_evidence'));
-  }
+test('a correct source and execution are checked without assigning them responsibility',()=>{
+ const f=businessChainFixture(), registry=new AgentRegistry([attributionAgent]);
+ const result=registry.resolve(f.binding,attributionSubmission(f.binding.request,f.result,f.audit),f.audit) as AttributionResult;
+ registry.validate(f.binding,result,f.audit);
+ assert.equal(result.findings[0].problem!.component.length,1);
+ assert.equal(result.findings[0].problem!.component[0].transition_index,f.generated.transition_index);
+ assert.equal(result.findings[0].problem!.component[0].certainty,'inferred');
+ assert(result.findings[0].problem!.investigation.some(check=>check.kind==='execution'&&check.outcome==='preserved'));
 });
-test("a prose term-expansion defect does not invent structured fields from its diagnosis",()=>{
-  const seed=businessChainFixture(),question='解释 IEC-HS。',correct='immune effector cell-associated hemophagocytic syndrome';
-  const messages=[{type:'user_question',role:'user',content:question},
-    {type:'llm_turn',name:'planner-search',parent_span:'plan',input_messages:[{role:'user',content:question}],output:[{role:'assistant',content:'搜索 IEC-HS 释义。'}]},
-    {type:'tool_call',name:'web_search',parent_span:'plan',call_id:'search',input:{query:'IEC-HS'}},
-    {type:'tool_result',name:'web_search',call_id:'search',output:{content:correct}},
-    {type:'llm_turn',name:'llm-call-0',input_messages:[{role:'user',content:'记录提到 IEC-HS。'}],output:[{role:'assistant',content:'IEC-HS 是细胞因子释放综合征。'}]},
-    {type:'final_answer',content:'IEC-HS 是细胞因子释放综合征。'}];
-  const binding=bindAttributionMaterial({...seed.candidate,question,final_index:5},{messages});
-  const selected=([ [3,'/output/content'],[4,'/input_messages/0/content'],[4,'/output/0/content'],[5,'/content'] ] as const)
-    .map(([index,path])=>{const source=evidenceSources(messages[index]).find(s=>s.kind==='text'&&s.path===path)!;
-      return cite(seed.candidate.input_id,index,source,0,source.text.length);});
-  const cause={...seed.cause,actor_index:3,component:'回答生成：正文术语缩写展开（消息 4、5）',field_names:[],
-    business_component:'正文术语缩写展开',mechanism:'实际输入只保留缩写，生成输出的释义与原始返回不同；具体补写过程未记录。',
-    evidence_ids:selected.map(item=>item.evidence_id)};
-  const problem={...seed.problem,component:[cause],investigation:[]};
-  assert.deepEqual(investigationIssues(binding.request,problem,selected,seed.audit,'/problem'),[]);
+test('boundary differences do not certify a hidden model action',()=>{
+ const f=businessChainFixture(); f.cause.certainty='confirmed';
+ assert(codes(f).includes('responsibility_mechanism_inferred'));
+ f.cause.mechanism_source='explicit_process';
+ assert(codes(f).includes('responsibility_mechanism_source'));
 });
-test("shell input navigation follows the actual action ID without copying unrelated history into every chain",()=>{
-  const f=businessChainFixture(),returned={action_id:"actual-run",stdout:"matching result"};
-  const messages=[{type:"user_question",role:"user",content:"检查回测。"},
-    {type:"llm_turn",name:"llm-call-1",parent_span:"p",input_messages:[{role:"user",content:"检查回测。"}],output:[{role:"assistant",content:"此前步骤"}]},
-    {type:"tool_call",name:"shell",parent_span:"p",end:"2026-10-24T06:08:42.893Z",input:{command:"run"}},
-    {type:"tool_result",name:"shell",end:"2026-10-24T06:08:42.893Z",output:returned},
-    {type:"llm_turn",name:"llm-call-2",input_messages:[{role:"assistant",content:"此前步骤"},{role:"tool",content:JSON.stringify(returned)},
-      {role:"tool",content:JSON.stringify({action_id:"other-run",stdout:"unrelated"})}],output:[{role:"assistant",content:"完成"}]},
-    {type:"final_answer",content:"完成"}];
-  const binding=bindAttributionMaterial({...f.candidate,final_index:5},{messages});
-  const chain=(binding.request.input.answer as any).business_chains[0];
-  assert.deepEqual(chain.context_indices,[1,4]);
-  const inputs=chain.checkpoints.find((point:any)=>point.step==="模型实际输入").evidence;
-  assert.equal(inputs.length,1);
-  assert.deepEqual(JSON.parse(inputs[0].quote),returned);
+test('available unread boundaries request real protected reads',()=>{
+ const f=businessChainFixture(); f.audit.traceReads=[];
+ const issues=investigationIssues(f.binding.request,f.problem,f.evidence,f.audit,'/problem');
+ assert(issues.some(issue=>issue.code==='investigation_read_required'));
+ for(const issue of issues.filter(issue=>issue.code==='investigation_read_required')) {
+  const target=issue.expected as {start:number;end:number}; assert(target.end>target.start);
+ }
 });
-test("correct tool return followed by wrong interpretation retains the full business location and inferred hidden mechanism", () => {
-  const f = businessChainFixture(), registry = new AgentRegistry([attributionAgent]);
-  assert.deepEqual(codes(f), []);
-  assert.deepEqual(responsibilityIssues(f.binding.request, f.problem, f.evidence, "/problem"), []);
-  const draft = attributionSubmission(f.binding.request, f.result, f.audit);
-  const accepted = registry.resolve(f.binding, draft, f.audit) as AttributionResult;
-  registry.validate(f.binding, accepted, f.audit);
-  assert.equal(accepted.findings[0].assessment.evidence_status, "established");
-  assert.equal(accepted.findings[0].problem!.component[0].certainty, "inferred");
-  assert.equal(accepted.findings[0].problem!.component[0].business_component, "finquery 返回的价格口径解释与使用");
-  assert(accepted.findings[0].problem!.component.every(cause => cause.component !== "finquery"));
-  f.cause.certainty = "confirmed";
-  assert(codes(f).includes("responsibility_mechanism_inferred"));
+test('read coverage cannot let an input quote impersonate the actual return',()=>{
+ const f=businessChainFixture(), execution=f.problem.investigation.find(check=>check.kind==='execution')!;
+ execution.after_evidence_ids=f.problem.investigation.find(check=>check.transition_index===f.generated.transition_index)!.before_evidence_ids;
+ assert(codes(f).includes('investigation_boundary_evidence'));
 });
-test("a wrong target selected by the planner points back to that planner and exact request, not the final node", () => {
-  const f = businessChainFixture(false, "请预测未来6个月XAU/USD现货黄金，必须查询现货美元每盎司，不能使用ETF代理。");
-  assert(f.chain.checkpoints[0].evidence.some(item => item.quote.includes("不能使用ETF代理")));
-  f.cause.component = "查询规划 Agent"; f.cause.actor_index=1; f.cause.business_component = "黄金现货查询的标的选择";
-  f.cause.chain_step = "查询规划与标的选择"; f.cause.field_names = ["query"];
-  f.cause.mechanism_source = "explicit_process"; f.cause.certainty = "confirmed"; f.cause.evidence_gap = null; f.cause.alternatives = [];
-  f.cause.mechanism = "公开任务明确要求现货时仍计划查询ETF标的；工具依照该计划执行。";
-  assert(codes(f).includes("responsibility_mechanism_source"));
-  // A parent span links the invocation, but only emitted arguments show this planner formed the request.
-  (f.raw.messages[1].output as Record<string,unknown>[])[0].tool_calls=[{id:'query-call',type:'function',
-    function:{name:'finquery',arguments:JSON.stringify(f.raw.messages[2].input)}}];
-  f.binding=bindAttributionMaterial(f.candidate,f.raw);
-  assert.deepEqual(codes(f), []);
-  f.cause.component = "最终回答组织"; f.cause.actor_index=(f.binding.request.input.answer as any).component_catalog.findIndex((actor:any)=>actor.component===f.cause.component)+1;
-  assert(codes(f).includes("responsibility_chain_actor"));
-  const issue = investigationIssues(f.binding.request, f.problem, f.result.findings[0].evidence, f.audit, "/problems/0")
-    .find(item => item.code === "responsibility_chain_actor")!;
-  assert(issue.path.endsWith("/actor_index"));
-  assert((issue.expected as { actor_index_choices: { actor_index: number }[] }).actor_index_choices.some(item => item.actor_index === 1));
+test('serialized complete source reads cover decoded text without duplicate mandatory reading',()=>{
+ const f=businessChainFixture();
+ f.audit.traceReads=f.raw.messages.map((message,message_index)=>{
+  const source=evidenceSources(message).find(source=>source.kind==='json'&&source.path==='')!;
+  return {candidate:'answer',message_index,kind:'json' as const,path:'',start:0,end:source.text.length};
+ });
+ assert.deepEqual(codes(f),[]);
 });
-test("captured context preparation can own identity and unit loss; the receiving final node alone cannot prove that responsibility", () => {
-  const f = businessChainFixture(true);
-  assert.deepEqual(f.chain.context_indices, [4, 5]);
-  f.problem.diagnosis = "context_loss";
-  Object.assign(f.cause, { actor_index:(f.binding.request.input.answer as any).component_catalog.findIndex((actor:any)=>actor.component==="结果整理 Agent")+1, component: "结果整理 Agent", technical_domain: "上下文工程", functional_component: "压缩摘要",
-    business_component: "finquery 返回的身份与单位整理", chain_step: "返回整理与上下文传递", certainty: "inferred", mechanism_source: "boundary_comparison",
-    evidence_gap: "仅采集整理输入输出，未记录内部转换。", alternatives: ["字段选择或序列化规则导致遗漏。"], mechanism: "整理前含ETF身份和美元单位，整理输出只保留price，最终输入沿用该输出。" });
-  assert.deepEqual(codes(f), []);
-  f.cause.component = "最终回答组织"; f.cause.actor_index=(f.binding.request.input.answer as any).component_catalog.findIndex((actor:any)=>actor.component===f.cause.component)+1;
-  assert(codes(f).includes("responsibility_transfer_actor"));
+test('preserved and recovered transitions cannot be relabeled as causes without a defect',()=>{
+ for(const outcome of ['preserved','recovered'] as const){
+  const f=businessChainFixture();f.problem.investigation.find(check=>check.transition_index===f.generated.transition_index)!.outcome=outcome;
+  assert(codes(f).includes('responsibility_formation'));
+ }
 });
-test("readable but unread actual input cannot be called missing, including an uncertain source-absence finding", () => {
-  const f = businessChainFixture();
-  f.audit.traceReads = f.audit.traceReads.filter(read => read.message_index !== 4);
-  assert(codes(f).includes("investigation_read_required"));
-  f.problem.investigation[0].steps.find(step => step.step === "模型实际输入")!.status = "not_collected";
-  assert(codes(f).includes("investigation_available"));
-  f.problem.diagnosis = "source_absence";
-  assert(codes(f).includes("source_absence_contradicted"));
-  const registry = new AgentRegistry([attributionAgent]);
-  f.result.findings[0].assessment.evidence_status = "uncertain";
-  assert.throws(() => registry.resolve(f.binding, attributionSubmission(f.binding.request, f.result, f.audit), f.audit),
-    error => error instanceof ValidationError && error.issues!.some(issue => issue.code === "investigation_read_required"));
+test('mechanical transition identity cannot be forged in the formal result',()=>{
+ const f=businessChainFixture(); f.cause.actor_index=null;
+ assert(codes(f).includes('responsibility_transition_actor'));
+ Object.assign(f.binding.request.input.answer as object,{transitions:[]});
+ assert(codes(f).includes('transition_directory'));
 });
-test("uncited chains remain navigable without compulsory pre-reading; cited chains still enforce their own evidence", () => {
-  const f=businessChainFixture(), before=businessChainReads(f.binding.request);
-  f.chain.references=[];
-  assert.deepEqual(businessChainReads(f.binding.request),before);
-  assert(before.some(read=>read.message_index===f.chain.return_indices[0]));
-  assert(before.some(read=>read.message_index===f.chain.context_indices.at(-1)));
-  assert(!attributionProfile.requiredReads!(f.binding.request).some(read=>read.message_index===f.chain.return_indices[0]));
-  f.audit.traceReads=[];
-  assert(codes(f).includes("investigation_read_required"));
+test('changed upstream material prevents a claim of first deviation after intact input',()=>{
+ const f=businessChainFixture();f.problem.investigation.find(check=>check.kind==='transfer')!.outcome='changed';
+ assert(codes(f).includes('responsibility_generation_formation'));
+ f.cause.basis='independent_addition';assert(!codes(f).includes('responsibility_generation_formation'));
 });
-test("complete serialized return coverage proves its real text leaves without requiring an impossible duplicate read", () => {
-  const f = businessChainFixture(), message_index = f.chain.return_indices[0];
-  const sources = evidenceSources(f.raw.messages[message_index]);
-  const json = sources.find(source => source.kind === "json")!;
-  const point = f.chain.checkpoints.find(row => row.step === "原始返回及字段含义")!.evidence
-    .map(row => parseEvidenceCoordinates(row.evidence_id)!).find(row => row.kind === "text")!;
-  assert(point?.kind === "text");
-  const leaf = selectEvidenceSource([json], point.path)!;
-  const otherReads = f.audit.traceReads.filter(read => read.message_index !== message_index);
-  const read = { candidate: "answer", message_index, kind: "json" as const, path: json.path, start: 0, end: json.text.length };
-  f.audit.traceReads = [...otherReads, { ...read, end: leaf.start }, { ...read, start: leaf.start }];
-  assert.deepEqual(codes(f), [], "adjacent physical JSON reads cover the complete leaf");
-  const registry = new AgentRegistry([attributionAgent]);
-  const accepted = registry.resolve(f.binding, attributionSubmission(f.binding.request, f.result, f.audit), f.audit) as AttributionResult;
-  registry.validate(f.binding, accepted, f.audit);
-  const missing = () => investigationIssues(f.binding.request, f.problem, f.evidence, f.audit, "/problem")
-    .some(issue => issue.code === "investigation_read_required" && (issue.expected as { path: string }).path === point.path);
-  f.audit.traceReads = [...otherReads, { ...read, end: leaf.end - 1 }];
-  assert(missing(), "partial serialized leaf must still be read");
-  for (const changed of [{ candidate: "other" }, { message_index: message_index + 1 }, { path: "/other" }]) {
-    f.audit.traceReads = [...otherReads, { ...read, ...changed }];
-    assert(missing(), "coverage cannot come from another physical source");
-  }
-});
-test("specific actors, business operation and call coordinates stay distinct and forged links or final-only fallback fail", () => {
-  const f = businessChainFixture();
-  assert.equal(f.chain.request_index, 2); assert.deepEqual(f.chain.return_indices, [3]); assert.equal(f.chain.planner_index, 1);
-  assert(!f.problem.component.some(cause => /^llm-call-|^[0-9a-f-]{32,}$/u.test(cause.component)));
-  const actor = (f.binding.request.input.answer as any).component_catalog[Number(f.cause.actor_index) - 1];
-  for (const generic of [actor.component, f.cause.chain_step, "工具执行与数据获取", "语义理解", "llm-call-0"]) {
-    f.cause.business_component = generic;
-    assert(codes(f).includes("responsibility_business_location"));
-  }
-  f.cause.chain_index = null;
-  assert(codes(f).includes("responsibility_chain"));
-  f.problem.investigation = [];
-  assert(!codes(f).includes("investigation_incomplete"));
-  f.chain.return_indices = [4];
-  assert(businessChainDirectoryIssues(f.binding.request).length);
-});
+
 test("English renderer finance sources retain identity, price and exact coordinates without indexing private metadata", () => {
   const f = businessChainFixture(), answer = f.binding.request.input.answer as any;
   const source = answer.citation_inventory.references.find((item: any) => item.reference === "pfJtupL");
@@ -208,26 +85,6 @@ test("English renderer finance sources retain identity, price and exact coordina
   (f.raw.messages[3] as any).call_id = "another-call";
   const rebuilt = bindAttributionMaterial({ ...f.candidate, final_index: f.candidate.final_index + 1 }, f.raw);
   assert.deepEqual((rebuilt.request.input.answer as any).business_chains[0].return_indices, [4]);
-});
-
-test("a readable retrieved Goldman target cannot become an absent-source allegation when the judge skipped it", () => {
-  const f = businessChainFixture();
-  const result = { serial_number: "gs4900a", title: "Goldman Sachs Research", summary: "$4,900 per troy ounce by end 2026" };
-  const final = f.raw.messages.at(-1)!;
-  final.content = '高盛目标价4,900美元。<trace ref="gs4900a"/>';
-  const turn = f.raw.messages.at(-2)!;
-  (turn.output as any[])[0].content = final.content;
-  turn.input_messages = [{ role: "user", content: "What you found from web search:\n" + JSON.stringify(result) + "\nFinancial data you fetched:\n" }];
-  f.raw.messages.splice(4, 0, { type: "tool_result", name: "search", output: { items: [result] } });
-  const binding = bindAttributionMaterial({ ...f.candidate, final_index: f.candidate.final_index + 1 }, f.raw);
-  const inventory = (binding.request.input.answer as any).citation_inventory;
-  const reference = inventory.references[0];
-  assert.equal(reference.status, "resolved");
-  assert(reference.sources.some((source: any) => source.origin === "tool_return" && source.quote.includes("$4,900")));
-  const proof = reference.occurrences.map((item: any) => item.context);
-  f.problem.diagnosis = "source_absence"; f.problem.component[0].chain_index = null;
-  assert(investigationIssues(binding.request, f.problem, proof, { ...f.audit, traceReads: [] }, "/problem")
-    .some(issue => issue.code === "source_absence_contradicted"));
 });
 
 test("wide financial rows navigate identity and the declared latest price field instead of an arbitrary serialized prefix", () => {
@@ -261,193 +118,4 @@ test("an explicitly empty return remains readable process evidence instead of an
   assert(returned.evidence.some((item: any) => /"output":\s*""/u.test(item.quote)));
   assert(attributionAgent.profiles.default.requiredReads!(binding.request).every(read => read.end > read.start));
   assert.deepEqual(businessChainDirectoryIssues(binding.request), []);
-});
-
-test("reading all materials does not let an actual-input quote impersonate the raw return or either generated boundary", () => {
-  const f = businessChainFixture();
-  const input = f.chain.checkpoints.find(point => point.step === "模型实际输入")!.evidence.map(item => item.evidence_id);
-  for (const stepName of ["原始返回及字段含义", "返回整理与上下文传递", "数据解释与计算", "核验与最终交付"]) {
-    const step = f.problem.investigation[0].steps.find(step => step.step === stepName)!, before = step.evidence_ids;
-    step.evidence_ids = input;
-    assert(codes(f).includes("investigation_stage_evidence"), stepName);
-    step.evidence_ids = before;
-  }
-  assert.deepEqual(codes(f), []);
-});
-for(const processField of ["reasoning_content","analysis"]) test(`a tenfold boundary relation needs recorded ${processField} to confirm the process`, () => {
-  const f = businessChainFixture();
-  Object.assign(f.cause, { mechanism_source: "explicit_process", certainty: "confirmed", evidence_gap: null, alternatives: [] });
-  assert(codes(f).includes("responsibility_mechanism_source"));
-  const index = f.raw.messages.length - 2;
-  f.raw.messages[index][processField] = "将369乘10得到3690，再写为XAU/USD。";
-  f.binding = bindAttributionMaterial(f.candidate, f.raw);
-  const source = evidenceSources(f.raw.messages[index]).find(source => source.path === "/"+processField)!;
-  const point = cite(f.candidate.input_id, index, source, 0, source.text.length);
-  f.evidence.push(point); f.cause.evidence_ids.push(point.evidence_id);
-  const read=parseEvidenceCoordinates(point.evidence_id)!;
-  if(read.kind!=='image')f.audit.traceReads.push({candidate:'answer',message_index:index,kind:read.kind,path:read.path,start:read.start,end:read.end});
-  f.cause.mechanism = "记录的推理明确将369乘10得到3690，并作为XAU/USD报价输出。";
-  f.cause.reason = "该节点的reasoning_content直接记录了转换步骤，输入及生成边界与之相符。";
-  assert.deepEqual(codes(f), []);
-});
-test("an earlier preparer's complete source never substitutes for the final model's input after the source was dropped", () => {
-  const f = businessChainFixture(true, undefined, true), last = f.chain.context_indices.at(-1)!;
-  f.problem.diagnosis = "context_loss";
-  Object.assign(f.cause, { actor_index:(f.binding.request.input.answer as any).component_catalog.findIndex((actor:any)=>actor.component==="结果整理 Agent")+1, component: "结果整理 Agent", technical_domain: "上下文工程", functional_component: "压缩摘要",
-    business_component: "finquery 返回整理时删除身份与单位", chain_step: "返回整理与上下文传递", certainty: "inferred", mechanism_source: "boundary_comparison",
-    evidence_gap: "仅采集整理输入输出，未记录内部转换。", alternatives: ["字段选择或序列化规则导致遗漏。"], mechanism: "整理前含ETF身份和美元单位，整理输出仅保留price且最后实际输入没有恢复身份与单位。" });
-  assert(f.chain.references.includes("pfJtupL"));
-  assert.equal((f.binding.request.input.answer as any).citation_inventory.references[0].status, "unknown");
-  const inputs = f.chain.checkpoints.find(point => point.step === "模型实际输入")!.evidence;
-  assert(inputs.some(item => item.message_index < last && item.quote.includes("SPDR Gold Shares")));
-  assert(inputs.some(item => item.message_index === last && item.quote.includes("use the preceding summary")));
-  assert.deepEqual(codes(f), []);
-  f.problem.diagnosis = "source_absence";
-  assert(codes(f).includes("source_absence_contradicted"));
-  f.problem.diagnosis = "context_loss";
-  const step = f.problem.investigation[0].steps.find(step => step.step === "模型实际输入")!;
-  step.evidence_ids = inputs.filter(item => item.message_index < last).map(item => item.evidence_id);
-  assert(codes(f).includes("investigation_stage_evidence"));
-  f.audit.traceReads = f.audit.traceReads.filter(read => read.message_index !== last);
-  assert(codes(f).includes("investigation_read_required"));
-});
-test("final JSON evidence does not invent an unselected chain, while explicit invalid links still fail", () => {
-  const f = businessChainFixture(), index = f.candidate.final_index;
-  const source = evidenceSources(f.raw.messages[index]).find(source => source.kind === "json")!;
-  const point = cite(f.candidate.input_id, index, source, 0, source.text.length);
-  f.problem.investigation = []; f.cause.chain_index = null;
-  const issues = investigationIssues(f.binding.request, f.problem, [point], f.audit, "/problem");
-  assert(!issues.some(issue => issue.code === "investigation_incomplete"));
-  assert(!issues.some(issue => issue.code === "responsibility_chain"));
-  f.cause.chain_index=999;
-  assert(investigationIssues(f.binding.request,f.problem,[point],f.audit,"/problem")
-    .some(issue=>issue.code==="responsibility_chain"));
-});
-
-test("field repair feedback lists actual selected names without silently rewriting invented aliases", () => {
-  const f = businessChainFixture();
-  f.cause.field_names = ["Closing Price[20261022]", "target price"];
-  const issue = investigationIssues(f.binding.request, f.problem, f.evidence, f.audit, "/problem")
-    .find(issue => issue.code === "responsibility_fields")!;
-  assert.deepEqual(issue.expected, ["Closing Price[20261022]"]);
-  assert.deepEqual(f.cause.field_names, ["Closing Price[20261022]", "target price"]);
-  f.cause.field_names = issue.expected as string[];
-  assert.deepEqual(codes(f), []);
-});
-
-test("prose investigations clear invented field names regardless of diagnostic category", () => {
-  const f = businessChainFixture();
-  f.problem.diagnosis = "other"; f.cause.field_names = ["target price", "spot price"];
-  const issue = investigationIssues(f.binding.request, f.problem, f.evidence, f.audit, "/problem")
-    .find(issue => issue.code === "responsibility_fields")!;
-  assert.deepEqual(issue.expected, []);
-  f.cause.field_names = issue.expected as string[];
-  assert.deepEqual(codes(f), []);
-  f.problem.diagnosis = "entity_or_unit";
-  assert.deepEqual(codes(f), []);
-  f.cause.field_names = ["target price"];
-  assert.deepEqual(investigationIssues(f.binding.request, f.problem, f.evidence, f.audit, "/problem")
-    .find(issue => issue.code === "responsibility_fields")!.expected, []);
-});
-
-test("missing investigation choices produce structural feedback without cascading reads", () => {
-  const f=businessChainFixture(),registry=new AgentRegistry([attributionAgent]);
-  const draft=attributionSubmission(f.binding.request,f.result,f.audit) as any;
-  delete draft.problems[0].diagnosis;delete draft.problems[0].investigation_fact_indices;
-  draft.problems[0].component[0].actor_index=999;
-  assert.throws(()=>registry.resolve(f.binding,draft,f.audit),error=>{
-    assert(error instanceof ValidationError);
-    assert.equal(error.issues!.filter(issue=>issue.code==='schema_required').length,2);
-    assert(error.issues!.some(issue=>issue.code==='schema_maximum'));
-    assert(!error.issues!.some(issue=>issue.code.startsWith('investigation_')));return true;
-  });
-});
-test("sufficient existing evidence and an explicit mechanism gap do not require eight investigation facts",()=>{
-  const f=businessChainFixture(),registry=new AgentRegistry([attributionAgent]);f.problem.investigation=[];
-  const draft=attributionSubmission(f.binding.request,f.result,f.audit);
-  const result=registry.resolve(f.binding,draft,f.audit) as AttributionResult;
-  registry.validate(f.binding,result,f.audit);
-  assert.equal(result.findings[0].problem!.component[0].certainty,'inferred');
-  assert(result.findings[0].problem!.component[0].evidence_gap);
-});
-test('shared missing proof reads are grouped by node across affected problems',()=>{
-  const f=businessChainFixture();f.problem.investigation=[];
-  Object.assign(f.cause,{certainty:'confirmed',mechanism_source:'explicit_process',evidence_gap:null,alternatives:[]});
-  f.result.findings.push(structuredClone(f.result.findings[0]));
-  const draft=attributionSubmission(f.binding.request,f.result,f.audit);
-  const issues=validateModelSubmission(f.binding.request,draft,{...f.audit,traceReads:[]})
-    .filter(issue=>issue.code==='investigation_read_required');
-  const requests=issues.flatMap(issue=>(issue.expected as any).read_requests);
-  assert(issues.length>0);
-  assert.equal(issues.length,new Set(requests.map(read=>read.message_index)).size);
-  assert(issues.some(issue=>(issue.expected as any).affected_fields.length===2));
-});
-
-test("stage repair feedback provides selectable source indices that repair the actual model submission", () => {
-  const f = businessChainFixture(), registry = new AgentRegistry([attributionAgent]);
-  f.problem.investigation[0].steps.find(step => step.step === "返回整理与上下文传递")!.evidence_ids =
-    f.chain.checkpoints.find(point => point.step === "模型实际输入")!.evidence.map(item => item.evidence_id);
-  const draft = attributionSubmission(f.binding.request, f.result, f.audit);
-  assert.throws(() => registry.resolve(f.binding, draft, f.audit), error => {
-    assert(error instanceof ValidationError);
-    const expected = error.issues!.find(issue => issue.code === "investigation_stage_evidence")!.expected as any;
-    assert.equal(expected.chain_index, 1);
-    assert.equal(expected.step, "返回整理与上下文传递");
-    const factIndex=draft.investigation_facts.findIndex(fact=>fact.step_index===5);
-    assert.deepEqual(expected.fact_indices,[factIndex+1]);
-    assert.deepEqual(expected.repair_paths,[`/investigation_facts/${factIndex}/evidence_indices`]);
-    assert(expected.required_sources.every((source:any)=>source.read_request?.candidate==='answer'&&
-      typeof source.read_request.path==='string'&&source.end_offset>source.read_request.offset));
-    const indices = expected.required_sources.map((source: any) => source.reference.evidence_index);
-    assert(indices.every((index: number) => Number.isInteger(index) && index > 0));
-    assert(!JSON.stringify(expected).includes(`ev_${f.candidate.input_id}_`));
-    const step = draft.investigation_facts.find(fact => fact.step_index === 5)!;
-    step.evidence_indices = [...new Set([...step.evidence_indices, ...indices])] as number[];
-    return true;
-  });
-  const accepted = registry.resolve(f.binding, draft, f.audit) as AttributionResult;
-  registry.validate(f.binding, accepted, f.audit);
-});
-
-test('unknown field transfer and independent answer invention have distinct responsibility without blaming a correct tool',()=>{
- const f=businessChainFixture(true);
- // Remove the captured preparer: raw return and receiving input remain observable.
- f.raw.messages.splice(4,1);f.candidate.final_index--;
- f.binding=bindAttributionMaterial(f.candidate,f.raw);
- const chain=(f.binding.request.input.answer as {business_chains:typeof f.chains}).business_chains[0];
- const evidence=[...new Map([...chain.checkpoints.flatMap(point=>point.evidence),...chain.final_evidence].map(item=>[item.evidence_id,item])).values()];
- const audit={...f.audit,traceReads:evidence.flatMap(item=>{const p=parseEvidenceCoordinates(item.evidence_id)!;return p.kind==='image'?[]:
-  [{candidate:'answer',message_index:p.message_index,kind:p.kind,path:p.path,start:p.start,end:p.end}];})};
- const unknown={...f.cause,actor_index:null,technical_domain:'上下文工程',functional_component:'实际输入传递',business_component:'工具返回身份字段进入回答输入前的传递',
-  component:'处理者未采集：工具返回身份字段进入回答输入前的传递',chain_step:'返回整理与上下文传递',evidence_ids:evidence.map(item=>item.evidence_id)};
- const actors=(f.binding.request.input.answer as {component_catalog:import('@eval/tools').TraceComponentIdentity[]}).component_catalog;
- const finalActor=actors.findIndex(actor=>actor.role==='final_answer')+1;
- const generated={...f.cause,actor_index:finalActor,role:'contributing' as const,evidence_ids:evidence.map(item=>item.evidence_id),
-  component:responsibilityComponentName(actors[finalActor-1],f.cause.business_component)};
- const problem={...f.problem,investigation:[],component:[unknown,generated]};
- assert.deepEqual(investigationIssues(f.binding.request,problem,evidence,audit,'/problem'),[]);
- assert.deepEqual(responsibilityIssues(f.binding.request,problem,evidence,'/problem'),[]);
- assert(problem.component.every(cause=>cause.actor_index===null||actors[cause.actor_index-1].component!=='finquery'));
- const registry=new AgentRegistry([attributionAgent]);
- const result={...f.result,criterion_assessments:f.result.criterion_assessments.map(row=>({...row,evidence})),findings:[{...f.result.findings[0],evidence,problem}]};
- const draft=attributionSubmission(f.binding.request,result,audit);
- const accepted=registry.resolve(f.binding,draft,audit) as AttributionResult;
- registry.validate(f.binding,accepted,audit);
- assert.equal(accepted.findings[0].problem!.component[0].actor_index,null);
- assert.equal(accepted.findings[0].problem!.component[1].actor_index,finalActor);
- const receiver={...unknown,actor_index:finalActor};
- assert(investigationIssues(f.binding.request,{...problem,component:[receiver]},evidence,audit,'/problem').some(issue=>issue.code==='responsibility_transfer_actor'));
- unknown.evidence_ids=chain.final_evidence.map(item=>item.evidence_id);
- assert(investigationIssues(f.binding.request,problem,evidence,audit,'/problem').some(issue=>issue.code==='responsibility_unknown_boundary'));
-});
-test('input and output differences cannot prove model actions at any step or without a selected tool chain',()=>{
- const f=businessChainFixture();f.problem.investigation=[];f.cause.chain_index=null;
- const actor=(f.binding.request.input.answer as {component_catalog:import('@eval/tools').TraceComponentIdentity[]}).component_catalog[Number(f.cause.actor_index)-1];
- const final=f.evidence.filter(item=>actor.message_indices.includes(item.message_index));
- f.cause.field_names=[];f.cause.evidence_ids=final.map(item=>item.evidence_id);
- f.cause.mechanism_source='explicit_process';f.cause.certainty='confirmed';
- for(const step of ['查询规划与标的选择','返回整理与上下文传递','核验与最终交付']){
-  f.cause.chain_step=step;
-  assert(investigationIssues(f.binding.request,f.problem,final,f.audit,'/problem').some(issue=>issue.code==='responsibility_mechanism_source'));
- }
 });

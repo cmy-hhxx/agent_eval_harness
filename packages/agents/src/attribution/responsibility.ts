@@ -40,8 +40,10 @@ export function responsibilitySchema(evidenceField: "evidence_ids" | "evidence_i
   const text = { type: "string", minLength: 1 };
   return {
     type: "object", additionalProperties: false,
-    required: ["actor_index", "role", "technical_domain", "functional_component", "component", "business_component", "chain_index", "chain_step", "field_names", "mechanism_source", "failure_stage", "mechanism", "certainty", "reason", evidenceField, "evidence_gap", "alternatives"],
+    required: ["transition_index", "basis", "actor_index", "role", "technical_domain", "functional_component", "component", "business_component", "chain_index", "chain_step", "field_names", "mechanism_source", "failure_stage", "mechanism", "certainty", "reason", evidenceField, "evidence_gap", "alternatives"],
     properties: {
+      transition_index: {type: "integer", minimum: 1},
+      basis: {enum: ["input_deviation", "independent_addition", "unknown_transition"]},
       actor_index: { type: ["integer", "null"], minimum: 1 },
       role: { enum: ["primary", "contributing"] }, technical_domain: text, functional_component: text, component: { ...text },
       business_component: text, chain_index: { type: ["integer", "null"], minimum: 1 },

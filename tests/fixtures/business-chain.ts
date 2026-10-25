@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { bindAttributionMaterial } from "@eval/workflows/review";
 import { type Candidate, type RawInput } from "@eval/workflows/inputs";
-import type { AttributionResult, BusinessChain, ProblemProposal } from "@eval/agents/attribution";
+import type { AttributionResult, BusinessChain, ProblemProposal, AttributionTransition, Evidence } from "@eval/agents/attribution";
 import { responsibilityComponentName } from "@eval/agents/attribution";
 import { parseEvidenceCoordinates } from "@eval/tools";
 import { emptyAudit } from "./comparison.js";
@@ -32,18 +32,22 @@ export function businessChainFixture(loss = false, question = "Gold prediction f
     answer_timing: { finish_seconds: null } } as Candidate;
   const binding = bindAttributionMaterial(candidate, { messages });
   const chains = (binding.request.input.answer as { business_chains: BusinessChain[] }).business_chains;
-  const chain = chains[0], evidence = [...new Map([...chain.checkpoints.flatMap(point => point.evidence), ...chain.final_evidence]
+  const transitions = (binding.request.input.answer as {transitions: AttributionTransition[]}).transitions;
+  const generated = transitions.find(edge=>edge.kind === "generation" && edge.after.some(item=>item.message_index===messages.length-2))!;
+  const chain = chains[0], evidence = [...new Map([...chain.checkpoints.flatMap(point => point.evidence), ...chain.final_evidence, ...transitions.flatMap(edge=>[...edge.before,...edge.after])]
+    .filter((item): item is Evidence => typeof item.quote === "string")
     .map(item => [item.evidence_id, item])).values()];
-  const cause = responsibilityFixture(undefined, { actor_index:(binding.request.input.answer as {component_catalog:{component:string}[]}).component_catalog.findIndex(actor=>actor.component==='最终回答组织')+1,
-    business_component: "finquery 返回的价格口径解释与使用", chain_index: 1,
+  const cause = responsibilityFixture(undefined, { transition_index:generated.transition_index,actor_index:(binding.request.input.answer as {component_catalog:{component:string}[]}).component_catalog.findIndex(actor=>actor.component==='最终回答组织')+1,
+    business_component: "finquery 返回的价格口径解释与使用", chain_index: generated.chain_index,
     chain_step: "数据解释与计算", field_names: ["etf code", "etf name", "Closing Price[20261022]"],
     mechanism: "将ETF份额价格用于现货黄金报价构造，输入369与输出3690的十倍差异可见，具体转换动作未记录。",
-    evidence_ids: evidence.map(item => item.evidence_id), evidence_gap: "未记录中间换算或计算过程。",
+    evidence_ids: [...generated.before,...generated.after].map(item => item.evidence_id), evidence_gap: "未记录中间换算或计算过程。",
     alternatives: ["小数点或零位误写。", "从其他价格记忆拼接现货报价。"] });
-  const problem: ProblemProposal = { diagnosis: "entity_or_unit", investigation: [{ chain_index: 1, steps: chain.checkpoints.map(point => ({
-    step: point.step, status: point.availability === "available" ? "checked" : "not_collected", observation: "对照该环节实际记录；未记录的内部动作仍保留缺口。",
-    evidence_ids: point.evidence.map(item => item.evidence_id),
-  })) }], component: [cause], label: "ETF份额价错配现货报价", definition: "把GLD.P份额报价作为XAU/USD现货报价使用。" };
+  const problem: ProblemProposal = { diagnosis: "entity_or_unit", calculations:[], investigation:transitions.map(edge=>({
+    transition_index:edge.transition_index,kind:edge.kind,outcome:edge.transition_index===generated.transition_index?"changed":"preserved",
+    observation:edge.transition_index===generated.transition_index?"输入保留ETF身份和369价格，生成文本却声明现货3690；具体转换动作未记录。":"该边界前后记录保持相同对象与价格，未发现本问题的新增偏离。",
+    before_evidence_ids:edge.before.map(item=>item.evidence_id),after_evidence_ids:edge.after.map(item=>item.evidence_id),
+  })), component: [cause], label: "ETF份额价错配现货报价", definition: "把GLD.P份额报价作为XAU/USD现货报价使用。" };
   const result: AttributionResult = { has_standard_answer: false, is_correct: null, correctness_reason: "", correctness_evidence: [], numeric_checks: [],
     task_analysis: binding.request.input.task_analysis as unknown as AttributionResult["task_analysis"],
     criterion_assessments: [{ criterion_id: "r1", status: "partial", evidence_status: "established", summary: "预测使用的基准标的和价格错配。", evidence }],
@@ -58,5 +62,5 @@ export function businessChainFixture(loss = false, question = "Gold prediction f
     const point=parseEvidenceCoordinates(item.evidence_id)!;
     return point.kind==='image'?[]:[{candidate:'answer',message_index:point.message_index,kind:point.kind,path:point.path,start:point.start,end:point.end}];
   });
-  return { binding, chains, chain, problem, result, evidence, audit, cause, raw: { messages }, candidate };
+  return { binding, chains, chain, transitions, generated, problem, result, evidence, audit, cause, raw: { messages }, candidate };
 }

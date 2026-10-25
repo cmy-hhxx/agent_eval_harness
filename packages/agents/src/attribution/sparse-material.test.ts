@@ -1,4 +1,4 @@
-import { responsibilityFixture } from "../../../../tests/fixtures/responsibility.js";
+import { unknownFormationFixture } from "../../../../tests/fixtures/responsibility.js";
 import assert from "node:assert/strict";
 import test from "node:test";
 import { AgentRegistry } from "@eval/host";
@@ -45,8 +45,8 @@ test("final-only answers can confirm correctness and core delivery without priva
   const f = fixture();
   assert(f.norms.every(norm => norm.roles.every(role => role === "user")));
   const schema = attributionProfile.modelSubmissionSchema!(f.request) as {
-    properties: { problems: { items: { properties: { component: { items: { enum: string[] } } } } } } };
-  assert.equal((schema.properties.problems.items.properties.component.items as any).properties.actor_index.maximum,1);
+    properties: { problems: { items: { properties: { causes: { items: { enum: string[] } } } } } } };
+  assert.deepEqual((schema.properties.problems.items.properties.causes.items as any).properties.transition_index.enum,[1]);
   const accepted = f.resolve();
   assert.equal(accepted.is_correct, true);
   assert.equal(accepted.core_assessment.meets_core, true);
@@ -67,7 +67,8 @@ test("a confirmed final-answer error stays established when its component cannot
     importance: "high", text: "加法结果错误。", reason: "回答为5，标准答案为4，未提供过程记录。",
     evidence: [f.evidence], assessment: { requirement_index: 0, observation: "最终结果为5。",
       evidence_status: "established", impact: "唯一所求结果不能使用。" },
-    problem: { diagnosis: "other" as const, investigation: [], component: [responsibilityFixture("最终回答组织",{evidence_ids:[f.evidence.evidence_id]})], label: "结果错误", definition: "最终结果错误，现有材料无法定位出错环节。" } }];
+    problem: { diagnosis: "other" as const, ...unknownFormationFixture(f.request,[f.evidence]), label: "结果错误", definition: "最终结果错误，现有材料无法定位出错环节。" } }];
+  f.audit.traceReads.push({candidate:'answer',message_index:1,kind:'text',path:'/content',start:0,end:1});
   const accepted = f.resolve();
   assert.equal(accepted.is_correct, false);
   assert.equal(accepted.core_assessment.meets_core, false);
@@ -75,10 +76,10 @@ test("a confirmed final-answer error stays established when its component cannot
   assert.equal(accepted.findings[0].problem!.component[0].certainty,"inferred");
   assert.equal(accepted.findings[0].stage, "final_answer");
   const invented = attributionSubmission(f.request, accepted, f.audit);
-  invented.problems[0].component[0].actor_index=(f.request.input.answer as {component_catalog:unknown[]}).component_catalog.length+1;
+  invented.problems[0].causes[0].transition_index=999;
   assert.throws(() => f.registry.resolve(f.binding, invented, f.audit), error =>
     error instanceof ValidationError && error.issues!.some(issue => issue.code === "schema_maximum" ||
-      issue.code === "responsibility_actor"));
+      issue.code === "responsibility_transition"));
 });
 
 test("an explicit execution requirement can remain unknown while the visible result is correct", () => {

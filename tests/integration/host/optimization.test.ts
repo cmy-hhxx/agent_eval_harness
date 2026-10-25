@@ -346,17 +346,19 @@ for (const entireAnswer of [false, true]) test(`oversized final-answer blocks pr
           assert(material.final_answer.includes("图表之后的风险说明"));
         }
         assert(!material.final_answer.includes("deferred_final_material"), "harness metadata must not appear as the candidate's answer");
-        assert(JSON.stringify(material).length < 50000, "large encoded chart data must not overwhelm the model context");
+        const displayed = shown.answer ?? shown.candidates[label];
+        assert(JSON.stringify(displayed).length < 50000, "large encoded chart data must not overwhelm the actual model context");
         assert.deepEqual(material.deferred_final_material, [{
           message_index: 1, path: chartPath, total_chars: chart.length,
         }]);
-        const displayed = shown.answer ?? shown.candidates[label];
         assert.deepEqual(displayed.deferred_final_material[0].read_request,
           { candidate: label, message_index: 1, path: chartPath, offset: 0, max_chars: 16000 });
         const source = bound.request.sources[label].value as RawInput;
         assert.equal(entireAnswer ? source.messages[1].content : (source.messages[1].content as any[])[1].text, chart);
-        for (const evidence of material.final_evidence)
+        for (const evidence of [...material.final_evidence,...(material.transitions??[]).flatMap((edge:any)=>[...edge.before,...edge.after])])
           assert.equal(resolveEvidence(source, evidence, label, emptyAudit(), "/evidence", task.inputIds[label]).quote, evidence.quote);
+        if(material.transitions)assert(material.transitions.some((edge:any)=>edge.after.some((evidence:any)=>evidence.quote===chart)),
+          "server transition evidence retains the entire original chart while model navigation defers its read");
       }
     }
   } finally { await rm(directory, { recursive: true, force: true }); }

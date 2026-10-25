@@ -278,7 +278,7 @@ test("dashboard pairs attribution rewrites by slot and indexes strengths and pro
   const evaluation = attributionResult();
   const finding = evaluation.findings[0]!;
   evaluation.findings = [
-    { ...finding, type: "problem", text: "缺点原文", problem: { diagnosis: "other" as const, investigation: [], component: [], label: "问题原名", definition: "问题定义原文" } },
+    { ...finding, type: "problem", text: "缺点原文", problem: { diagnosis: "other" as const, investigation: [], calculations: [], component: [], label: "问题原名", definition: "问题定义原文" } },
     { ...finding, type: "strength", text: "优点原文" },
   ];
   evaluation.table_resolutions = [{ table_id: "table", row_index: 0, outcome: "supported", reason: "表格核查原文", evidence: finding.evidence }];

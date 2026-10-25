@@ -41,7 +41,8 @@
         "note",
         "norm_directory",
         "component_catalog",
-        "business_chains"
+        "business_chains",
+        "transitions"
       ],
       "properties": {
         "identity": {
@@ -351,6 +352,9 @@
         },
         "business_chains": {
           "$ref": "#/$defs/businessChains"
+        },
+        "transitions": {
+          "$ref": "#/$defs/transitions"
         }
       }
     },
@@ -933,7 +937,8 @@
         "source_input_id",
         "original_user_timestamp",
         "grader_only",
-        "business_chains"
+        "business_chains",
+        "transitions"
       ],
       "properties": {
         "identity": {
@@ -1131,6 +1136,9 @@
         },
         "business_chains": {
           "$ref": "#/$defs/businessChains"
+        },
+        "transitions": {
+          "$ref": "#/$defs/transitions"
         }
       }
     },
@@ -1533,6 +1541,114 @@
           }
         }
       }
+    },
+    "transitions": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "transition_index",
+          "kind",
+          "actor_index",
+          "chain_index",
+          "before",
+          "after",
+          "predecessors",
+          "relation"
+        ],
+        "properties": {
+          "transition_index": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "kind": {
+            "enum": [
+              "request_formation",
+              "execution",
+              "transfer",
+              "generation",
+              "delivery"
+            ]
+          },
+          "actor_index": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "minimum": 1
+          },
+          "chain_index": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "minimum": 1
+          },
+          "before": {
+            "type": "array",
+            "items": {
+              "$ref": "#/$defs/transitionBoundary"
+            }
+          },
+          "after": {
+            "type": "array",
+            "items": {
+              "$ref": "#/$defs/transitionBoundary"
+            }
+          },
+          "predecessors": {
+            "type": "array",
+            "uniqueItems": true,
+            "items": {
+              "type": "integer",
+              "minimum": 1
+            }
+          },
+          "relation": {
+            "enum": [
+              "captured",
+              "unresolved"
+            ]
+          }
+        }
+      }
+    },
+    "transitionBoundary": {
+      "oneOf": [
+        {
+          "allOf": [
+            {
+              "$ref": "#/$defs/evidence"
+            },
+            {
+              "properties": {
+                "evidence_id": {
+                  "pattern": "^ev_[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}_(?:0|[1-9][0-9]*)_(?:text|json)_(?:0|[1-9][0-9]*)_(?:0|[1-9][0-9]*)_[\\s\\S]*$"
+                }
+              }
+            }
+          ]
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "evidence_id",
+            "message_index"
+          ],
+          "properties": {
+            "evidence_id": {
+              "type": "string",
+              "pattern": "^ev_[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}_(?:0|[1-9][0-9]*)_image$"
+            },
+            "message_index": {
+              "type": "integer",
+              "minimum": 0
+            }
+          }
+        }
+      ]
     }
   }
 }

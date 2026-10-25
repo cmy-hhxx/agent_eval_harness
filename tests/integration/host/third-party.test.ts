@@ -1,4 +1,3 @@
-import { responsibilityFixture } from "../../fixtures/responsibility.js";
 import test from "node:test";
 import assert from "node:assert/strict";
 import { readFile, rm } from "node:fs/promises";
@@ -14,7 +13,7 @@ import { parseTraceTables } from "@eval/tools";
 import { buildPlan, comparisonCodec, comparisonRow, outputSchema, readRunState, resultFile, type AttributionResult, type ComparisonResult, type TaskData } from "@eval/workflows/comparison";
 import { type RawInput } from "@eval/workflows/inputs";
 import { canonicalEvidence } from "../../fixtures/evidence.js";
-import { draftFor, fakeEvaluatorVersion, fakeIdentity, fixtureConfig, parsedMaterial, raw,
+import { attributionResult, draftFor, fakeEvaluatorVersion, fakeIdentity, fixtureConfig, parsedMaterial, raw,
   submitFor, taskResult } from "../../fixtures/comparison.js";
 import { ROOT, services, validateRun } from "../../fixtures/services.js";
 
@@ -88,7 +87,8 @@ test("answer-only and short third-party traces survive independent pairs, formal
               summary: "计算结果为5，未完成求和要求。", evidence: [evidence] };
             evaluation.summary = "最终计算结果错误，责任依据现有材料推断。";
             Object.assign(evaluation.findings[0], { type: "problem", text: "加法结果错误", reason: "2+2应为4，最终回答写成5。",
-              problem: { diagnosis: "other" as const, investigation: [], component: [responsibilityFixture("最终回答组织",{evidence_ids:evaluation.findings[0].evidence.map(item=>item.evidence_id)})], label: "算术错误", definition: "最终交付的加法结果错误；现有材料不足以定位链路责任。" } });
+              problem: { ...attributionResult(false, final, true, candidate.input_id).findings[0]!.problem!,
+                label: "算术错误", definition: "最终交付的加法结果错误；现有材料不足以定位链路责任。" } });
             evaluation.findings[0].assessment.observation = final;
           }
         } else if (task.stage === "comparison") {
@@ -165,6 +165,7 @@ test("answer-only and short third-party traces survive independent pairs, formal
         assert.equal(baseline.is_correct, false);
         assert.equal(object(baseline.core_assessment).meets_core, false);
         assert.equal((baseline.findings as AttributionResult["findings"])[0].problem!.component[0].certainty, "inferred");
+        assert.equal((baseline.findings as AttributionResult["findings"])[0].problem!.component[0].actor_index, null);
         assert.deepEqual(object((baseline.findings as JsonObject[])[0]).stage_trace,
           { tools: [], confidence: "none", source: "none", locations: [{ message_index: 1, tool_name: null }] });
         assert.equal(verdict.result, "win");

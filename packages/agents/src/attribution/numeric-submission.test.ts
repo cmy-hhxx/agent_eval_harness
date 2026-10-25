@@ -8,12 +8,14 @@ import { attributionJudgment } from "../../../../tests/fixtures/attribution-judg
 import type { AttributionResult } from "./types.js";
 import { canonicalEvidence } from "../../../../tests/fixtures/evidence.js";
 import { ValidationError } from "@eval/contracts";
+import { setFixtureComponentCatalog } from "../../../../tests/fixtures/attribution-submission.js";
 
 const audit = { calls: 0, requiredReadCalls: 0, viewedImages: [], traceReads: [], calculations: [], artifacts: [] };
 
 test("an ETF identity standard forbids supplemental source numbers and reports them beside a missing problem", () => {
   const request = structuredClone(example.request);
   request.input.ground_truth.value = "510630.SH华夏消费etf";
+  setFixtureComponentCatalog(request);
   const schema = attributionProfile.modelSubmissionSchema!(request);
   const ledger = (schema.properties as Record<string, { maxItems?: number }>).numeric_checks;
   assert.equal(ledger.maxItems, 0, "security identifiers are not standard-answer numeric quantities");
