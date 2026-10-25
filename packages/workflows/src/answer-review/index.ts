@@ -78,7 +78,7 @@ export const answerReviewWorkflow:WorkflowDefinition={
     if(task.stage==='score')return {tasks:[]};
     if(task.stage==='attribution'){
       const candidate=(task.data as TaskData).candidate,original=(inputs[candidate.input_id] as {[sourceTrace]:RawInput})[sourceTrace];
-      validateOriginalAttributionEvidence(receipt.evaluation,{[candidate.input_id]:original},receipt.audit);
+      validateOriginalAttributionEvidence(receipt.evaluation,{[candidate.input_id]:original},receipt.audit,receipt.submitted);
     }
     return {tasks:[]};
   },
@@ -504,7 +504,7 @@ export async function readAnswerReviewSources(run:string,taskId:string){
     sources[id]=content;
   };
   if(task.stage==='attribution'){
-    validateOriginalAttributionEvidence(receipt.evaluation,{[candidate.input_id]:raw},receipt.audit);
+    validateOriginalAttributionEvidence(receipt.evaluation,{[candidate.input_id]:raw},receipt.audit,receipt.submitted);
     const visit=(value:unknown):void=>{
       if(!value||typeof value!=='object')return;
       if(Array.isArray(value)){value.forEach(visit);return;}

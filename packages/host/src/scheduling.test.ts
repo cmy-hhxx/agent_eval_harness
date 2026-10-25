@@ -42,7 +42,7 @@ test("ready downstream stages share slots with an unfinished attribution backlog
   states.a0!.status = states.c0!.status = "succeeded";
   states.a1!.status = "running";
   const ordered = scheduleTasks(tasks, states);
-  assert.deepEqual(ordered.slice(0, 5).map((task) => task.id), ["r0", "c1", "r1", "c2", "a2"]);
+  assert.deepEqual(ordered.slice(0, 5).map((task) => task.id), ["c1", "c2", "a2", "a3", "a4"]);
   assert.equal(ordered.length, tasks.length);
   assert.equal(new Set(ordered).size, tasks.length);
   assert.deepEqual(tasks.slice(0, 2).map((task) => task.id), ["a0", "a1"]);

@@ -13,7 +13,7 @@ const identity: EngineIdentity = { engine: "pi", version: "fixture", commit: "fi
 const model: ModelConfig = { provider: "fixture", baseUrl: "http://127.0.0.1:1/v1", api: "openai-completions",
   apiKeyEnv: "SCHEDULING_SCOPE_FIXTURE_KEY", model: "fixture", thinking: "off", contextWindow: 4096, maxOutputTokens: 100 };
 
-for (const outsidePerStage of [0, 1, 100]) test(`frozen scope fairly dispatches three ready stages with ${outsidePerStage} outside tasks per upstream stage`, async () => {
+for (const outsidePerStage of [0, 1, 100]) test(`frozen scope prioritizes primary stages with ${outsidePerStage} outside tasks per upstream stage`, async () => {
   const directory = await mkdtemp(path.join(os.tmpdir(), "host-scheduling-scope-"));
   const acceptedId = randomUUID(), tasks: PlannedTask[] = [{ id: acceptedId, stage: "criteria", dependencies: {}, inputIds: {}, data: null }], scope: string[] = [acceptedId];
   for (const stage of ["criteria", "attribution", "rewrite"]) {
@@ -74,7 +74,7 @@ for (const outsidePerStage of [0, 1, 100]) test(`frozen scope fairly dispatches 
     });
     assert.equal(result.status, "interrupted");
     assert.equal(started.length, 3);
-    assert.deepEqual(started.map(id => tasks.find(task => task.id === id)!.stage).sort(), ["attribution", "criteria", "rewrite"],
+    assert.deepEqual(started.map(id => tasks.find(task => task.id === id)!.stage).sort(), ["attribution", "attribution", "criteria"],
       "outside-scope ready work must not occupy virtual stage slots before dispatch filtering");
     assert(started.every(id => scope.includes(id)), "no outside task reaches a Worker");
     const saved = await repository.readRun(path.join(directory, "scope"));

@@ -148,7 +148,7 @@ const advanceCriteria: NonNullable<WorkflowDefinition["advance"]> = (task, recei
 /** Accepted formal comparisons and retrospective verification never reopen source results. */
 export const advanceReview: NonNullable<WorkflowDefinition["advance"]> = (task, receipt, state, inputs) => {
   if (task.stage === "attribution") validateOriginalAttributionEvidence(receipt.evaluation,
-    Object.fromEntries(Object.values(task.inputIds).filter(id => inputs[id]).map(id => [id, inputs[id] as RawInput])), receipt.audit);
+    Object.fromEntries(Object.values(task.inputIds).filter(id => inputs[id]).map(id => [id, inputs[id] as RawInput])), receipt.audit, receipt.submitted);
   if (task.stage === "attribution" && state.manifest.tasks.some(item =>
     (item.data as TaskData).standardConflictReview && (item.data as TaskData).reviewOf?.taskId === task.id)) return { tasks: instructionReviewFollowup(task,state) };
   const advance = task.stage === "criteria" ? advanceCriteria(task, receipt, state, inputs)

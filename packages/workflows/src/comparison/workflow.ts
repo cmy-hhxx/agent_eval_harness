@@ -13,7 +13,11 @@ export const comparisonWorkflow: WorkflowDefinition = {
   bind: bindTask,
   advance: advanceReview,
   observesFailures: task => !(task.data as TaskData).verificationAudit,
-  canStart: (task, manifest) => task.stage !== "clustering" || manifest.tasks
+  canStart: (task, manifest) => ["rewrite", "instruction-review"].includes(task.stage)
+    ? !manifest.tasks.some(item => !["rewrite", "instruction-review", "clustering"].includes(item.stage) &&
+      (!manifest.executionScope || manifest.executionScope.includes(item.id)) &&
+      ["pending", "running"].includes(manifest.states[item.id].status))
+    : task.stage !== "clustering" || manifest.tasks
     .filter(item => item.stage === "attribution" && (!(item.data as TaskData).reviewOf ||
       (item.data as TaskData).standardConflictReview))
     .every(item => !["pending", "running"].includes(manifest.states[item.id].status)),

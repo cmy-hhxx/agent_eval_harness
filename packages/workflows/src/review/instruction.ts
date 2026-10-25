@@ -3,6 +3,19 @@ import { instructionSources } from "@eval/tools";
 import { attributionTrace } from "./public-trace.js";
 import type { Candidate, RawInput } from "../inputs/types.js";
 
+/** Navigate the unchanged source by code-point offsets, including its full input snapshot. */
+function processSections(message: RawInput["messages"][number], text: string, source_id: string) {
+  const positions = Object.keys(message).flatMap(field => {
+    const at = text.indexOf(`\n  ${JSON.stringify(field)}: `);
+    return at < 0 ? [] : [{ field, at: at + 1 }];
+  }).sort((a, b) => a.at - b.at);
+  return positions.map(({ field, at }, i) => {
+    const end = positions[i + 1]?.at ?? text.lastIndexOf("\n}");
+    const start = Array.from(text.slice(0, at)).length, length = Array.from(text.slice(at, end)).length;
+    return { field, start, length, read_request: { action: "read", source_id, start, length: Math.min(12000, length) } };
+  }).sort((a, b) => Number(a.field === "input_messages") - Number(b.field === "input_messages"));
+}
+
 /** A new session gets rules and behavior, never the primary evaluator's findings or judgments. */
 export function bindInstructionReview(candidate: Candidate, raw: RawInput): AgentBinding {
   const trace = attributionTrace(raw, candidate.input_id, candidate.final_index);
@@ -13,20 +26,33 @@ export function bindInstructionReview(candidate: Candidate, raw: RawInput): Agen
     const source_id = `N${String(index + 1).padStart(3, "0")}`;
     const content = typeof source.content === "string" ? source.content : JSON.stringify(source.content, null, 2);
     evidence[source_id] = content;
+    let offset = 0;
+    const headings = content.split("\n").flatMap(line => {
+      const start = offset;
+      offset += Array.from(line).length + 1;
+      return /^#{1,6}\s+\S/u.test(line) ? [{ title: line.slice(0, 120), start }] : [];
+    });
     return { source_id, role: source.role, message_index: source.message_index, path: source.path,
       length: Array.from(content).length,
-      headings: content.split("\n").filter(line => /^#{1,6}\s+\S/u.test(line)).map(line => line.slice(0, 120)).slice(0, 32) };
+      headings: headings.slice(0, 32).map((heading, i) => ({ ...heading,
+        read_request: { action: "read", source_id, start: heading.start,
+          length: Math.min(12000, (headings[i + 1]?.start ?? Array.from(content).length) - heading.start) } })) };
   });
+  const process = new Map<string, Record<string, unknown>>();
   for (const [index, message] of trace.messages.entries()) {
     if (index === candidate.final_index || message.role === "user" || message.type === "user_question" || message.type === "private_instruction_omitted") continue;
-    evidence[`C${String(index + 1).padStart(3, "0")}`] = JSON.stringify(message, null, 2);
+    const source_id = `C${String(index + 1).padStart(3, "0")}`;
+    evidence[source_id] = JSON.stringify(message, null, 2);
+    process.set(source_id, { message_index: index, type: message.type, role: message.role, name: message.name,
+      sections: processSections(message, evidence[source_id], source_id) });
   }
   const material: ReviewCase = { case_id: candidate.input_id, task_question: candidate.question, candidate_output_id: "A", evidence,
     availability: { candidate_output: "available", internal_instructions: norm_catalog.length ? "available" : "not_collected" },
     public_requirements: { question: candidate.question } };
   const input = { case_id: candidate.input_id, task_question: candidate.question, norm_catalog,
     candidate_response: Array.from(evidence.A).slice(0, 12000).join(""), answer_requires_more: Array.from(evidence.A).length > 12000,
-    evidence_catalog: Object.entries(evidence).map(([source_id, text]) => ({ source_id, length: Array.from(text).length })),
+    evidence_catalog: Object.entries(evidence).map(([source_id, text]) => ({ source_id, length: Array.from(text).length,
+      ...process.get(source_id) })),
     availability: material.availability };
   return { agent: "instruction-review", profile: "default", request: { input, sources: { case: { id: candidate.input_id, value: material } } } };
 }

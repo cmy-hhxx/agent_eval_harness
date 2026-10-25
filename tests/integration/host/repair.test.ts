@@ -177,7 +177,7 @@ for (const configured of [false, true]) test(`repeated comparison rewrite prepar
   } finally { await worker.close(); await rm(directory, { recursive: true, force: true }); }
 });
 
-test("failure circuit preserves healthy downstream work, survives restart and recovers only its frozen scope", async () => {
+test("failure circuit preserves healthy comparisons, defers polish and recovers only its frozen scope", async () => {
   const records = [raw("healthy"), raw("broken-1"), raw("broken-2"), raw("broken-3")];
   const { directory, config, modelForStage } = await fixtureConfig([records, [], records, []], true, true);
   config.rewrite.attribution = false;
@@ -209,7 +209,8 @@ test("failure circuit preserves healthy downstream work, survives restart and re
     assert.equal(progressSnapshot(paused).eta_status, "paused");
     assert(paused.receipts[healthy.id], "comparison with healthy dependencies commits during the circuit break");
     const healthyRewrite = paused.manifest.tasks.find((task) => (task.data as TaskData).rewriteOf?.taskId === healthy.id)!;
-    assert(paused.receipts[healthyRewrite.id]);
+    assert.equal(paused.receipts[healthyRewrite.id], undefined);
+    assert.equal(paused.manifest.states[healthyRewrite.id].status, "pending", "polish waits while primary work is paused");
     const neverStarted = plan.tasks.filter((task) => task.stage === "attribution" && !paused.manifest.states[task.id].attempts);
     assert(neverStarted.length >= 2, "shared failures stop new attempts before exhausting all inputs");
     await runEvaluation(resume);

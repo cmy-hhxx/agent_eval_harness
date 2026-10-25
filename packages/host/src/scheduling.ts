@@ -15,9 +15,9 @@ export function createScopeMembership(manifest: Pick<RunManifest, "executionScop
   };
 }
 
-// Share free slots between ready stages; a large upstream backlog must not
-// prevent work with already accepted dependencies from reaching its next stage.
+// Share primary slots between stages; independent checks and polish follow decisions.
 export function scheduleTasks(tasks: PlannedTask[], states: RunManifest["states"]): PlannedTask[] {
+  const priority = (stage: string) => stage === "rewrite" ? 2 : stage === "instruction-review" ? 1 : 0;
   const stageByTask = new Map(tasks.map(task => [task.id, task.stage]));
   const continuation = (task: PlannedTask) => Object.values(task.dependencies).some(id => stageByTask.get(id) === task.stage);
   const stages = new Map<string, { tasks: PlannedTask[]; next: number; running: number }>();
@@ -33,12 +33,13 @@ export function scheduleTasks(tasks: PlannedTask[], states: RunManifest["states"
   }
   for (const stage of stages.values()) stage.tasks.sort((a, b) => Number(continuation(b)) - Number(continuation(a)));
   // Plans list upstream stages first. Prefer downstream work when counts tie.
-  const queues = [...stages.values()].reverse();
+  const queues = [...stages.entries()].reverse().map(([name, stage]) => ({ ...stage, priority: priority(name) }));
   const scheduled: PlannedTask[] = [];
   for (;;) {
     let next: typeof queues[number] | undefined;
     for (const stage of queues)
-      if (stage.next < stage.tasks.length && (!next || stage.running < next.running)) next = stage;
+      if (stage.next < stage.tasks.length && (!next || stage.priority < next.priority ||
+        stage.priority === next.priority && stage.running < next.running)) next = stage;
     if (!next) break;
     scheduled.push(next.tasks[next.next++]!);
     next.running++;
