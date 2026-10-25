@@ -29,6 +29,29 @@ test("real JSON container covers its escaped complete text leaf without interpre
   assert(!evidenceCovers(raw, ID, evidenceId(ID, 0, "json", "", leaf.start, leaf.end), text("/content/1/text")));
 });
 
+test("request-local precomputed sources preserve coverage checks without rendering the message again", () => {
+  const material = structuredClone(raw), sources = evidenceSources(material.messages[0]);
+  const leaf = selectEvidenceSource(sources.filter(source => source.kind === "json"), "/content/0/text")!;
+  const whole = text("/content/0/text"), renderedLeaf = evidenceId(ID, 0, "json", "", leaf.start, leaf.end);
+  const cases: [string, string][] = [
+    [whole, text("/content/0/text", 1, 4)], [renderedLeaf, text("/content/0/text", 2, 5)],
+    [evidenceId(ID, 0, "json", "", leaf.start + 1, leaf.end), whole],
+    [renderedLeaf, text("/content/1/text")], [whole, text("/content/0/text", 0, 1000)],
+    [whole, text("/content/0/text", 2, 2)], [whole, text("/content/0/text", 0, undefined, 1)],
+    [whole, text("/content/0/text", 0, undefined, 0, PEER)], [whole, "bad-coordinate"],
+    [whole, evidenceId(ID, 0, "text", "/missing", 0, 1)], [whole, evidenceId(ID, 0, "image")],
+  ];
+  const expected = cases.map(([covering, covered]) => evidenceCovers(material, ID, covering, covered));
+  assert.deepEqual(expected, [true, true, false, false, false, false, false, false, false, false, false]);
+  Object.defineProperty(material.messages[0], "content", { get() { throw new Error("message rendered again"); } });
+  assert.deepEqual(cases.map(([covering, covered]) => evidenceCovers(material, ID, covering, covered, sources)), expected);
+  const image = { messages: [{ content: "data:image/png;base64,AA==" }] }, imageSources = evidenceSources(image.messages[0]);
+  const imageJson = imageSources.find(source => source.kind === "json")!;
+  const placeholder = evidenceId(ID, 0, "json", "", 0, imageJson.text.length);
+  assert.equal(evidenceCovers(image, ID, placeholder, placeholder), false);
+  assert.equal(evidenceCovers(image, ID, placeholder, placeholder, imageSources), false);
+});
+
 test("image placeholders and fabricated text paths never provide physical coverage", () => {
   const material = { messages: [{ role: "assistant", content: "data:image/png;base64,AA==" }] };
   const rendered = evidenceSources(material.messages[0]).find(source => source.kind === "json")!;

@@ -93,7 +93,7 @@ export function buildAttributionTransitions({ raw, inputId, finalIndex, actors, 
   }
   const outputEvents = [...pending];
   const covers = (container: TransitionBoundary, item: TransitionBoundary) => container.message_index === item.message_index &&
-    evidenceCovers(raw, inputId, container.evidence_id, item.evidence_id);
+    evidenceCovers(raw, inputId, container.evidence_id, item.evidence_id, sources(container.message_index));
   for (const chain of chains) {
     const transfers = new Map<string, Pending>();
     for (const evidence of chain.checkpoints[5].evidence) {
