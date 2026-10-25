@@ -471,7 +471,8 @@ export class RunStore {
         message: value.submissionId,
         validationMs: performance.now() - validationStarted, validationCpuMs: (cpu.user + cpu.system) / 1000 });
     }
-    const reviewContext=this.services.agents.completionReviewContext(this.bindings.get(spec.attemptId)!,value.evaluation,evaluation,value.audit);
+    const reviewContext=!value.completionReview&&!previousCandidate?.focusedReview
+      ?this.services.agents.completionReviewContext(this.bindings.get(spec.attemptId)!,value.evaluation,evaluation,value.audit):undefined;
     const focusedReview=previousCandidate?.focusedReview||reviewContext!==undefined;
     if(focusedReview&&!value.completionReview&&previousCandidate?.focusedReview&&previousCandidate.previous!==undefined)
       throw new ValidationError([{category:'decision',code:'completion_review_incomplete',path:'/',
@@ -484,11 +485,24 @@ export class RunStore {
         message: spec.evaluation.completionReview, expected: { candidate_id: candidate.id, next_tool: 'confirm_evaluation',
           ...(focusedReview?{focused_review:{...reviewContext,correction_remaining:previousCandidate?.focusedReview?0:1}}:{}),
           ...(candidate.previous ? { previous_candidate: candidate.previous } : {}) } }];
+      this.registerValidationReads(spec,new ValidationError(errors));
       state.failure = { ...state.failure, draft: structuredClone(value.evaluation), completionCandidate: candidate, errors,
         evidenceBank: [...value.audit.evidenceBank ?? []], contentSubmissions: value.submissionStats?.contentSubmissions ?? 1,
         fileErrors: value.submissionStats?.fileErrors ?? 0, repeatedErrors: 0, stopped: false, attemptId: value.attemptId };
       await this.save();
       throw new ValidationError(errors);
+    }
+    if(value.completionReview&&previousCandidate?.focusedReview){
+      const reads=[...this.bindings.get(spec.attemptId)!.presentedReads??[],...value.audit.traceReads];
+      const unread=(spec.evaluation.requiredReads??[]).some(target=>{
+        let end=target.start;
+        for(const read of reads.filter(r=>r.candidate===target.candidate&&r.message_index===target.message_index&&r.kind===target.kind&&r.path===target.path).sort((a,b)=>a.start-b.start)){
+          if(read.start>end)break;end=Math.max(end,read.end);
+        }
+        return end<target.end;
+      });
+      if(unread)throw new ValidationError([{category:'decision',code:'completion_review_incomplete',path:'/Problem',
+        message:'责任后处理的相关原始返回、实际输入或输出尚未读完，禁止确认成功。'}]);
     }
     const receipt: SubmissionReceipt = {
       ...value,

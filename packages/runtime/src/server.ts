@@ -330,10 +330,11 @@ export async function startWorker(
         if (!content.length) return undefined;
         reserveFileDraft();
         // Deliver every recorded page before judging the draft or charging a verdict.
+        const focused=(failure.errors.find(e=>e.code==='completion_review_required')?.expected as {focused_review?:{correction_remaining:number}}|undefined)?.focused_review;
         const feedback = textResult({ accepted: false, material_pending: true,
           ...(dynamic.length?{draft_preserved:true,errors:failure.errors}:{}),
           next_tool: nextContentTool(), read_requests, instructions: spec.evaluation.toolDescriptions.read_trace,
-          budget: { content_remaining: Math.max(0, 1 + spec.policy.repairAttempts - submissions) },
+          budget: { content_remaining: focused?focused.correction_remaining:Math.max(0, 1 + spec.policy.repairAttempts - submissions) },
         });
         return { ...feedback, content: [...feedback.content, ...content] };
       };
@@ -436,6 +437,8 @@ export async function startWorker(
                 record.failure = failure;
                 await saveRecord();
                 emitLoaded();
+                const requiredMaterial=await supplyRequiredMaterial(investigationReads(errors));
+                if(requiredMaterial)return requiredMaterial;
                 const response=textResult({ accepted: false, review_pending: true, candidate_id: submission.submissionId,
                   next_tool: 'confirm_evaluation', instructions: spec.evaluation.completionReview, errors,
                   budget: { content_remaining: focused?focused.correction_remaining:Math.max(0, 1 + spec.policy.repairAttempts - submissions) } });
@@ -635,8 +638,8 @@ export async function startWorker(
         execute: (_context, value) =>
           submitResult(() => loadFileContent(value)),
       };
-      const confirmSchema = { type: 'object', additionalProperties: false, required: ['reason'],
-        properties: { reason: { type: 'string', minLength: 1 } } };
+      const confirmSchema = { type: 'object', additionalProperties: false, required: ['decision','reason'],
+        properties: { decision:{type:'string',enum:['确认','未完成']}, reason: { type: 'string', minLength: 1 } } };
       const validateConfirmation = ajv.compile(confirmSchema);
       const confirm: ExecutableTool = { name: 'confirm_evaluation', inputSchema: confirmSchema,
         execute: (_context, value) => enqueueContent(async () => {
@@ -644,6 +647,11 @@ export async function startWorker(
             return rejectedLoad([{ category: 'structure', code: 'completion_review_reason_required', path: '/reason',
               message: 'Explain the review of the current candidate before confirming it.' }]);
           if (!completionCandidate) throw new Error('No current candidate is available for completion review');
+          if((value as {decision:string}).decision==='未完成'){
+            const response=await rejected([{category:'decision',code:'completion_review_incomplete',path:'/',message:(value as {reason:string}).reason}],completionCandidate.evaluation,false,false);
+            failure.stopped=true;record.failure=failure;await saveRecord();
+            controller.abort(new Error((value as {reason:string}).reason));void attempt.session?.abort();return response;
+          }
           const candidate = completionCandidate;
           return submitExclusive(async () => structuredClone(candidate.evaluation), false,
             { candidateId: candidate.submissionId, reason: (value as { reason: string }).reason });

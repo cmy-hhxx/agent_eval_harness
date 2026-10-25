@@ -6,7 +6,7 @@ import { AgentRegistry } from './agents.js';
 import { RunStore } from './store.js';
 const id = '11111111-1111-4111-8111-111111111111';
 const reviewRequired = (error: unknown) => error instanceof HttpError && error.issues?.some(issue => issue.code === 'completion_review_required') === true;
-async function fixture(focused=false) {
+async function fixture(focused=false, required=false) {
   const source = { messages: [{content:'本次实际交付与来源'}] };
   const binding: AgentBinding = {agent:'reads',profile:'default',request:{input:{},sources:{answer:{id,value:source}}}};
   let validations = 0, bindings = 0, rejectBusiness = false;
@@ -16,7 +16,7 @@ async function fixture(focused=false) {
     systemPrompt:'Review.',instructions:'Review.',submissionNudge:'Submit.',fileSubmission:false,
     toolNames:[],toolDescriptions:{submit_evaluation:'Submit.'},renderPrompt:()=> 'Review.',
     completionReview:'Review summary against registered problems and sources; explain before confirming.',
-    ...(focused?{completionReviewContext:()=>({problems:[{attribution_reason:'参数生成时形成缺陷。'}],choices:[{component:'Expert 推理轮'}]})}:{}),
+    ...(focused?{completionReviewContext:()=>({problems:[{attribution_reason:'参数生成时形成缺陷。'}],choices:[{component:'Expert 推理轮'}],...(required?{read_requests:[{candidate:'answer',message_index:0,kind:'text',path:'/content',start:0,end:4}]}:{})})}:{}),
     validate() {validations++;if(rejectBusiness)throw new ValidationError([{category:'evidence',code:'missing_evidence',path:'/',message:'Evidence incomplete.'}]);},
   };
   const agents = new AgentRegistry([{id:'reads',profiles:{default:profile}}]);
@@ -102,3 +102,11 @@ test('a repaired candidate invalidates the earlier review and confirmation rerun
     completionReview:{candidateId:'repaired',reason:'Reviewed the repaired candidate.'}}),/Evidence incomplete/);
   assert.equal(await f.store.receipt(f.spec.taskId),undefined);
 });
+
+ test('focused responsibility review cannot confirm unread originals even through the Host API',async()=>{
+ const f=await fixture(true,true);await assert.rejects(f.store.accept(f.submission),reviewRequired);
+ await assert.rejects(f.store.accept({...f.submission,submissionId:'confirm',completionReview:{candidateId:'first',reason:'已核对。'}}),
+ (e:unknown)=>e instanceof HttpError&&e.issues?.some(i=>i.code==='completion_review_incomplete')===true);
+ assert.equal(await f.store.receipt(f.spec.taskId),undefined);
+ assert.deepEqual(f.state.manifest.states[f.spec.taskId].failure?.draft,f.submission.evaluation);
+ });

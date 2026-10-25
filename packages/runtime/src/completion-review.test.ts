@@ -51,12 +51,12 @@ for (const mode of ['confirm','unconfirmed','replace','budget'] as const) test('
     if(mode==='replace'){
       const replacement=await options.execute('submit_evaluation',{summary:'修正后的实际结论',Problem:[]});
       assert.equal(replacement.isError,true);
-      await assert.rejects(()=>options.execute('confirm_evaluation',{reason:'Cannot use the old candidate after an exhausted replacement.'}));
+      await assert.rejects(()=>options.execute('confirm_evaluation',{decision:'确认',reason:'Cannot use the old candidate after an exhausted replacement.'}));
       return;
     }
     if(mode==='budget') assert.equal((await options.execute('read_trace',{candidate:'answer',message_index:0,path:'/content'})).isError,true,'submitting a candidate does not earn extra reads');
     if(confirm){
-      const result=await options.execute('confirm_evaluation',{reason:'已将摘要与本次交付逐项核对，无已成立而未登记的问题。'});
+      const result=await options.execute('confirm_evaluation',{decision:'确认',reason:'已将摘要与本次交付逐项核对，无已成立而未登记的问题。'});
       assert.equal(result.terminate,true);
     }
   },async abort(){},async dispose(){}};}},directory);

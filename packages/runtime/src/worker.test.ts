@@ -1659,7 +1659,7 @@ test("targeted completion review recalls from the current Problem without extra 
     const pending=await options.execute('submit_evaluation',{ok:true}),feedback=JSON.parse(pending.content[0].text!);
     assert.equal(feedback.review_pending,true);assert(!pending.content.some(c=>c.text?.includes('abc')));
     assert.equal(feedback.errors[0].expected.focused_review.problems[0].attribution_reason,'参数生成错误。');
-    assert.equal((await options.execute('confirm_evaluation',{reason:'已按整条问题核对实际组件。'})).terminate,true);
+    assert.equal((await options.execute('confirm_evaluation',{decision:'确认',reason:'已按整条问题核对实际组件。'})).terminate,true);
   },async abort(){},async dispose(){}}),{material:'abc',policy:{repairAttempts:0,maxToolCalls:1},profile:{requiredReads:()=>[],
     completionReview:'Recall actual components once.',completionReviewContext(){return {problems:[{attribution_reason:'参数生成错误。'}],choices:[{component:'Expert 推理轮'}]};},
   }});
@@ -2864,3 +2864,31 @@ test("Worker rejects malformed program material navigation before starting a ses
     assert.equal(sessions,0);
   }finally{await fixture.close();}
 });
+
+ test("targeted completion review supplies protected originals before accepting confirmation",async()=>{
+  const original='ma50=165.7899; period=20261023; status_code=-2601; SQL取数异常';
+  const target:TraceRead={candidate:'answer',message_index:0,kind:'text',path:'/content',start:0,end:original.length};
+  const fixture=await harness(async options=>({async run(){
+    await options.execute('read_trace',{candidate:'answer',message_index:1,path:'/content'});
+    const pending=await options.execute('submit_evaluation',{ok:true});
+    assert.equal((pending.details as {material_pending:boolean}).material_pending,true);
+    assert(pending.content.some(c=>c.text?.includes(original)));
+    assert.equal((await options.execute('confirm_evaluation',{decision:'确认',reason:'已比较原始返回与实际输入输出。'})).terminate,true);
+  },async abort(){},async dispose(){}}),{material:original,policy:{repairAttempts:0,maxToolCalls:1},profile:{requiredReads:()=>[],
+    completionReview:'Compare originals once.',completionReviewContext(){return {problems:[],choices:[],read_requests:[target] as any};},
+  }});
+  try{await fixture.start();const status=await fixture.done();assert.equal(status.state,'succeeded',status.error);
+    const receipt=(await fixture.store.receipt(fixture.spec.taskId))!;assert.equal(receipt.submissionStats!.contentSubmissions,1);
+    assert.equal(receipt.audit.requiredReadCalls,1);assert(traceReadCoverage(receipt.audit,target).covered);
+  }finally{await fixture.close();}
+ });
+ test("an unfinished completion decision preserves the draft and never creates a receipt",async()=>{
+  const fixture=await harness(async options=>({async run(){
+    await options.execute('submit_evaluation',{ok:true});
+    await options.execute('confirm_evaluation',{decision:'未完成',reason:'原始返回有均线，实际输入丢失；材料处理主体未采集。'});
+  },async abort(){},async dispose(){}}),{material:'original',profile:{requiredReads:()=>[],completionReview:'Confirm or stop.'}});
+  try{await fixture.start();const status=await fixture.done();assert.equal(status.state,'failed');
+    assert.equal(await fixture.store.receipt(fixture.spec.taskId),undefined);
+    assert.deepEqual(status.failure?.draft,{ok:true});assert(status.failure?.errors.some(e=>e.code==='completion_review_incomplete'));
+  }finally{await fixture.close();}
+ });

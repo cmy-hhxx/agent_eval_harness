@@ -61,8 +61,13 @@ test('parameter creator remains identifiable without prose or hidden reasoning',
 test('final responsibility recall reads the existing Problem and offers only captured calls',()=>{
  const f=nativeFixture(true,true),edge=f.transitions.find(t=>responsibilityDisplay(f.binding.request,t.transition_index).component==='终稿生成轮')!;
  const problem={text:'均线支撑无依据',reason:'原始返回有均线，实际输入丢失。',attribution_reason:'材料传递中丢失均线字段。',responsibility_boundary:'boundary:'+edge.transition_index};
- const context=finalResponsibilityReview(f.binding.request,{Problem:[problem]},{Problem:[{component:'终稿生成轮'}]},f.audit)!;
+ const context=finalResponsibilityReview(f.binding.request,{Problem:[problem]},{Problem:[{component:'终稿生成轮',evidence:f.evidence.filter(e=>e.message_index===6)}]},f.audit)!;
  assert.deepEqual((context.problems as any[])[0].Problem,problem);
+ const reads=context.read_requests as any[];
+ assert(reads?.some(r=>r.message_index===6),'the actual finquery return is mandatory, not the attribution explanation');
+ const original=(f.binding.request.sources.answer.value as RawInput).messages;
+ assert(reads.filter(r=>r.message_index===6).some(r=>evidenceSources(original[r.message_index]).find(s=>s.kind===r.kind&&s.path===r.path)?.text.slice(r.start,r.end).includes('165.7899')));
+ assert(!reads.some(r=>[1,2,3].includes(r.message_index)),'unrelated weather ancestors stay outside the review');
  assert((context.choices as any[]).some(c=>c.component==='finquery 取数服务'));
  assert(!(context.choices as any[]).some(c=>c.component.includes('web_fetch')));
  assert.equal(finalResponsibilityReview(f.binding.request,{Problem:[problem]},{Problem:[{component:'finquery 取数服务'}]},f.audit),undefined);
