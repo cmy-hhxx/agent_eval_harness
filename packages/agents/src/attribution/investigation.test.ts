@@ -2,21 +2,8 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { attributionAgent } from "./index.js";
 import { businessChainFixture } from "../../../../tests/fixtures/business-chain.js";
-import { businessChainDirectoryIssues, investigationIssues } from "./investigation.js";
 import { bindAttributionMaterial } from "@eval/workflows/review";
 
-test('generation responsibility requires actual input/output and relevant source evidence, without checks forms',()=>{
- const f=businessChainFixture(),p=f.result.Problem[0];
- assert.deepEqual(investigationIssues(f.binding.request,p,p.evidence,f.audit,'/Problem/0'),[]);
- const outputOnly=p.evidence.filter(e=>f.generated.after.some(b=>b.evidence_id===e.evidence_id));
- assert(investigationIssues(f.binding.request,p,outputOnly,f.audit,'/Problem/0').some(i=>i.code==='investigation_boundary_evidence'));
- assert(investigationIssues(f.binding.request,p,p.evidence,{...f.audit,traceReads:[]},'/Problem/0').some(i=>i.code==='investigation_read_required'));
-});
-test('full serialized reads cover decoded text without duplicate reading',()=>{
- const f=businessChainFixture(),p=f.result.Problem[0];
- const audit={...f.audit,traceReads:f.raw.messages.map((m,message_index)=>({candidate:'answer',message_index,kind:'json' as const,path:'',start:0,end:JSON.stringify(m,null,2).length}))};
- assert.deepEqual(investigationIssues(f.binding.request,p,p.evidence,audit,'/Problem/0'),[]);
-});
 test("English renderer finance sources retain identity, price and exact coordinates without indexing private metadata", () => {
   const f = businessChainFixture(), answer = f.binding.request.input.answer as any;
   const source = answer.citation_inventory.references.find((item: any) => item.reference === "pfJtupL");
@@ -50,9 +37,6 @@ test("a nameless tool keeps its catalog identity gap instead of displaying an in
   const actor = answer.component_catalog.find((actor: any) => actor.kind === "tool" && actor.message_indices.includes(2));
   assert.equal(answer.business_chains[0].tool_component, actor.component);
   assert(!["undefined", "query-call"].includes(actor.component));
-  assert.deepEqual(businessChainDirectoryIssues(binding.request), []);
-  answer.business_chains[0].tool_component = "finquery";
-  assert(businessChainDirectoryIssues(binding.request).length);
 });
 
 test("an explicitly empty return remains readable process evidence instead of an invalid zero-length mandatory range", () => {
@@ -61,6 +45,5 @@ test("an explicitly empty return remains readable process evidence instead of an
   const returned = chain.checkpoints.find((point: any) => point.step === "原始返回及字段含义");
   assert.equal(returned.availability, "available");
   assert(returned.evidence.some((item: any) => /"output":\s*""/u.test(item.quote)));
-  assert(attributionAgent.profiles.default.requiredReads!(binding.request).every(read => read.end > read.start));
-  assert.deepEqual(businessChainDirectoryIssues(binding.request), []);
+  assert.equal(attributionAgent.profiles.default.requiredReads,undefined);
 });

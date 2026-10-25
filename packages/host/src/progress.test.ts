@@ -26,6 +26,10 @@ test("progress separates execution failures from dependency blocks and cancellat
   const before = structuredClone(state);
   const progress = progressSnapshot(state);
   assert.deepEqual(progress.failures, { file: 1, interruption: 1 });
+  assert.equal(progress.usage.archived_tokens,0);
+  assert.equal(progress.usage.archived_attempts,3);
+  assert.equal(progress.usage.unarchived_attempts,0);
+  assert.match(progress.usage.scope,/零不代表未消耗/);
   assert.equal(progress.blocked, 1);
   assert.equal(progress.cancelled, 1);
   assert.equal(progress.queued, 1);
@@ -33,6 +37,8 @@ test("progress separates execution failures from dependency blocks and cancellat
   const active = { attemptId: 'a', contentSubmissions: 1, fileErrors: 0, repeatedErrors: 0, stopped: false, draft: {},
     errors: [{ category: 'decision' as const, code: 'completion_review_required', path: '/', message: 'Review' }] };
   state.manifest.states.pending.status = 'running';
+  state.manifest.states.pending.attempts=1;
+  assert.equal(progressSnapshot(state).usage.unarchived_attempts,1);
   state.manifest.states.pending.failure = active;
   const review = progressSnapshot(state, 1000);
   assert.equal(review.running, 1);

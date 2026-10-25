@@ -7,8 +7,8 @@ export type EvidenceStatus = '已确认' | '待核实';
 export type EvidencePurpose = '问题' | '归因';
 export interface ProblemEvidence extends Evidence { purposes: EvidencePurpose[] }
 export interface RelatedResponsibility {
-  responsibility_boundary: number;
-  component: string | null;
+  responsibility_boundary: string;
+  component: string;
   attribution_reason: string;
   evidence_ids: string[];
   uncertainties?: string[];
@@ -17,8 +17,8 @@ export interface ProblemProposal {
   text: string;
   reason: string;
   evidence_status: EvidenceStatus;
-  responsibility_boundary: number | null;
-  component: string | null;
+  responsibility_boundary: string;
+  component: string;
   attribution_reason: string;
   uncertainties?: string[];
   related_responsibilities?: RelatedResponsibility[];

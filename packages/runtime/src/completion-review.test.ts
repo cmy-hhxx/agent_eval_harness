@@ -4,15 +4,15 @@ import {mkdtemp,rm} from 'node:fs/promises';
 import {tmpdir} from 'node:os';
 import path from 'node:path';
 import {DEFAULT_POLICY,emptyUsage,type AgentBinding,type AgentProfile,type AttemptSpec,type AttemptStatus,
-  type FailureContext,type RunRepository,type RunState,type Submission} from '@eval/contracts';
+  type EvidenceBankUpdate,type FailureContext,type RunRepository,type RunState,type Submission} from '@eval/contracts';
 import {AgentRegistry} from '../../host/src/agents.js';
 import {RunStore} from '../../host/src/store.js';
 import {body,json,listen,request} from './http.js';
 import {startWorker} from './server.js';
 import {waitForTestState} from '../../../tests/fixtures/wait.js';
 
-for (const mode of ['confirm','unconfirmed','replace'] as const) test('same-session completion review '+mode,async()=>{
-  const confirm=mode==='confirm';
+for (const mode of ['confirm','unconfirmed','replace','budget'] as const) test('same-session completion review '+mode,async()=>{
+  const confirm=mode==='confirm'||mode==='budget';
   const id='11111111-1111-4111-8111-111111111111',source={messages:[{content:'实际交付与来源'}]};
   const binding:AgentBinding={agent:'review',profile:'default',request:{input:{},sources:{answer:{id,value:source}}}};
   const profile:AgentProfile={id:'default',requestSchema:{type:'object'},submissionSchema:{type:'object'},
@@ -29,15 +29,19 @@ for (const mode of ['confirm','unconfirmed','replace'] as const) test('same-sess
   const store=new RunStore('/unused-fixture',state,{[id]:source},{agents,repository,taskSource:{id:'review',bind:()=>binding}});
   const host=await listen(async(req,res,url)=>{
     if(url.pathname.endsWith('/checkpoint')){await store.checkpoint(task.id,await body(req) as unknown as FailureContext);return json(res,{saved:true});}
+    if(url.pathname==='/api/evidence-bank')return json(res,await store.registerEvidenceBank(await body(req) as unknown as EvidenceBankUpdate));
     if(url.pathname==='/api/submissions')return json(res,await store.accept(await body(req) as unknown as Submission));
     if(url.pathname.startsWith('/api/submissions/'))return json(res,await store.findSubmission(url.pathname.split('/').at(-1)!));
-    if(confirm)await new Promise(resolve=>setTimeout(resolve,1100));
+    if(mode==='confirm')await new Promise(resolve=>setTimeout(resolve,1100));
     return json(res,source);
   });
   const directory=await mkdtemp(path.join(tmpdir(),'completion-review-'));
   let runs=0;
   const worker=await startWorker({identity:engine,async createSession(options){return {async run(){
     if(runs++)return;
+    if(mode==='budget'){
+      for(let i=0;i<4;i++) assert(!(await options.execute('read_trace',{candidate:'answer',message_index:0,path:'/content'})).isError);
+    }
     const candidate={summary:'已核查实际交付及来源，未发现成立缺陷。',Problem:[]};
     const pending=await options.execute('submit_evaluation',candidate);
     assert.equal(pending.terminate,undefined);
@@ -50,13 +54,14 @@ for (const mode of ['confirm','unconfirmed','replace'] as const) test('same-sess
       await assert.rejects(()=>options.execute('confirm_evaluation',{reason:'Cannot use the old candidate after an exhausted replacement.'}));
       return;
     }
+    if(mode==='budget') assert.equal((await options.execute('read_trace',{candidate:'answer',message_index:0,path:'/content'})).isError,true,'submitting a candidate does not earn extra reads');
     if(confirm){
       const result=await options.execute('confirm_evaluation',{reason:'已将摘要与本次交付逐项核对，无已成立而未登记的问题。'});
       assert.equal(result.terminate,true);
     }
   },async abort(){},async dispose(){}};}},directory);
   const prepared=agents.prepare(binding),spec:AttemptSpec={runId:'test',taskId:'task',attemptId:'attempt',inputRevision:1,engine,
-    evaluation:prepared.evaluation,policy:{...DEFAULT_POLICY,repairAttempts:0,maxToolCalls:1,idleTimeoutSeconds:1},prompt:'Review.',evidenceBank:[],
+    evaluation:prepared.evaluation,policy:{...DEFAULT_POLICY,repairAttempts:mode==='budget'?1:0,maxToolCalls:1,idleTimeoutSeconds:1},prompt:'Review.',evidenceBank:[],
     inputs:[{id,name:'answer'}],hostUrl:host.url,deadline:Date.now()+10000,
     model:{provider:'test',baseUrl:'http://127.0.0.1',api:'openai-completions',apiKeyEnv:'TEST_KEY',model:'test',thinking:'off',contextWindow:10000,maxOutputTokens:1000}};
   try{

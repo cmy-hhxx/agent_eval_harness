@@ -175,7 +175,7 @@ export async function startWorker(
         },
         definitions,
       );
-      const explorationLimit = () => spec.policy.maxToolCalls + 3 * Math.min(submissions, spec.policy.repairAttempts);
+      const explorationLimit = () => spec.policy.maxToolCalls + 3 * (spec.evaluation.completionReview ? spec.policy.repairAttempts : Math.min(submissions, spec.policy.repairAttempts));
       const ajv = new Ajv2020({ strict: false, allErrors: true });
       const draftPath = path.join(runtime.context.workdir, "submission-rejected.json");
       let fileErrors = 0;

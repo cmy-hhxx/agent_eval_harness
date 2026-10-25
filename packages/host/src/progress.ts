@@ -58,6 +58,9 @@ export function progressSnapshot(state: RunState, now = Date.now(), preparing: R
   )[0];
   return {
     updated_at: new Date(now).toISOString(),
+    usage: { archived_tokens: state.usage.totalTokens, archived_attempts: state.recordedAttempts,
+      unarchived_attempts: Math.max(0,tasks.reduce((sum,task)=>sum+task.attempts,0)-state.recordedAttempts),
+      scope: '仅已归档尝试；待归档及当前响应不计入，零不代表未消耗' },
     stages,
     paused_stages: state.manifest.pausedStages ?? [],
     execution_scope_count: state.manifest.executionScope?.length ?? null,

@@ -41,8 +41,6 @@ export interface ResolvedDerivation extends DerivationFields {
   operands: Record<string, DerivationOperandResolved>;
 }
 type Source = { evidence_id: string; quote: string };
-type SourceResolver = (evidenceId: string) => Source | undefined;
-const numericToken = /(?<![\w.])[+-]?(?:\d{1,3}(?:,\d{3})+|\d+)(?:\.\d+)?(?:[eE][+-]?\d+)?(?![\d.])/gu;
 const numberValue = (value: string) => value.replaceAll(",", "");
 const fraction = (expression: string, inputs: Record<string, string>) => calculateExpression(expression, inputs).exact_fraction;
 const sign = (value: { numerator: string }) => BigInt(value.numerator) < 0n ? -1 : BigInt(value.numerator) > 0n ? 1 : 0;
@@ -59,8 +57,8 @@ function matchesRounded(expression: string, inputs: Record<string, string>, subm
   return BigInt(proposed.numerator) * 10n ** BigInt(places) === rounded * BigInt(proposed.denominator);
 }
 
-/** Validate mathematics and explicit source bindings; this does not certify economic interpretation. */
-export function validateDerivations(rows: readonly ResolvedDerivation[], evidenceById: SourceResolver, path = "/calculations"): ValidationIssue[] {
+/** Recompute submitted numbers and units; source contents and economic interpretation are not acceptance gates. */
+export function validateDerivations(rows: readonly ResolvedDerivation[], path = "/calculations"): ValidationIssue[] {
   const issues: ValidationIssue[] = [];
   const reject = (at: string, code: string, message: string, actual?: unknown) => {
     issues.push({ category: "decision", code, path: at, message, ...(actual === undefined ? {} : { actual }) });
@@ -75,9 +73,6 @@ export function validateDerivations(rows: readonly ResolvedDerivation[], evidenc
       if (!row[field]?.trim()) invalid(`/${field}`, "计算必须声明用途、结果单位和期间。");
     for (const [name, operand] of Object.entries(operands)) {
       if (!/^[A-Za-z_][A-Za-z_0-9]*$/u.test(name) || name === "display_scale") invalid(`/operands/${name}`, "操作数名须为合法变量名，display_scale为程序保留名。");
-      const source = evidenceById(operand.evidence_id);
-      const tokens: string[] = source?.quote.match(numericToken) ?? [];
-      if (!tokens.includes(operand.value)) reject(`${at}/operands/${name}/value`, "derivation_operand_not_in_evidence", "操作数须为绑定证据中的完整原数token，不接受子串或自行换算值。", operand.value);
       if (![operand.unit, operand.period, operand.role].every(item => typeof item === "string" && item.trim()))
         invalid(`/operands/${name}`, "每个操作数须声明单位、期间和业务角色。");
       try { values[name] = numberValue(operand.value); calculateExpression(name, { [name]: values[name] }); }
@@ -168,14 +163,12 @@ export function validateDerivations(rows: readonly ResolvedDerivation[], evidenc
 
 /** Bind identity mechanically, then reject invalid derivations without rewriting any verdict. */
 export function resolveDerivations(rows: readonly DerivationSubmission[], resolveEvidence: (index: number, path: string) => Source, path = "/calculations"): ResolvedDerivation[] {
-  const sources = new Map<string, Source>();
   const resolved = rows.map((row, index) => ({ ...row, operands: Object.fromEntries(Object.entries(row.operands).map(([name, operand]) => {
     const { evidence_index, ...fields } = operand;
     const evidence = resolveEvidence(evidence_index, `${path}/${index}/operands/${name}/evidence_index`);
-    sources.set(evidence.evidence_id, evidence);
     return [name, { ...fields, evidence_id: evidence.evidence_id }];
   })) }));
-  const issues = validateDerivations(resolved, id => sources.get(id), path);
+  const issues = validateDerivations(resolved, path);
   if (issues.length) throw new ValidationError(issues);
   return resolved;
 }

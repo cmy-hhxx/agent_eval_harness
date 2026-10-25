@@ -149,7 +149,7 @@ export function attributionResult(correct=true,answer='2+2=4',available=true,inp
     correct_reason:available?(correct?'回答结果4与给定标准4一致。':'回答结果与给定标准4不一致。'):null,
     Problem:correct?[]:[{problem_id:'p1',text:'加法结果错误',reason:'2+2应为4，实际回答给出了不同的结果。',evidence_status:'已确认',
       evidence:[{evidence_id:id,message_index:1,quote:answer,purposes:['问题']}],
-      responsibility_boundary:null,component:null,attribution_reason:'实际交付错误，形成记录未采集。',uncertainties:['实际生成输入输出未采集，无法定位形成主体。']}]};
+      responsibility_boundary:'问题形成过程未定位',component:'责任主体未确定',attribution_reason:'实际交付错误，形成记录未采集。',uncertainties:['实际生成输入输出未采集，无法定位形成主体。']}]};
 }
 
 /** Task result; Criteria uses its source-selection submission, other stages use resolved results. */
@@ -421,12 +421,13 @@ export function draftFor(spec: Pick<AttemptSpec, "inputs" | "prompt" | "evidence
   if(material.answer&&"Problem" in result){
     const value=result as unknown as AttributionResult;
     const selections=(ids:string[])=>ids.map(id=>choose(id).evidence_index);
+    const boundary=(description:string)=>{if(description==='问题形成过程未定位')return null;throw new Error('Known-boundary fixtures must use attributionSubmission with the actual request');};
     return {summary:value.summary,...(value.has_standard_answer?{is_correct:value.is_correct,correct_reason:value.correct_reason}:{}),
       Problem:value.Problem.map(item=>({text:item.text,reason:item.reason,evidence_status:item.evidence_status,
         evidence:item.evidence.map(e=>({index:choose(e.evidence_id).evidence_index,purposes:e.purposes})),
-        responsibility_boundary:item.responsibility_boundary,attribution_reason:item.attribution_reason,
+        responsibility_boundary:boundary(item.responsibility_boundary),attribution_reason:item.attribution_reason,
         ...(item.uncertainties?{uncertainties:item.uncertainties}:{}),
-        ...(item.related_responsibilities?{related_responsibilities:item.related_responsibilities.map(r=>({responsibility_boundary:r.responsibility_boundary,attribution_reason:r.attribution_reason,evidence_indices:selections(r.evidence_ids)}))}:{}),
+        ...(item.related_responsibilities?{related_responsibilities:item.related_responsibilities.map(r=>({responsibility_boundary:boundary(r.responsibility_boundary),attribution_reason:r.attribution_reason,evidence_indices:selections(r.evidence_ids)}))}:{}),
         ...(item.calculations?{calculations:item.calculations.map(calculation=>({...calculation,operands:Object.fromEntries(Object.entries(calculation.operands).map(([name,{evidence_id,...operand}])=>[name,{...operand,evidence_index:choose(evidence_id).evidence_index}]))}))}:{})}))};
   }
   if ("assessments" in result) {

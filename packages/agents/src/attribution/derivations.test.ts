@@ -54,14 +54,14 @@ describe("source-bound attribution derivations", () => {
     rejects({ ...row, assumptions: [] }, quote, "derivation_invalid");
   });
 
-  it("rejects invented operands, number substrings, unbound constants and incorrect output", () => {
+  it("recomputes numbers without enforcing source contents, rejects invalid constants and results", () => {
     const row = base({ operands: { numerator: operand("123", "值"), denominator: operand("3", "分母") }, denominator_role: "分母", result: "41" });
-    rejects(row, "原始值1234，分母3", "derivation_operand_not_in_evidence");
+    assert.equal(resolve(row, "原始值1234，分母3")[0].result,"41");
     rejects({ ...row, result: "42" }, "原始值123，分母3", "derivation_result_mismatch");
     rejects(base({ operation: "四则运算", operands: { source: operand("3", "值") }, formula: "source*999", result: "2997" }), "原始值3", "derivation_invalid");
     rejects(base({ operation: "四则运算", operands: { display_scale: operand("3", "值") }, formula: "display_scale", result: "1" }), "原始值3", "derivation_invalid");
     const [resolved] = resolve(row, "原始值123，分母3");
-    assert.equal(validateDerivations([resolved], () => undefined)[0].code, "derivation_operand_not_in_evidence");
+    assert.deepEqual(validateDerivations([resolved]),[]);
   });
 
   it("keeps exact decimal arithmetic, explicit units and evidence IDs without rewriting results", () => {

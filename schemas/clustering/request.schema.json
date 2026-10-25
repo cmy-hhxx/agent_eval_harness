@@ -264,11 +264,8 @@
                                   "minLength": 1
                                 },
                                 "responsibility_boundary": {
-                                  "type": [
-                                    "integer",
-                                    "null"
-                                  ],
-                                  "minimum": 1
+                                  "type": "string",
+                                  "minLength": 1
                                 },
                                 "attribution_reason": {
                                   "type": "string",
@@ -381,11 +378,8 @@
                         "minLength": 1
                       },
                       "responsibility_boundary": {
-                        "type": [
-                          "integer",
-                          "null"
-                        ],
-                        "minimum": 1
+                        "type": "string",
+                        "minLength": 1
                       },
                       "attribution_reason": {
                         "type": "string",

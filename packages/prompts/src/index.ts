@@ -101,7 +101,7 @@ export function agentPrompt(stage: PromptStage, toolNames: string[], options: Ag
       const limits = policy ? {
         content_call_limit: 1 + policy.repairAttempts,
         ...(toolNames.some(name => name !== "inspect_material") ? {
-          exploration_call_limit: Math.max(0, policy.maxToolCalls - Number(draftWriteInCallLimit)),
+          exploration_call_limit: Math.max(0, policy.maxToolCalls + (stage === 'attribution' ? 3 * policy.repairAttempts : 0) - Number(draftWriteInCallLimit)),
           ...(draftWriteInCallLimit ? { reserved_draft_calls: 1 } : {}),
         } : {}),
         ...(toolNames.includes("execute_code") ? { code_timeout_seconds: policy.codeTimeoutSeconds } : {}),

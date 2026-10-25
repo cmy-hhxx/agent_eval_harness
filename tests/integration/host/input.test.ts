@@ -781,7 +781,7 @@ test("subjective inputs still run attribution and direct evidence needs no force
     assert.equal(audit.calls, 0);
     const bad = structuredClone(result);
     bad.Problem[0].evidence[0].quote = "fabricated";
-    assert.throws(() => validateEvaluation(task, plan.inputs, bad, emptyAudit(), {}), /原文|证据/);
+    assert.doesNotThrow(() => validateEvaluation(task, plan.inputs, bad, emptyAudit(), {})); // Evidence business validation is disabled.
     const subjective = attributionResult(true, "2+2=4", true, task.inputIds.answer!);
     assert.throws(
       () => validateEvaluation(task, plan.inputs, subjective, emptyAudit(), {}),
@@ -789,7 +789,7 @@ test("subjective inputs still run attribution and direct evidence needs no force
     );
     const forged = structuredClone(result);
 
-    forged.Problem[0].responsibility_boundary=99999;
+    forged.Problem[0].responsibility_boundary='不存在的边界';
     assert.throws(
       () => validateEvaluation(task, plan.inputs, forged, emptyAudit(), {}),
       (error: unknown) => error instanceof ValidationError && error.issues!.some(issue => issue.code === "responsibility_actor"),

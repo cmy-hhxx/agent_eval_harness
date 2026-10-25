@@ -9,7 +9,8 @@
   "properties": {
     "summary": {
       "type": "string",
-      "minLength": 1
+      "minLength": 1,
+      "description": "用简短中文概括本次评审结论。发现的缺陷也要写进Problem，不能只写摘要；不堆行情数字。"
     },
     "Problem": {
       "type": "array",
@@ -27,17 +28,20 @@
         "properties": {
           "text": {
             "type": "string",
-            "minLength": 1
+            "minLength": 1,
+            "description": "指出哪句回答、哪个操作或哪项交付有什么错。"
           },
           "reason": {
             "type": "string",
-            "minLength": 1
+            "minLength": 1,
+            "description": "对照事实说明为什么错、造成什么影响；保留原句的条件和限制，不重复text。"
           },
           "evidence_status": {
             "enum": [
               "已确认",
               "待核实"
-            ]
+            ],
+            "description": "缺陷已经证实选“已确认”，缺陷本身还不能确定选“待核实”。不知道谁负责不影响已确认缺陷。"
           },
           "evidence": {
             "type": "array",
@@ -52,7 +56,8 @@
               "properties": {
                 "index": {
                   "type": "integer",
-                  "minimum": 1
+                  "minimum": 1,
+                  "description": "选择读取工具给出的证据编号，不编造编号。"
                 },
                 "purposes": {
                   "type": "array",
@@ -63,25 +68,30 @@
                     ]
                   },
                   "minItems": 1,
-                  "uniqueItems": true
+                  "uniqueItems": true,
+                  "description": "证明缺陷选“问题”，证明谁负责选“归因”；同一原文可以同时选两项。"
                 },
                 "observation": {
                   "type": "string",
-                  "minLength": 1
+                  "minLength": 1,
+                  "description": "只在引用图片时写实际看到的内容。引用文字时省略，不填空字符串。"
                 }
               }
-            }
+            },
+            "description": "选择能说明问题和责任的原文。同一段原文只列一次，用purposes标明用途。"
           },
           "responsibility_boundary": {
             "type": [
               "integer",
               "null"
             ],
-            "minimum": 1
+            "minimum": 1,
+            "description": "选择产生问题的真实调用边界编号。找不到实际形成调用才填null，并在attribution_reason和uncertainties说明哪里缺记录。"
           },
           "attribution_reason": {
             "type": "string",
-            "minLength": 1
+            "minLength": 1,
+            "description": "说明谁在哪次调用中形成了这个问题，所选原文支持到哪里。只看到输入输出变化时，不猜内部推理。无法定位时说清缺少哪段过程。"
           },
           "uncertainties": {
             "type": "array",
@@ -90,7 +100,8 @@
               "type": "string",
               "minLength": 1
             },
-            "uniqueItems": true
+            "uniqueItems": true,
+            "description": "只写还不知道的事实、不能证实的解释或其他可能原因。没有就省略；责任未知或缺陷待核实时必须写。"
           },
           "related_responsibilities": {
             "type": "array",
@@ -131,7 +142,8 @@
                   "uniqueItems": true
                 }
               }
-            }
+            },
+            "description": "只有另一个组件独立传播或扩大了同一问题才填写。正常传递、引用或渲染不算；没有就省略。"
           },
           "calculations": {
             "type": "array",
@@ -152,7 +164,8 @@
               "properties": {
                 "label": {
                   "type": "string",
-                  "minLength": 1
+                  "minLength": 1,
+                  "description": "说明这次计算用于核对哪项判断。"
                 },
                 "operation": {
                   "enum": [
@@ -161,7 +174,8 @@
                     "复利增长",
                     "年化",
                     "四则运算"
-                  ]
+                  ],
+                  "description": "选择本次实际使用的运算。"
                 },
                 "operands": {
                   "type": "object",
@@ -179,7 +193,8 @@
                     "properties": {
                       "value": {
                         "type": "string",
-                        "minLength": 1
+                        "minLength": 1,
+                        "description": "原数的十进制字符串，如\"9\"，不要填JSON数字。"
                       },
                       "evidence_index": {
                         "type": "integer",
@@ -187,19 +202,22 @@
                       },
                       "unit": {
                         "type": "string",
-                        "minLength": 1
+                        "minLength": 1,
+                        "description": "原数单位；复利rate用%或比值，periods用“期”。"
                       },
                       "period": {
                         "type": "string",
-                        "minLength": 1
+                        "minLength": 1,
+                        "description": "原数对应期间。"
                       },
                       "role": {
                         "type": "string",
-                        "minLength": 1
+                        "minLength": 1,
+                        "description": "这项数字代表什么，如累计成本、当前市值或年收益率。"
                       }
                     }
                   },
-                  "description": "每项value为对应evidence中的完整原数token（可含千分位），unit/period/role明确原始单位、期间及业务角色。比值仅numerator+denominator，区间比值仅numerator+denominator_lower+denominator_upper（分子非负、分母为有序正数、两端同单位同期间），denominator_role精确等于分母role；相对变化仅base+observed（同单位，期间可不同），公式(observed-base)/base，denominator_role=base.role；复利增长必需rate+periods，可选base；rate.unit为比值或%（%自动精确除100），periods.unit=期且1—20整数（有界资源限制）；有base时结果=base*(1+每期增长率)^periods且与base同单位，无base计算增长倍数且result_unit=比值，不需编造值为1的来源；非CAGR；年化仅value，须有正factor、observation_period=value.period、target_period=result_period、result_basis=按当前速度年化及非空assumptions，结果单位与value一致；四则运算用自选合法变量名且每项均参与formula，display_scale为保留名。"
+                  "description": "填写参与计算的原数及其单位、期间、含义和证据编号。比值用numerator、denominator；相对变化用base、observed；复利用rate、periods，可选base；年化用value；四则运算自行命名变量。区间比值将denominator替换为denominator_lower、denominator_upper。"
                 },
                 "result": {
                   "oneOf": [
@@ -233,65 +251,76 @@
                         }
                       }
                     }
-                  ]
+                  ],
+                  "description": "单个结果填十进制字符串，如\"2.10\"，不要填JSON数字；区间结果才填写上下界对象。"
                 },
                 "scale": {
                   "enum": [
                     "1",
                     "100"
                   ],
-                  "description": "结果显示倍率，仅1或100，不是容差。比值/相对变化的scale=100当且仅当result_unit=%；其他运算也按此倍率乘在公式结果之后。"
+                  "description": "普通结果填\"1\"；结果用百分数显示时填\"100\"。这是显示倍率，不是误差范围。"
                 },
                 "decimal_places": {
                   "type": "integer",
                   "minimum": 0,
                   "maximum": 12,
-                  "description": "结果小数位数0—12：对源数字的精确有理数运算结果一次性按四舍六入五成双舍入，提交result须与该精度相符。区间两端分别核算；不会自动改写模型提交的结果。"
+                  "description": "结果保留几位小数，填0至12的整数。程序用精确运算复算，按四舍六入五成双舍入一次。"
                 },
                 "result_unit": {
                   "type": "string",
-                  "minLength": 1
+                  "minLength": 1,
+                  "description": "结果的单位，如美元、%、比值；不能省略。"
                 },
                 "result_period": {
                   "type": "string",
-                  "minLength": 1
+                  "minLength": 1,
+                  "description": "结果对应的日期、季度或其他期间。"
                 },
                 "assumptions": {
                   "type": "array",
                   "items": {
                     "type": "string",
                     "minLength": 1
-                  }
+                  },
+                  "description": "写计算用到的假设或单位换算；没有假设填[]。年化必须说明按当前速度外推。"
                 },
                 "denominator_role": {
                   "type": "string",
-                  "minLength": 1
+                  "minLength": 1,
+                  "description": "仅比值和相对变化填写，必须与分母或base的role相同；其他运算省略。"
                 },
                 "formula": {
                   "type": "string",
                   "minLength": 1,
-                  "description": "仅四则运算使用具名源数操作数、四则运算和括号。数学常数0/1可直接写；10的整数次幂可作单位换算倍率（如/1000或*1e-3），须用assumptions声明原/目标单位及换算依据。其他数值必须来自operands，不得通过常数绕过证据绑定；数学常量不证明被评模型执行过对应动作。"
+                  "description": "仅四则运算填写，例如\"amount/divisor\"，使用operands中的变量；其他运算省略，不填空字符串。除0、1和已说明的十进制单位倍率外，数字放入operands。"
                 },
                 "factor": {
                   "type": "string",
-                  "minLength": 1
+                  "minLength": 1,
+                  "description": "仅年化填写正数倍率的字符串，如\"4\"；其他运算省略。"
                 },
                 "observation_period": {
                   "type": "string",
-                  "minLength": 1
+                  "minLength": 1,
+                  "description": "仅年化填写原数所在期间，必须与value.period相同。"
                 },
                 "target_period": {
                   "type": "string",
-                  "minLength": 1
+                  "minLength": 1,
+                  "description": "仅年化填写外推到的期间，必须与result_period相同。"
                 },
                 "result_basis": {
-                  "const": "按当前速度年化"
+                  "const": "按当前速度年化",
+                  "description": "仅年化填写“按当前速度年化”，不要当成公司全年指引。"
                 }
               }
-            }
+            },
+            "description": "问题是否成立确实需要计算时才填写，放在这条Problem内；不需要就省略，不放到顶层。"
           }
         }
-      }
+      },
+      "description": "逐条记录发现的问题。实际评审后没有问题才填空数组。"
     },
     "is_correct": {
       "type": [

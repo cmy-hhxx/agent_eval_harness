@@ -48,7 +48,7 @@ test('accepted evidence cannot be replaced by equal-looking foreign or modified 
  request.sources.answer.value.messages[1].content='2+2=4';assert.throws(()=>acceptedAttributionView(receipt,request));
 });
 test('clustering projection keeps current problem judgment without classification questionnaires',()=>{
- const {value}=fixture();Object.assign(value.Problem[0],{responsibility_boundary:1,component:'计算节点',attribution_reason:'实际输入输出存在差异。',uncertainties:['内部过程未采集。']});
+ const {value}=fixture();Object.assign(value.Problem[0],{responsibility_boundary:'实际生成调用：接收输入并形成最终回答。',component:'计算节点',attribution_reason:'实际输入输出存在差异。',uncertainties:['内部过程未采集。']});
  const rows=groupObservations([{input_id:String(value.meta.input_id),case_id:'q1',source:{file:'source',line:1},Problem:value.Problem}]);
  assert.equal(rows.length,1);assert.equal(rows[0].label,value.Problem[0].text);assert.equal(rows[0].definition,value.Problem[0].reason);assert.equal(rows[0].refs[0].finding_id,'p1');
  assert(!Object.hasOwn(rows[0].examples[0],'dimension'));assert(!Object.hasOwn(rows[0].examples[0],'importance'));

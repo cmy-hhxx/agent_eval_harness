@@ -57,7 +57,7 @@ test("explicit transport and draft options determine tools and exploration budge
   assert.equal(prompt.draftWriteInCallLimit, true);
   assert.deepEqual(Object.keys(prompt.toolDescriptions), ["execute_code", "submit_evaluation_file"]);
   const rendered = prompt.renderPrompt({}, { ...DEFAULT_POLICY, maxToolCalls: 24 });
-  assert.match(rendered, /"exploration_call_limit":23/);
+  assert.match(rendered, /"exploration_call_limit":32/);
   assert.match(rendered, /"reserved_draft_calls":1/);
   const comparison = agentPrompt("comparison", ["execute_code"], { fileSubmission: false });
   assert.equal(comparison.fileSubmission, false);
@@ -118,10 +118,10 @@ test("model budgets expose actionable call limits for the selected tools", () =>
   assert.deepEqual(limits("rewrite", []), { content_call_limit: 5 });
   assert.deepEqual(limits("comparison", ["inspect_material"]), { content_call_limit: 5 });
   assert.deepEqual(limits("attribution", ["read_trace"], true), {
-    content_call_limit: 5, exploration_call_limit: DEFAULT_POLICY.maxToolCalls - 1, reserved_draft_calls: 1,
+    content_call_limit: 5, exploration_call_limit: DEFAULT_POLICY.maxToolCalls + 3 * policy.repairAttempts - 1, reserved_draft_calls: 1,
   });
   assert.deepEqual(limits("attribution", ["read_trace", "execute_code"], true), {
-    content_call_limit: 5, exploration_call_limit: DEFAULT_POLICY.maxToolCalls - 1, reserved_draft_calls: 1,
+    content_call_limit: 5, exploration_call_limit: DEFAULT_POLICY.maxToolCalls + 3 * policy.repairAttempts - 1, reserved_draft_calls: 1,
     code_timeout_seconds: DEFAULT_POLICY.codeTimeoutSeconds,
   });
 });

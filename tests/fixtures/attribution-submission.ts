@@ -1,5 +1,5 @@
 import {selectEvidence,parseEvidenceCoordinates,type AgentRequest,type ToolAudit} from '@eval/contracts';
-import {attributionNormDirectory,buildAttributionTransitions,buildAttributionExecutionNodes,type AttributionResult,type AttributionSubmission} from '@eval/agents/attribution';
+import {responsibilityTransition,attributionNormDirectory,buildAttributionTransitions,buildAttributionExecutionNodes,type AttributionResult,type AttributionSubmission} from '@eval/agents/attribution';
 import {traceComponentIdentities} from '@eval/tools';
 import {businessChains} from '@eval/workflows/review';
 /** Construct the current program-owned directory for a hand-built request. */
@@ -25,7 +25,7 @@ export function attributionSubmission(request:AgentRequest,result:AttributionRes
   return {summary:result.summary,...(result.has_standard_answer?{is_correct:result.is_correct,correct_reason:result.correct_reason!}:{}),Problem:result.Problem.map(p=>({
     text:p.text,reason:p.reason,evidence_status:p.evidence_status,
     evidence:p.evidence.map(e=>({index:ref(e.evidence_id),purposes:e.purposes,...(parseEvidenceCoordinates(e.evidence_id)?.kind==='image'?{observation:e.quote.replace('[图像观察]','')}:{})})),
-    responsibility_boundary:p.responsibility_boundary,attribution_reason:p.attribution_reason,
+    responsibility_boundary:responsibilityTransition(request,p.responsibility_boundary)?.transition_index??null,attribution_reason:p.attribution_reason,
     ...(p.uncertainties?{uncertainties:p.uncertainties}:{}),
-    ...(p.related_responsibilities?{related_responsibilities:p.related_responsibilities.map(r=>({responsibility_boundary:r.responsibility_boundary,attribution_reason:r.attribution_reason,evidence_indices:r.evidence_ids.map(ref),...(r.uncertainties?{uncertainties:r.uncertainties}:{})}))}:{}),...(p.calculations?{calculations:p.calculations.map(c=>({...c,operands:Object.fromEntries(Object.entries(c.operands).map(([name,{evidence_id,...o}])=>[name,{...o,evidence_index:ref(evidence_id)}]))}))}:{})}))};
+    ...(p.related_responsibilities?{related_responsibilities:p.related_responsibilities.map(r=>({responsibility_boundary:responsibilityTransition(request,r.responsibility_boundary)!.transition_index,attribution_reason:r.attribution_reason,evidence_indices:r.evidence_ids.map(ref),...(r.uncertainties?{uncertainties:r.uncertainties}:{})}))}:{}),...(p.calculations?{calculations:p.calculations.map(c=>({...c,operands:Object.fromEntries(Object.entries(c.operands).map(([name,{evidence_id,...o}])=>[name,{...o,evidence_index:ref(evidence_id)}]))}))}:{})}))};
 }

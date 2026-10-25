@@ -2351,6 +2351,7 @@ const inspectionProfile: Partial<AgentProfile> = {
 for (const stalled of [false, true]) test(`inspection dynamic reads use protected budget and bounded progress (${stalled})`, async () => {
   const target: TraceRead = { candidate: "answer", message_index: 0, kind: "text", path: "/content", start: 0, end: 14 };
   const fixture = await harness(async options => ({ async run() {
+    await options.execute('calculate',{operation:'add',operands:['1','1']});
     const draft = { actual: "original facts" };
     const pending = await inspectMaterials(options, draft);
     const feedback = pending.details as { material_pending: boolean; budget: { content_remaining: number } };
@@ -2361,7 +2362,7 @@ for (const stalled of [false, true]) test(`inspection dynamic reads use protecte
     if (stalled) { assert.equal(inspected.isError, true); return; }
     assert.equal(inspected.isError, undefined, JSON.stringify(inspected));
     assert.equal((await submitFor(options, { ok: true })).terminate, true);
-  }, async abort() {}, async dispose() {} }), { material: "original facts", policy: { maxToolCalls: 0, repairAttempts: 1 }, profile: {
+  }, async abort() {}, async dispose() {} }), { material: "original facts", policy: { maxToolCalls: 1, repairAttempts: 1 }, profile: {
     ...inspectionProfile, requiredReads: () => [], inspection: { ...inspectionProfile.inspection!, validate(request, value, audit) {
       if (stalled || !traceReadCoverage(audit, target).covered) throw new ValidationError([{ category: "evidence",
         code: "investigation_read_required", path: "/actual", message: "登记评审前须读取相关原文。", expected: { read_requests: [target] } }]);

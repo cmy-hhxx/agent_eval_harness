@@ -7,8 +7,7 @@ import { evidenceSources } from "@eval/tools";
 import { bindAttributionMaterial } from "@eval/workflows/review";
 import type { Candidate, RawInput } from "@eval/workflows/inputs";
 import type { AttributionTransition } from "./transitions.js";
-import type { ProblemProposal } from "./types.js";
-import { investigationIssues } from "./investigation.js";
+import { responsibilityDisplay } from "./responsibility.js";
 import { attributionSubmissionSchema } from "./submission-schema.js";
 
 function nativeFixture(loss = false, unrelated = false) {
@@ -52,32 +51,11 @@ function material(messages: RawInput["messages"], question: string) {
   return { binding, transitions, evidence, audit };
 }
 
-function judgment(f:ReturnType<typeof material>,kind:string):ProblemProposal{
- const t=f.transitions.find(t=>t.kind===kind)!;
- return {text:'支撑位与来源不符',reason:'来源与交付所指价位不一致。',evidence_status:'已确认',
- responsibility_boundary:t.transition_index,component:null,attribution_reason:'相关输入保留来源数值，输出发生改变。',uncertainties:['内部形成机制没有记录。']};
-}
-const inspect=(f:ReturnType<typeof material>,p:ProblemProposal,evidence=f.evidence)=>investigationIssues(f.binding.request,p,evidence,f.audit,'/Problem/0');
-test('known parameter generation is a valid formation boundary even without prose generation',()=>{
- const f=nativeFixture(),p=judgment(f,'request_formation');
- assert.deepEqual(inspect(f,p),[]);
- const t=f.transitions.find(t=>t.transition_index===p.responsibility_boundary)!;
- assert.notEqual(t.actor_index,null);
-});
-test('delivery evidence cannot substitute for actual generation and normal delivery is not formation',()=>{
- const f=nativeFixture(),p=judgment(f,'generation'),delivery=f.transitions.find(t=>t.kind==='delivery')!;
- assert(inspect(f,p,f.evidence.filter(e=>delivery.after.some(b=>b.evidence_id===e.evidence_id))).some(i=>i.code==='investigation_boundary_evidence'));
- assert(inspect(f,judgment(f,'delivery')).some(i=>i.code==='responsibility_formation'));
-});
-test('source requirement follows selected input, not unrelated weather history',()=>{
- const f=nativeFixture(false,true),p=judgment(f,'generation');
- const own=f.evidence.filter(e=>!e.quote.includes('北京')&&!e.quote.includes('晴天'));
- assert.deepEqual(inspect(f,p,own),[]);
-});
-test('read audit distinguishes actual returned source from a copy in model input',()=>{
- const f=nativeFixture(),p=judgment(f,'generation');
- const unread={...f.audit,traceReads:f.audit.traceReads.filter(r=>!f.transitions.some(t=>t.kind==='execution'&&t.after.some(b=>b.message_index===r.message_index)))};
- assert(investigationIssues(f.binding.request,p,f.evidence,unread,'/Problem/0').some(i=>i.code==='investigation_read_required'));
+test('parameter creator remains identifiable without prose or hidden reasoning',()=>{
+ const f=nativeFixture(),edge=f.transitions.find(t=>t.kind==='request_formation')!;
+ const display=responsibilityDisplay(f.binding.request,edge.transition_index);
+ assert.match(display.component,/XOM取数参数/);assert.match(display.responsibility_boundary,/生成 finquery 调用参数/);
+ assert(!display.component.includes('责任主体未确定'));
 });
 test('boundary selection stays a bounded integer rather than an expanded enumeration',()=>{
  const f=nativeFixture(),s=attributionSubmissionSchema(f.binding.request);

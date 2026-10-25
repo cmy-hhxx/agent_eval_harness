@@ -128,6 +128,7 @@ function renderOverview() {
   const libraryModels = Object.keys(run.problem_library || {}).length;
   const engineLabel = run.engine === "prime" ? "Prime" : "Pi";
   $("#run-description").textContent = `${engineLabel} · ${progress.accepted || 0}/${totalTasks} 已接受${libraryModels ? ` · 问题库 ${libraryModels} 个模型` : ""}${run.live && progress.updated_at ? ` · 更新 ${new Date(progress.updated_at).toLocaleTimeString()}` : ""}`;
+  if (progress.usage) $("#run-description").textContent += ` · 已归档 ${Number(progress.usage.archived_tokens).toLocaleString()} Token（${progress.usage.archived_attempts} 次尝试） · ${progress.usage.unarchived_attempts} 次待归档`;
   $("#run-actions").innerHTML = run.status === "running"
     ? `<form id="concurrency-form" class="inline-form"><label for="live-concurrency">并发</label><input id="live-concurrency" type="number" min="1" value="${Number(progress.concurrency) || 1}" required /><button class="button" type="submit">调整</button></form><button class="button button-danger" type="button" data-stop="${escapeHtml(run.run_id)}">停止</button>`
     : `<button class="button" type="button" data-resume="${escapeHtml(run.run_id)}">续跑此运行</button><button class="button button-danger" type="button" data-delete="${escapeHtml(run.run_id)}">删除运行</button>`;
