@@ -107,3 +107,19 @@ test('an unpropagated failed query is compared with the distinct zero-row query 
  const messages=(ctx.read_requests as any[]).map(r=>r.message_index);
  assert(messages.includes(2));assert(messages.includes(4));assert(messages.includes(5));
 });
+
+test('parameter formation never recalls historical same-tool returns as missing propagation',()=>{
+ const call={id:'new',type:'function',function:{name:'shell',arguments:'{"title":"two metrics","series":[1]}'}};
+ const f=material([{role:'user',content:'绘图'},
+ {type:'tool_call',name:'shell',call_id:'old',input:{command:'old'}},
+ {type:'tool_result',name:'shell',call_id:'old',output:'unrelated old chart'},
+ {type:'llm_turn',name:'llm-call-0',input_messages:[{role:'tool',tool_call_id:'old',content:'unrelated old chart'}],output:[{role:'assistant',content:'',tool_calls:[call]}]},
+ {type:'tool_call',name:'shell',call_id:'new',input:{title:'two metrics',series:[1]}},
+ {type:'tool_result',name:'shell',call_id:'new',output:'one series rendered'},
+ {type:'llm_turn',name:'llm-call-1',input_messages:[{role:'user',content:'write final'}],output:[{role:'assistant',content:'two metrics rendered'}]},
+ {type:'final_answer',role:'assistant',content:'two metrics rendered'}],'绘图');
+ const parameter=f.transitions.find(t=>t.kind==='request_formation')!,final=f.transitions.find(t=>responsibilityDisplay(f.binding.request,t.transition_index).component==='终稿生成轮')!;
+ const draft={Problem:[{responsibility_boundary:'boundary:'+parameter.transition_index},{responsibility_boundary:'boundary:'+final.transition_index}]};
+ const ctx=finalResponsibilityReview(f.binding.request,draft,{Problem:[{component:'Expert 推理轮',evidence:f.evidence.filter(e=>e.message_index===5)},{component:'终稿生成轮',evidence:[]}]},f.audit)!;
+ assert(!(ctx.read_requests as any[]).some(r=>r.message_index===1||r.message_index===2));
+});

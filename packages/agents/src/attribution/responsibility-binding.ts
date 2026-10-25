@@ -49,7 +49,7 @@ export function finalResponsibilityReview(request:AgentRequest,draft:unknown,res
       proof.some(e=>[c.request_index,...c.return_indices].includes(e.message_index)||
         c.checkpoints[5].evidence.some(entry=>covers(entry,e))));
     const generations=selected.filter(t=>t.kind==='generation'||t.kind==='request_formation');
-    const generationMessages=generations.flatMap(t=>answer.execution_nodes.filter(n=>n.execution_node_index===t.execution_node_index).map(n=>n.message_index));
+    const generationMessages=generations.filter(t=>responsibilityDisplay(request,t.transition_index).component==='终稿生成轮').flatMap(t=>answer.execution_nodes.filter(n=>n.execution_node_index===t.execution_node_index).map(n=>n.message_index));
     // If the selected return has no captured propagation, disambiguate it from
     // same-tool records actually present in this input. Do not follow ancestors
     // or claim that one invocation's empty result belongs to another invocation.
