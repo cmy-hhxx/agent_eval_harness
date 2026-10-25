@@ -789,7 +789,7 @@ test("subjective inputs still run attribution and direct evidence needs no force
     );
     const forged = structuredClone(result);
 
-    forged.Problem[0].responsibility_boundary='不存在的边界';
+    forged.Problem[0].component='不存在的主体';
     assert.throws(
       () => validateEvaluation(task, plan.inputs, forged, emptyAudit(), {}),
       (error: unknown) => error instanceof ValidationError && error.issues!.some(issue => issue.code === "responsibility_actor"),

@@ -15,7 +15,7 @@
 | requirements / scoring_points / red_flags | Criteria | Attribution、Comparison | 有不同验收含义；统一作用域和来源绑定避免私规外溢。 |
 | is_correct / correct_reason | Attribution | 标准一致性核对 | 只判断与给定标准答案是否一致，独立于问题归因；无标准时两者固定 null。 |
 | Problem / text / reason / evidence_status | Attribution | Comparison、Score、Clustering、报告 | 正式问题及依据、实际影响与缺陷确定性；允许充分评审后的空数组，摘要不替代问题。 |
-| responsibility_boundary / component / attribution_reason | 模型选边界并解释，程序解析主体 | 归责与导出 | 绑定真实调用，区分事实偏离与机制推断；主体未知不撤销缺陷。 |
+| component / attribution_reason | 模型选边界并解释，程序解析主体 | 归责与导出 | 绑定真实调用，区分事实偏离与机制推断；主体未知不撤销缺陷。 |
 | accepted_attribution / problem_assignments | Workflow、Score | 单次评分及程序导出 | 完成情况、已确认或待核的问题和恢复状态来自接受收据；模型仅映射选档，程序保留源问题、责任确定性及证据。 |
 | evidence / calculations / uncertainties | 模型选证据与必要计算 | 程序核查与复算 | 用途为问题、归因或两者；原文去重。计算保留单位、期间、分母和假设；真实缺口直接记录。 |
 | evidence_id / evidence refs | Agent 与 Host | 引用校验、复核、查看原文 | 可解析坐标，必需；位置合法不证明语义正确。 |
@@ -48,6 +48,6 @@
 
 归因接收口径：证据业务硬校验已关闭，不再因必读覆盖、边界前后匹配、上游来源追查或原数证据匹配触发内容修复。保留 Schema、稳定编号与来源坐标解析、程序身份一致性及计算复算。技术接收不证明评审有效，证据相关性、缺陷成立与语义完成性须真实样本抽审。公共 Runtime 的动态必读受保护预算及无进展停止仍保留，归因不再注册强制必读门。
 
-正式 `responsibility_boundary` 为程序生成的可读过程字符串，`component` 为非空字符串，包含真实主体及本次调用任务；未定位主体固定为“责任主体未确定”，模型须在归责说明和未确定事项说明断点。模型提交仍选择稳定边界编号，不能自行填写边界说明或主体名称。摘要及判断正文使用简洁简体中文，真实工具名与原文引文保留原语言，不能只用节点或证据编号代替解释。
+正式 Problem 及关联责任不输出 `responsibility_boundary`；该稳定编号仅保留在内部模型提交与收据中，用于精确关联真实调用。程序按组件健康度报表生成 component 展示名称，不用展示名称反查身份或去重调用；内部模型名及原始坐标仍可溯源。正文说明具体动作和偏差。
 
 归因探索与修复共用从开始即公开的既有总额度，提交不再解锁额外工具次数，不增加总预算或重试。进度 Token 仅累计已归档尝试，同时显示待归档次数和统计覆盖范围；零值不代表没有实际消耗。checkpoint.writeMs 是累计持久化墙钟时间，不是事件循环阻塞时间；snapshotMs 仅衡量快照构造，不涵盖全部持久化 CPU。

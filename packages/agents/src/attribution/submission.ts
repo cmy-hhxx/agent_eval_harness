@@ -27,6 +27,9 @@ export function resolveModelSubmission(request:AgentRequest,draft:unknown,audit:
   const edge=(index:number,path:string)=>{const found=edges.find(e=>e.transition_index===index);if(!found)throw new ValidationError([{category:'evidence',code:'transition_invalid',path,message:'选择本任务真实边界编号。',actual:index}]);return found;};
   const resolve=(index:number,path:string,observation?:string)=>resolveAttributionEvidence(request,resolveEvidenceSelection(audit.evidenceBank??[],{evidence_index:index,...(observation?{observation}:{})},path),audit,path);
   const result:AttributionResult={meta:{input_id:request.sources.answer.id},summary:value.summary,Problem:value.Problem.map((p,i)=>{
+    const seenBoundaries=new Set<number>();
+    const selectBoundary=(index:number|null,at:string)=>{if(index===null)return;edge(index,at);if(seenBoundaries.has(index))throw new ValidationError([{category:'decision',code:'responsibility_duplicate',path:at,message:'同一问题的同一责任调用只登记一次。'}]);seenBoundaries.add(index);};
+    selectBoundary(p.responsibility_boundary,'/Problem/'+i+'/responsibility_boundary');
     const path='/Problem/'+i,selected=new Map<string,ProblemEvidence>();
     const observations=new Map(p.evidence.map(e=>[e.index,e.observation]));
     const evidence=(index:number,at:string)=>{
@@ -44,7 +47,7 @@ export function resolveModelSubmission(request:AgentRequest,draft:unknown,audit:
         const proof=resolve(index,at+'/evidence_indices/'+k,observations.get(index));
         return proof.evidence_id;
       });
-      edge(r.responsibility_boundary,at);
+      selectBoundary(r.responsibility_boundary,at);
       return {...responsibilityDisplay(request,r.responsibility_boundary),
         attribution_reason:r.attribution_reason,evidence_ids:ids,...(r.uncertainties?{uncertainties:r.uncertainties}:{})};
     });
@@ -52,7 +55,6 @@ export function resolveModelSubmission(request:AgentRequest,draft:unknown,audit:
       const proof=resolve(index,at,observations.get(index));
       return proof;
     }):undefined;
-    if(p.responsibility_boundary!==null)edge(p.responsibility_boundary,path+'/responsibility_boundary');
     return {problem_id:'p'+(i+1),text:p.text,reason:p.reason,evidence_status:p.evidence_status,evidence:[...selected.values()],
       ...responsibilityDisplay(request,p.responsibility_boundary),
       attribution_reason:p.attribution_reason,...(p.uncertainties?{uncertainties:p.uncertainties}:{}),

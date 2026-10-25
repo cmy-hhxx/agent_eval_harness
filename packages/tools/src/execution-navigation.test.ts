@@ -37,6 +37,19 @@ function page(result: ToolResult) {
   return value;
 }
 
+test('reading a captured call presents its responsibility choice without a second navigation call',async()=>{
+ const f=await setup();
+ try {
+   const choices=[{transition_index:1,execution_node_index:1,message_index:0,component:'Expert 推理轮',kind:'request_formation'}];
+   Object.assign(f.ctx.materialNavigation!.answer as object,{responsibility_choices:choices});
+   const result=await f.runtime.execute('read_trace',{candidate:'answer',message_index:0,path:'/content'},new AbortController().signal);
+   assert(!result.isError);
+   assert.deepEqual(JSON.parse(result.content[0].text!).responsibility_choices,choices);
+   assert.equal(f.ctx.audit.calls,1);
+   assert.equal(page(await f.call({view:'boundaries',transition_index:1})).items[0].component,'Expert 推理轮');
+ } finally { await f.close(); }
+});
+
 test("execution navigation pages complete nodes, searches only short metadata, and enforces page limits", async () => {
   const f = await setup();
   try {

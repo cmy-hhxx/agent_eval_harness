@@ -35,7 +35,7 @@ test('evidence-backed completed no-problem review has exactly six formal fields 
 test('no standard answer still preserves an established defect and actual generation identity',()=>{
  const f=businessChainFixture(),draft=attributionSubmission(f.binding.request,f.result,f.audit);
  const r=resolveModelSubmission(f.binding.request,draft,f.audit);
- assert.equal(r.Problem.length,1);assert.equal(r.Problem[0].responsibility_boundary,f.problem.responsibility_boundary);
+ assert.equal(r.Problem.length,1);assert(!Object.hasOwn(r.Problem[0],'responsibility_boundary'));
  assert.equal(r.Problem[0].component,f.problem.component);assert.equal(r.is_correct,null);assert.equal(r.correct_reason,null);
 });
 test('reference agreement and independent attribution remain separate judgments',()=>{
@@ -65,16 +65,30 @@ test('unread evidence and missing boundary proof no longer trigger content repai
  assert.equal(resolveModelSubmission(f.binding.request,draft,{...f.audit,traceReads:[]}).Problem.length,1);
 });
 
-test('formal boundary is readable, exact tool identity is retained and numeric/null aliases are rejected',()=>{
+test('formal boundary is absent, report component names are program-owned and old fields are rejected',()=>{
  const f=businessChainFixture(),draft=attributionSubmission(f.binding.request,f.result,f.audit);
  draft.Problem[0].responsibility_boundary=f.transitions.find(t=>t.kind==='execution')!.transition_index;
  const r=resolveModelSubmission(f.binding.request,draft,f.audit),p=r.Problem[0];
- assert.match(p.component,/^finquery（/);assert.match(p.component,/查询/);
- assert.match(p.responsibility_boundary,/接收本次请求参数，返回执行结果/);
+ assert.equal(p.component,'finquery 取数服务');assert(!Object.hasOwn(p,'responsibility_boundary'));
  for(const extra of [{responsibility_boundary:1},{responsibility_boundary:null},{component:null},{component:''}]){
   const invalid=structuredClone(r);Object.assign(invalid.Problem[0],extra);
   assert.throws(()=>validateEvaluation(f.binding.request,invalid,f.audit),ValidationError);
  }
  draft.Problem[0].responsibility_boundary=null;delete draft.Problem[0].uncertainties;
  assert.throws(()=>resolveModelSubmission(f.binding.request,draft,f.audit),(e:unknown)=>e instanceof ValidationError&&e.issues!.some(i=>i.code==='responsibility_unresolved_required'));
+});
+
+test('same display component retains distinct internal call selections',()=>{
+ const f=businessChainFixture(true),draft=attributionSubmission(f.binding.request,f.result,f.audit);
+ const calls=f.transitions.filter(t=>responsibilityDisplay(f.binding.request,t.transition_index).component==='Expert 推理轮');
+ assert.equal(calls.length,2);
+ draft.Problem[0].responsibility_boundary=calls[0].transition_index;
+ draft.Problem[0].related_responsibilities=[{responsibility_boundary:calls[1].transition_index,
+   attribution_reason:'该次整理调用独立改变了字段，原文证据分别保留。',evidence_indices:draft.Problem[0].evidence.map(e=>e.index)}];
+ const before=structuredClone(draft),result=resolveModelSubmission(f.binding.request,draft,f.audit);
+ assert.equal(result.Problem[0].component,'Expert 推理轮');
+ assert.equal(result.Problem[0].related_responsibilities![0].component,'Expert 推理轮');
+ assert.deepEqual(draft,before,'the receipt retains exact submitted choices; display names never bind calls');
+ draft.Problem[0].related_responsibilities[0].responsibility_boundary=calls[0].transition_index;
+ assert.throws(()=>resolveModelSubmission(f.binding.request,draft,f.audit),ValidationError);
 });

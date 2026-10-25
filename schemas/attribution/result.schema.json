@@ -29,7 +29,6 @@
           "reason",
           "evidence_status",
           "evidence",
-          "responsibility_boundary",
           "attribution_reason",
           "problem_id",
           "component"
@@ -114,11 +113,6 @@
             },
             "description": "选择能说明问题和责任的原文。同一段原文只列一次，用purposes标明用途。"
           },
-          "responsibility_boundary": {
-            "type": "string",
-            "minLength": 1,
-            "description": "程序写明实际调用接收什么、形成什么；这里不写是否有错。"
-          },
           "attribution_reason": {
             "type": "string",
             "minLength": 1,
@@ -137,7 +131,7 @@
           "component": {
             "type": "string",
             "minLength": 1,
-            "description": "程序填写真实名称，如finquery或shell，并附本次调用任务。无法定位时固定为“责任主体未确定”。"
+            "description": "程序按真实调用职责生成的中文名称，如终稿生成轮、Expert 推理轮、finquery 取数服务；确实无法定位才填责任主体未确定。"
           },
           "related_responsibilities": {
             "type": "array",
@@ -146,17 +140,11 @@
               "type": "object",
               "additionalProperties": false,
               "required": [
-                "responsibility_boundary",
                 "attribution_reason",
                 "evidence_ids",
                 "component"
               ],
               "properties": {
-                "responsibility_boundary": {
-                  "type": "string",
-                  "minLength": 1,
-                  "description": "程序按实际调用组装的输入到输出过程说明；不含责任判词。"
-                },
                 "attribution_reason": {
                   "type": "string",
                   "minLength": 1
@@ -182,7 +170,7 @@
                 "component": {
                   "type": "string",
                   "minLength": 1,
-                  "description": "程序解析实际主体并注明本次调用任务；无法定位时为责任主体未确定。"
+                  "description": "程序按真实调用职责生成的中文名称，如终稿生成轮、Expert 推理轮、finquery 取数服务；确实无法定位才填责任主体未确定。"
                 }
               }
             },
@@ -263,39 +251,35 @@
                   "description": "填写参与计算的原数及其单位、期间、含义和证据编号。比值用numerator、denominator；相对变化用base、observed；复利用rate、periods，可选base；年化用value；四则运算自行命名变量。区间比值将denominator替换为denominator_lower、denominator_upper。"
                 },
                 "result": {
-                  "oneOf": [
-                    {
+                  "description": "单个结果填十进制字符串，如\"2.10\"，不要填JSON数字；区间结果才填写上下界对象。",
+                  "type": [
+                    "string",
+                    "object"
+                  ],
+                  "minLength": 1,
+                  "additionalProperties": false,
+                  "required": [
+                    "lower",
+                    "upper",
+                    "include_lower",
+                    "include_upper"
+                  ],
+                  "properties": {
+                    "lower": {
                       "type": "string",
                       "minLength": 1
                     },
-                    {
-                      "type": "object",
-                      "additionalProperties": false,
-                      "required": [
-                        "lower",
-                        "upper",
-                        "include_lower",
-                        "include_upper"
-                      ],
-                      "properties": {
-                        "lower": {
-                          "type": "string",
-                          "minLength": 1
-                        },
-                        "upper": {
-                          "type": "string",
-                          "minLength": 1
-                        },
-                        "include_lower": {
-                          "type": "boolean"
-                        },
-                        "include_upper": {
-                          "type": "boolean"
-                        }
-                      }
+                    "upper": {
+                      "type": "string",
+                      "minLength": 1
+                    },
+                    "include_lower": {
+                      "type": "boolean"
+                    },
+                    "include_upper": {
+                      "type": "boolean"
                     }
-                  ],
-                  "description": "单个结果填十进制字符串，如\"2.10\"，不要填JSON数字；区间结果才填写上下界对象。"
+                  }
                 },
                 "scale": {
                   "enum": [

@@ -295,7 +295,6 @@
               "reason",
               "evidence_status",
               "evidence",
-              "responsibility_boundary",
               "attribution_reason",
               "problem_id",
               "component"
@@ -374,13 +373,6 @@
                   }
                 }
               },
-              "responsibility_boundary": {
-                "type": [
-                  "integer",
-                  "null"
-                ],
-                "minimum": 1
-              },
               "attribution_reason": {
                 "type": "string",
                 "minLength": 1
@@ -399,7 +391,8 @@
                   "string",
                   "null"
                 ],
-                "minLength": 1
+                "minLength": 1,
+                "description": "程序按真实调用职责生成的中文名称，如终稿生成轮、Expert 推理轮、finquery 取数服务；确实无法定位才填责任主体未确定。"
               },
               "related_responsibilities": {
                 "type": "array",
@@ -408,16 +401,11 @@
                   "type": "object",
                   "additionalProperties": false,
                   "required": [
-                    "responsibility_boundary",
                     "attribution_reason",
                     "evidence_ids",
                     "component"
                   ],
                   "properties": {
-                    "responsibility_boundary": {
-                      "type": "integer",
-                      "minimum": 1
-                    },
                     "attribution_reason": {
                       "type": "string",
                       "minLength": 1
@@ -445,7 +433,8 @@
                         "string",
                         "null"
                       ],
-                      "minLength": 1
+                      "minLength": 1,
+                      "description": "程序按真实调用职责生成的中文名称，如终稿生成轮、Expert 推理轮、finquery 取数服务；确实无法定位才填责任主体未确定。"
                     }
                   }
                 }
@@ -519,38 +508,34 @@
                       "description": "每项value为对应evidence中的完整原数token（可含千分位），unit/period/role明确原始单位、期间及业务角色。比值仅numerator+denominator，区间比值仅numerator+denominator_lower+denominator_upper（分子非负、分母为有序正数、两端同单位同期间），denominator_role精确等于分母role；相对变化仅base+observed（同单位，期间可不同），公式(observed-base)/base，denominator_role=base.role；复利增长必需rate+periods，可选base；rate.unit为比值或%（%自动精确除100），periods.unit=期且1—20整数（有界资源限制）；有base时结果=base*(1+每期增长率)^periods且与base同单位，无base计算增长倍数且result_unit=比值，不需编造值为1的来源；非CAGR；年化仅value，须有正factor、observation_period=value.period、target_period=result_period、result_basis=按当前速度年化及非空assumptions，结果单位与value一致；四则运算用自选合法变量名且每项均参与formula，display_scale为保留名。"
                     },
                     "result": {
-                      "oneOf": [
-                        {
+                      "type": [
+                        "string",
+                        "object"
+                      ],
+                      "minLength": 1,
+                      "additionalProperties": false,
+                      "required": [
+                        "lower",
+                        "upper",
+                        "include_lower",
+                        "include_upper"
+                      ],
+                      "properties": {
+                        "lower": {
                           "type": "string",
                           "minLength": 1
                         },
-                        {
-                          "type": "object",
-                          "additionalProperties": false,
-                          "required": [
-                            "lower",
-                            "upper",
-                            "include_lower",
-                            "include_upper"
-                          ],
-                          "properties": {
-                            "lower": {
-                              "type": "string",
-                              "minLength": 1
-                            },
-                            "upper": {
-                              "type": "string",
-                              "minLength": 1
-                            },
-                            "include_lower": {
-                              "type": "boolean"
-                            },
-                            "include_upper": {
-                              "type": "boolean"
-                            }
-                          }
+                        "upper": {
+                          "type": "string",
+                          "minLength": 1
+                        },
+                        "include_lower": {
+                          "type": "boolean"
+                        },
+                        "include_upper": {
+                          "type": "boolean"
                         }
-                      ]
+                      }
                     },
                     "scale": {
                       "enum": [

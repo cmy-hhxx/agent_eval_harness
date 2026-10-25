@@ -360,6 +360,8 @@ export const builtinTools: ExecutableTool[] = [
         max_chars?: number;
         source_offset?: number;
       };
+      const responsibilityChoices = (object(ctx.materialNavigation?.[args.candidate] ?? {}).responsibility_choices as {message_index:number}[] | undefined)
+        ?.filter(choice=>choice.message_index===args.message_index);
       const sources = evidenceSources(message(ctx, args.candidate, args.message_index));
       const path = args.path;
       const selected = selectEvidenceSource(sources, path);
@@ -404,6 +406,7 @@ export const builtinTools: ExecutableTool[] = [
         const { quote, ...coordinates } = evidence;
         return {
           source: { kind: source.kind, path: source.path },
+          ...(responsibilityChoices?.length ? { responsibility_choices: responsibilityChoices } : {}),
           ...(path !== undefined ? { selection_path: path } : {}),
           ...(alreadyRead ? { already_read: true } : {}),
           evidence: !quotable ? [] : wholeContext ? [displayEvidence(evidence)] : alreadyRead ? [displayEvidence(quote.length > 400

@@ -53,7 +53,7 @@ test("a viewed image-only final preserves an unknown formation boundary without 
     assert(delivery.after.some(item => item.evidence_id === evidence.evidence_id && !Object.hasOwn(item, "quote")), "the image directory must locate pixels without inventing an observation");
     const boundaryDisplay=responsibilityDisplay(binding.request,delivery.transition_index);
     assert.equal(boundaryDisplay.component,'责任主体未确定');
-    assert.match(boundaryDisplay.responsibility_boundary,/交付|最终回答/);
+    assert(!Object.hasOwn(boundaryDisplay,'responsibility_boundary'));
 
   } finally { await rm(workdir, { recursive: true, force: true }); }
 });

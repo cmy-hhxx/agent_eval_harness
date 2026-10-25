@@ -5,6 +5,17 @@ import { setFixtureNormDirectory } from "../../../../tests/fixtures/attribution-
 import { findingIssueContext } from "./finding-feedback.js";
 import { attributionSubmissionSchema, attributionSubmissionShape } from "./submission-schema.js";
 import example from "./fixtures/example.json" with { type: "json" };
+import { Ajv2020 } from 'ajv/dist/2020.js';
+
+test('scalar or interval calculation result rejects a number once without widening accepted types',()=>{
+  const request=structuredClone(example.request);setFixtureNormDirectory(request);
+  const field=attributionSubmissionShape(request).properties.Problem.items.properties.calculations.items.properties.result;
+  const validate=new Ajv2020({strict:false,allErrors:true}).compile(field);
+  assert(validate('1.35'));
+  assert(validate({lower:'1.3',upper:'1.4',include_lower:true,include_upper:false}));
+  for(const invalid of ['',1.35,{lower:'1.3'}, {lower:1.3,upper:'1.4',include_lower:true,include_upper:false}])assert(!validate(invalid));
+  assert(!validate(1.35));assert.equal(validate.errors!.length,1);
+});
 
 test("decimal type repair shows the exact quoted value without changing the draft", () => {
   const request = structuredClone(example.request);

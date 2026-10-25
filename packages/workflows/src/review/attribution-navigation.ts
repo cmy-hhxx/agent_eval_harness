@@ -1,5 +1,5 @@
 import { displayEvidence, images, parseEvidenceCoordinates, visualCaptureMarkers, type TraceComponentIdentity, type TableCheckResult } from "@eval/tools";
-import { responsibilityComponentName, type AttributionExecutionNode, type AttributionTransition, type AttributionNorm } from "@eval/agents/attribution";
+import { responsibilityComponentName, responsibilityComponent, type ResponsibilityMaterial, type AttributionExecutionNode, type AttributionTransition, type AttributionNorm } from "@eval/agents/attribution";
 import type { JsonObject } from "@eval/contracts";
 import { tableChecksPresentation } from "./attribution-presentation.js";
 import type { RawInput } from "../inputs/types.js";
@@ -14,7 +14,12 @@ export function attributionNavigation(answer: JsonObject, raw: RawInput, inputId
       answer: { ...row.answer, evidence: reference(row.answer.evidence) },
       sources: row.sources.map(source => ({ ...source, evidence: reference(source.evidence) })),
     }))) : [];
-  return { table_checks, nodes: (answer.execution_nodes as AttributionExecutionNode[]).map(node => {
+  const responsibility_choices = (answer.transitions as AttributionTransition[]).filter(t => t.execution_node_index !== null).map(t => ({
+    transition_index:t.transition_index, execution_node_index:t.execution_node_index,
+    message_index:(answer.execution_nodes as AttributionExecutionNode[]).find(n=>n.execution_node_index===t.execution_node_index)!.message_index,
+    component:responsibilityComponent(answer as unknown as ResponsibilityMaterial, raw, t.transition_index), kind:t.kind,
+  }));
+  return { table_checks, responsibility_choices, nodes: (answer.execution_nodes as AttributionExecutionNode[]).map(node => {
     const message = raw.messages[node.message_index];
     const outputs = Array.isArray(message.output) ? message.output : [];
     const calls = outputs.flatMap(value => value && typeof value === "object" && Array.isArray(value.tool_calls) ? value.tool_calls : []);
@@ -51,11 +56,13 @@ export function initialAttributionMaterial(answer: JsonObject, raw: RawInput, na
       model_calls: navigation.nodes.filter(node => node.kind === "model").length,
       tool_calls: navigation.nodes.filter(node => node.kind === "tool").length,
       execution_nodes: navigation.nodes.length, transfer_boundaries: navigation.boundaries.filter(boundary => boundary.kind === "transfer").length,
-      entries: nodes.map(({ actor_index: _actor, ...node }) => node), offset: 0, total: navigation.nodes.length,
+      entries: nodes.map(({ actor_index: _actor, ...node }) => ({...node,
+        responsibility_choices:navigation.responsibility_choices.filter(c=>c.execution_node_index===node.execution_node_index)})), offset: 0, total: navigation.nodes.length,
       has_more: nodes.length < navigation.nodes.length,
       next_request: nodes.length < navigation.nodes.length ? { candidate, view: "nodes", offset: nodes.length } : null,
       read_request: { candidate, view: "nodes", offset: 0 },
     },
+    final_generation_choices: navigation.responsibility_choices.filter(c=>c.component==='终稿生成轮'),
     table_check_count: navigation.table_checks.length,
     ...(navigation.table_checks.length ? { table_check_request: { candidate, view: "table_checks", offset: 0 } } : {}),
     norm_directory: (answer.norm_directory as AttributionNorm[]).map(norm => ({ ...norm,

@@ -255,17 +255,13 @@
                               "additionalProperties": false,
                               "required": [
                                 "component",
-                                "responsibility_boundary",
                                 "attribution_reason"
                               ],
                               "properties": {
                                 "component": {
                                   "type": "string",
-                                  "minLength": 1
-                                },
-                                "responsibility_boundary": {
-                                  "type": "string",
-                                  "minLength": 1
+                                  "minLength": 1,
+                                  "description": "程序按真实调用职责生成的中文名称，如终稿生成轮、Expert 推理轮、finquery 取数服务；确实无法定位才填责任主体未确定。"
                                 },
                                 "attribution_reason": {
                                   "type": "string",
@@ -316,7 +312,8 @@
           },
           "component": {
             "type": "string",
-            "minLength": 1
+            "minLength": 1,
+            "description": "程序按真实调用职责生成的中文名称，如终稿生成轮、Expert 推理轮、finquery 取数服务；确实无法定位才填责任主体未确定。"
           },
           "label": {
             "type": "string",
@@ -369,17 +366,13 @@
                     "additionalProperties": false,
                     "required": [
                       "component",
-                      "responsibility_boundary",
                       "attribution_reason"
                     ],
                     "properties": {
                       "component": {
                         "type": "string",
-                        "minLength": 1
-                      },
-                      "responsibility_boundary": {
-                        "type": "string",
-                        "minLength": 1
+                        "minLength": 1,
+                        "description": "程序按真实调用职责生成的中文名称，如终稿生成轮、Expert 推理轮、finquery 取数服务；确实无法定位才填责任主体未确定。"
                       },
                       "attribution_reason": {
                         "type": "string",

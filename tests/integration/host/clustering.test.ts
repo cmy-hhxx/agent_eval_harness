@@ -77,7 +77,7 @@ test("a batch may create every component its own observations use", async () => 
     const evaluation = {
       ...attributionResult(false),
       Problem: [
-        { ...finding, problem_id: "p1", ...responsibilityFixture("Search"), related_responsibilities:[{...responsibilityFixture("最终回答组织"),responsibility_boundary:'实际调用：根据输入形成最终回答。',evidence_ids:[]}], text: "检索不足", reason: "检索结果不完整，模型仍给出确定结论。" },
+        { ...finding, problem_id: "p1", ...responsibilityFixture("Search"), related_responsibilities:[{...responsibilityFixture("最终回答组织"),evidence_ids:[]}], text: "检索不足", reason: "检索结果不完整，模型仍给出确定结论。" },
       ],
     };
     const dependencies = { [inputId]: { evaluation } } as unknown as Record<string, SubmissionReceipt | undefined>;
@@ -491,7 +491,7 @@ test("library statistics count a jointly attributed finding once", async () => {
   try {
     const plan = await buildPlan(config), task = plan.tasks.find(task => task.stage === "clustering")!;
     const evaluation = problemAttribution("5", "7c4e3ba8-8f7c-46cc-b8fb-3016e10ea2dd");
-    evaluation.Problem[0]!.related_responsibilities=[{...responsibilityFixture("Search"),responsibility_boundary:'实际调用：根据输入形成最终回答。',evidence_ids:[]}];
+    evaluation.Problem[0]!.related_responsibilities=[{...responsibilityFixture("Search"),evidence_ids:[]}];
     const receipts = Object.fromEntries(Object.values(task.dependencies).map(id => [id, attributedReceipt(id, evaluation)]));
     const { taskObservations } = await import("@eval/workflows/comparison");
     const observations = taskObservations(task, id => receipts[id]);

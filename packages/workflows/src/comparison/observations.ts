@@ -70,7 +70,7 @@ export function groupObservations(sources: ProblemSource[]): ClusteringObservati
             reason: finding.reason,
             evidence_status: finding.evidence_status,
             responsibilities: [finding,...finding.related_responsibilities??[]].filter(row=>row.component===component)
-              .map(row=>({component:row.component!,responsibility_boundary:row.responsibility_boundary,
+              .map(row=>({component:row.component!,
                 attribution_reason:row.attribution_reason,...(row.uncertainties?{uncertainties:row.uncertainties}:{})})),
           },
         });

@@ -16,7 +16,7 @@ export { buildAttributionExecutionNodes, buildAttributionTransitions, type Attri
 export { attributionNormDirectory, type AttributionNorm } from "./norm-directory.js";
 export { numericReferenceDirectory } from "./units.js";
 export * from "./types.js";
-export { responsibilityLabels,responsibilityComponentName,responsibilityDisplay,responsibilityTransition } from "./responsibility.js";
+export { responsibilityLabels,responsibilityComponentName,responsibilityDisplay,responsibilityComponent,type ResponsibilityMaterial } from "./responsibility.js";
 export { attributionTableChecks, attributionTableReview } from "./table-review.js";
 export type { TableReviewConcern } from "./table-review.js";
 // Attribution resolves evidence IDs into source locations before the result is accepted.

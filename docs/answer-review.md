@@ -15,7 +15,7 @@ AIME 使用 workflow: answer-review。每条回答先完成 Attribution，通过
 | is_correct | 仅判断与给定标准答案是否一致；无标准答案固定 null，确实无法判断时为 null |
 | correct_reason | 有标准答案时说明比较对象、依据和原因；无标准答案固定 null |
 
-每条问题使用 `problem_id/text/reason/evidence_status/evidence/responsibility_boundary/component/attribution_reason`，有真实缺口时增加 `uncertainties`，确有独立传播或放大时增加 `related_responsibilities`，依赖计算时增加 `calculations`。问题编号、主体名称和证据坐标由程序填写；模型只选稳定编号并写判断。`evidence_status` 为“已确认”或“待核实”，与责任是否已知分开。证据原文去重，`purposes` 标注“问题”“归因”或两者。关联责任只保留一层主体—理由—证据关系。仅有输入输出差异不证明隐藏机制；已知参数生成调用不能因无隐藏推理而写未知。
+每条问题使用 `problem_id/text/reason/evidence_status/evidence/component/attribution_reason`，有真实缺口时增加 `uncertainties`，确有独立传播或放大时增加 `related_responsibilities`，依赖计算时增加 `calculations`。问题编号、主体名称和证据坐标由程序填写；模型只选稳定编号并写判断。`evidence_status` 为“已确认”或“待核实”，与责任是否已知分开。证据原文去重，`purposes` 标注“问题”“归因”或两者。关联责任只保留一层主体—理由—证据关系。仅有输入输出差异不证明隐藏机制；已知参数生成调用不能因无隐藏推理而写未知。
 
 不再要求 strengths、逐项 criterion_assessments、core_assessment、meets_core、core_reason、维度、阶段、重要性、功能分类或重复调查表。原问与适用规则继续作为判断依据。计算只在问题判断确实依赖计算时记录，并保留来源、单位、期间、分母及程序复算能力。
 
@@ -63,8 +63,7 @@ npm run eval -- run --stage attribution --run-id answer-review-run --config conf
 | reason | 缺陷成立依据、原句限定及实际影响，必填 | 模型 |
 | evidence_status | 已确认或待核实，仅描述缺陷确定性 | 模型 |
 | evidence | 一份去重原文；用途为问题、归因或两者 | 模型选 index/purposes，程序解析原文坐标；图片观察由模型写 |
-| responsibility_boundary | 实际调用的输入到输出过程说明；不含责任判词 | 模型内部选编号，程序组装文字 |
-| component | 真实主体及本次调用任务；无法定位为“责任主体未确定” | 程序 |
+| component | 报表中的组件展示名；动作写归责说明，真实断点才填“责任主体未确定” | 程序 |
 | attribution_reason | 谁在哪个边界形成问题，依据支持到哪里；未知则说明断点 | 模型 |
 | uncertainties | 具体缺口、推断或替代解释；无则省略 | 模型 |
 | related_responsibilities | 仅独立传播或放大时填写边界、理由、证据引用及必要缺口 | 模型选择，程序解析主体；不复制原文 |
@@ -76,8 +75,8 @@ npm run eval -- run --stage attribution --run-id answer-review-run --config conf
 
 归因接收口径：证据业务硬校验已关闭，不再因必读覆盖、边界前后匹配、上游来源追查或原数证据匹配触发内容修复。保留 Schema、稳定编号与来源坐标解析、程序身份一致性及计算复算。技术接收不证明评审有效，证据相关性、缺陷成立与语义完成性须真实样本抽审。公共 Runtime 的动态必读受保护预算及无进展停止仍保留，归因不再注册强制必读门。
 
-正式 `responsibility_boundary` 为程序生成的可读过程字符串，`component` 为非空字符串，包含真实主体及本次调用任务；未定位主体固定为“责任主体未确定”，模型须在归责说明和未确定事项说明断点。模型提交仍选择稳定边界编号，不能自行填写边界说明或主体名称。摘要及判断正文使用简洁简体中文，真实工具名与原文引文保留原语言，不能只用节点或证据编号代替解释。
+正式 Problem 及关联责任不输出 `responsibility_boundary`；该稳定编号仅保留在内部模型提交与收据中，用于精确关联真实调用。程序按组件健康度报表生成 component 展示名称，不用展示名称反查身份或去重调用；内部模型名及原始坐标仍可溯源。正文说明具体动作和偏差。
 
 归因探索与修复共用从开始即公开的既有总额度，提交不再解锁额外工具次数，不增加总预算或重试。进度 Token 仅累计已归档尝试，同时显示待归档次数和统计覆盖范围；零值不代表没有实际消耗。checkpoint.writeMs 是累计持久化墙钟时间，不是事件循环阻塞时间；snapshotMs 仅衡量快照构造，不涵盖全部持久化 CPU。
 
-责任组件保留实际登记的 planner-search、planner-finquery、finquery、shell、web_search、web_fetch 等名称；同名多次调用附任务说明。实际模型名或 llm-call-k 标识只能来自轨迹，不用抽象职能标签替换真实入口。参考组件报表的风险信号不自动成立为缺陷。
+责任组件对齐组件健康度报表：规划子模型、Expert 推理轮、终稿生成轮及具体工具名称由实际调用解析；内部模型代号只用于溯源。展示名相同不合并不同调用。报表风险信号不自动成立为缺陷。

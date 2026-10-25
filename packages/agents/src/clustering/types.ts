@@ -17,7 +17,7 @@ export interface ClusteringExample {
   reason: string;
   evidence_status: "已确认" | "待核实";
   responsibilities?: {
-    component:string;responsibility_boundary:string;attribution_reason:string;uncertainties?:string[];
+    component:string;attribution_reason:string;uncertainties?:string[];
   }[];
 }
 /** One deduplicated problem observation: identical proposals collapsed before clustering. */

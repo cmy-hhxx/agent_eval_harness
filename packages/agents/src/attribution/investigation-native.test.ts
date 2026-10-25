@@ -54,7 +54,7 @@ function material(messages: RawInput["messages"], question: string) {
 test('parameter creator remains identifiable without prose or hidden reasoning',()=>{
  const f=nativeFixture(),edge=f.transitions.find(t=>t.kind==='request_formation')!;
  const display=responsibilityDisplay(f.binding.request,edge.transition_index);
- assert.match(display.component,/XOM取数参数/);assert.match(display.responsibility_boundary,/生成 finquery 调用参数/);
+ assert.equal(display.component,'Expert 推理轮');assert(!Object.hasOwn(display,'responsibility_boundary'));
  assert(!display.component.includes('责任主体未确定'));
 });
 test('boundary selection stays a bounded integer rather than an expanded enumeration',()=>{

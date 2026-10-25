@@ -86,7 +86,7 @@
               "null"
             ],
             "minimum": 1,
-            "description": "选择产生问题的真实调用边界编号。找不到实际形成调用才填null，并在attribution_reason和uncertainties说明哪里缺记录。"
+            "description": "从已展示的 responsibility_choices 或 final_generation_choices 选择实际形成问题的调用编号；只有真实主体无法定位才填null。未查编号、没有隐藏推理不等于主体未知。编号只保留在内部，正式结果由程序显示组件名称。"
           },
           "attribution_reason": {
             "type": "string",
@@ -143,7 +143,7 @@
                 }
               }
             },
-            "description": "只有另一个组件独立传播或扩大了同一问题才填写。正常传递、引用或渲染不算；没有就省略。"
+            "description": "仅在有独立传播或放大证据时填写。上游错误和终稿错误同时出现不等于发生传播；实际输入未包含该错误时不要关联。"
           },
           "calculations": {
             "type": "array",
@@ -220,39 +220,35 @@
                   "description": "填写参与计算的原数及其单位、期间、含义和证据编号。比值用numerator、denominator；相对变化用base、observed；复利用rate、periods，可选base；年化用value；四则运算自行命名变量。区间比值将denominator替换为denominator_lower、denominator_upper。"
                 },
                 "result": {
-                  "oneOf": [
-                    {
+                  "description": "单个结果填十进制字符串，如\"2.10\"，不要填JSON数字；区间结果才填写上下界对象。",
+                  "type": [
+                    "string",
+                    "object"
+                  ],
+                  "minLength": 1,
+                  "additionalProperties": false,
+                  "required": [
+                    "lower",
+                    "upper",
+                    "include_lower",
+                    "include_upper"
+                  ],
+                  "properties": {
+                    "lower": {
                       "type": "string",
                       "minLength": 1
                     },
-                    {
-                      "type": "object",
-                      "additionalProperties": false,
-                      "required": [
-                        "lower",
-                        "upper",
-                        "include_lower",
-                        "include_upper"
-                      ],
-                      "properties": {
-                        "lower": {
-                          "type": "string",
-                          "minLength": 1
-                        },
-                        "upper": {
-                          "type": "string",
-                          "minLength": 1
-                        },
-                        "include_lower": {
-                          "type": "boolean"
-                        },
-                        "include_upper": {
-                          "type": "boolean"
-                        }
-                      }
+                    "upper": {
+                      "type": "string",
+                      "minLength": 1
+                    },
+                    "include_lower": {
+                      "type": "boolean"
+                    },
+                    "include_upper": {
+                      "type": "boolean"
                     }
-                  ],
-                  "description": "单个结果填十进制字符串，如\"2.10\"，不要填JSON数字；区间结果才填写上下界对象。"
+                  }
                 },
                 "scale": {
                   "enum": [
