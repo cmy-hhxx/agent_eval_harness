@@ -51,6 +51,7 @@ for (const mode of ['revised','unsubmitted','invalid','budget'] as const) test('
         return;
       }
       assert.equal(session,2);assert.equal(options.spec.evaluation.systemPrompt,profile.completionReview);
+      assert.equal(options.spec.model.model,'test');assert.equal(options.spec.model.thinking,'low');
       assert.deepEqual(JSON.parse(prompt),{initial_result:candidate});
       assert.equal(options.spec.recovery,undefined);
       if(mode==='unsubmitted')return;
@@ -64,7 +65,7 @@ for (const mode of ['revised','unsubmitted','invalid','budget'] as const) test('
   const prepared=agents.prepare(binding),spec:AttemptSpec={runId:'test',taskId:'task',attemptId:'attempt',inputRevision:1,engine,
     evaluation:prepared.evaluation,policy:{...DEFAULT_POLICY,repairAttempts:mode==='budget'?1:0,maxToolCalls:1,idleTimeoutSeconds:1},prompt:'Review.',evidenceBank:[],
     inputs:[{id,name:'answer'}],hostUrl:host.url,deadline:Date.now()+10000,
-    model:{provider:'test',baseUrl:'http://127.0.0.1',api:'openai-completions',apiKeyEnv:'TEST_KEY',model:'test',thinking:'off',contextWindow:10000,maxOutputTokens:1000}};
+    model:{provider:'test',baseUrl:'http://127.0.0.1',api:'openai-completions',apiKeyEnv:'TEST_KEY',model:'test',thinking:'high',contextWindow:10000,maxOutputTokens:1000}};
   try{
     await store.activate(spec);await request(worker.url+'/api/attempts','POST',spec);
     const status=await waitForTestState(()=>request<AttemptStatus>(worker.url+'/api/attempts/attempt'),value=>value.state!=='running','completion review did not finish');

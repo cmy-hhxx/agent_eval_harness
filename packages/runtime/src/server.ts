@@ -856,7 +856,8 @@ export async function startWorker(
         const {read_requests,...material}=pendingReview;
         const prompt=JSON.stringify(projectEvidenceReferences(material,audit.evidenceBank!));
         await runtime.context.persistEvidenceBank?.([...audit.evidenceBank!]);
-        const reviewSpec={...spec,prompt,recovery:undefined,evaluation:{...spec.evaluation,
+        const reviewSpec:AttemptSpec={...spec,prompt,recovery:undefined,
+          model:{...spec.model,thinking:spec.model.thinking==='off'?'off':'low'},evaluation:{...spec.evaluation,
           systemPrompt:spec.evaluation.completionReview!}};
         attempt.session=await createSession(reviewSpec);
         audit.traceReads.push(...(read_requests as unknown as TraceRead[]??[]));
