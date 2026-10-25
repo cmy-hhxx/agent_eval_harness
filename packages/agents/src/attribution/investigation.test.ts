@@ -5,7 +5,7 @@ import { AgentRegistry } from "@eval/host";
 import { attributionAgent, type AttributionResult } from "./index.js";
 import { businessChainFixture } from "../../../../tests/fixtures/business-chain.js";
 import { attributionSubmission } from "../../../../tests/fixtures/attribution-submission.js";
-import { businessChainDirectoryIssues, investigationIssues } from "./investigation.js";
+import { businessChainDirectoryIssues, businessChainReads, investigationIssues } from "./investigation.js";
 import { responsibilityIssues } from "./responsibility.js";
 import { bindAttributionMaterial } from "@eval/workflows/review";
 import { cite, evidenceSources, selectEvidenceSource } from "@eval/tools";
@@ -59,6 +59,13 @@ test("readable but unread actual input cannot be called missing, including an un
   f.result.findings[0].assessment.evidence_status = "uncertain";
   assert.throws(() => registry.resolve(f.binding, attributionSubmission(f.binding.request, f.result, f.audit), f.audit),
     error => error instanceof ValidationError && error.issues!.some(issue => issue.code === "investigation_read_required"));
+});
+test("uncited captured chains retain protected input and return reads before a finding is judged", () => {
+  const f=businessChainFixture(), before=businessChainReads(f.binding.request);
+  f.chain.references=[];
+  assert.deepEqual(businessChainReads(f.binding.request),before);
+  assert(before.some(read=>read.message_index===f.chain.return_indices[0]));
+  assert(before.some(read=>read.message_index===f.chain.context_indices.at(-1)));
 });
 test("complete serialized return coverage proves its real text leaves without requiring an impossible duplicate read", () => {
   const f = businessChainFixture(), message_index = f.chain.return_indices[0];

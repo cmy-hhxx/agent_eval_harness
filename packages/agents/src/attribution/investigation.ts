@@ -23,7 +23,7 @@ function readCovered(audit: ToolAudit, read: TraceRead, raw: { messages: unknown
     start: leaf.start, end: leaf.end }).covered;
 }
 export function businessChainReads(request: AgentRequest): TraceRead[] {
-  return [...new Map(businessChainDirectory(request).filter(chain => chain.references.length).flatMap(chain => chain.checkpoints
+  return [...new Map(businessChainDirectory(request).flatMap(chain => chain.checkpoints
     .filter(point => critical.has(point.step)).flatMap(point => point.evidence.flatMap(item => {
       const read = target(item); return read ? [[canonical(read), read] as const] : [];
     })))).values()];

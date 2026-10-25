@@ -64,17 +64,20 @@ test('Score and unified Attribution run independently, omit SYS/DEV, and rewrite
    const refs=(ids:string[])=>ids.map(id=>id==='q'?rows[0].evidence_id:rows[1].evidence_id);
    if(profile==='evidence')value={facts:[],unresolved:[]};
    else if(profile.startsWith('axis-')||profile==='dimensions'){
+    const start=Array.from(q).indexOf('2'),number=await options.execute(materialTool,{action:'quote',source_id:'Q',start,end:start+1});
+    const calculated=await options.execute('score_calculate',{operation:'arithmetic',expression:'x+x',inputs:{x:{evidence_id:(number.details as any).evidence_id,number_token:'2',role:'原问数值',unit:''}},result_unit:''});
+    assert.notEqual(calculated.isError,true,JSON.stringify(calculated));
     const axes=profile==='dimensions'?['T','E','L','A','U','D']:[profile.slice(-1).toUpperCase()];
     value={evaluations:value.evaluations.filter((r:any)=>axes.includes(r.item_id[0])).map(({item_name:_name,grade:_grade,...r}:any)=>({...r,evidence_ids:refs(r.evidence_ids)})),
      diagnostics:value.diagnostics.filter((r:any)=>axes.includes(r.diagnostic_id[0])).map(({diagnostic_name:_name,...r}:any)=>({...r,evidence_ids:refs(r.evidence_ids)})),findings:[],verification_requests:[]};
-   }else{const {grade:_grade,...rating}=value.final_answer_score;value={final_answer_score:{...rating,evidence_ids:refs(rating.evidence_ids)},finding_groups:[],explicit_probability:null,probability_evidence_ids:[]};}
+   }else{assert(!options.spec.evaluation.toolNames.includes('score_external'));const source=(inspect.details as {sources:{source_id:string}[]}).sources.find(row=>row.source_id.startsWith('V_CALC_'));assert(source);const calculation=await read(source.source_id);assert.equal(JSON.parse(calculation).result.result,'4','independent total retains the grading session calculation');const {grade:_grade,...rating}=value.final_answer_score;value={final_answer_score:{...rating,evidence_ids:refs(rating.evidence_ids)},finding_groups:[],explicit_probability:null,probability_evidence_ids:[]};}
   }
   const accepted=await options.execute('submit_evaluation',value);assert.notEqual(accepted.isError,true,JSON.stringify(accepted));
  },async abort(){},async dispose(){}};}};
  const worker=await startWorker(backend,path.join(fixture.directory,'worker'));t.after(()=>worker.close());
  await runEvaluation({...services,agents,taskSource:answerReviewWorkflow,repository:answerReviewRepository,report:reportAnswerReview,runId:'flow',output:config.output,config,plan,
   engine:'pi',identity:fakeIdentity,evaluatorVersion:fakeEvaluatorVersion,modelForStage:stage=>fixture.modelForStage(stage==='score'?'attribution':stage),policy:config.execution,concurrency:3,retries:0,retryDelaySeconds:0,workerUrls:[worker.url]});
- const state=await answerReviewRepository.readRun(path.join(config.output.path,'flow'));assert.equal(Object.keys(state.receipts).length,6,JSON.stringify(state.manifest.states));assert.equal(validateAnswerReview(state).valid,true);
+ const state=await answerReviewRepository.readRun(path.join(config.output.path,'flow'));assert.equal(Object.keys(state.receipts).length,5,JSON.stringify(state.manifest.states));assert.equal(validateAnswerReview(state).valid,true);
  const s=state.manifest.tasks.find(t=>t.stage==='score'&&(t.data as any).score_part==='final')!,a=plan.tasks.find(t=>t.stage==='attribution')!;
  assert.equal((state.receipts[s.id].evaluation as ScoreResult).final_answer_score.score,10);
  assert.equal(state.receipts[a.id].submissionStats?.contentSubmissions,2,'English rejection is repaired in-session and remains counted');
@@ -109,7 +112,7 @@ test('Score and unified Attribution run independently, omit SYS/DEV, and rewrite
   runId:'flow',output:delta.output,config:delta,plan:await planAnswerReview(delta),engine:'pi',identity:fakeIdentity,
   evaluatorVersion:fakeEvaluatorVersion,modelForStage:fixture.modelForStage,policy:delta.execution,concurrency:1,retries:0,retryDelaySeconds:0,workerUrls:[worker.url]});
  const appended=await answerReviewRepository.readRun(run);
- assert.equal(Object.keys(appended.receipts).length,8,JSON.stringify(appended.manifest.states));
+ assert.equal(Object.keys(appended.receipts).length,Object.keys(before).length+2,JSON.stringify(appended.manifest.states));
  const added=appended.manifest.tasks.find(t=>(t.data as any).candidate.trace_id==='trace-two')!;
  assert.equal(appended.manifest.states[added.id].status,'succeeded');
  assert.equal(appended.receipts[added.id].exported!.row.trace_id,'trace-two');

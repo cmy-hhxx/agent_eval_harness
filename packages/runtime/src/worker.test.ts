@@ -1642,6 +1642,48 @@ test("a session stopping after rejected submission repairs within the same attem
   } finally { await fixture.close(); }
 });
 
+test("submission batches independent short required sources before charging a verdict", async () => {
+  const material = "abc--def--ghi";
+  const targets: TraceRead[] = [[0,3],[5,8],[10,13]].map(([start,end]) => ({candidate:"answer",message_index:0,kind:"text",path:"/content",start,end}));
+  const fixture = await harness(async options => ({async run() {
+    const pending = await submitFor(options,{ok:true});
+    const feedback = JSON.parse(pending.content[0].text!);
+    assert.equal(feedback.material_pending,true);
+    assert.equal(feedback.read_requests.length,3);
+    const pages=pending.content.slice(1).map(block=>JSON.parse(block.text!)).filter(page=>Array.isArray(page.evidence));
+    assert.deepEqual(pages.map(page=>page.evidence[0].quote),["abc","def","ghi"]);
+    assert.equal((await submitFor(options,{ok:true})).terminate,true);
+  },async abort(){},async dispose(){}}),{material,policy:{maxToolCalls:1,repairAttempts:0},profile:{
+    requiredReads:()=>targets,
+    validate(_request,_value,audit){assert(targets.every(target=>traceReadCoverage(audit,target).covered));},
+  }});
+  try {
+    await fixture.start();const status=await fixture.done();assert.equal(status.state,"succeeded",status.error);
+    const receipt=(await fixture.store.receipt(fixture.spec.taskId))!;
+    assert.equal(receipt.audit.requiredReadCalls,3);
+    assert.equal(receipt.submissionStats!.contentSubmissions,1);
+  }finally{await fixture.close();}
+});
+
+test("larger output budgets deliver consecutive required pages in one bounded feedback", async () => {
+  const material='原文🧪\n'+"x".repeat(50000), maxOutputChars=65536;
+  const target:TraceRead={candidate:"answer",message_index:0,kind:"text",path:"/content",start:0,end:material.length};
+  const fixture=await harness(async options=>({async run(){
+    const pending=await submitFor(options,{ok:true});
+    const feedback=JSON.parse(pending.content[0].text!);
+    assert(feedback.read_requests.length>1);
+    const pages=pending.content.slice(1).map(block=>JSON.parse(block.text!)).filter(page=>Array.isArray(page.evidence));
+    assert.equal(pages.flatMap(page=>page.evidence.map((item:{quote:string})=>item.quote)).join(''),material);
+    assert(pending.content.reduce((size,block)=>size+(block.text?.length??0),0)<=maxOutputChars);
+    assert.equal((await submitFor(options,{ok:true})).terminate,true);
+  },async abort(){},async dispose(){}}),{material,policy:{maxOutputChars,maxToolCalls:1,repairAttempts:0},profile:{
+    validate(_request,_value,audit){assert(traceReadCoverage(audit,target).covered);},
+  }});
+  try{await fixture.start();const status=await fixture.done();assert.equal(status.state,'succeeded',status.error);
+    assert.equal((await fixture.store.receipt(fixture.spec.taskId))!.submissionStats!.contentSubmissions,1);
+  }finally{await fixture.close();}
+});
+
 test("submission delivers missing material before charging a content attempt", async () => {
   const material = "图表数据".repeat(12344);
   const target: TraceRead = { candidate: "answer", message_index: 0, kind: "text", path: "/content", start: 0, end: material.length };

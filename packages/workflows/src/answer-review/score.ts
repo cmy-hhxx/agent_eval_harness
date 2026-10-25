@@ -3,7 +3,7 @@ import type {AgentBinding,JsonObject,PlannedTask,ReviewAudit,ReviewCase,RunState
 import {scoreAxes,scoreAxisPart,combineScoreAxes,scoreFinalMaterial,type ScoreAxis,type ScoreAxisResult,type ScoreEvidence,type ScoreRepair} from '@eval/agents/score';
 import type { Candidate } from "@eval/workflows/inputs";
 export interface ReviewTaskData {candidate:Candidate;rewriteOf?:string;score_part?:'evidence'|'axis'|'axes'|'final'|'rejected';score_axis?:ScoreAxis;score_axes?:ScoreAxis[];score_repair_used?:boolean;score_evidence_used?:boolean}
-export function scoreEvidenceTask(candidate:Candidate):PlannedTask{return {id:randomUUID(),stage:'score',inputIds:{case:candidate.input_id},dependencies:{},data:{candidate,score_part:'evidence'} satisfies ReviewTaskData};}
+export function scoreTask(candidate:Candidate):PlannedTask{return {id:randomUUID(),stage:'score',inputIds:{case:candidate.input_id},dependencies:{},data:{candidate,score_part:'axes',score_axes:[...scoreAxes]} satisfies ReviewTaskData};}
 export function isFormalScore(task:PlannedTask,receipt:SubmissionReceipt|undefined){
   return task.stage==='score'&&receipt&&('final_answer_score' in (receipt.evaluation as object)||'assessment_status' in (receipt.evaluation as object));
 }
@@ -26,7 +26,10 @@ function coupledAxes(requested:readonly ScoreAxis[],dependencies:Record<string,s
   return scoreAxes.filter(axis=>selected.has(axis));
 }
 export function bindScore(task:PlannedTask,source:ReviewCase&{view:JsonObject},dependencies:Record<string,SubmissionReceipt|undefined>):AgentBinding{
-  const data=task.data as ReviewTaskData,seed=dependencies.evidence?proof(dependencies.evidence):undefined;
+  const data=task.data as ReviewTaskData;
+  const latest=Object.values(dependencies).filter((receipt):receipt is SubmissionReceipt=>!!receipt?.audit.review)
+    .sort((a,b)=>(b.acceptedAt??0)-(a.acceptedAt??0))[0];
+  const seed=latest?proof(latest):structuredClone(source.review_seed??{quotes:[],sources:[],actions:[],viewed:[],searches:[]});
   const current={...source,...(seed?{review_seed:seed}:{} )};
   const feedback=dependencies.feedback?.evaluation as ScoreRepair|undefined;
   const collected=dependencies.evidence?.evaluation as ScoreEvidence|undefined;
@@ -55,6 +58,8 @@ export const advanceScore:NonNullable<WorkflowDefinition['advance']>=(completed,
   if(completed.stage!=='score')return {tasks:[]};
   const data=completed.data as ReviewTaskData;
   if(isFormalScore(completed,receipt))return {tasks:[]};
+  if(data.score_part==='axes'&&!Object.keys(completed.dependencies).length)
+    return {tasks:[task({...data,score_part:'final',score_axis:undefined,score_axes:undefined},Object.fromEntries(scoreAxes.map(axis=>[axis,completed.id])))]};
   if(data.score_part==='evidence'){
     const value=receipt.evaluation as ScoreEvidence;
     const selected=coupledAxes(data.score_evidence_used&&!value.full_rescore_reason?scoreAxes.filter(axis=>value.changed_item_ids.some(id=>id.startsWith(axis))):scoreAxes,completed.dependencies,state);
@@ -72,7 +77,7 @@ export const advanceScore:NonNullable<WorkflowDefinition['advance']>=(completed,
       return {tasks:[task({...data,score_part:'evidence',score_evidence_used:true},{...completed.dependencies,feedback:completed.id})]};
     }
     if(data.score_repair_used)return {tasks:[task({...data,score_part:'rejected'},{source:completed.id})]};
-    const dependencies={...completed.dependencies},axes=coupledAxes(repair.axis_ids,dependencies,state),panel=judgments({...data,score_repair_used:true},axes,{evidence:dependencies.evidence,feedback:completed.id});
+    const dependencies={...completed.dependencies},axes=coupledAxes(repair.axis_ids,dependencies,state),panel=judgments({...data,score_repair_used:true},axes,{...dependencies,feedback:completed.id});
     for(const axis of axes)dependencies[axis]=panel.id;
     return {tasks:[panel,task({...data,score_repair_used:true},dependencies)]};
   }

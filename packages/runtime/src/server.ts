@@ -27,7 +27,7 @@ import {
   type ValidationIssue,
 } from "@eval/contracts";
 import { ArtifactStore, exists, readJson, writeJson } from "@eval/data";
-import { HttpError, ValidationError, canonical, errorText, redact, safeId, validateEvidenceBank, type EvidenceBank } from "@eval/contracts";
+import { HttpError, ValidationError, canonical, errorText, evidenceSources, redact, safeId, validateEvidenceBank, type EvidenceBank } from "@eval/contracts";
 import { body, json, listen, request } from "./http.js";
 import { createRegistry, textResult, ToolRuntime, traceReadCoverage, type ToolRegistry, type ExecutableTool } from "@eval/tools";
 import { contentToolName, modelEventForLog, isModelQuotaExhausted } from "./sdk-utils.js";
@@ -277,27 +277,47 @@ export async function startWorker(
           isError: true,
         };
       };
+      const materialSources = new Map<string, ReturnType<typeof evidenceSources>>();
       const supplyRequiredMaterial = async () => {
-        for (const target of spec.evaluation.requiredReads ?? []) {
-          const missing = traceReadCoverage(audit, target).missing[0];
-          if (!missing) continue;
-          const args = { candidate: target.candidate, message_index: target.message_index, path: target.path,
-            offset: missing.start, max_chars: Math.min(16000, target.end - missing.start) };
-          emit(attempt, "tool_start", { name: "read_trace", args, required_material: true });
-          const read = await runtime.execute("read_trace", args, controller.signal, explorationLimit());
-          emit(attempt, "tool_end", { name: "read_trace", result: read, required_material: true });
-          if (read.isError) throw new Error(read.content.map(item => item.text ?? "").join("\n"));
-          if (traceReadCoverage(audit, target).missing[0]?.start === missing.start)
-            throw new Error("Required material read made no progress");
-          reserveFileDraft();
-          // Deliver actual source pages before evaluating a draft; no acceptance or content charge yet.
-          const feedback = textResult({ accepted: false, material_pending: true,
-            next_tool: nextContentTool(), read_request: args, instructions: spec.evaluation.toolDescriptions.read_trace,
-            budget: { content_remaining: Math.max(0, 1 + spec.policy.repairAttempts - submissions) },
-          });
-          return { ...feedback, content: [...feedback.content, ...read.content] };
+        const content: ReturnType<typeof textResult>["content"] = [];
+        const read_requests: {candidate:string;message_index:number;path:string;offset:number;max_chars:number}[] = [];
+        let used = 0;
+        reading: for (const target of spec.evaluation.requiredReads ?? []) {
+          for (;;) {
+            const missing = traceReadCoverage(audit, target).missing[0];
+            if (!missing) break;
+            const key = `${target.candidate}:${target.message_index}`;
+            if (!materialSources.has(key)) materialSources.set(key,
+              evidenceSources((inputs.get(target.candidate) as {messages:unknown[]}).messages[target.message_index]));
+            const source = materialSources.get(key)!.find(source => source.kind === target.kind && source.path === target.path);
+            if (!source) throw new Error("Required material source is unavailable");
+            // Count real escaped text, reserving navigation and budget space.
+            // A page larger than the remaining response is delivered on its own.
+            const estimate = JSON.stringify(source.text.slice(missing.start,Math.min(target.end,missing.start+16000))).length + 4096;
+            if (content.length && used + estimate > spec.policy.maxOutputChars - 2048) break reading;
+            const args = { candidate: target.candidate, message_index: target.message_index, path: target.path,
+              offset: missing.start, max_chars: Math.min(16000, target.end - missing.start) };
+            emit(attempt, "tool_start", { name: "read_trace", args, required_material: true });
+            const read = await runtime.execute("read_trace", args, controller.signal, explorationLimit());
+            emit(attempt, "tool_end", { name: "read_trace", result: read, required_material: true });
+            if (read.isError) throw new Error(read.content.map(item => item.text ?? "").join("\n"));
+            if (traceReadCoverage(audit, target).missing[0]?.start === missing.start)
+              throw new Error("Required material read made no progress");
+            const { budget: _budget, ...page } = read.details as Record<string, unknown>;
+            const pageContent = textResult(page).content;
+            content.push(...pageContent);
+            read_requests.push(args);
+            used += pageContent.reduce((total,item)=>total+(item.text?.length??0),0);
+          }
         }
-        return undefined;
+        if (!content.length) return undefined;
+        reserveFileDraft();
+        // Deliver every recorded page before judging the draft or charging a verdict.
+        const feedback = textResult({ accepted: false, material_pending: true,
+          next_tool: nextContentTool(), read_requests, instructions: spec.evaluation.toolDescriptions.read_trace,
+          budget: { content_remaining: Math.max(0, 1 + spec.policy.repairAttempts - submissions) },
+        });
+        return { ...feedback, content: [...feedback.content, ...content] };
       };
       const rejectedLoad = async (errors: ValidationIssue[]) => {
         fileErrors++;

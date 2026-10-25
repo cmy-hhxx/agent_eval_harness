@@ -11,7 +11,7 @@ import attributionOutputSchema from '../../../../schemas/workflow/answer-review-
 import rewrittenSchema from '../../../../schemas/workflow/rewritten.schema.json' with {type:'json'};
 import type {ScoreResult} from "@eval/agents/score";
 import {answerReviewMaterial} from "./material.js";
-import {scoreEvidenceTask,bindScore,advanceScore,scoreBlockedReason,isFormalScore,scoreExportState,type ReviewTaskData} from './score.js';
+import {scoreTask,bindScore,advanceScore,scoreBlockedReason,isFormalScore,scoreExportState,type ReviewTaskData} from './score.js';
 export {answerReviewMaterial} from "./material.js";
 export * from './incremental.js';
 export * from './watch.js';
@@ -30,7 +30,7 @@ export function attributionTextSlots(value:AttributionResult){return [{id:'summa
 export async function planAnswerReview(config:AnswerReviewConfig){
   const indexed=await collectInputs(config,undefined,{materializeInputs:false});
   const catalog=indexed.catalog,stages=config.reviewStages??['score','attribution'],tasks:PlannedTask[]=[];
-  for(const candidate of catalog)for(const stage of stages){const task:PlannedTask=stage==='score'?scoreEvidenceTask(candidate):{id:randomUUID(),stage,inputIds:{answer:candidate.input_id},dependencies:{},data:{candidate} satisfies TaskData};tasks.push(task);
+  for(const candidate of catalog)for(const stage of stages){const task:PlannedTask=stage==='score'?scoreTask(candidate):{id:randomUUID(),stage,inputIds:{answer:candidate.input_id},dependencies:{},data:{candidate} satisfies TaskData};tasks.push(task);
     if(stage==='attribution'&&config.rewrite.attribution)tasks.push({id:randomUUID(),stage:'rewrite',inputIds:{},dependencies:{source:task.id},data:{candidate,rewriteOf:task.id} satisfies TaskData});}
   const manifest={config,tasks,inputCatalog:catalog} as RunManifest,inputs=prepareInputs(await loadReviewInputs(manifest),catalog);
   const summary={workflow:'answer-review',cases:catalog.length,valid_inputs:catalog.length,score_tasks:tasks.filter(t=>t.stage==='score').length,attribution_tasks:tasks.filter(t=>t.stage==='attribution').length,rewrite_tasks:tasks.filter(t=>t.stage==='rewrite').length,criteria_tasks:0,comparison_tasks:0,issues:indexed.issues};
@@ -117,7 +117,7 @@ export const answerReviewWorkflow:WorkflowDefinition={
     const add=(task:PlannedTask)=>{manifest.tasks.push(task);manifest.states[task.id]={status:'pending',attempts:0};};
     for(const candidate of selected)for(const stage of stages){
       const key=canonical([stage,candidate.input_id]);let task=tasks.get(key);
-      if(!task){task=stage==='score'?scoreEvidenceTask(candidate):{id:randomUUID(),stage,inputIds:{answer:candidate.input_id},dependencies:{},data:{candidate} satisfies TaskData};add(task);tasks.set(key,task);}
+      if(!task){task=stage==='score'?scoreTask(candidate):{id:randomUUID(),stage,inputIds:{answer:candidate.input_id},dependencies:{},data:{candidate} satisfies TaskData};add(task);tasks.set(key,task);}
       if(stage==='attribution'&&config.rewrite.attribution&&!rewrites.has(task.id)){
         add({id:randomUUID(),stage:'rewrite',inputIds:{},dependencies:{source:task.id},data:{candidate,rewriteOf:task.id} satisfies TaskData});
         rewrites.add(task.id);
@@ -203,7 +203,7 @@ export async function appendAnswerReviewInputs(run:string,config:AnswerReviewCon
       if(!prior){catalog.push(candidate);known.set(key(candidate),candidate);added++;}
       for(const stage of config.reviewStages??['score','attribution']){
         const identity=canonical([stage,selected.input_id]);if(taskKeys.has(identity))continue;
-        const task:PlannedTask=stage==='score'?scoreEvidenceTask(selected):{id:randomUUID(),stage,inputIds:{answer:selected.input_id},dependencies:{},data:{candidate:selected} satisfies TaskData};
+        const task:PlannedTask=stage==='score'?scoreTask(selected):{id:randomUUID(),stage,inputIds:{answer:selected.input_id},dependencies:{},data:{candidate:selected} satisfies TaskData};
         state.manifest.tasks.push(task);state.manifest.states[task.id]={status:'pending',attempts:0};taskKeys.add(identity);
       }
     }

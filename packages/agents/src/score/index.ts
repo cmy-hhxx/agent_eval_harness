@@ -89,7 +89,8 @@ function resolveJudgments(request:AgentRequest,draft:unknown,audit:ToolAudit):Sc
     diagnostics:value.diagnostics.map(row=>({...row,diagnostic_name:scoreDirectory.diagnostics[row.diagnostic_id]})),
     evidence:quotes(request,audit,[...value.evaluations,...value.diagnostics,...value.findings])};
 }
-const axisProfiles=Object.fromEntries(scoreAxes.map(axis=>[`axis-${axis.toLowerCase()}`,profile(`axis-${axis.toLowerCase()}`,`axis-${axis.toLowerCase()}`,axisSchema,['score_material','read_artifact'],(request,draft,audit)=>{
+const judgmentTools=['score_material','score_calculate','score_external','read_artifact'];
+const axisProfiles=Object.fromEntries(scoreAxes.map(axis=>[`axis-${axis.toLowerCase()}`,profile(`axis-${axis.toLowerCase()}`,`axis-${axis.toLowerCase()}`,axisSchema,judgmentTools,(request,draft,audit)=>{
   const result=resolveJudgments(request,draft,audit);
   validateScoreAxis(request,result,audit,axis);
   for(const row of result.verification_requests)if(row.affected_item_ids.some(id=>!id.startsWith(axis)))fail('/verification_requests','只提请本轴的关键缺口。');
@@ -100,17 +101,23 @@ function dimensionAxes(request:AgentRequest):ScoreAxis[]{
   if(!axes?.length||new Set(axes).size!==axes.length||axes.some(axis=>!scoreAxes.includes(axis)))fail('/score_axes','评分阶段必须指定不重复的实际评审轴。');
   return axes;
 }
-function validateDimensions(request:AgentRequest,value:ScoreAxisResult,audit:ToolAudit){
+function validateDimensions(request:AgentRequest,value:ScoreAxisResult|ScoreException,audit:ToolAudit){
+  if('assessment_status' in value){validateScore(request,value,audit);return;}
   const axes=dimensionAxes(request),units=new Set(axes.flatMap(axis=>[axis+'1',axis+'2']));
   if(value.evaluations.length!==axes.length*2||value.diagnostics.length!==axes.length*4||
     value.evaluations.some(row=>!units.has(row.item_id))||value.diagnostics.some(row=>!axes.includes(row.diagnostic_id[0] as ScoreAxis))||
     [...value.findings,...value.verification_requests].some(row=>row.affected_item_ids.some(id=>!units.has(id))))fail('/evaluations','只提交指定轴的全部核心项、诊断与问题。');
   validateScoreJudgments(request,value,audit,axes);
 }
-const dimensionsProfile=profile('dimensions','dimensions',axisSchema,['score_material','read_artifact'],(request,draft,audit)=>{
-  const value=resolveJudgments(request,draft,audit);validateDimensions(request,value,audit);return value;
-},(request,value,audit)=>validateDimensions(request,value as ScoreAxisResult,audit));
-dimensionsProfile.resultSchema=axisResultSchema;
+function withException(schema:AgentProfile['submissionSchema'],exception:unknown):AgentProfile['submissionSchema']{
+  const {$defs,...normal}=schema as { $defs?:Record<string,unknown> };
+  return {$defs:{...$defs,exception},oneOf:[normal,{$ref:'#/$defs/exception'}]} as AgentProfile['submissionSchema'];
+}
+const dimensionsProfile=profile('dimensions','dimensions',withException(axisSchema,evidenceSchema.$defs.exception),judgmentTools,(request,draft,audit)=>{
+  const value='assessment_status' in (draft as object)?{...draft as ScoreException,case_id:material(request).case_id}:resolveJudgments(request,draft,audit);
+  validateDimensions(request,value,audit);return value;
+},(request,value,audit)=>validateDimensions(request,value as ScoreAxisResult|ScoreException,audit));
+dimensionsProfile.resultSchema=withException(axisResultSchema,evidenceResultSchema.$defs.exception);
 evidenceProfile.resultSchema=evidenceResultSchema;
 function scopedJudgments(axes:ScoreAxis[]){
     const schema=structuredClone(axisSchema),units=axes.flatMap(axis=>[axis+'1',axis+'2']),diagnostics=Object.keys(scoreDirectory.diagnostics).filter(id=>axes.includes(id[0] as ScoreAxis));
@@ -120,7 +127,7 @@ function scopedJudgments(axes:ScoreAxis[]){
     schema.$defs.finding.properties.primary_diagnostic_id.enum=[...diagnostics,'unmapped'];
     schema.properties.verification_requests.items.properties.affected_item_ids.items.enum=units;return schema;
 }
-dimensionsProfile.modelSubmissionSchema=request=>scopedJudgments(dimensionAxes(request));
+dimensionsProfile.modelSubmissionSchema=request=>withException(scopedJudgments(dimensionAxes(request)),evidenceSchema.$defs.exception);
 for(const axis of scoreAxes){const p=axisProfiles['axis-'+axis.toLowerCase()];p.resultSchema=axisResultSchema;
   p.modelSubmissionSchema=()=>scopedJudgments([axis]);
 }

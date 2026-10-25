@@ -1,16 +1,19 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {advanceScore,scoreEvidenceTask,bindScore,scoreBlockedReason} from './score.js';
+import {advanceScore,scoreTask,bindScore,scoreBlockedReason} from './score.js';
 import type {SubmissionReceipt,RunState,ReviewAudit} from '@eval/contracts';
 import type { Candidate } from "@eval/workflows/inputs";
 const candidate={input_id:'input',case_id:'case',batch_id:'batch'} as Candidate;
 const receipt=(evaluation:unknown,review?:ReviewAudit)=>({evaluation,audit:{review}} as SubmissionReceipt);
-test('Score plans one joint judgment and an independent total after evidence acceptance',()=>{
-  const first=scoreEvidenceTask(candidate),next=advanceScore(first,receipt({facts:[],unresolved:[],changed_item_ids:[]}),{} as RunState,{}).tasks;
-  assert.equal(next.length,2);assert.deepEqual(next[0].dependencies,{evidence:first.id});
-  assert.deepEqual((next[0].data as any).score_axes,['T','E','L','A','U','D']);
-  const final=next[1];assert.equal(Object.keys(final.dependencies).length,7);
-  assert.equal(new Set(Object.values(final.dependencies).filter(id=>id!==first.id)).size,1);
+const initialFinal=()=>advanceScore(scoreTask(candidate),receipt({}),{} as RunState,{}).tasks[0];
+const supplementTask=()=>advanceScore(initialFinal(),receipt({action:'repair',reason:'缺关键事实',axis_ids:[],verification_requests:[{claim:'核对来源',affected_item_ids:['E1']}]}),{} as RunState,{}).tasks[0];
+test('Score starts with joint evidence-backed judgments and then an independent total',()=>{
+  const first=scoreTask(candidate),next=advanceScore(first,receipt({}),{} as RunState,{}).tasks;
+  assert.equal((first.data as any).score_part,'axes');
+  assert.deepEqual((first.data as any).score_axes,['T','E','L','A','U','D']);
+  assert.equal(next.length,1);
+  const final=next[0];assert.equal(Object.keys(final.dependencies).length,6);
+  assert(Object.values(final.dependencies).every(id=>id===first.id));
   const repaired=advanceScore(final,receipt({action:'repair',reason:'同一事实的相反判定。',axis_ids:['E','L'],verification_requests:[]}),{} as RunState,{}).tasks;
   assert.equal(repaired.length,2);assert.equal(repaired[1].dependencies.T,final.dependencies.T);
   assert.notEqual(repaired[1].dependencies.E,final.dependencies.E);
@@ -22,12 +25,12 @@ test('Score plans one joint judgment and an independent total after evidence acc
   assert.match(scoreBlockedReason(rejected,{source:repeated})!,/拒收评分：仍矛盾/);
 });
 test('late evidence is supplemented once with the original cumulative proof and rescoring uses the new snapshot',()=>{
-  const first=scoreEvidenceTask(candidate),final=advanceScore(first,receipt({facts:[],unresolved:[],changed_item_ids:[]}),{} as RunState,{}).tasks[1];
+  const final=initialFinal();
   const correction=receipt({action:'repair',reason:'缺关键事实',axis_ids:[],verification_requests:[{claim:'确认期间',affected_item_ids:['E1']}]});
   const evidence=advanceScore(final,correction,{} as RunState,{}).tasks[0];assert.equal((evidence.data as any).score_evidence_used,true);
   const proof:ReviewAudit={quotes:[],sources:[],actions:[{kind:'search',args:{query:'已有请求'},at:'test'}],viewed:[],searches:[]};
   const source={case_id:'input',task_question:'题目',candidate_output_id:'A',evidence:{Q:'题目',A:'回答'},availability:{candidate_output:'available' as const},public_requirements:{question:'题目'},view:{case_id:'input',task_question:'题目',availability:{candidate_output:'available'}}};
-  const binding=bindScore(evidence,source,{evidence:receipt({facts:[],unresolved:[],changed_item_ids:[]},proof),feedback:correction});
+  const binding=bindScore(evidence,source,{T:receipt({},proof),feedback:correction});
   assert.deepEqual((binding.request.sources.case.value as any).review_seed.actions,proof.actions);
   const rescored=advanceScore(evidence,receipt({facts:[{affected_item_ids:['E1'],evidence_ids:['EV_1']}],unresolved:[],changed_item_ids:['E1']}),{} as RunState,{}).tasks;
   assert.equal(rescored.length,2);assert.equal((rescored[0].data as any).score_axis,'E');
@@ -35,7 +38,7 @@ test('late evidence is supplemented once with the original cumulative proof and 
   assert.equal(directed.length,2);assert.equal((directed[1].data as any).score_evidence_used,true);assert.equal((directed[1].data as any).score_repair_used,true);
 });
 test('collector gap narratives cannot become shared judgments in an axis prompt',()=>{
-  const first=scoreEvidenceTask(candidate),evidence={facts:[{affected_item_ids:['U2'],evidence_ids:['EV_1']}],unresolved:[{claim:'Collector speculation: two different scopes contradict',affected_item_ids:['U2']}],changed_item_ids:['U2']};
+  const first=supplementTask(),evidence={facts:[{affected_item_ids:['U2'],evidence_ids:['EV_1']}],unresolved:[{claim:'Collector speculation: two different scopes contradict',affected_item_ids:['U2']}],changed_item_ids:['U2']};
   const axis=advanceScore(first,receipt(evidence),{} as RunState,{}).tasks[0];
   const source={case_id:'input',task_question:'题目',candidate_output_id:'A',evidence:{Q:'题目',A:'回答'},availability:{candidate_output:'available' as const},public_requirements:{question:'题目'},view:{case_id:'input',task_question:'题目',availability:{candidate_output:'available'}}};
   const binding=bindScore(axis,source,{evidence:receipt(evidence,{quotes:[],sources:[],actions:[],viewed:[],searches:[]})});
@@ -45,7 +48,7 @@ test('collector gap narratives cannot become shared judgments in an axis prompt'
 test('final material preserves verification evidence coordinates when axes quote a different order and reuse local IDs',()=>{
   const seed:ReviewAudit={quotes:[{evidence_id:'EV_1',source_id:'Q',start:0,end:2,quote:'题目'},{evidence_id:'EV_2',source_id:'A',start:0,end:2,quote:'答案'}],sources:[],actions:[],viewed:[],searches:[]};
   const facts=[{affected_item_ids:['T1'],evidence_ids:['EV_1']}];
-  const first=scoreEvidenceTask(candidate),final=advanceScore(first,receipt({facts,unresolved:[],changed_item_ids:['T1']}),{} as RunState,{}).tasks[1];
+  const first=supplementTask(),final=advanceScore(first,receipt({facts,unresolved:[],changed_item_ids:['T1']}),{} as RunState,{}).tasks[1];
   const dependencies:Record<string,SubmissionReceipt>={evidence:receipt({facts,unresolved:[],changed_item_ids:['T1']},seed)};
   for(const axis of ['T','E','L','A','U','D']){
     const extra=axis==='E'?{evidence_id:'EV_3',source_id:'P',start:0,end:2,quote:'过程'}:axis==='L'?{evidence_id:'EV_3',source_id:'P',start:2,end:4,quote:'后续'}:undefined;
@@ -62,8 +65,7 @@ test('final material preserves verification evidence coordinates when axes quote
   assert.deepEqual(quotes.map(q=>q.quote),['题目','答案','过程','后续']);
 });
 test('supplementation reuses unaffected axes and no new facts do not replay six judgments',()=>{
-  const first=scoreEvidenceTask(candidate),initial=receipt({facts:[],unresolved:[],changed_item_ids:[]});
-  const final=advanceScore(first,initial,{} as RunState,{}).tasks[1];
+  const final=initialFinal();
   const correction=receipt({action:'repair',reason:'核对一项期间',axis_ids:[],verification_requests:[{claim:'期间',affected_item_ids:['E1']}]});
   const supplement=advanceScore(final,correction,{} as RunState,{}).tasks[0];
   const unchanged=advanceScore(supplement,receipt({facts:[],unresolved:[{claim:'未取得资料',affected_item_ids:['E1']}],changed_item_ids:[]}),{} as RunState,{}).tasks;
@@ -76,16 +78,29 @@ test('supplementation reuses unaffected axes and no new facts do not replay six 
   assert.equal(broad.length,2);assert.deepEqual((broad[0].data as any).score_axes,['T','E','L','A','U','D']);
 });
 test('source catalog is lazy while full provenance remains available to tools',()=>{
-  const large='长来源'.repeat(10000),first=scoreEvidenceTask(candidate);
-  const proof:ReviewAudit={quotes:[],sources:[{id:'V_SRC_1',content:large,record:{record_type:'external_source',url:'https://example.com',response:{content:large}}}],actions:[],viewed:[],searches:[]};
-  const next=advanceScore(first,receipt({facts:[],unresolved:[],changed_item_ids:[]},proof),{} as RunState,{}).tasks[0];
+  const large='长来源'.repeat(10000),first=supplementTask();
+  const proof:ReviewAudit={quotes:[{evidence_id:'EV_1',source_id:'Q',start:0,end:2,quote:'题目'}],sources:[{id:'V_SRC_1',content:large,record:{record_type:'external_source',url:'https://example.com',response:{content:large}}}],actions:[],viewed:[],searches:[]};
+  const evidence={facts:[{affected_item_ids:['T1'],evidence_ids:['EV_1']}],unresolved:[],changed_item_ids:['T1']};
+  const next=advanceScore(first,receipt(evidence,proof),{} as RunState,{}).tasks[0];
   const source={case_id:'input',task_question:'题目',candidate_output_id:'A',evidence:{Q:'题目',A:'回答'},availability:{candidate_output:'available' as const},public_requirements:{question:'题目'},view:{}};
-  const binding=bindScore(next,source,{evidence:receipt({facts:[],unresolved:[],changed_item_ids:[]},proof)});
+  const binding=bindScore(next,source,{evidence:receipt(evidence,proof)});
   assert(!JSON.stringify(binding.request.input).includes(large));
   assert.equal((binding.request.sources.case.value as any).review_seed.sources[0].content,large);
 });
+test('independent total carries the newest cumulative verification proof after directed reassessment',()=>{
+  const old:ReviewAudit={quotes:[{evidence_id:'EV_1',source_id:'A',start:0,end:2,quote:'回答'}],sources:[],actions:[{kind:'search',args:{query:'已有核验'},at:'first'}],viewed:[],searches:[]};
+  const updated:ReviewAudit={...structuredClone(old),quotes:[...old.quotes,{evidence_id:'EV_2',source_id:'Q',start:0,end:2,quote:'题目'}],sources:[{id:'V_SRC_1',content:'新增原文',record:{record_type:'external_source'}}]};
+  const value={evaluations:['T','E','L','A','U','D'].map(axis=>({item_id:axis+'1',reason:'原文支持',evidence_ids:['EV_1']})),diagnostics:[],findings:[],verification_requests:[],evidence:old.quotes};
+  const previous={...receipt(value,old),acceptedAt:10},latest={...receipt(value,updated),acceptedAt:30};
+  const final=initialFinal(),dependencies=Object.fromEntries(['T','E','L','A','U','D'].map(axis=>[axis,axis==='E'?latest:previous]));
+  const source={case_id:'input',task_question:'题目',candidate_output_id:'A',evidence:{Q:'题目',A:'回答'},availability:{candidate_output:'available' as const},public_requirements:{question:'题目'},view:{}};
+  const binding=bindScore(final,source,dependencies),proof=(binding.request.sources.case.value as any).review_seed;
+  assert.deepEqual(proof.actions,old.actions,'reassessment cannot reset the external verification budget');
+  assert.deepEqual(proof.sources,updated.sources);
+  assert.deepEqual(proof.quotes,updated.quotes);
+});
 test('directed reassessment follows shared-issue links and reuses unrelated axes',()=>{
-  const first=scoreEvidenceTask(candidate),final=advanceScore(first,receipt({facts:[],unresolved:[],changed_item_ids:[]}),{} as RunState,{}).tasks[1];
+  const final=initialFinal();
   const panel=final.dependencies.E;
   const state={receipts:{[panel]:receipt({evaluations:['T','E','L','A','U','D'].flatMap(axis=>[1,2].map(n=>({item_id:axis+n,evidence_ids:[]}))),diagnostics:[],evidence:[],verification_requests:[],
     findings:[{finding_id:'shared',primary_diagnostic_id:'E04',affected_item_ids:['E2','L1'],evidence_ids:[]}]})}} as unknown as RunState;
