@@ -1,6 +1,7 @@
-import type { TaskState } from "@eval/contracts";
+import type { RunState, TaskState } from "@eval/contracts";
 import type { Checkpoint } from "./checkpoint.js";
 import type { EvalConfig, Stage } from "./types.js";
+import { analysisComparisonRecords, analysisComparisonStats } from "./analysis-comparison.js";
 
 type SavedTask = Checkpoint["tasks"][string];
 type AnalysisCheckpoint = Pick<Checkpoint, "runId" | "status" | "startedAt" | "finishedAt" | "config" | "inputs" | "tasks">;
@@ -89,10 +90,17 @@ export function analysisProgress(saved: AnalysisCheckpoint) {
   };
 }
 
-/** Persist counts only; source identities, task references and verdicts stay in their authoritative files. */
-export function analysisRunOverview(saved: Checkpoint) {
+/** Persist counts, percentages and result coordinates, without copying questions, answers or judgments. */
+export function analysisRunOverview(saved: Checkpoint, state: RunState) {
   if (saved.format !== "evaluation-run") throw new Error("运行统计索引只支持 evaluation-run。");
-  const { formalComparisonReferences: _formal, comparisonReviewReferences: _review, ...summary } = analysisProgress(saved);
-  return { runId: saved.runId, evaluatorVersion: saved.evaluatorVersion, summary };
+  const { formalComparisonReferences, comparisonReviewReferences: _review, ...summary } = analysisProgress(saved);
+  const formalComparisonStats = analysisComparisonStats(
+    analysisComparisonRecords(state, formalComparisonReferences.map(item => item.taskId)));
+  const percent = (count: number, total: number) => total ? Number((count / total * 100).toFixed(2)) : null;
+  return { runId: saved.runId, evaluatorVersion: saved.evaluatorVersion, summary: { ...summary,
+    attributionCompletionRate: percent(summary.evaluatedInputCount, summary.inputCount),
+    battleCompletionRate: percent(formalComparisonStats.comparisonCount, summary.tasks.byPurpose.comparison_formal.total),
+    formalComparisonStats,
+  } };
 }
 export type AnalysisRunOverview = ReturnType<typeof analysisRunOverview>;

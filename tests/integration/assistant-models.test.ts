@@ -95,7 +95,6 @@ model=deepseek-flash
 models=deepseek-flash
 thinking=high
 efforts=off,low,high,max
-supports_developer_role=false
 context_window=1048576
 max_output_tokens=8192
 [agent]

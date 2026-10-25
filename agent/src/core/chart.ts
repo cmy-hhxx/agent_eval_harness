@@ -2,7 +2,7 @@ import { calculate } from "@eval/tools";
 import type { JsonObject } from "@eval/contracts";
 
 export interface ChartSpec {
-  type: "line" | "pie" | "heatmap" | "scatter" | "waterfall" | "histogram" | "radial_heatmap" | "bubble" | "bubble_matrix" | "slope" | "interval" | "boxplot" | "violin" | "rose" | "concentric" | "radial_progress" | "radar" | "waffle" | "sunburst" | "treemap" | "sankey" | "chord" | "ecdf" | "ridgeline";
+  type: "bar" | "line" | "pie" | "heatmap" | "scatter" | "waterfall" | "histogram" | "radial_heatmap" | "bubble" | "bubble_matrix" | "slope" | "interval" | "boxplot" | "violin" | "rose" | "concentric" | "radial_progress" | "radar" | "waffle" | "sunburst" | "treemap" | "sankey" | "chord" | "ecdf" | "ridgeline";
   title: string;
   scope: string;
   unit: string;
@@ -21,7 +21,8 @@ export interface ChartSpec {
 }
 
 /** Plot recorded per-model outcomes; never ask the model to transcribe counts or invent missing values. */
-export function comparisonChartData(tier: JsonObject): Pick<ChartSpec, "categories" | "series" | "unit" | "source"> {
+export type ComparisonChartMetric = "outcomes" | "outcomeRates" | "winRate" | "lossRate" | "bothGoodRate" | "bothBadRate" | "meetsCoreRate";
+export function comparisonChartData(tier: JsonObject, metric: ComparisonChartMetric = "outcomes"): Pick<ChartSpec, "categories" | "series" | "unit" | "source"> {
   const models = tier.models as JsonObject[] | undefined;
   const outcomes = [["wins", "胜场"], ["losses", "负场"], ["both_good", "双方均好"], ["both_bad", "双方均差"]] as const;
   if (!Array.isArray(models) || !models.length || models.some(model => !model || typeof model.modelName !== "string" || !model.modelName.trim()
@@ -29,6 +30,14 @@ export function comparisonChartData(tier: JsonObject): Pick<ChartSpec, "categori
     || !Number.isSafeInteger(model.comparisonCount) || (model.comparisonCount as number) <= 0
     || outcomes.reduce((sum, [key]) => sum + (model[key] as number), 0) !== model.comparisonCount))
     throw new Error("正式统计缺少完整的模型战绩计数，不能补零或猜测。");
+  if (metric !== "outcomes") {
+    const labels = { winRate: "胜率", lossRate: "落败比例", bothGoodRate: "双方均好比例", bothBadRate: "双方均差比例", meetsCoreRate: "核心达标率" };
+    const fields = metric === "outcomeRates" ? ["winRate", "lossRate", "bothGoodRate", "bothBadRate"] as const : [metric];
+    if (models.some(model => fields.some(field => model[field] !== null && (typeof model[field] !== "number" || !Number.isFinite(model[field]) || model[field] < 0 || model[field] > 100))))
+      throw new Error("正式统计缺少有效的预计算比例，不能补零或重新计算。");
+    return { categories: models.map(model => `${model.modelName}（${model.comparisonCount}场）`),
+      series: fields.map(field => ({ name: labels[field], values: models.map(model => model[field] as number | null) })), unit: "%", source: "本地正式对战统计" };
+  }
   return { categories: models.map(model => model.modelName as string),
     series: outcomes.map(([key, name]) => ({ name, values: models.map(model => model[key] as number) })),
     unit: "场", source: "本地正式对战统计" };

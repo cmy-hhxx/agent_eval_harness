@@ -43,6 +43,8 @@ export function researchLayout(chart, width, deltaUnit, numbers) {
       height: rowNames.length * 42 + (chart.type === 'heatmap' ? top + bottom : 48),
       labelWidth, showColorScale, top, bottom };
   }
+  if (chart.type === 'bar') return { width: Math.max(width, labelWidth + longestNumber * 2 + 240),
+    height: chart.categories.length * (chart.series.length * 26 + 16) + 48, labelWidth: Math.max(labelWidth, ...rowNames.map(name => chartTextWidth(name, 14))), endSpace: longestNumber + 28 };
   if (chart.type === 'interval') return { width: Math.max(width, labelWidth + longestNumber * 3 + 200), height: rowNames.length * 34 + 48, labelWidth };
   if (chart.type === 'slope') return { width: Math.max(width, 300, longestNumber * 2 + 180, ...chart.categories.map(name => chartTextWidth(name) * 2 + 40)), height: 220, labelWidth, endSpace: longestNumber + 24 };
   if (['waterfall', 'boxplot', 'violin'].includes(chart.type)) {

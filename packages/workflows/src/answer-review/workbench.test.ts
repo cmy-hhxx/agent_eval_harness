@@ -76,6 +76,9 @@ test('Score phases project once, wait for a formal result and retry dependencies
     [evidence.id]:{status:'succeeded',attempts:1},[attribution.id]:{status:'succeeded',attempts:1},dimensions:{status:'failed',attempts:2},final:{status:'blocked',attempts:0},instruction:{status:'failed',attempts:1}},inputCatalog:plan.catalog,inputs:{},preflight:plan.summary,startedAt:1},receipts:{
       [evidence.id]:receipt(evidence,{facts:[],unresolved:[]}),[attribution.id]:receipt(attribution,attributionResult(true,'2+2=4',true,c.input_id))},usage:emptyUsage(),recordedAttempts:5};
   const save=async()=>{await answerReviewRepository.createResultWriter(run,plan.inputs)(state);await answerReviewRepository.writeRun(run,state);};await save();
+  const progress=await readAnswerReviewAnalysis(run);
+  assert.equal(progress.summary.completedInputCount,0);assert.equal(progress.summary.inputCompletionRate,0);
+  assert.equal(progress.summary.stages.attribution.completionRate,100);assert.equal(progress.summary.stages.score.completionRate,0);
   const accepted=structuredClone(state.receipts);
   assert.deepEqual((await retryAnswerReviewTasks(run,{taskIds:[dimensions.id]})).retried,[dimensions.id,final.id]);
   const retried=await answerReviewRepository.readRun(run);assert.equal(retried.manifest.states.dimensions.attempts,2);assert.deepEqual(retried.receipts,accepted);assert.equal(retried.manifest.states.instruction.status,'failed');
@@ -88,7 +91,8 @@ test('Score phases project once, wait for a formal result and retry dependencies
   assert.equal((await answerReviewProgress(run))[0].status,'succeeded');
   assert.equal(((await answerReviewSample(run,c.input_id)).results.score?.evaluation as any).assessment_status,'needs_material');
   assert.equal((await readAnswerReviewSources(run,final.id)).sources.A,'2+2=4');
-  assert.equal((await readAnswerReviewAnalysis(run)).summary.stages.score.succeeded,1);
+  const completed=await readAnswerReviewAnalysis(run);assert.equal(completed.summary.stages.score.succeeded,1);
+  assert.equal(completed.summary.completedInputCount,1);assert.equal(completed.summary.inputCompletionRate,100);
   assert.deepEqual((await retryAnswerReviewTasks(run,{taskIds:[instruction.id],stages:['instruction-review']})).retried,[instruction.id]);
   const after=await answerReviewRepository.readRun(run);assert.equal(after.manifest.states.instruction.attempts,1);assert.deepEqual(after.receipts[attribution.id],state.receipts[attribution.id]);assert.equal(after.recordedAttempts,5);
 });

@@ -1,5 +1,5 @@
 import type { AnalysisQuery, AnalysisReadOptions, JsonObject, RunReference } from "@eval/contracts";
-import { answerReviewAnswer, answerReviewProgress, answerReviewTaskInput, readAnswerReviewAnalysis, readAnswerReviewInput, readAnswerReviewSources } from "@eval/workflows/answer-review";
+import { answerReviewAnswer, answerReviewTaskInput, readAnswerReviewAnalysis, readAnswerReviewInput, readAnswerReviewSources } from "@eval/workflows/answer-review";
 import { LocalAnalysisData } from "./assistant-data.js";
 
 function page(total: number, offset: number, limit: number) { const end = Math.min(total, offset + limit); return { total, offset, limit, unit: "items", hasMore: end < total, nextOffset: end < total ? end : null }; }
@@ -22,8 +22,8 @@ export class AnswerReviewAnalysisData {
   async list(query: AnalysisQuery): Promise<JsonObject> {
     if (!query.runId) throw new Error("请选择运行");
     if (query.view === "comparisons") throw new Error("该运行是独立回答评测，没有两两胜负；请读取 inputs");
-    const { state, candidates, summary } = await readAnswerReviewAnalysis(this.run(query.runId));
-    const progress = new Map((await answerReviewProgress(this.run(query.runId))).map(row => [row.inputId,row]));
+    const { state, candidates, summary, rows } = await readAnswerReviewAnalysis(this.run(query.runId));
+    const progress = new Map(rows.map(row => [row.inputId,row]));
     const items = candidates.filter(candidate => !query.query || JSON.stringify([candidate.question, candidate.version, candidate.batch_id, candidate.case_id]).includes(query.query)).map(candidate => ({
       reference: { runId: query.runId, inputId: candidate.input_id }, inputId: candidate.input_id,
       model: candidate.version, modelName: candidate.name, question: candidate.question, batchId: candidate.batch_id, caseId: candidate.case_id,

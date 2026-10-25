@@ -1,6 +1,5 @@
-import type { JsonObject } from "@eval/contracts";
+import type { JsonObject, RunState } from "@eval/contracts";
 import type { AttributionResult, EvalConfig, TaskData } from "./types.js";
-import { readRunTasks } from "./run-data.js";
 
 type Outcome = "win" | "both_good" | "both_bad";
 type ModelResult = Outcome | "loss";
@@ -108,21 +107,29 @@ export function analysisComparisonStats(records: readonly AnalysisComparisonReco
     }
   }
   const order = (tier: string | null) => tier === "Fast" ? 0 : tier === "Expert" ? 1 : 2;
-  return { formalResultCount: records.length, comparisonCount, records,
+  return { formalResultCount: records.length, comparisonCount,
     tiers: [...tiers].sort(([a], [b]) => order(a) - order(b) || String(a).localeCompare(String(b))).map(([comparisonTier, tier]) => ({
       comparisonTier, formalResultCount: tier.formalResultCount, comparisonCount: tier.comparisonCount, caseCount: tier.cases.size,
-      outcomes: tier.outcomes, models: [...tier.models.values()], references: tier.references,
+      outcomes: tier.outcomes, models: [...tier.models.values()].map(model => ({ ...model,
+        winRate: Number((model.wins / model.comparisonCount * 100).toFixed(2)),
+        lossRate: Number((model.losses / model.comparisonCount * 100).toFixed(2)),
+        bothGoodRate: Number((model.both_good / model.comparisonCount * 100).toFixed(2)),
+        bothBadRate: Number((model.both_bad / model.comparisonCount * 100).toFixed(2)),
+        meetsCoreRate: Number((model.meetsCoreCount / model.comparisonCount * 100).toFixed(2)),
+        problemDimensions: model.problemDimensions.map(dimension => ({ ...dimension,
+          establishedRate: Number((dimension.established / model.comparisonCount * 100).toFixed(2)),
+          uncertainRate: Number((dimension.uncertain / model.comparisonCount * 100).toFixed(2)),
+        })),
+      })), references: tier.references,
     })) };
 }
 
-/** Read only the selected run's already accepted formal rows through the existing result repository. */
-export async function readAnalysisComparisonStats(run: string, taskIds: readonly string[]) {
-  const ids = [...new Set(taskIds)];
-  if (ids.length !== taskIds.length) throw new Error("正式比较任务引用重复");
-  if (!ids.length) return analysisComparisonStats([]);
-  const state = await readRunTasks(run, ids), config = state.manifest.config as EvalConfig;
-  return analysisComparisonStats(ids.map((taskId) => {
-    const task = state.manifest.tasks.find((item) => item.id === taskId), receipt = state.receipts[taskId];
+/** The writer already holds accepted rows; statistics never need another result-file scan. */
+export function analysisComparisonRecords(state: RunState, taskIds: readonly string[]): AnalysisComparisonRecord[] {
+  const config = state.manifest.config as EvalConfig;
+  const tasks = new Map(state.manifest.tasks.map(task => [task.id, task]));
+  return taskIds.map((taskId) => {
+    const task = tasks.get(taskId), receipt = state.receipts[taskId];
     const data = task?.data as TaskData | undefined;
     if (!task || task.stage !== "comparison" || data?.verificationAudit || state.manifest.states[taskId]?.status !== "succeeded" ||
       !receipt?.exported || (receipt.exported.file ?? "comparison.jsonl") !== "comparison.jsonl") throw new Error("比较引用不是当前正式结果：" + taskId);
@@ -131,5 +138,5 @@ export async function readAnalysisComparisonStats(run: string, taskIds: readonly
     const candidate = Object.values(data!.candidates).find((item) => item.batch_id === scope.case.batchId && item.case_id === scope.case.caseId);
     if (!candidate) throw new Error("正式比较缺少登记的原问：" + taskId);
     return { reference: { runId: state.manifest.runId, taskId }, question: candidate.question, scope };
-  }));
+  });
 }

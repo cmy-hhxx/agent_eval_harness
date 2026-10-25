@@ -144,7 +144,7 @@ test('every directory page keeps exact counts without repeating whole-run narrat
   const unexpected = async (): Promise<never> => { throw new Error('Unexpected call'); };
   const reference = { collectionId: "0_wencai/0_daily_eval", runId: 'run', taskId: 'case' };
   const summary = { inputCount: 12, evaluatedInputCount: 10, formalComparisonReferences: [reference], comparisonReviewReferences: [reference],
-    formalComparisonStats: { comparisonCount: 3, records: [{ reference, question: 'Only needed for case analysis' }],
+    formalComparisonStats: { comparisonCount: 3,
       tiers: [{ comparisonTier: 'Fast', comparisonCount: 3, both_good: 1, both_bad: 1, references: [reference], models: [{ wins: 1, losses: 0, both_good: 1, both_bad: 1 }] }] } };
   const original = structuredClone(summary);
   const eris = createEris({ data: { list: async query => query.runId ? { kind: 'inputs', summary } : { kind: 'runs', currentRun: { runId: 'run', summary } }, read: unexpected, search: unexpected, image: unexpected }, search: { search: unexpected }, web: { read: unexpected } });
@@ -206,6 +206,9 @@ test("raw arguments fail with field paths and allowed values before SDK coercion
   const unexpected = async (): Promise<never> => { throw new Error("Unexpected dependency call"); };
   const eris = createEris({ data: { list: unexpected, read: unexpected, search: unexpected, image: unexpected }, search: { search: unexpected }, web: { read: unexpected } });
   const list = eris.tools.find(tool => tool.name === "list_data")!;
+  list.validate!({ view: "statistics", breakdown: "date", offset: 20, limit: 20 });
+  for (const invalid of [{ view: "statistics", offset: 1 }, { view: "inputs", breakdown: "date" },
+    { breakdown: "date" }, { view: "statistics", breakdown: "model" }]) assert.throws(() => list.validate!(invalid));
   for (const runId of [".", "..", "../run", "a..b", "a..", "a.b..c", "/tmp/run", "a/b", "a\\b", "_run", "-run", "a b", "运行"])
     assert.throws(() => list.validate!({ collectionId: "0_wencai/0_daily_eval", runId }), /\/runId.*schema_pattern/);
   assert.throws(() => list.validate!({ collectionId: "0_wencai/0_daily_eval", runId: "" }), /\/runId.*schema_minLength/);

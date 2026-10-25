@@ -5,10 +5,13 @@ annotations 越界或指向缺失值时仅省略标注，回执 omittedAnnotatio
 ```json
 {"title":"Fast 各模型战绩","statistics":{"collectionId":"沿用目录的collectionId","runId":"eval-20261013","comparisonTier":"Fast"}}
 ```
-程序直接读取正式计数，填入模型名称、胜场、负场、双方均好/均差、单位、日期和来源，不填写 categories、series、unit、scope、source、references。仅支持 heatmap（默认）或 bubble_matrix。每列为一个模型的出场计数，不能跨模型相加当作总场数；不代表历史累计。title、annotations、caveat 及正文结论仍由你根据数据分析。
+程序直接读取正式计数，填入模型名称、胜场、负场、双方均好/均差、单位、日期和来源，不填写 categories、series、unit、scope、source、references。场数可用 heatmap（默认）、bar 或 bubble_matrix。每列为一个模型的出场计数，不能跨模型相加当作总场数；不代表历史累计。title、annotations、caveat 及正文结论仍由你根据数据分析。
+
+比较胜率等比例，在 statistics 中加 metric:"winRate"，默认生成横向柱状图，程序读取预计算数值并标出各模型的参战分母。metric 还可用 lossRate、bothGoodRate、bothBadRate、meetsCoreRate 或 outcomeRates（四类比例）；默认 outcomes 为四类场数。统计图也支持 type:"bar"，不用抄写或复算数字。
 
 按问题选择图形。两组战绩可用 heatmap：categories 为 Fast、Expert，四个 series 为 A组胜、B组胜、双方都好、双方都差，unit="场"。单例对战使用 show_comparison。
 - 数值与频数：heatmap 比较数值，bubble_matrix 展示频数矩阵。
+- 模型、指标或排名对比：bar 用横向分组柱，适合直观看大小；零值与未知分开，保留真实负值。
 - 时间与阶段：line 的 categories 用递增日期，slope 比两个阶段。
 - 关系：scatter 的 xValues 是横轴观测，xLabel / xUnit 说明含义；bubble 再用 sizeValues / sizeLabel / sizeUnit 表示第三个量的面积。
 - 原始分布：histogram、boxplot、violin、ecdf、ridgeline；程序计算分箱、分位数与密度。
@@ -22,6 +25,7 @@ annotations 越界或指向缺失值时仅省略标注，回执 omittedAnnotatio
 服务器评测的 references 按来源选择：
 - 正式战绩：{"statistics":{"collectionId":"沿用目录的collectionId","runId":"实际运行ID","comparisonTier":"Fast"}}，核验该档完整统计。
 - 具体材料：{"reference":目录返回的reference}。
+- 报告、归档结果或问题树：{"asset":list_assets 返回的 reference}，沿用其数字和已读范围；scope 写清使用的资产或批次。
 - 普通运行统计：{"collectionId":"沿用目录的collectionId","runId":"实际运行ID"}。
 外部资料省略 references，在 source 标明来源名称和日期。单次运行的 references 不能代表历史累计。
 

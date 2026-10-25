@@ -1,5 +1,5 @@
 // Derived display data only. Source values and accepted receipts stay unchanged.
-export const researchTypes = ['heatmap', 'scatter', 'waterfall', 'histogram', 'bubble', 'bubble_matrix', 'slope', 'interval', 'boxplot', 'violin', 'sunburst', 'treemap', 'sankey', 'ecdf', 'ridgeline'];
+export const researchTypes = ['bar', 'heatmap', 'scatter', 'waterfall', 'histogram', 'bubble', 'bubble_matrix', 'slope', 'interval', 'boxplot', 'violin', 'sunburst', 'treemap', 'sankey', 'ecdf', 'ridgeline'];
 export { researchColors } from './chart-theme.js';
 export const differenceUnit = (chart, english = false) => /^(?:× \S+ )?[%％]$/.test(chart.unit)
   ? chart.unit.replace(/[%％]$/, english ? 'pp' : '百分点') : chart.unit;

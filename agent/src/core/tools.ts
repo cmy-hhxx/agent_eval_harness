@@ -1,15 +1,13 @@
 import { Ajv2020 } from "ajv/dist/2020.js";
-import { canonical, parseEvidenceCoordinates, schemaIssues, type AnalysisDataSource, type AnalysisReference, type AnalysisCaseLookup, type AnalysisQuery, type AnalysisReadOptions, type AnalysisResultReadOptions, type AssistantSource, type AssistantTool, type JsonObject, type WebSearchProvider, type WebSearchRequest, type WebReader, type WebReadRequest } from "@eval/contracts";
+import { parseEvidenceCoordinates, schemaIssues, type AnalysisAssetSource, type AnalysisAssetQuery, type AnalysisAssetReference, type AnalysisDataSource, type AnalysisReference, type AnalysisCaseLookup, type AnalysisQuery, type AnalysisReadOptions, type AnalysisResultReadOptions, type AssistantTool, type JsonObject, type WebSearchProvider, type WebSearchRequest, type WebReader, type WebReadRequest } from "@eval/contracts";
 import { calculate } from "@eval/tools";
-import { erisComparisonCheck } from "@eval/prompts";
 import schemas from "../../../schemas/eris/tools.json" with { type: "json" };
-import checkSchema from "../../../schemas/eris/comparison-check.json" with { type: "json" };
-import { comparisonChartData, validateChart, type ChartSpec } from "./chart.js";
+import { comparisonChartData, validateChart, type ChartSpec, type ComparisonChartMetric } from "./chart.js";
 import { comparisonDiagram, type ComparisonDiagramInput } from "./comparison-diagram.js";
-import { comparisonSample } from "./comparison-sample.js";
 
 export interface ErisDependencies {
   data: AnalysisDataSource;
+  assets?: AnalysisAssetSource;
   search: WebSearchProvider;
   web: WebReader;
 }
@@ -78,58 +76,11 @@ function reviewReferences(value: unknown, run: Pick<AnalysisReference, "collecti
   return [...references.values()];
 }
 
-/** Combine current case material with earlier observed evidence, including uncited counterevidence. */
-function comparisonSources(sources: AssistantSource[], reference: AnalysisReference, result: unknown): AssistantSource[] {
-  const parsed = sources.map(source => ({ source, materials: source.content.flatMap(block => {
-    if (block.type !== "text" || !block.text) return [];
-    try {
-      const value = JSON.parse(block.text);
-      return value && typeof value === "object" ? [value as JsonObject] : [];
-    } catch { return []; }
-  }) }));
-  const isPair = (ref?: AnalysisReference) => ref?.collectionId === reference.collectionId && ref?.runId === reference.runId && ref.taskId === reference.taskId;
-  const inputIds = new Set(reviewReferences(result, reference).map(ref => ref.inputId));
-  for (const { materials } of parsed) for (const material of materials) {
-    if (!isPair(material.reference as AnalysisReference | undefined)) continue;
-    for (const answer of (material.answers as { reference: AnalysisReference }[] | undefined) ?? [])
-      if (answer.reference.collectionId === reference.collectionId && answer.reference.runId === reference.runId) inputIds.add(answer.reference.inputId);
-  }
-  const selected = parsed.filter(({ materials }) => materials.some(material => {
-    const ref = material.reference as AnalysisReference | undefined;
-    return isPair(ref) || ref?.collectionId === reference.collectionId && ref?.runId === reference.runId && !!ref.inputId && inputIds.has(ref.inputId);
-  }));
-  // Deduplicate only identical observed material in this request, never by a locator alone.
-  const seen = new Set<string>();
-  const packed = selected.flatMap(({ source, materials }) => {
-    const content = materials.flatMap(material => {
-      if (source.tool === "read_evidence" && Array.isArray(material.items)) return material.items as JsonObject[];
-      if (source.tool === "read_case" && Array.isArray(material.answers)) return [{ ...material,
-        answers: (material.answers as JsonObject[]).map(answer => {
-          const trace = answer.trace as JsonObject | undefined;
-          // Retain previews and their truncation markers; empty navigation nodes carry no evidence.
-          return trace && Array.isArray(trace.nodes) ? { ...answer, trace: { ...trace,
-            nodes: (trace.nodes as JsonObject[]).filter(node => typeof node.preview === "string" && node.preview.length > 0) } } : answer;
-        }) }];
-      return [material];
-    }).flatMap(material => {
-      let value = material;
-      if (material.kind === "message") {
-        const { nextRead: _nextRead, limit: _limit, ...page } = material;
-        value = page;
-      }
-      const identity = canonical(value);
-      if (seen.has(identity)) return [];
-      seen.add(identity);
-      return [{ tool: source.tool, content: [{ type: "text" as const, text: JSON.stringify(value) }] }];
-    });
-    // Preserve non-JSON text and images belonging to a selected source.
-    const other = source.content.filter(block => {
-      if (block.type !== "text" || !block.text) return true;
-      try { const value = JSON.parse(block.text); return !value || typeof value !== "object"; } catch { return true; }
-    });
-    return [...content, ...(other.length ? [{ tool: source.tool, content: other }] : [])];
-  });
-  return packed;
+function formalSummary(data: JsonObject, reference: AnalysisReference): JsonObject {
+  const result = data.result as JsonObject;
+  return { ...data, result: data.comparisonScope
+    ? { status: result.status, ground_truth: result.ground_truth, evidence_references: reviewReferences(result, reference) }
+    : resultSummary(result, reference) };
 }
 
 /** Whole-run counts are independent of paging; whole-run prose and coordinates are not tool material. */
@@ -137,9 +88,8 @@ function directorySummary(summary: JsonObject): JsonObject {
   const { formalComparisonReferences: _formal, comparisonReviewReferences: _review, ...progress } = summary;
   const statistics = summary.formalComparisonStats as JsonObject | undefined;
   if (!statistics) return progress;
-  const { records: _records, ...counts } = statistics;
-  const tiers = (counts.tiers as JsonObject[]).map(({ references: _sources, ...tier }) => tier);
-  return { ...progress, formalComparisonStats: { ...counts, tiers } };
+  const tiers = (statistics.tiers as JsonObject[]).map(({ references: _sources, ...tier }) => tier);
+  return { ...progress, formalComparisonStats: { ...statistics, tiers } };
 }
 
 /** Keep the exact page once; its node reference, format and offset locate every character. */
@@ -161,21 +111,29 @@ function statisticalScope(summary: JsonObject, names: string[]): string {
 }
 
 export function erisTools(options: ErisDependencies, descriptions: Record<string, string>): AssistantTool[] {
-  const validateCheck = new Ajv2020({ strict: false }).compile<{ issues: { path: string; reason: string }[] }>(checkSchema);
   const validateChartReceipt = new Ajv2020({ strict: false }).compile({ ...schemas.show_chart,
     required: ["type", "title", "scope", "unit", "source", "categories", "series"] });
   const execute: Record<keyof typeof schemas, AssistantTool["execute"]> = {
-    list_data: async (value, context) => {
+    list_assets: async value => {
+      if (!options.assets) throw new Error("评测资产目录未配置");
+      return textResult(await options.assets.list(value as AnalysisAssetQuery));
+    },
+    read_asset: async value => {
+      if (!options.assets) throw new Error("评测资产读取未配置");
+      const args = value as { reference: AnalysisAssetReference; offset?: number; limit?: number };
+      return { ...textResult(withContinuation("read_asset", args, await options.assets.read(args.reference, args))),
+        details: { sourceRead: { tool: "read_asset", args } } };
+    },
+    list_data: async (value) => {
       const query = value as AnalysisQuery;
-      const sampled = query.sample ? await comparisonSample(options.data, query, context) : undefined;
-      const result: JsonObject = sampled?.result ?? await options.data.list(query);
+      const result = await options.data.list(query.sample ? { ...query, includeAnalysis: true } : query);
       const current = result.currentRun as JsonObject | undefined;
       // Apply to every page, including empty searches. Chart validation still reads complete provenance.
       return { ...textResult({ ...result,
         ...(result.summary ? { summary: directorySummary(result.summary as JsonObject) } : {}),
         ...(current?.summary ? { currentRun: { ...current, summary: directorySummary(current.summary as JsonObject) } } : {}),
         ...(result.currentRuns ? { currentRuns: (result.currentRuns as JsonObject[]).map(run => ({ ...run, summary: directorySummary(run.summary as JsonObject) })) } : {}),
-      }), ...(sampled?.qualityCheck ? { details: { qualityCheck: sampled.qualityCheck } } : {}) };
+      }) };
     },
     read_case: async (value, context) => {
       const args = value as { reference: AnalysisReference | AnalysisCaseLookup; review?: boolean };
@@ -194,7 +152,7 @@ export function erisTools(options: ErisDependencies, descriptions: Record<string
         result: pair.result, winnerModel: pair.winnerModel, models: (pair.models as JsonObject[] | undefined)?.map(model => model.model),
       }));
       return { ...textResult({ ...caseData, answers, ...(formal ? review ? { originalVerdicts }
-        : { formal: { ...formal, result: resultSummary(formal.result, args.reference) } } : {}) }),
+        : { formal: formalSummary(formal, args.reference) } : {}) }),
         details: { sourceRead: { tool: "read_case", args: { reference: data.reference, ...(args.review === undefined ? {} : { review: args.review }) } } } };
     },
     read_evidence: async (value, context) => {
@@ -218,10 +176,7 @@ export function erisTools(options: ErisDependencies, descriptions: Record<string
       const data = await options.data.read(args.reference, args);
       return args.reference.taskId ? textResult(resultView(args) === "details"
         ? withContinuation("read_data", { ...args, view: "details" }, { kind: "accepted-result", reference: args.reference, view: "details", ...resultPage(data, args) })
-        : { ...data, view: "summary", result: data.comparisonScope
-          ? { status: (data.result as JsonObject).status, ground_truth: (data.result as JsonObject).ground_truth,
-            evidence_references: reviewReferences(data.result, args.reference) }
-          : resultSummary(data.result) })
+        : { ...formalSummary(data, args.reference), view: "summary" })
         : { ...textResult(withContinuation("read_data", args, evidenceMaterial(data, context.audience))), details: { sourceRead: { tool: "read_data", args } } };
     },
     search_data: async (value) => {
@@ -239,66 +194,21 @@ export function erisTools(options: ErisDependencies, descriptions: Record<string
     calculate: async (value) => { const args = value as { operation: string; operands: string[] }; return textResult(calculate(args.operation, args.operands)); },
     show_comparison: async (value, context) => {
       const args = value as ComparisonDiagramInput;
-      const material = await options.data.read(args.reference, { view: "case" });
+      const result = await options.data.read(args.reference);
       context.signal.throwIfAborted();
-      const result = material.formal as JsonObject | undefined;
-      if (material.kind !== "case" || !result) throw new Error("当前对战缺少正式结果，尚未展示。");
+      if (result.kind !== "accepted-result" || !result.comparisonScope) throw new Error("当前对战缺少正式结果，尚未展示。");
       const { diagram, omittedHighlights } = comparisonDiagram(args, result);
-      if (!context.complete) throw new Error("比较图结论核对不可用，尚未展示");
-      const reference = result.reference as AnalysisReference;
-      const answers = (Array.isArray(material.answers) ? material.answers as JsonObject[] : [])
-        .filter(answer => args.candidates.some(candidate => candidate.model === answer.model));
-      if (typeof material.question !== "string" || !material.question.trim() || answers.length !== 2
-        || new Set(answers.map(answer => answer.model)).size !== 2
-        || answers.some(answer => (answer.reference as AnalysisReference | undefined)?.collectionId !== reference.collectionId || (answer.reference as AnalysisReference | undefined)?.runId !== reference.runId || !answer.answer))
-        throw new Error("当前对战的原始问题或双方回答缺失，尚未展示；请检查该对战的数据源。");
-      const sources: AssistantSource[] = [{ tool: "read_case", ...textResult({ ...material, answers }) }];
-      // A long final answer is represented by a preview in read_case; fetch all its pages before checking.
-      const continuations = await Promise.all(answers.map(async answer => {
-        const response = answer.answer as JsonObject;
-        if (response.complete === true && typeof response.text === "string") return [];
-        const source = response.reference as AnalysisReference | undefined;
-        if (response.complete !== false || !source || source.collectionId !== reference.collectionId || source.runId !== reference.runId || !source.inputId
-          || source.inputId !== (answer.reference as AnalysisReference).inputId || !Number.isInteger(source.messageIndex))
-          throw new Error("当前对战的原始回答缺少完整正文或有效引用，尚未展示。");
-        const pages: AssistantSource[] = [];
-        let offset = 0;
-        while (true) {
-          context.signal.throwIfAborted();
-          const page = await options.data.read(source, { offset, limit: 16000 });
-          if (page.kind !== "message" || typeof page.text !== "string") throw new Error("当前对战的原始回答续读失败，尚未展示。");
-          pages.push({ tool: "read_data", ...textResult(page) });
-          if (page.hasMore === false) break;
-          if (page.hasMore !== true || !Number.isInteger(page.nextOffset) || Number(page.nextOffset) <= offset)
-            throw new Error("当前对战的原始回答分页不完整，尚未展示。");
-          offset = Number(page.nextOffset);
-        }
-        return pages;
-      }));
-      sources.push(...continuations.flat());
-      context.signal.throwIfAborted();
-      const { complete: _complete, reasonHighlight: _reasonHighlight, ...draft } = args;
-      const check = await context.complete({ systemPrompt: erisComparisonCheck, maxThinking: "low", draft: { ...draft,
-        candidates: args.candidates.map(candidate => ({ ...candidate, paths: candidate.paths.map(({ highlights: _highlights, ...path }) => path) })) }, outputSchema: checkSchema,
-        sourceTools: ["read_case", "search_data", "read_evidence", "read_data"],
-        selectSources: observed => comparisonSources([...sources, ...observed], reference, result.result) });
-      let review: unknown;
-      try { review = JSON.parse(check.text); } catch { /* Preserve invalid output and usage for diagnosis. */ }
-      if (!validateCheck(review)) return { ...textResult({ kind: "comparison-check", error: "比较图结论核对格式无效，尚未展示", issues: schemaIssues(validateCheck.errors) }),
-        isError: true, details: { consistencyCheck: check } };
-      const consistencyCheck = { ...check, issues: review.issues };
-      if (review.issues.length) return { ...textResult({ kind: "comparison-check", issues: review.issues }), isError: true, details: { consistencyCheck } };
       return { ...textResult({ kind: "comparison-diagram", diagram }),
         ...(args.complete ? { terminate: true } : {}),
-        details: { reference: result.reference, evaluatorVersion: result.evaluatorVersion, consistencyCheck,
+        details: { reference: result.reference, evaluatorVersion: result.evaluatorVersion,
           ...(omittedHighlights.length ? { omittedHighlights } : {}) } };
     },
     show_chart: async (value, context) => {
       const { statistics, references: suppliedReferences, ...input } = value as Partial<ChartSpec> & { title: string;
-        statistics?: { collectionId: string; runId: string; comparisonTier: string };
-        references?: { collectionId?: string; runId?: string; reference?: AnalysisReference; statistics?: { collectionId: string; runId: string; comparisonTier: string } }[] };
+        statistics?: { collectionId: string; runId: string; comparisonTier: string; metric?: ComparisonChartMetric };
+        references?: { collectionId?: string; runId?: string; reference?: AnalysisReference; asset?: AnalysisAssetReference; statistics?: { collectionId: string; runId: string; comparisonTier: string } }[] };
       const references: NonNullable<typeof suppliedReferences> = statistics ? [{ statistics }] : suppliedReferences ?? [];
-      let chart = { type: "heatmap", source: "本地评测材料", ...input } as ChartSpec;
+      let chart = { type: statistics?.metric && statistics.metric !== "outcomes" ? "bar" : "heatmap", source: "本地评测材料", ...input } as ChartSpec;
       if (!statistics) validateChart({ ...chart, annotations: undefined });
       const citations: unknown[] = [];
       const timeScopes = new Map<string, string>();
@@ -317,11 +227,15 @@ export function erisTools(options: ErisDependencies, descriptions: Record<string
           const tier = summary?.formalComparisonStats?.tiers?.find(tier => tier.comparisonTier === item.statistics!.comparisonTier);
           if (result.kind !== "inputs" || !tier || tier.comparisonCount <= 0 || !tier.references?.length)
             throw new Error("该运行与档位没有可引用的正式统计");
-          if (statistics) chart = { ...chart, ...comparisonChartData(tier) };
+          if (statistics) chart = { ...chart, ...comparisonChartData(tier, statistics.metric) };
           if (references.every(item => item.statistics)) timeScopes.set(JSON.stringify([item.statistics.collectionId, item.statistics.runId]), statisticalScope(result.summary as JsonObject,
             references.filter(ref => ref.statistics?.collectionId === item.statistics!.collectionId && ref.statistics?.runId === item.statistics!.runId).map(ref => ref.statistics!.comparisonTier)));
           citations.push({ statistics: item.statistics, evaluatorVersion: result.evaluatorVersion, references: tier.references,
             timeScope: (result.summary as JsonObject).timeScope, batches: (result.summary as JsonObject).batches });
+        } else if (item.asset) {
+          if (!options.assets) throw new Error("评测资产读取未配置");
+          const asset = await options.assets.read(item.asset, { limit: 1 });
+          citations.push({ asset: item.asset, name: asset.name, modifiedAt: asset.modifiedAt });
         } else if (item.runId) {
           const result = await readRun(item.runId, item.collectionId!);
           if (result.kind !== "inputs") throw new Error("图表目录引用不存在");

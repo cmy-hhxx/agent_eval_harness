@@ -449,6 +449,7 @@ test('a corrected statistical chart replaces the earlier snapshot in the same re
   }
   assert.equal(chartsFromToolData([{ root: first }, { root: { ...second, isError: true } }])[0].callId, first.callId);
   for (const independent of [
+    { ...second, meta: { references: references.map(ref => ({ statistics: { ...ref.statistics, collectionId: '1_aime/0_daily_eval' } })) } },
     { ...second, meta: { references: references.map(ref => ({ statistics: { ...ref.statistics, runId: 'another-run' } })) } },
     { ...second, meta: { references: references.slice(0, 1) } },
     { ...second, content: [{ type: 'text', text: receipt({ ...updated, series: [{ name: '问题数', values: [10, 20] }] }) }] },
@@ -460,6 +461,12 @@ test('a corrected statistical chart replaces the earlier snapshot in the same re
   const corrupt = chartsFromToolData([{ root: first }, { root: { ...second, content: [{ type: 'text', text: 'broken' }] } }]);
   assert.equal(corrupt.length, 2, 'an unreadable receipt cannot replace the usable chart');
   assert.equal(corrupt[1].error, '图表数据无效，无法显示');
+  const asset = { collectionId: '1_aime/0_daily_eval', assetId: 'cluster/cluster_tree.jsonl' };
+  const fromAsset = { ...first, meta: { references: [{ asset }] } };
+  const revisedAsset = { ...second, meta: { references: [{ asset, modifiedAt: 2 }] } };
+  assert.equal(chartsFromToolData([{ root: fromAsset }, { root: revisedAsset }]).length, 1);
+  assert.equal(chartsFromToolData([{ root: fromAsset }, { root: { ...revisedAsset,
+    meta: { references: [{ asset: { ...asset, assetId: '.archive/cluster/cluster_tree.jsonl' } }] } } }]).length, 2);
 });
 
 test('accepted charts stay at the tail only when cancellation or failure leaves no final answer', () => {

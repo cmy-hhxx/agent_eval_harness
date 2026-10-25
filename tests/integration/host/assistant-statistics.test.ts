@@ -62,10 +62,18 @@ test("Eris supplies completion percentages and losses without changing the froze
   const metric = { p50: null, p90: null, count: 0 };
   Object.assign(object(record.data), { totalCaseCount: 20554, caseCount: 12114,
     progress: { expectedBattleCount: 35838, completedBattleCount: 22293, completedCaseCount: 11753 },
-    models: [{ id: "a_fast", name: "A Fast" }],
+    models: [{ id: "a_fast", name: "A Fast" }, { id: "a_expert", name: "A Expert" }],
     stats: [{ id: "a_fast", name: "A Fast", evaluated: 10, wins: 3, both_good: 4, both_bad: 1, winRate: 30,
-      accuracy: { correct: 0, count: 0, rate: null }, first: metric, total: metric, input: metric, output: metric }],
+      accuracy: { correct: 0, count: 0, rate: null }, first: metric, total: metric, input: metric, output: metric },
+      { id: "a_expert", name: "A Expert", evaluated: 0, wins: 0, both_good: 0, both_bad: 0, winRate: 0,
+        accuracy: { correct: 0, count: 0, rate: null }, first: metric, total: metric, input: metric, output: metric }],
   });
+  const data = object(record.data);
+  const task = { id: "reasoning", name: "推理", count: 20554, evaluatedCount: 12114, stats: data.stats, progress: data.progress };
+  data.tasks = [task];
+  data.difficultyLevels = [{ ...task, description: "需要多步推理", difficulty: "困难", tasks: [task] }];
+  data.requestDates = ["2026-10-12", "2026-10-11"].map(date => ({ date, count: data.totalCaseCount, caseCount: data.caseCount,
+    totalCaseCount: data.totalCaseCount, models: data.models, stats: data.stats, tasks: data.tasks, progress: data.progress, difficultyLevels: data.difficultyLevels }));
   try {
     await writeJsonl(files.logFile, [record]);
     await writeJson(files.stateFile, { statistics: { lastTraceId: "published", lastWindow: 1, generatedAt: 2000, nextAt: 4000, attempts: 0 } });
@@ -79,6 +87,31 @@ test("Eris supplies completion percentages and losses without changing the froze
     assert.equal(result.history.progress.caseCompletionRate, 57.18, "fully completed cases use total included cases, not partially evaluated cases");
     assert.equal(result.history.stats[0].losses, 2, "both-good and both-bad outcomes are not losses");
     assert.equal(result.history.stats[0].winRate, 30);
+    assert.equal(result.history.stats[0].lossRate, 20);
+    assert.equal(result.history.stats[0].bothGoodRate, 40);
+    assert.equal(result.history.stats[0].bothBadRate, 10);
+    assert.equal(result.history.stats[1].winRate, null, "no evaluated samples is unknown, not a zero-percent win rate");
+    assert.equal(result.history.stats[1].lossRate, null);
+    const daily = await readPublishedStatistics(files, { breakdown: "date", limit: 1 });
+    assert.equal(daily.breakdown?.nextOffset, 1);
+    const day = daily.breakdown!.items[0];
+    assert("date" in day);
+    assert.equal(day.date, "2026-10-12");
+    assert.equal(daily.breakdown?.items[0].stats[0].winRate, 30);
+    assert.equal(daily.breakdown?.items[0].progress.battleCompletionRate, 62.2);
+    assert(!("tasks" in daily.breakdown!.items[0]), "breakdown pages omit repeated nested snapshots");
+    const next = await readPublishedStatistics(files, { breakdown: "date", offset: 1, limit: 1 });
+    const older = next.breakdown!.items[0];
+    assert("date" in older);
+    assert.equal(older.date, "2026-10-11");
+    assert.equal(next.breakdown?.hasMore, false);
+    for (const breakdown of ["task", "difficulty"] as const) {
+      const page = await readPublishedStatistics(files, { breakdown });
+      const group = page.breakdown!.items[0];
+      assert("name" in group);
+      assert.equal(group.name, "推理");
+      assert.equal(page.breakdown?.items[0].stats[0].winRate, 30);
+    }
     assert.deepEqual(await readFile(files.logFile), before, "derived fields belong only to Eris's read projection");
   } finally { await rm(directory, { recursive: true, force: true }); }
 });

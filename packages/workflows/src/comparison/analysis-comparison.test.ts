@@ -1,8 +1,9 @@
 import test from "node:test";
+import { readAnalysisComparisonRecords } from "./run-data.js";
 import assert from "node:assert/strict";
 import type { JsonObject } from "@eval/contracts";
 import type { EvalConfig } from "./types.js";
-import { analysisComparisonScope, analysisComparisonStats, readAnalysisComparisonStats } from "./analysis-comparison.js";
+import { analysisComparisonScope, analysisComparisonStats } from "./analysis-comparison.js";
 
 const config = { inputs: { versions: [
   { id: "a", name: "A", comparison_tier: "Fast" }, { id: "b", name: "B", comparison_tier: "Fast" }, { id: "c", name: "C", comparison_tier: "Fast" },
@@ -45,7 +46,8 @@ test("Eris keeps undeclared tiers unknown, preserves both-bad outcomes and rejec
   Object.values(source.assessments as Record<string, { meets_core: boolean }>).forEach(assessment => { assessment.meets_core = false; });
   const scope = analysisComparisonScope(source, unknown)!;
   assert.equal(scope.comparisonTier, null);
-  const stats = analysisComparisonStats([{ reference: { runId: "run", taskId: "task" }, question: "原问。", scope }]);
+  const record = { reference: { runId: "run", taskId: "task" }, question: "原问。", scope };
+  const stats = analysisComparisonStats([record]);
   assert.deepEqual(stats.tiers[0]!.outcomes, { win: 0, both_good: 0, both_bad: 1 });
   assert(stats.tiers[0]!.models.every((model) => model.both_bad === 1 && model.wins === 0));
   const mixed = structuredClone(config);
@@ -57,14 +59,31 @@ test("Eris keeps undeclared tiers unknown, preserves both-bad outcomes and rejec
   const extra = row();
   (extra.verdicts as JsonObject).a__vs__c = (extra.verdicts as JsonObject).a__vs__b!;
   assert.throws(() => analysisComparisonScope(extra, config), /未登记/);
-  assert.throws(() => analysisComparisonStats([stats.records[0]!, stats.records[0]!]), /引用重复/);
+  assert.throws(() => analysisComparisonStats([record, record]), /引用重复/);
   assert.equal(analysisComparisonScope({ ...row(), status: "pending_review" }, config), null, "a review receipt remains readable without formal outcome coordinates");
   assert.equal(analysisComparisonScope({ evaluation_type: "single_model_attribution" }, config), null);
 });
 
 test("Eris rejects duplicate formal task references before reading any result", async () => {
-  await assert.rejects(readAnalysisComparisonStats("unused-run", ["same-task", "same-task"]), /引用重复/);
-  assert.deepEqual(await readAnalysisComparisonStats("unused-run", []), { formalResultCount: 0, comparisonCount: 0, records: [], tiers: [] });
+  await assert.rejects(readAnalysisComparisonRecords("unused-run", ["same-task", "same-task"]), /引用重复/);
+  assert.deepEqual(await readAnalysisComparisonRecords("unused-run", []), []);
+});
+
+test("win rates include both-good and both-bad appearances and retain two decimal places", () => {
+  const bad = row("a", "b", null);
+  (bad.verdicts as JsonObject).a__vs__b = { result: "both_bad", winner_version: null, winner_name: null, reason: "双方未达标" };
+  (bad.assessments as JsonObject).a = { meets_core: false, summary: "未达标" };
+  const stats = analysisComparisonStats([row(), row("a", "b", null), bad].map((source, index) => ({
+    reference: { runId: "run", taskId: String(index) }, question: "原问", scope: analysisComparisonScope(source, config)!,
+  })));
+  const a = stats.tiers[0].models.find(model => model.model === "a")!;
+  assert.equal(a.comparisonCount, 3);
+  assert.equal(a.winRate, 33.33);
+  assert.equal(a.lossRate, 0);
+  assert.equal(a.bothGoodRate, 33.33);
+  assert.equal(a.bothBadRate, 33.33);
+  assert.equal(a.meetsCoreRate, 66.67);
+  assert.equal(stats.tiers[0].models.find(model => model.model === "b")!.winRate, 0);
 });
 
 test("Eris summarizes problem incidence per model battle, deduplicating findings and separating uncertainty", () => {
@@ -78,7 +97,7 @@ test("Eris summarizes problem incidence per model battle, deduplicating findings
   assert.equal(stats.tiers[0]!.caseCount, 1);
   assert.equal(model.comparisonCount, 2, "the denominator is formal model appearances, not independent answers or questions");
   assert.equal(model.meetsCoreCount, 2);
-  assert.deepEqual(model.problemDimensions, [{ dimension: "correctness", established: 1, uncertain: 1 }, { dimension: "completeness", established: 0, uncertain: 1 }]);
+  assert.deepEqual(model.problemDimensions, [{ dimension: "correctness", established: 1, uncertain: 1, establishedRate: 50, uncertainRate: 50 }, { dimension: "completeness", established: 0, uncertain: 1, establishedRate: 0, uncertainRate: 50 }]);
   assert.deepEqual(stats.tiers[0]!.models.find(model => model.model === "b")!.problemDimensions, []);
   assert.deepEqual(first.verdicts, before.verdicts);
   delete first.evaluations;

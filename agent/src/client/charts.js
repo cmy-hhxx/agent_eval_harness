@@ -124,7 +124,8 @@ export function chartFromToolOutput(output, state) {
 
 function sameStatisticalView(left, right, leftSources, rightSources) {
   if (!leftSources?.length || !rightSources?.length || leftSources.length !== rightSources.length) return false;
-  if (!leftSources.every(source => rightSources.some(other => source.runId === other.runId && source.comparisonTier === other.comparisonTier))) return false;
+  if (!leftSources.every(source => rightSources.some(other => ['collectionId', 'runId', 'assetId', 'comparisonTier'].every(key => source[key] === other[key])
+    && (source.metric ?? 'outcomes') === (other.metric ?? 'outcomes')))) return false;
   return ['type', 'unit', 'xLabel', 'xUnit', 'sizeLabel', 'sizeUnit'].every(key => left[key] === right[key])
     && left.categories.length === right.categories.length && left.categories.every((name, index) => name === right.categories[index])
     && left.series.length === right.series.length && left.series.every((series, index) => series.name === right.series[index].name);
@@ -144,7 +145,9 @@ export function chartsFromToolData(data) {
       const references = block.meta?.references;
       const statistics = Array.isArray(references) && references.length && references.every(item =>
         typeof item?.statistics?.runId === 'string' && typeof item.statistics.comparisonTier === 'string')
-        ? references.map(item => item.statistics) : null;
+        ? references.map(item => item.statistics)
+        : Array.isArray(references) && references.length && references.every(item => typeof item?.asset?.collectionId === 'string' && typeof item.asset.assetId === 'string')
+          ? references.map(item => item.asset) : null;
       const index = chart ? charts.findIndex(entry => entry.chart && sameStatisticalView(entry.chart, chart, sources.get(entry.callId), statistics)) : -1;
       const entry = { callId: block.callId, ...(chart ? { chart } : { diagram }) };
       seen.add(block.callId); sources.set(block.callId, statistics);
@@ -454,7 +457,7 @@ function ChartContent({ chart, language = 'zh' }) {
   const scope = compactTimeScope(chart, battles);
   const displayChart = { ...chart, scope };
   const scopeStyle = { margin: '6px 0 0', fontSize: 13, lineHeight: 1.5, color: '#53616E' };
-  const legend = chart.series.length > 1 && ['scatter', 'bubble', 'slope', 'ecdf'].includes(chart.type);
+  const legend = chart.series.length > 1 && ['bar', 'scatter', 'bubble', 'slope', 'ecdf'].includes(chart.type);
   return h('figure', { ref, className: 'eris-analysis-chart', 'data-analysis-chart': chart.type, style: {
     position: 'relative', margin: '16px auto', minWidth: 0, width: '100%', maxWidth: chartMaxWidth, padding: '16px', boxSizing: 'border-box', background: paperColor,
     border: '1px solid #E1E5EB', borderRadius: 6, color: textColor, fontSize: 'var(--dsh-content-font-size, 14px)', overflowWrap: 'anywhere',

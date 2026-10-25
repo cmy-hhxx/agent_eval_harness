@@ -16,7 +16,8 @@ export function assistantModelConfiguration(configuration: ApplicationSettings) 
   const selected = configuration.agent;
   const gateways: AssistantGateway[] = Object.values(configuration.channels).map(channel => ({
     name: channel.name,
-    model: { ...channel, model: channel.model ?? "", thinking: channel.thinking ?? DEFAULT_THINKING,
+    model: { ...channel, supportsDeveloperRole: channel.supportsDeveloperRole ?? false,
+      model: channel.model ?? "", thinking: channel.thinking ?? DEFAULT_THINKING,
       maxOutputTokens: channel.maxOutputTokens ?? 8192,
       contextWindow: channel.contextWindow ?? 524288 },
     models: channel.models?.map(id => ({ id, name: id })), efforts: channel.efforts,
