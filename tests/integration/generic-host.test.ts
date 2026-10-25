@@ -96,6 +96,37 @@ const repository = createRunRepository(codec, (task, state) => ({
   row: { id: task.id, result: state.receipts[task.id].evaluation },
 }));
 
+for (const persistent of [false, true]) test(`the stage circuit waits for bounded transport retries (${persistent ? "outage" : "recovery"})`, { timeout: 15000 }, async () => {
+  const directory = await mkdtemp(path.join(tmpdir(), "eval-transport-circuit-"));
+  const calls = new Map<string, number>();
+  const backend: AgentBackend = { identity, async createSession(options) {
+    return { async run() {
+      const id = options.spec.taskId, count = (calls.get(id) ?? 0) + 1;
+      calls.set(id, count);
+      if (persistent || count === 1) throw new Error("Connection error.");
+      assert(!(await options.execute("submit_evaluation", { score: 1 })).isError);
+    }, async abort() {}, async dispose() {} };
+  } };
+  const workers = await Promise.all([0, 1].map(i => startWorker(backend, path.join(directory, `worker-${i}`))));
+  try {
+    const result = await runEvaluation({ agents: new AgentRegistry([agent]), taskSource: workflow, repository,
+      runtime: { root: directory, workerEntry: "unused" }, runId: "transport-circuit", output: { kind: "directory", path: directory },
+      engine: "pi", identity, evaluatorVersion: "test", config: {}, plan,
+      policy: { ...DEFAULT_POLICY, timeoutSeconds: 10 }, modelForStage: () => model,
+      concurrency: 2, retries: 1, retryDelaySeconds: 0, workerUrls: workers.map(worker => worker.url),
+      failureGuard: { windowSize: 2, threshold: 2 }, signal: AbortSignal.timeout(12000),
+    });
+    const saved = await repository.readRun(path.join(directory, "transport-circuit"));
+    assert.deepEqual([...calls.values()], [2, 2], "each task gets its bounded retry before the circuit can pause");
+    assert.equal(Object.keys(saved!.receipts).length, persistent ? 0 : 2);
+    assert.equal(result.paused_stages.length, persistent ? 1 : 0);
+    assert.equal(result.status, persistent ? "interrupted" : "finished");
+  } finally {
+    await Promise.all(workers.map(worker => worker.close()));
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
 test("a receipt committed during terminal collection wins over an earlier failed observation", { timeout: 10000 }, async (t) => {
   const directory = await mkdtemp(path.join(tmpdir(), "eval-late-receipt-"));
   let release!: () => void, submitted!: () => void;

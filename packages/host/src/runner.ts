@@ -774,7 +774,13 @@ export async function runEvaluation(options: RunOptions): Promise<Record<string,
         contentLedgerConfirmed && contentRemaining(task) > 0 &&
         (record.status ?? status)?.modelQuotaExhausted === true && options.onModelQuotaExhausted?.(model, task) === true &&
         taskModel().provider !== model.provider;
-      const pause = controller.signal.aborted || rerouted || !observesFailures(task) ? undefined : guard.observe(task.stage, task.id, errors);
+      const retryingTransport = !receipt && status?.retryable && contentLedgerConfirmed &&
+        !state.failure?.stopped && !attemptsExhausted(task) && contentRemaining(task) > 0 &&
+        retries.transport < options.retries;
+      // Count a transport outage only after this task's bounded retries. At high
+      // concurrency, one brief outage must not preempt every task's first retry.
+      const pause = controller.signal.aborted || rerouted || retryingTransport || !observesFailures(task)
+        ? undefined : guard.observe(task.stage, task.id, errors);
       if (!receipt && !controller.signal.aborted) await options.logger?.error(state.reason || "No committed receipt", {
         component: "host", event: rerouted ? "model_channel_switched" : "attempt_failed", run_id: options.runId, task_id: task.id,
         ...(rerouted ? { from_channel: model.provider, to_channel: taskModel().provider,
