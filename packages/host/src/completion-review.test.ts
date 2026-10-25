@@ -78,9 +78,9 @@ test('independent revision reruns business validation',async()=>{
    completionReview:{candidateId:'first',reason:'独立复核'}}),/Evidence incomplete/);
 });
 
-test('independent review cannot accept originals that were not delivered',async()=>{
+test('review has no mandatory-read count gate; actual evidence validation remains authoritative',async()=>{
  const f=await fixture(true,true);await assert.rejects(f.store.accept(f.submission),reviewRequired);
- await assert.rejects(f.store.accept({...f.submission,submissionId:'reviewed',completionReview:{candidateId:'first',reason:'独立复核'}}),
- (e:unknown)=>e instanceof HttpError&&e.issues?.some(i=>i.code==='investigation_read_required')===true);
- assert.equal(await f.store.receipt(f.spec.taskId),undefined);
+ assert.deepEqual(f.spec.evaluation.requiredReads,[]);
+ const receipt=await f.store.accept({...f.submission,submissionId:'reviewed',completionReview:{candidateId:'first',reason:'独立复核'}});
+ assert.equal(receipt.status,'succeeded');
 });

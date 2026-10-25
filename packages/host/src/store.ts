@@ -479,24 +479,11 @@ export class RunStore {
       const errors = [{ category: 'decision' as const, code: 'completion_review_required', path: '/',
         message: spec.evaluation.completionReview, expected: { candidate_id: candidate.id,
           focused_review:reviewContext??{initial_result:evaluation} } }];
-      this.registerValidationReads(spec,new ValidationError(errors));
       state.failure = { ...state.failure, draft: structuredClone(value.evaluation), completionCandidate: candidate, errors,
         evidenceBank: [...value.audit.evidenceBank ?? []], contentSubmissions: value.submissionStats?.contentSubmissions ?? 1,
         fileErrors: value.submissionStats?.fileErrors ?? 0, repeatedErrors: 0, stopped: false, attemptId: value.attemptId };
       await this.save();
       throw new ValidationError(errors);
-    }
-    if(value.completionReview){
-      const reads=[...this.bindings.get(spec.attemptId)!.presentedReads??[],...value.audit.traceReads];
-      const unread=(spec.evaluation.requiredReads??[]).some(target=>{
-        let end=target.start;
-        for(const read of reads.filter(r=>r.candidate===target.candidate&&r.message_index===target.message_index&&r.kind===target.kind&&r.path===target.path).sort((a,b)=>a.start-b.start)){
-          if(read.start>end)break;end=Math.max(end,read.end);
-        }
-        return end<target.end;
-      });
-      if(unread)throw new ValidationError([{category:'decision',code:'investigation_read_required',path:'/Problem',
-        message:'独立复核尚未获得相关原始返回、实际输入或输出，保留草稿为未完成。'}]);
     }
     const receipt: SubmissionReceipt = {
       ...value,
