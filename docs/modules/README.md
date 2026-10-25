@@ -46,3 +46,5 @@ Comparison 的归因输入由自身公开契约定义，Workflow 显式投影摘
 工作台结果与分析入口：`apps/host/src/dashboard-analysis.ts` 登记任务/批次/运行选择和分析占用；`packages/workflows/src/comparison/analysis-scope.ts` 投影已接受归因身份，`clustering-job.ts` 校验冻结来源并复用独立作业。`packages/data/src/run-artifacts.ts` 枚举公开报告与结果，页面不读取 state 或 debug 材料。
 
 双日常来源由 `apps/host/src/daily-workbench.ts` 组合控制与查询：问财调用既有自动化，AIME通过 `aime-workbench.ts` 复用CLI同一执行器。全量总览独立读取数据服务的已发布输入聚合及 `daily-evaluation-analytics.ts` / answer-review 公开入口的正式收据覆盖；Tabler 负责界面组件，ECharts 图表按需加载，不参与清洗或调度。包覆盖只关联清洗坐标和当前正式收据，结果按comparison/answer-review公开入口读取；共享Host通过独立pauseSignal收尾，模型请求额度按来源隔离。
+
+服务器控制统一经根目录 `workbench.sh`；`apps/host/src/workbench.ts` 组装前台生命周期，`workbench-services.ts` 管理本次启动拥有的子进程、退避恢复与共同停止时限，`workbench-control.ts` 提供仅本机账号可访问的状态与停止通道及现有日志读取。部署、构建和只读命令不启动服务。

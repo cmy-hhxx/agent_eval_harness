@@ -34,11 +34,24 @@ WORKBENCH_ADMIN_PASSWORD='<管理员密码>' npm run deploy:workbench
 ssh <eval_agent_server>
 cd /mnt/aigc_team/user_workspace/chenmingyang/eval_harness/code
 git pull --ff-only
-tmux new -s workbench
-bash workbench.sh
+bash workbench.sh start
 ```
 
-`workbench.sh` 不执行 `git pull`，不每次重装依赖，不 daemonize。首次缺少依赖或构建产物时执行 bootstrap/build；后续只构建过期产物。实例锁阻止重复启动，子服务异常按退避重启，配置错误、端口冲突或连续崩溃会停止整套服务。服务启动和重启只恢复界面，评测来源等待手动点击「运行」。
+`workbench.sh` 默认执行 `start`，前台运行；SSH 断开、Ctrl+C 或 SIGTERM 会停止整套服务并保存进度。需要断线后持续运行时，由操作者先进入 `tmux new -s workbench`，再执行启动命令。部署、更新、构建、查看状态和日志均不会启动服务；整套退出后必须手动再启，不注册开机自启。
+
+服务器控制命令如下，可从任意目录执行脚本，并用 `--config FILE` 选择运行配置：
+
+```bash
+bash workbench.sh --help
+bash workbench.sh check
+bash workbench.sh status
+bash workbench.sh logs --log runtime --lines 100 --follow
+bash workbench.sh stop
+```
+
+`check` 只校验工具链、配置、依赖和端口，不安装依赖或启动子服务。`status` 和 `stop` 使用运行目录内仅服务器账号可访问的控制通道；`stop` 等待当前实例停止，不按端口或进程名杀进程。`npm run workbench -- <命令>` 使用同一个脚本入口。
+
+启动不执行 `git pull`，首次缺少依赖或构建产物时执行 bootstrap/build，后续只构建过期产物。实例锁阻止重复启动。子服务异常在本次手动启动期间有限退避重启，`runtime/config/workbench.json` 的 `restart.limit` 可设为 `0` 关闭；配置错误、端口冲突或连续崩溃会停止整套服务。启动和子服务重启均不自动恢复评测来源，需手动点击「运行」。
 
 工具链或依赖有变更时，在服务器运行 `npm run deploy:workbench -- --on-server` 准备工具链，随后 `npm run bootstrap && npm run build`。已有管理员配置时无需再提供密码。认证、代理与更新约束见[部署指南](docs/deployment.md)。
 

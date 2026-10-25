@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { createReadStream } from "node:fs";
-import { link, lstat, mkdir, open, readFile, readdir, rename, rm, stat, writeFile } from "node:fs/promises";
+import { chmod, link, lstat, mkdir, open, readFile, readdir, rename, rm, stat, writeFile } from "node:fs/promises";
 import { Readable } from "node:stream";
 import { createGunzip, createGzip } from "node:zlib";
 import path from "node:path";
@@ -12,6 +12,7 @@ export const localFiles = {
   stream: createReadStream,
   list: readdir,
   stat,
+  chmod,
   mkdir,
   remove: rm,
 };

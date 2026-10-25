@@ -37,6 +37,12 @@ test("workbench config resolves every runtime path and rejects unknown settings"
     assert.equal(loaded.data.root, data);
     assert.equal(loaded.runtime.logDirectory, path.join(runtime, "log"));
     assert.equal(loaded.runtime.hostConfigs.length, 2);
+    await writeFile(file, JSON.stringify({ ...config, restart: { ...config.restart, limit: 0 } }));
+    assert.equal((await loadWorkbenchConfig(file)).restart.limit, 0);
+    for (const limit of [-1, 1.5, "0"]) {
+      await writeFile(file, JSON.stringify({ ...config, restart: { ...config.restart, limit } }));
+      await assert.rejects(loadWorkbenchConfig(file), /restart.limit/);
+    }
     await writeFile(file, JSON.stringify({ ...config, version: 1 }));
     await assert.rejects(loadWorkbenchConfig(file), /unknown=\[version]/);
   } finally { await rm(root, { recursive: true, force: true }); }

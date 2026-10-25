@@ -86,7 +86,7 @@ mise trust >/dev/null
 mise install
 export WORKBENCH_ADMIN_PASSWORD
 mise exec -- node scripts/workbench-init.mjs --runtime-root "$RUNTIME" --data-root "$DATA" --admin-user ${shellQuote(args.values["admin-user"])}
-printf '部署准备完成。\\n在服务器执行 cd %s && tmux new -s workbench && bash workbench.sh\\n' "$CODE"
+printf '部署准备完成，服务尚未启动。\\n在服务器执行：cd %s && bash workbench.sh start\\n需要保持断线后运行时，先自行进入 tmux。\\n' "$CODE"
 `;
 await new Promise((resolve, reject) => {
   const child = spawn(command[0], command.slice(1), { cwd: root, stdio: ["pipe", "inherit", "inherit"] });

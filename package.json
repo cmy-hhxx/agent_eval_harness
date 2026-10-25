@@ -27,7 +27,7 @@
     "aime:ingest-and-attribute": "node dist/apps/host/src/aime-ingest-and-attribute.js",
     "attribution:check-language": "node dist/apps/host/src/attribution-language-check.js",
     "automations": "node dist/apps/host/src/automations.js",
-    "workbench": "node dist/apps/host/src/workbench.js",
+    "workbench": "bash workbench.sh",
     "workbench:init": "node scripts/workbench-init.mjs",
     "workbench:configure-daily": "node scripts/configure-daily-workbench.mjs",
     "deploy:workbench": "node scripts/deploy-workbench.mjs",
