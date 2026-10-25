@@ -43,6 +43,9 @@ export const readExecutionTool: Omit<ToolDefinition, "description"> = {
       throw new Error("candidate 必须选择本任务已登记的执行导航材料");
     const material = object(ctx.materialNavigation[args.candidate]);
     const nodes = rows(material.nodes), boundaries = rows(material.boundaries);
+    const nodeByIndex = new Map(nodes.map(node => [node.execution_node_index, node]));
+    const action = (boundary: Record<string, unknown>) => ({ request_formation: '生成工具调用参数', execution: '执行工具请求',
+      generation: '生成回答正文', transfer: '传递上下文', delivery: '交付最终回答' })[String(boundary.kind) as 'generation'];
     const related = (boundary: Record<string, unknown>, node: number) =>
       [boundary.execution_node_index, boundary.source_node_index, boundary.target_node_index].includes(node);
     const request = (view: View, selectors: Partial<NavigationArgs>) => ({
@@ -91,6 +94,8 @@ export const readExecutionTool: Omit<ToolDefinition, "description"> = {
       .filter(side => rows(boundary[side]).some(matchesEvidence));
     const summary = (boundary: Record<string, unknown>) => ({
       transition_index: boundary.transition_index, kind: boundary.kind, actor_index: boundary.actor_index,
+      action: action(boundary), component: nodeByIndex.get(boundary.execution_node_index)?.component ?? null,
+      message_index: nodeByIndex.get(boundary.execution_node_index)?.message_index ?? null,
       execution_node_index: boundary.execution_node_index, source_node_index: boundary.source_node_index,
       target_node_index: boundary.target_node_index, input_path: boundary.input_path, relation: boundary.relation,
       ...(selectedEvidence === undefined ? {} : { matched_sides: matchedSides(boundary) }),
@@ -121,6 +126,8 @@ export const readExecutionTool: Omit<ToolDefinition, "description"> = {
         (query === undefined || [node.component, node.summary].some(text => typeof text === "string" && text.toLocaleLowerCase().includes(query))));
       render = node => ({ execution_node_index: node.execution_node_index, kind: node.kind, actor_index: node.actor_index,
           message_index: node.message_index, component: node.component, ...(node.summary === undefined ? {} : { summary: node.summary }),
+          responsibility_choices: boundaries.filter(boundary => boundary.execution_node_index === node.execution_node_index)
+            .map(boundary => ({ transition_index: boundary.transition_index, action: action(boundary) })),
           boundary_count: boundaries.filter(boundary => related(boundary, node.execution_node_index as number)).length,
           read_request: request("boundaries", { execution_node_index: node.execution_node_index as number }),
         });

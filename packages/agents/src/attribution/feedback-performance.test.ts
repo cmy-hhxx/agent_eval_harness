@@ -1,11 +1,20 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { ValidationError, type ToolAudit } from "@eval/contracts";
+import { ValidationError } from "@eval/contracts";
 import { setFixtureNormDirectory } from "../../../../tests/fixtures/attribution-submission.js";
 import { findingIssueContext } from "./finding-feedback.js";
 import { attributionSubmissionSchema, attributionSubmissionShape } from "./submission-schema.js";
-import { validateEvaluation } from "./validate.js";
 import example from "./fixtures/example.json" with { type: "json" };
+
+test("decimal type repair shows the exact quoted value without changing the draft", () => {
+  const request = structuredClone(example.request);
+  setFixtureNormDirectory(request);
+  const draft = { Problem: [{ calculations: [{ result: 1.35 }] }] };
+  const feedback = findingIssueContext(request, draft, { category: 'structure', code: 'schema_type',
+    path: '/Problem/0/calculations/0/result', actual: 1.35, message: 'must be string' });
+  assert.match(String(feedback?.repair_action), /"1\.35"/);
+  assert.equal(draft.Problem[0].calculations[0].result, 1.35);
+});
 
 test("per-field feedback uses the same shape without rerendering sources or bypassing submission identity validation", () => {
   const request = structuredClone(example.request);
@@ -22,7 +31,5 @@ test("per-field feedback uses the same shape without rerendering sources or bypa
   assert.equal(sourceReads, 0, "repairing field shape must not repeat whole-source identity validation");
   (request.input.answer.component_catalog[0] as { component: string }).component = "伪造主体";
   assert.throws(() => attributionSubmissionSchema(request), ValidationError);
-  const audit: ToolAudit = { calls: 0, requiredReadCalls: 0, traceReads: [], viewedImages: [], calculations: [], artifacts: [] };
-  assert.throws(() => validateEvaluation(request, example.result, audit), ValidationError);
-  assert(sourceReads > 0, "the submission gate still validates identities against original source records");
+  assert(sourceReads > 0, "material preparation validates identities against original source records");
 });

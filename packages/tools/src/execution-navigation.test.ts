@@ -67,6 +67,10 @@ test("execution navigation follows only one edge and can select formation among 
     assert.deepEqual(related.items.map((x: any) => x.transition_index), [1, 2]);
     assert(!("before" in related.items[0])); assert(!("after" in related.items[0])); assert(!("predecessors" in related.items[0]));
     assert.equal(related.items[0].requests.before.arguments.view, "before");
+    assert.equal(related.items[0].component, '模型 0');
+    assert.equal(related.items[0].action, '生成工具调用参数');
+    assert.deepEqual(page(await f.call({ view: 'nodes', message_index: 0 })).items[0].responsibility_choices,
+      [{ transition_index: 1, action: '生成工具调用参数' }]);
     assert.equal(page(await f.call({ view: "boundaries", execution_node_index: 2, kind: "request_formation" })).total, 1);
     assert.deepEqual(page(await f.call({ view: "predecessors", transition_index: 3 })).items.map((x: any) => x.transition_index), [2]);
     assert.deepEqual(page(await f.call({ view: "successors", transition_index: 1 })).items.map((x: any) => x.transition_index), [2]);
