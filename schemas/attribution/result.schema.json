@@ -24,13 +24,14 @@
         "type": "object",
         "additionalProperties": false,
         "required": [
-          "problem_id",
           "text",
           "reason",
           "evidence_status",
           "evidence",
-          "checks",
-          "causes"
+          "responsibility_boundary",
+          "attribution_reason",
+          "problem_id",
+          "component"
         ],
         "properties": {
           "problem_id": {
@@ -47,8 +48,8 @@
           },
           "evidence_status": {
             "enum": [
-              "established",
-              "uncertain"
+              "已确认",
+              "待核实"
             ]
           },
           "evidence": {
@@ -60,7 +61,8 @@
               "required": [
                 "evidence_id",
                 "message_index",
-                "quote"
+                "quote",
+                "purposes"
               ],
               "properties": {
                 "message_index": {
@@ -82,6 +84,17 @@
                 "evidence_id": {
                   "type": "string",
                   "minLength": 1
+                },
+                "purposes": {
+                  "type": "array",
+                  "items": {
+                    "enum": [
+                      "问题",
+                      "归因"
+                    ]
+                  },
+                  "minItems": 1,
+                  "uniqueItems": true
                 }
               },
               "dependentRequired": {
@@ -94,189 +107,79 @@
               }
             }
           },
-          "checks": {
+          "responsibility_boundary": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "minimum": 1
+          },
+          "attribution_reason": {
+            "type": "string",
+            "minLength": 1
+          },
+          "uncertainties": {
+            "type": "array",
+            "minItems": 1,
+            "items": {
+              "type": "string",
+              "minLength": 1
+            },
+            "uniqueItems": true
+          },
+          "component": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "minLength": 1
+          },
+          "related_responsibilities": {
             "type": "array",
             "minItems": 1,
             "items": {
               "type": "object",
               "additionalProperties": false,
               "required": [
-                "transition_index",
-                "kind",
-                "outcome",
-                "observation",
-                "before_evidence_ids",
-                "after_evidence_ids"
+                "responsibility_boundary",
+                "attribution_reason",
+                "evidence_ids",
+                "component"
               ],
               "properties": {
-                "transition_index": {
+                "responsibility_boundary": {
                   "type": "integer",
                   "minimum": 1
                 },
-                "kind": {
-                  "enum": [
-                    "request_formation",
-                    "execution",
-                    "transfer",
-                    "generation",
-                    "delivery"
-                  ]
-                },
-                "outcome": {
-                  "enum": [
-                    "preserved",
-                    "changed",
-                    "recovered",
-                    "unresolved"
-                  ]
-                },
-                "observation": {
+                "attribution_reason": {
                   "type": "string",
                   "minLength": 1
                 },
-                "before_evidence_ids": {
+                "uncertainties": {
                   "type": "array",
-                  "uniqueItems": true,
-                  "items": {
-                    "type": "string",
-                    "minLength": 1
-                  }
-                },
-                "after_evidence_ids": {
-                  "type": "array",
-                  "uniqueItems": true,
-                  "items": {
-                    "type": "string",
-                    "minLength": 1
-                  }
-                }
-              }
-            }
-          },
-          "causes": {
-            "type": "array",
-            "items": {
-              "type": "object",
-              "additionalProperties": false,
-              "required": [
-                "transition_index",
-                "basis",
-                "mechanism_source",
-                "reason",
-                "certainty",
-                "actor_index",
-                "component",
-                "kind",
-                "role",
-                "evidence_ids"
-              ],
-              "properties": {
-                "transition_index": {
-                  "type": "integer",
-                  "minimum": 1
-                },
-                "basis": {
-                  "enum": [
-                    "input_deviation",
-                    "independent_addition",
-                    "unknown_transition"
-                  ]
-                },
-                "mechanism_source": {
-                  "enum": [
-                    "explicit_process",
-                    "boundary_comparison"
-                  ]
-                },
-                "reason": {
-                  "type": "string",
-                  "minLength": 1
-                },
-                "certainty": {
-                  "enum": [
-                    "confirmed",
-                    "inferred"
-                  ]
-                },
-                "uncertainty": {
-                  "type": "object",
-                  "additionalProperties": false,
-                  "required": [
-                    "evidence_gap",
-                    "alternatives"
-                  ],
-                  "properties": {
-                    "evidence_gap": {
-                      "type": "string",
-                      "minLength": 1
-                    },
-                    "alternatives": {
-                      "type": "array",
-                      "items": {
-                        "type": "string",
-                        "minLength": 1
-                      },
-                      "minItems": 1
-                    }
-                  }
-                },
-                "actor_index": {
-                  "type": [
-                    "integer",
-                    "null"
-                  ],
-                  "minimum": 1
-                },
-                "component": {
-                  "type": "string",
-                  "minLength": 1
-                },
-                "kind": {
-                  "enum": [
-                    "request_formation",
-                    "execution",
-                    "transfer",
-                    "generation",
-                    "delivery"
-                  ]
-                },
-                "role": {
-                  "enum": [
-                    "primary",
-                    "contributing"
-                  ]
-                },
-                "evidence_ids": {
-                  "type": "array",
+                  "minItems": 1,
                   "items": {
                     "type": "string",
                     "minLength": 1
                   },
-                  "minItems": 1,
                   "uniqueItems": true
-                }
-              }
-            }
-          },
-          "uncertainty": {
-            "type": "object",
-            "additionalProperties": false,
-            "required": [
-              "evidence_gap",
-              "alternatives"
-            ],
-            "properties": {
-              "evidence_gap": {
-                "type": "string",
-                "minLength": 1
-              },
-              "alternatives": {
-                "type": "array",
-                "items": {
-                  "type": "string",
-                  "minLength": 1
                 },
-                "minItems": 1
+                "evidence_ids": {
+                  "type": "array",
+                  "minItems": 1,
+                  "uniqueItems": true,
+                  "items": {
+                    "type": "string",
+                    "minLength": 1
+                  }
+                },
+                "component": {
+                  "type": [
+                    "string",
+                    "null"
+                  ],
+                  "minLength": 1
+                }
               }
             }
           },
@@ -303,11 +206,11 @@
                 },
                 "operation": {
                   "enum": [
-                    "ratio",
-                    "relative_change",
-                    "compound_growth",
-                    "annualization",
-                    "arithmetic"
+                    "比值",
+                    "相对变化",
+                    "复利增长",
+                    "年化",
+                    "四则运算"
                   ]
                 },
                 "operands": {
@@ -346,7 +249,7 @@
                       }
                     }
                   },
-                  "description": "每项value为对应evidence中的完整原数token（可含千分位），unit/period/role明确原始单位、期间及业务角色。ratio仅numerator+denominator，区间比值仅numerator+denominator_lower+denominator_upper（分子非负、分母为有序正数、两端同单位同期间），denominator_role精确等于分母role；relative_change仅base+observed（同单位，期间可不同），公式(observed-base)/base，denominator_role=base.role；compound_growth必需rate+periods，可选base；rate.unit为ratio或%（%自动精确除100），periods.unit=periods且1—20整数（有界资源限制）；有base时结果=base*(1+每期增长率)^periods且与base同单位，无base计算增长倍数且result_unit=ratio，不需编造值为1的来源；非CAGR；annualization仅value，须有正factor、observation_period=value.period、target_period=result_period、result_basis=run_rate及非空assumptions，结果单位与value一致；arithmetic用自选合法变量名且每项均参与formula，display_scale为保留名。"
+                  "description": "每项value为对应evidence中的完整原数token（可含千分位），unit/period/role明确原始单位、期间及业务角色。比值仅numerator+denominator，区间比值仅numerator+denominator_lower+denominator_upper（分子非负、分母为有序正数、两端同单位同期间），denominator_role精确等于分母role；相对变化仅base+observed（同单位，期间可不同），公式(observed-base)/base，denominator_role=base.role；复利增长必需rate+periods，可选base；rate.unit为比值或%（%自动精确除100），periods.unit=期且1—20整数（有界资源限制）；有base时结果=base*(1+每期增长率)^periods且与base同单位，无base计算增长倍数且result_unit=比值，不需编造值为1的来源；非CAGR；年化仅value，须有正factor、observation_period=value.period、target_period=result_period、result_basis=按当前速度年化及非空assumptions，结果单位与value一致；四则运算用自选合法变量名且每项均参与formula，display_scale为保留名。"
                 },
                 "result": {
                   "oneOf": [
@@ -387,7 +290,7 @@
                     "1",
                     "100"
                   ],
-                  "description": "结果显示倍率，仅1或100，不是容差。ratio/relative_change的scale=100当且仅当result_unit=%；其他运算也按此倍率乘在公式结果之后。"
+                  "description": "结果显示倍率，仅1或100，不是容差。比值/相对变化的scale=100当且仅当result_unit=%；其他运算也按此倍率乘在公式结果之后。"
                 },
                 "decimal_places": {
                   "type": "integer",
@@ -417,7 +320,7 @@
                 "formula": {
                   "type": "string",
                   "minLength": 1,
-                  "description": "仅arithmetic使用具名源数操作数、四则运算和括号。数学常数0/1可直接写；10的整数次幂可作单位换算倍率（如/1000或*1e-3），须用assumptions声明原/目标单位及换算依据。其他数值必须来自operands，不得通过常数绕过证据绑定；数学常量不证明被评模型执行过对应动作。"
+                  "description": "仅四则运算使用具名源数操作数、四则运算和括号。数学常数0/1可直接写；10的整数次幂可作单位换算倍率（如/1000或*1e-3），须用assumptions声明原/目标单位及换算依据。其他数值必须来自operands，不得通过常数绕过证据绑定；数学常量不证明被评模型执行过对应动作。"
                 },
                 "factor": {
                   "type": "string",
@@ -432,7 +335,7 @@
                   "minLength": 1
                 },
                 "result_basis": {
-                  "const": "run_rate"
+                  "const": "按当前速度年化"
                 }
               }
             }

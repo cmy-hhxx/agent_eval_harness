@@ -66,7 +66,7 @@ export function validateEvaluation(request:AgentRequest,result:unknown,audit:Too
    for(const id of assessment.core_failure_refs){
     const criterion=input.task_analysis.requirements.find(item=>item.id===id);
     const cells=value.decision_basis.comparisons.filter(row=>row.criterion_ids.includes(id)).map(row=>row.assessments[candidate]);
-    if(!criterion||!criterionAppliesToPair(input,criterion)||!cells.some(cell=>cell?.evidence_status==='established'&&['unmet','partial'].includes(cell.status)&&cell.finding_indices.length))
+    if(!criterion||!criterionAppliesToPair(input,criterion)||!cells.some(cell=>cell?.evidence_status==='已确认'&&['unmet','partial'].includes(cell.status)&&cell.finding_indices.length))
      add('core_failure_unproven',`/assessments/${candidate}/core_failure_refs`,'核心失败仅引用双方共同要求、已证实未达标的比较格和既有 Problem；缺少归因记录须请求来源复核。',candidate);
    }
   }
@@ -84,17 +84,17 @@ export function validateEvaluation(request:AgentRequest,result:unknown,audit:Too
    if(!labels.includes(candidate))continue;
    const problems=cell.finding_indices.map(i=>input.attributions[candidate]?.Problem[i]);
    if(problems.some(item=>!item))add('finding_missing',path,'只能引用本方已接受 Problem 的零起始位置。',candidate);
-   if(cell.evidence_status==='established'&&problems.some(item=>item?.evidence_status==='uncertain'))add('finding_evidence_strengthened',path,'不可把不确定问题提升为已证实。',candidate);
+   if(cell.evidence_status==='已确认'&&problems.some(item=>item?.evidence_status==='待核实'))add('finding_evidence_strengthened',path,'不可把不确定问题提升为已证实。',candidate);
    if(row.criterion_ids.length){
     const inScope=row.criterion_ids.some(id=>applicable(candidate,id));
     if((cell.status==='not_applicable')===Boolean(inScope))add('criterion_scope_invalid',path,'状态必须遵守原规则的适用范围。',candidate);
-    if(['unmet','partial'].includes(cell.status)&&cell.evidence_status==='established'&&!cell.finding_indices.length)add('comparison_defect_unregistered',path,'已确认缺陷须引用正式 Problem；归因漏项时请求来源复核，不能由比较新增问题。',candidate);
-    if(cell.status==='unknown'&&cell.evidence_status!=='uncertain')add('criterion_unknown_established',path,'未知状态不能确证。',candidate);
+    if(['unmet','partial'].includes(cell.status)&&cell.evidence_status==='已确认'&&!cell.finding_indices.length)add('comparison_defect_unregistered',path,'已确认缺陷须引用正式 Problem；归因漏项时请求来源复核，不能由比较新增问题。',candidate);
+    if(cell.status==='unknown'&&cell.evidence_status!=='待核实')add('criterion_unknown_established',path,'未知状态不能确证。',candidate);
    }
   }
   if(row.better_candidates.length&&!comparisonAdvantageCandidates(row.assessments).length)add('comparison_advantage_unproven',path,'双方同口径且有确证判断时才可认定优势。');
   if(!row.criterion_ids.length&&row.better_candidates.length&&!comparisonResourcesComparable(input))add('comparison_resource_incomparable',path,'资源优势须使用双方同种有效指标。');
-  if(!row.criterion_ids.length)for(const [candidate,cell]of Object.entries(row.assessments))if(cell.evidence_status==='established'&&!Object.values(comparisonResourceMetrics(input,candidate)).some(item=>item!==null))add('unlinked_observation_unproven',path,'无资源数据不能生成已确认资源判断。',candidate);
+  if(!row.criterion_ids.length)for(const [candidate,cell]of Object.entries(row.assessments))if(cell.evidence_status==='已确认'&&!Object.values(comparisonResourceMetrics(input,candidate)).some(item=>item!==null))add('unlinked_observation_unproven',path,'无资源数据不能生成已确认资源判断。',candidate);
  }
  if(value.status==='decided'){
   const ranked=value.ranking.flat();

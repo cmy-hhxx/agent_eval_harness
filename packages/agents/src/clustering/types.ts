@@ -15,12 +15,9 @@ export interface ClusteringBudget {
 export interface ClusteringExample {
   finding: string;
   reason: string;
-  evidence_status: "established" | "uncertain";
+  evidence_status: "已确认" | "待核实";
   responsibilities?: {
-    role:"primary"|"contributing";component:string;transition_index:number;
-    mechanism_source:"explicit_process"|"boundary_comparison";
-    certainty:"confirmed"|"inferred";reason:string;
-    uncertainty?:{evidence_gap:string;alternatives:string[]};
+    component:string;responsibility_boundary:number|null;attribution_reason:string;uncertainties?:string[];
   }[];
 }
 /** One deduplicated problem observation: identical proposals collapsed before clustering. */

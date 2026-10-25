@@ -7,7 +7,7 @@ export function comparisonAttribution(result: AttributionResult): ComparisonAttr
     has_standard_answer: result.has_standard_answer, is_correct: result.is_correct,
     correct_reason: result.correct_reason, summary: result.summary,
     Problem: result.Problem.map(({problem_id,text,reason,evidence_status,evidence}) => ({
-      problem_id,text,reason,evidence_status,evidence: structuredClone(evidence),
+      problem_id,text,reason,evidence_status,evidence: evidence.map(({purposes:_purposes,...item})=>structuredClone(item)),
     })),
   };
 }

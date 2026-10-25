@@ -84,7 +84,7 @@ async function setup(rewrite = false, clustering = false, rows?: Parameters<type
     const secondInput = (plan.catalog as Candidate[]).find((candidate) => candidate.version === "a_fast" && candidate.case_id === "q2")!;
     const secondTask = plan.tasks.find((item) => item.stage === "attribution" && item.inputIds.answer === secondInput.input_id)!;
     const secondEvaluation = attributionResult(false, "2+2=5", true, secondInput.input_id);
-    secondEvaluation.Problem[0]!.evidence_status = "uncertain";
+    secondEvaluation.Problem[0]!.evidence_status = "待核实";
     const secondReceipt: SubmissionReceipt = { ...receipt, taskId: secondTask.id, attemptId: "attempt-2",
       submissionId: "submission-2", evaluation: secondEvaluation };
     secondReceipt.exported = { id: secondTask.id, file: "attribution.jsonl", row: attributionRow(secondTask, secondReceipt) };
@@ -171,7 +171,7 @@ async function setup(rewrite = false, clustering = false, rows?: Parameters<type
           task_id: clusteringTask.id,
           submission_id: clusteringReceipt.submissionId,
           finding_id: "f0",
-          evidence_status: "established",
+          evidence_status: "已确认",
           message_index: 1,
           source: { file: firstInput.source, line: firstInput.line },
           classification: "assigned",
@@ -192,7 +192,7 @@ async function setup(rewrite = false, clustering = false, rows?: Parameters<type
           task_id: clusteringTask.id,
           submission_id: clusteringReceipt.submissionId,
           finding_id: "f0",
-          evidence_status: "uncertain",
+          evidence_status: "待核实",
           message_index: 1,
           source: { file: secondInput.source, line: secondInput.line },
           classification: "assigned",
@@ -365,7 +365,7 @@ test("dashboard accepted task reads align formal traces by model and finding ID 
       evaluation.Problem = ["第一条资料：4", "第二条资料：4"].map((quote, index) => ({
         ...structuredClone(original), problem_id: `f${index}`, text: `${candidate.version}正式归因正文${index}`,
         evidence: [{ evidence_id: evidenceId(candidate.input_id, 2 + index * 2, "text", "/output", 0, quote.length),
-          message_index: 2 + index * 2, quote }],
+          purposes:["问题"], message_index: 2 + index * 2, quote }],
       }));
       accept(task.dependencies[label]!, evaluation);
     }
@@ -784,7 +784,7 @@ test("dashboard problem library lists every configured model and recalls intact 
     assert.deepEqual(classDetail.lineage, library[0].merged);
     assert.equal(classDetail.occurrences[0].run_id, "run-one");
     assert.equal(classDetail.occurrences[0].input_id, fixture.task.inputIds.answer);
-    assert.equal(classDetail.occurrences[0].evidence_status, "established");
+    assert.equal(classDetail.occurrences[0].evidence_status, "已确认");
     const recall = classDetail.occurrences[0].recall;
     assert.equal(recall.available, true);
     assert.equal(recall.reason, null);

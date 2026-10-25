@@ -400,7 +400,7 @@ function findingSharesUserNorm(request: AgentRequest, finding: Finding, concern:
 function concernFindingCoverage(request: AgentRequest, concern: ComparisonMaterialInspection["concerns"][number],
   findingIndex: number, audit: ToolAudit, path: string) {
   const input = request.input as unknown as ComparisonVerificationInput, finding = input.attributions[concern.candidate]?.Problem[findingIndex];
-  if (!finding || finding.evidence_status !== "established") return { eligible: false, covered: [] as string[] };
+  if (!finding || finding.evidence_status !== "已确认") return { eligible: false, covered: [] as string[] };
   if (!concern.criterion_ids.length) return { covered: [] as string[], eligible: findingSharesProof(request, finding, concern,
       sourceOnlyNormProof(request, concern, audit, `${path}/source_evidence`).blocks, audit, path) };
   const criterion = findingCriterion(input, concern.candidate, findingIndex), covered = concern.criterion_ids.filter(id =>
@@ -516,7 +516,7 @@ function unmatchedConcerns(request: AgentRequest, submission: ComparisonVerifica
       const findings = input.attributions[concern.candidate]?.Problem;
       const ids = new Set(match.finding_indices.flatMap(findingIndex => {
         const finding = findings?.[findingIndex];
-        if (!finding || finding.evidence_status !== "established")
+        if (!finding || finding.evidence_status !== "已确认")
           throw new ValidationError([{ category: "decision", code: "inspection_match_finding", path,
             expected: concernMatchChoices(request, concern, match.concern_index, audit, path),
             message: "原材料发现只能对应本方既有 established problem；准确对应事实与责任链仍须实际核查。" }]);
@@ -561,10 +561,10 @@ function unverifiedReviews(request: AgentRequest, audit: ToolAudit) {
   return inspection.checks.filter(check => check.result === "unverified").flatMap(check => {
     const attribution = input.attributions[check.candidate];
     const met = input.comparison_draft.decision_basis.comparisons.some(row=>row.criterion_ids.includes(check.criterion_id)&&
-      row.assessments[check.candidate]?.status==='met'&&row.assessments[check.candidate]?.evidence_status==='established');
+      row.assessments[check.candidate]?.status==='met'&&row.assessments[check.candidate]?.evidence_status==='已确认');
     const decisive = input.comparison_draft.decision_basis.decisive_findings.flatMap(reference => reference.candidate === check.candidate &&
       findingCriterion(input, check.candidate, reference.finding_index)?.id === check.criterion_id &&
-      attribution.Problem[reference.finding_index]?.evidence_status === "established" ? [reference.finding_index] : []);
+      attribution.Problem[reference.finding_index]?.evidence_status === "已确认" ? [reference.finding_index] : []);
     return met || decisive.length ? [{ candidate: check.candidate, criterion_ids: [check.criterion_id],
       finding_indices: [...new Set(decisive)], reason: check.observation }] : [];
   });
@@ -577,8 +577,8 @@ function checkConflictReviews(request: AgentRequest, audit: ToolAudit) {
   return inspection.checks.filter(check => check.result === "supported" || check.result === "not_applicable").flatMap(check => {
     const attribution = input.attributions[check.candidate];
     const failed = input.comparison_draft.decision_basis.comparisons.some(row=>row.criterion_ids.includes(check.criterion_id)&&
-      ['unmet','partial'].includes(row.assessments[check.candidate]?.status)&&row.assessments[check.candidate]?.evidence_status==='established');
-    const problems = check.result === "not_applicable" ? attribution.Problem.flatMap((finding, index) => finding.evidence_status === "established" && findingCriterion(input, check.candidate, index)?.id === check.criterion_id ? [index] : []) : [];
+      ['unmet','partial'].includes(row.assessments[check.candidate]?.status)&&row.assessments[check.candidate]?.evidence_status==='已确认');
+    const problems = check.result === "not_applicable" ? attribution.Problem.flatMap((finding, index) => finding.evidence_status === "已确认" && findingCriterion(input, check.candidate, index)?.id === check.criterion_id ? [index] : []) : [];
     return failed || problems.length ? [{ candidate: check.candidate, criterion_ids: [check.criterion_id],
       finding_indices: problems, reason: check.observation }] : [];
   });

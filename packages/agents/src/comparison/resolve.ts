@@ -124,10 +124,10 @@ export function resolveComparison(request: AgentRequest, draft: unknown): Compar
       metrics.every(metric => metric[key] !== null) && metrics.some(metric => metric[key] !== metrics[0][key]));
     const sharedDifference = comparisons.some(row => row.better_candidates.length ||
       row.criterion_ids.some(id => commonIds.has(id)) && Object.values(row.assessments).some(cell =>
-        cell.evidence_status !== "established" || cell.status !== row.assessments[labels[0]].status));
+        cell.evidence_status !== "已确认" || cell.status !== row.assessments[labels[0]].status));
     // Unmapped facts have no paired equivalence check, even when they cannot change a both-bad verdict.
     const unpairedObservation = labels.some(candidate => input.attributions[candidate].Problem.some((finding, index) =>
-      finding.evidence_status === "established" &&
+      finding.evidence_status === "已确认" &&
       findingAppliesToPair(input, candidate, index, request.sources[candidate]?.value) &&
       !comparisons.some(row => row.assessments[candidate].finding_indices.includes(index))));
     if (sharedDifference || resourceDifference || unpairedObservation) throw new ValidationError([{ category: "decision", code: "relative_preference_required",

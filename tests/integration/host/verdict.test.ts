@@ -49,7 +49,7 @@ function group(labels: string[], meets: Record<string, boolean> = {}): Compariso
       comparisons: criteriaResult().requirements.map((criterion, index) => ({ aspect: criterion.text, criterion_ids: [criterion.id],
         importance: "high", better_candidates: [], assessments: Object.fromEntries(
           labels.map((label) => [label, { status: meets[label] === false && ["r1", "r3", "r4"].includes(criterion.id) ? "unmet" : "met",
-            evidence_status: "established", summary: "保留本项计算与交付判断。", finding_indices: index === 0 ? [0] : [] }]),
+            evidence_status: "已确认", summary: "保留本项计算与交付判断。", finding_indices: index === 0 ? [0] : [] }]),
         ) })),
       decisive_findings: labels.some(label => meets[label] === false) && labels.some(label => meets[label] !== false)
         ? labels.map(label => ({ candidate: label, finding_index: 0 })) : [],

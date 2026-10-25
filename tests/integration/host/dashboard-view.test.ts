@@ -129,7 +129,7 @@ test("review projections resolve blind candidates and show uncertain cells witho
   review.assessments.A!.meets_core = null;
   review.decision_basis.comparisons[0]!.better_candidates = [];
   review.decision_basis.comparisons[0]!.assessments.A!.status = "unknown";
-  review.decision_basis.comparisons[0]!.assessments.A!.evidence_status = "uncertain";
+  review.decision_basis.comparisons[0]!.assessments.A!.evidence_status = "待核实";
   const row = { evaluation_type: "comparison_review", result: review,
     models: { a_fast: { version: "A组Fast" }, b_fast: { version: "B组Fast" } },
     evaluations: { a_fast: attributionResult(), b_fast: attributionResult() },
@@ -145,7 +145,7 @@ test("review projections resolve blind candidates and show uncertain cells witho
     assert.equal(verdicts, "待复核");
     assert(!/都好|都差/.test(verdicts));
     const cell = document.querySelector('[data-candidate="a_fast"]');
-    assert.match(cell.textContent, /证据不足.*不确定/);
+    assert.match(cell.textContent, /证据不足.*待核实/);
     assert(document.querySelector(".comparison-table th").closest("table").textContent.includes(review.task_analysis.requirements[0]!.id));
   } finally { dom.window.close(); }
 });
@@ -394,12 +394,12 @@ test("dashboard aligns models by version, prioritizes impact, and keeps accepted
     evaluations: { left: attributionResult(false), right: attributionResult(false) },
     decision_basis: { tradeoff: "A组Fast更好，方案比较更具体。", decisive_findings: [], comparisons: [
       { aspect: "脚注", criterion_ids: ["r1"], importance: "low", better_candidates: ["right"], assessments: {
-        left: { summary: "脚注编号错位。", finding_indices: [], status: "partial", evidence_status: "established" },
-        right: { summary: "编号准确。", finding_indices: [], status: "met", evidence_status: "established" },
+        left: { summary: "脚注编号错位。", finding_indices: [], status: "partial", evidence_status: "已确认" },
+        right: { summary: "编号准确。", finding_indices: [], status: "met", evidence_status: "已确认" },
       } },
       { aspect: "对冲方案", criterion_ids: ["r1"], importance: "high", better_candidates: ["left"], assessments: {
-        left: { summary: "比较了多种对冲工具。", finding_indices: [0], status: "met", evidence_status: "established" },
-        right: { summary: "只提到人民币融资。", finding_indices: [0], status: "unmet", evidence_status: "established" },
+        left: { summary: "比较了多种对冲工具。", finding_indices: [0], status: "met", evidence_status: "已确认" },
+        right: { summary: "只提到人民币融资。", finding_indices: [0], status: "unmet", evidence_status: "已确认" },
       } },
     ] },
   };
@@ -428,8 +428,8 @@ test("comparison cells retain problem evidence, source identities and escaped pr
   evaluations.left.Problem[0].reason="证据支持具体缺陷 <script>内容</script>";
   const comparison=comparisonResult(["left","right"]);
   comparison.decision_basis.comparisons=[{aspect:"引用缺陷",criterion_ids:[],importance:"medium",better_candidates:["right"],assessments:{
-    left:{summary:"已确认本方问题。",finding_indices:[0],status:"met",evidence_status:"established"},
-    right:{summary:"问题影响更小。",finding_indices:[0],status:"met",evidence_status:"established"}}}];
+    left:{summary:"已确认本方问题。",finding_indices:[0],status:"met",evidence_status:"已确认"},
+    right:{summary:"问题影响更小。",finding_indices:[0],status:"met",evidence_status:"已确认"}}}];
   const row={...comparison,evaluations,models:{left:{version:"左模型"},right:{version:"右模型"}},verdicts:{}};
   const before=structuredClone(row),projected=caseResultView("comparison",row)!;
   const {dom,document,views}=render("comparison",projected);

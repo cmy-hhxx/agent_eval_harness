@@ -97,7 +97,7 @@ export interface ClusteringObservationRef {
   finding_id: string;
   message_index: number;
   quote: string;
-  evidence_status: "established" | "uncertain";
+  evidence_status: "已确认" | "待核实";
   /** Cross-run observations retain the individual source date and accepted receipt. */
   batch_id?: string;
   attribution?: AttributionSource;

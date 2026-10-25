@@ -22,7 +22,7 @@ function plain(reference:unknown=null){
 test('model contract omits program identity, correctness availability and all removed forms',()=>{
  const f=plain(),schema=attributionSubmissionSchema(f.binding.request);
  assert.deepEqual(Object.keys(schema.properties).sort(),['Problem','summary']);
- assert.deepEqual(Object.keys(schema.properties.Problem.items.properties).sort(),['calculations','causes','checks','evidence_indices','evidence_status','reason','text','uncertainty']);
+ assert.deepEqual(Object.keys(schema.properties.Problem.items.properties).sort(),['attribution_reason','calculations','evidence','evidence_status','reason','related_responsibilities','responsibility_boundary','text','uncertainties']);
  for(const extra of [{meta:{}},{has_standard_answer:true}])assert.throws(()=>f.registry.resolve(f.binding,{summary:'实际加法结果正确。',Problem:[],...extra},f.audit),ValidationError);
 });
 test('evidence-backed completed no-problem review has exactly six formal fields and nullable correctness',()=>{
@@ -34,8 +34,8 @@ test('evidence-backed completed no-problem review has exactly six formal fields 
 test('no standard answer still preserves an established defect and actual generation identity',()=>{
  const f=businessChainFixture(),draft=attributionSubmission(f.binding.request,f.result,f.audit);
  const r=resolveModelSubmission(f.binding.request,draft,f.audit);
- assert.equal(r.Problem.length,1);assert.equal(r.Problem[0].causes[0].actor_index,f.generated.actor_index);
- assert.equal(r.Problem[0].causes[0].certainty,'inferred');assert.equal(r.is_correct,null);assert.equal(r.correct_reason,null);
+ assert.equal(r.Problem.length,1);assert.equal(r.Problem[0].responsibility_boundary,f.generated.transition_index);
+ assert.equal(r.Problem[0].component,f.problem.component);assert.equal(r.is_correct,null);assert.equal(r.correct_reason,null);
 });
 test('reference agreement and independent attribution remain separate judgments',()=>{
  const f=businessChainFixture();f.binding.request.input.ground_truth={available:true,value:'3690'};
@@ -45,18 +45,18 @@ test('reference agreement and independent attribution remain separate judgments'
  for(const value of [false,null]){const p=plain('4');const r=p.registry.resolve(p.binding,{summary:'已比较实际结果与标准。',Problem:[],is_correct:value,correct_reason:value===null?'标准对象未明确，无法确认比较口径。':'本次结果与标准不一致。'},p.audit) as AttributionResult;assert.equal(r.is_correct,value);}
 });
 test('established defect survives unknown responsibility with a real evidence gap',()=>{
- const f=businessChainFixture();f.result.Problem[0].causes=[];
- f.result.Problem[0].uncertainty={evidence_gap:'可见输入输出差异，但无法区分形成动作。',alternatives:['生成时转换错误。','相关材料解释错误。']};
+ const f=businessChainFixture();f.result.Problem[0].responsibility_boundary=null;f.result.Problem[0].component=null;
+ f.result.Problem[0].uncertainties=['可见交付缺陷，但形成记录未采集。'];
  const r=resolveModelSubmission(f.binding.request,attributionSubmission(f.binding.request,f.result,f.audit),f.audit);
- assert.equal(r.Problem[0].evidence_status,'established');assert.deepEqual(r.Problem[0].causes,[]);
+ assert.equal(r.Problem[0].evidence_status,'已确认');assert.equal(r.Problem[0].component,null);
 });
 test('structural repair preserves the defect and must still pass complete business validation',()=>{
  const f=businessChainFixture(),draft=attributionSubmission(f.binding.request,f.result,f.audit),original=structuredClone(draft.Problem);
  assert.throws(()=>resolveModelSubmission(f.binding.request,{...draft,extra:'bad'},f.audit),ValidationError);
- draft.Problem[0].causes[0].certainty='confirmed';
- assert.throws(()=>resolveModelSubmission(f.binding.request,draft,f.audit),(e:unknown)=>e instanceof ValidationError&&e.issues!.some(i=>i.code==='responsibility_mechanism_inferred'));
+ draft.Problem[0].evidence=draft.Problem[0].evidence.map(e=>({...e,purposes:['问题']}));
+ assert.throws(()=>resolveModelSubmission(f.binding.request,draft,f.audit),(e:unknown)=>e instanceof ValidationError&&e.issues!.some(i=>i.code==='investigation_boundary_evidence'));
  draft.Problem=original;const r=resolveModelSubmission(f.binding.request,draft,f.audit);assert.equal(r.Problem[0].text,original[0].text);
- const changed=structuredClone(r);changed.Problem[0].causes[0].actor_index=null;assert.throws(()=>validateEvaluation(f.binding.request,changed,f.audit),ValidationError);
+ const changed=structuredClone(r);changed.Problem[0].component=null;assert.throws(()=>validateEvaluation(f.binding.request,changed,f.audit),ValidationError);
 });
 test('unread available evidence remains protected required work after a field repair',()=>{
  const f=businessChainFixture(),draft=attributionSubmission(f.binding.request,f.result,f.audit);

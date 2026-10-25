@@ -94,9 +94,9 @@ export function projectClusteringTree(config: ClusteringJobConfig, inputs: Recor
     for (const node of nodes.filter(node => node.meta.model === model)) {
       const samples = [...new Map(nodeSamples.get(node.node_id)!.map(ref => [findingKey(ref), ref])).values()];
       node.count = samples.length;
-      node.established_count = samples.filter(ref => ref.evidence_status === "established").length;
+      node.established_count = samples.filter(ref => ref.evidence_status === "已确认").length;
       node.uncertain_count = samples.length - node.established_count;
-      node.established_answer_ids = [...new Set(samples.filter(ref => ref.evidence_status === "established").map(ref => ref.input_id))].sort();
+      node.established_answer_ids = [...new Set(samples.filter(ref => ref.evidence_status === "已确认").map(ref => ref.input_id))].sort();
       node.meta.answer_ids = node.level === 0 ? sources.map(source => source.input_id).sort() : [...new Set(samples.map(ref => ref.input_id))].sort();
     }
   }

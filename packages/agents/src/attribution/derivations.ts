@@ -19,7 +19,7 @@ export interface DerivationRange {
 }
 interface DerivationFields {
   label: string;
-  operation: "ratio" | "relative_change" | "compound_growth" | "annualization" | "arithmetic";
+  operation: "比值" | "相对变化" | "复利增长" | "年化" | "四则运算";
   result: string | DerivationRange;
   /** Display multiplier, not an error tolerance. Percent results use 100. */
   scale: "1" | "100";
@@ -32,7 +32,7 @@ interface DerivationFields {
   factor?: string;
   observation_period?: string;
   target_period?: string;
-  result_basis?: "run_rate";
+  result_basis?: "按当前速度年化";
 }
 export interface DerivationSubmission extends DerivationFields {
   operands: Record<string, DerivationOperandSubmission>;
@@ -95,14 +95,14 @@ export function validateDerivations(rows: readonly ResolvedDerivation[], evidenc
       if (operands[name] && row.denominator_role !== operands[name].role)
         invalid("/denominator_role", "denominator_role必须与实际分母操作数的role一致，不能互换成本和市值口径。");
     };
-    const allowed = row.operation === "arithmetic" ? ["formula"] : row.operation === "ratio" || row.operation === "relative_change" ? ["denominator_role"] : row.operation === "annualization" ? ["factor", "observation_period", "target_period", "result_basis"] : [];
+    const allowed = row.operation === "四则运算" ? ["formula"] : row.operation === "比值" || row.operation === "相对变化" ? ["denominator_role"] : row.operation === "年化" ? ["factor", "observation_period", "target_period", "result_basis"] : [];
     for (const field of ["formula", "denominator_role", "factor", "observation_period", "target_period", "result_basis"] as const)
       if (row[field] !== undefined && !allowed.includes(field)) invalid(`/${field}`, "该字段不适用于本运算，须按实际运算重新提交。");
-    if (["ratio", "relative_change"].includes(row.operation) && (row.scale === "100") !== (row.result_unit === "%"))
+    if (["比值", "相对变化"].includes(row.operation) && (row.scale === "100") !== (row.result_unit === "%"))
       invalid("/scale", "比值或变化率的百分数显示必须同时声明scale=100和result_unit=%，避免倍率与单位不一致。");
     let expression = "", upperExpression: string | undefined;
     try {
-      if (row.operation === "ratio") {
+      if (row.operation === "比值") {
         if (typeof row.result === "object") {
           requireNames("numerator", "denominator_lower", "denominator_upper");
           denominator("denominator_lower"); denominator("denominator_upper"); sameUnits("denominator_lower", "denominator_upper");
@@ -111,31 +111,31 @@ export function validateDerivations(rows: readonly ResolvedDerivation[], evidenc
             invalid("/operands", "区间比值要求非负分子、正分母和有序的分母上下界。");
           expression = "numerator/denominator_upper"; upperExpression = "numerator/denominator_lower";
         } else { requireNames("numerator", "denominator"); denominator("denominator"); expression = "numerator/denominator"; }
-      } else if (row.operation === "relative_change") {
+      } else if (row.operation === "相对变化") {
         requireNames("base", "observed"); sameUnits("base", "observed"); denominator("base");
         expression = "(observed-base)/base";
-      } else if (row.operation === "compound_growth") {
+      } else if (row.operation === "复利增长") {
         const hasBase = Object.hasOwn(operands, "base");
         requireNames(...hasBase ? ["base", "rate", "periods"] : ["rate", "periods"]);
         const count = Number(values.periods);
-        if (!Number.isInteger(count) || count < 1 || count > 20 || !["ratio", "%"].includes(operands.rate?.unit) || operands.periods?.unit !== "periods")
-          invalid("/operands", "累计复利使用ratio或%单位的每期利率及1—20整数期数；不把该运算当作CAGR反推。");
-        if (hasBase ? operands.base.unit !== row.result_unit : row.result_unit !== "ratio")
-          invalid("/result_unit", "有base时累计复利结果与base同单位；无base时计算增长倍数，result_unit须为ratio。");
+        if (!Number.isInteger(count) || count < 1 || count > 20 || !["比值", "%"].includes(operands.rate?.unit) || operands.periods?.unit !== "期")
+          invalid("/operands", "累计复利使用比值或%单位的每期利率及1—20整数期数；不把该运算当作CAGR反推。");
+        if (hasBase ? operands.base.unit !== row.result_unit : row.result_unit !== "比值")
+          invalid("/result_unit", "有base时累计复利结果与base同单位；无base时计算增长倍数，result_unit须为比值。");
         if (issues.length === before) {
           values.growth_factor = calculateExpression(operands.rate.unit === "%" ? "1+rate/100" : "1+rate", values).result;
           expression = hasBase ? `base${"*growth_factor".repeat(count)}` : Array(count).fill("growth_factor").join("*");
         }
-      } else if (row.operation === "annualization") {
+      } else if (row.operation === "年化") {
         requireNames("value");
         if (!row.observation_period?.trim() || !row.target_period?.trim() || operands.value?.period !== row.observation_period || row.result_period !== row.target_period)
           invalid("/observation_period", "年化须明确观察期间和目标期间，并与操作数、结果的期间分别一致。");
-        if (row.result_basis !== "run_rate" || !row.assumptions?.some(item => item.trim()))
+        if (row.result_basis !== "按当前速度年化" || !row.assumptions?.some(item => item.trim()))
           invalid("/result_basis", "按观察期外推仅为run_rate，必须保留外推假设，不能冒充全年指引。");
         if (operands.value?.unit !== row.result_unit) invalid("/result_unit", "年化结果须保留原值单位。");
         if (!row.factor || sign(fraction("factor", { factor: row.factor })) <= 0) invalid("/factor", "年化factor须为正十进制倍率，并由assumptions说明依据。");
         values.factor = row.factor ?? ""; expression = "value*factor";
-      } else if (row.operation === "arithmetic") {
+      } else if (row.operation === "四则运算") {
         if (!row.formula?.trim() || !names.length) invalid("/formula", "四则运算须声明formula及有来源操作数。");
         expression = row.formula ?? "";
         const tokens: string[] = expression.match(/[A-Za-z_][A-Za-z_0-9]*|(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?/gu) ?? [];

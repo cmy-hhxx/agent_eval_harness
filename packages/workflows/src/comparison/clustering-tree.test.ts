@@ -14,7 +14,7 @@ function fixture() {
   const components = ["planner-finquery / 工具请求参数 / 动作参数生成", "finquery / 原始返回及字段含义 / 实体映射"];
   const ref: ProblemObservationRef = { version: model, input_id: inputId, finding_id: "f0", batch_id: "day", case_id: "case",
     source: source.source, attribution: { run, run_id, task_id, submission_id, evaluator_version },
-    components, evidence_status: "established", summary: "返回不完整且结论缺少支持。" };
+    components, evidence_status: "已确认", summary: "返回不完整且结论缺少支持。" };
   const config = { clusteringJob: { sources: [source, { ...source, input_id: randomUUID(), task_id: randomUUID(),
     submission_id: randomUUID(), case_id: "healthy", source: { file: "/source.jsonl", line: 2 } }] } } as ClusteringJobConfig;
   const inputs = { [model]: { pending: [ref] } };
@@ -47,7 +47,7 @@ test("multi-responsibility tree counts findings once per node and keeps healthy 
 
 test("uncertain rare problems remain in a separate pending branch without invented class IDs or support", () => {
   const f = fixture();
-  f.ref.evidence_status = "uncertain";
+  f.ref.evidence_status = "待核实";
   f.library.occurrences = [];
   f.library.pending_observations = [f.ref];
   const tree = projectClusteringTree(f.config, f.inputs, [f.library]);

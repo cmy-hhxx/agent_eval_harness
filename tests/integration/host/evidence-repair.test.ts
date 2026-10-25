@@ -26,8 +26,8 @@ function taskDraft(spec: AttemptSpec) {
     const owner = result as AttributionResult;
     owner.Problem = attributionResult(false, material.answer.final_answer, false, spec.inputs.find(input=>input.name==="answer")!.id).Problem;
     const finding = owner.Problem[0];
-    finding.checks = [];
-    finding.evidence = [canonicalEvidence(spec.inputs.find(input => input.name === "answer")!.id, material.answer.final_message_index, material.answer.final_answer)];
+
+    finding.evidence = [{...canonicalEvidence(spec.inputs.find(input => input.name === "answer")!.id, material.answer.final_message_index, material.answer.final_answer),purposes:["问题"]}];
 
     finding.text = "计算过程曾返回错误数值5。";
     finding.reason = "工具记录将2+2算为5，最终回答已恢复为4，保留已发生的过程缺陷。";

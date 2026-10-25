@@ -237,7 +237,7 @@ export interface ProblemOccurrence {
   submission_id: string;
   finding_id: string;
   /** Certainty of this occurrence, not of its problem class. */
-  evidence_status: "established" | "uncertain";
+  evidence_status: "已确认" | "待核实";
   message_index: number;
   source: { file: string; line: number };
   classification: "assigned" | "created";
@@ -261,7 +261,7 @@ export interface ProblemObservationRef {
   batch_id: string;
   case_id: string;
   components: string[];
-  evidence_status: "established" | "uncertain";
+  evidence_status: "已确认" | "待核实";
   summary: string;
 }
 export type ProblemEventType = "class_created" | "class_merged" | "occurrence_moved" | "class_updated" | "occurrence_rejected" | "pending_observations_replaced" | "assignments_replaced";

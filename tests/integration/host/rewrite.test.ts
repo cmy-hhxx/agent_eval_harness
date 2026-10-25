@@ -56,7 +56,7 @@ for (const clustering of [false, true]) test(`rewrite embeds named text in stage
             attribution.Problem = attributionResult(false, material.answer.final_answer, true, options.spec.inputs.find(input => input.name === "answer")!.id).Problem;
             const finding = attribution.Problem[0]!;
 
-            finding.evidence = evidence;
+            finding.evidence = evidence.map(e=>({...e,purposes:["问题"]}));
             finding.text = "加法结果错误";
             finding.reason = "原文给出5，正确结果应为4。";
 

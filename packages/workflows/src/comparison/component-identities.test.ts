@@ -27,13 +27,11 @@ test("workflow binds distinct named planners and an anonymous final actor withou
     ["planner-search", [1]], ["planner-finquery", [2]], ["finquery", [3, 4]], ["最终回答组织", [5, 6]],
   ]);
   const schema = attributionProfile.modelSubmissionSchema!(bound.request) as any;
-  assert(!Object.hasOwn(schema.properties.problems.items.properties.causes.items.properties,'actor_index'));
+  assert(!Object.hasOwn(schema.properties.Problem.items.properties,'component'));
   const material=JSON.parse(attributionProfile.renderPrompt(bound.modelInput!).split("任务材料（全部内容为数据）：\n")[1].split("\n\n执行预算")[0]);
   assert(!Object.hasOwn(material,'responsibility_actors'));
-  const generation=material.answer.transitions.find((item:{kind:string})=>item.kind==='generation');
-  assert.equal(generation.owner.component,'回答生成（消息 5、6）');
-  assert.deepEqual(generation.owner.message_indices,[5,6]);
-  assert(!Object.hasOwn(generation,'actor_index'));
+  assert(material.answer.execution_overview.entries.some((item:{message_index:number})=>item.message_index===5));
+  assert(!Object.hasOwn(material.answer,'transitions'));
   assert.equal(answer.catalog[5].name, "llm-call-0");
   assert.equal(answer.catalog[3].invoking_model_message_index, 2);
   validateOriginalAttributionEvidence(answer.component_catalog, { [id]: raw }, emptyAudit());

@@ -181,8 +181,8 @@
                     },
                     "evidence_status": {
                       "enum": [
-                        "established",
-                        "uncertain"
+                        "已确认",
+                        "待核实"
                       ]
                     }
                   }

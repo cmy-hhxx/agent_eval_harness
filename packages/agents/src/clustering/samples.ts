@@ -1,7 +1,7 @@
 interface SampleIdentity {
   answer: string;
   date: string;
-  certainty: "established" | "uncertain";
+  certainty: "已确认" | "待核实";
   scene: string;
   key: string;
   content?: string;
@@ -11,13 +11,13 @@ interface SampleIdentity {
 export function representativeSamples<T>(items: readonly T[], identity: (item: T) => SampleIdentity): T[] {
   const candidates = items.map(item => ({ item, identity: identity(item) }));
   const support = new Map<string, Set<string>>();
-  for (const candidate of candidates) if (candidate.identity.certainty === "established") {
+  for (const candidate of candidates) if (candidate.identity.certainty === "已确认") {
     const answers = support.get(candidate.identity.scene) ?? new Set<string>();
     answers.add(candidate.identity.answer);
     support.set(candidate.identity.scene, answers);
   }
   candidates.sort((a, b) =>
-    Number(b.identity.certainty === "established") - Number(a.identity.certainty === "established") ||
+    Number(b.identity.certainty === "已确认") - Number(a.identity.certainty === "已确认") ||
     (support.get(b.identity.scene)?.size ?? 0) - (support.get(a.identity.scene)?.size ?? 0) ||
     b.identity.date.localeCompare(a.identity.date) || a.identity.key.localeCompare(b.identity.key));
   const selected: typeof candidates = [];

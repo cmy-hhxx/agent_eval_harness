@@ -12,7 +12,7 @@ export function comparisonDecisiveFindings(input: ComparisonInput, result: Pick<
     if (!coreFailure && (row.importance === "low" || !row.better_candidates.includes(winner))) return [];
     return Object.entries(row.assessments).flatMap(([candidate, cell]) => cell.finding_indices.flatMap(finding_index => {
       const finding = input.attributions[candidate]?.Problem[finding_index];
-      return finding?.evidence_status === "established" && candidate !== winner
+      return finding?.evidence_status === "已确认" && candidate !== winner
         ? [{ candidate, finding_index }] : [];
     }));
   }).filter((ref, index, all) => all.findIndex(item => item.candidate === ref.candidate && item.finding_index === ref.finding_index) === index).slice(0, 24);

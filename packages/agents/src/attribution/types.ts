@@ -3,43 +3,30 @@ import type { ResolvedEvidence, JsonObject } from '@eval/contracts';
 export type { TaskAnalysis, TaskCriterion } from '@eval/contracts';
 export type TransitionKind = 'request_formation' | 'execution' | 'transfer' | 'generation' | 'delivery';
 export interface Evidence extends ResolvedEvidence { source?: string; source_input_id?: string }
-export interface Uncertainty { evidence_gap: string; alternatives: string[] }
-export interface ResponsibilitySubmission {
-  transition_index: number;
-  basis: 'input_deviation' | 'independent_addition' | 'unknown_transition';
-  mechanism_source: 'explicit_process' | 'boundary_comparison';
-  reason: string;
-  certainty: 'confirmed' | 'inferred';
-  uncertainty?: Uncertainty;
-}
-export interface Responsibility extends ResponsibilitySubmission {
-  actor_index: number | null;
-  component: string;
-  kind: TransitionKind;
-  role: 'primary' | 'contributing';
+export type EvidenceStatus = '已确认' | '待核实';
+export type EvidencePurpose = '问题' | '归因';
+export interface ProblemEvidence extends Evidence { purposes: EvidencePurpose[] }
+export interface RelatedResponsibility {
+  responsibility_boundary: number;
+  component: string | null;
+  attribution_reason: string;
   evidence_ids: string[];
-}
-export type CheckOutcome = 'preserved' | 'changed' | 'recovered' | 'unresolved';
-export interface TransitionCheckSubmission {
-  transition_index: number; outcome: CheckOutcome; observation: string;
-  before_evidence_indices: number[]; after_evidence_indices: number[];
-}
-export interface TransitionCheck {
-  transition_index: number; kind: TransitionKind; outcome: CheckOutcome; observation: string;
-  before_evidence_ids: string[]; after_evidence_ids: string[];
+  uncertainties?: string[];
 }
 export interface ProblemProposal {
   text: string;
   reason: string;
-  evidence_status: 'established' | 'uncertain';
-  checks: TransitionCheck[];
-  causes: Responsibility[];
-  uncertainty?: Uncertainty;
+  evidence_status: EvidenceStatus;
+  responsibility_boundary: number | null;
+  component: string | null;
+  attribution_reason: string;
+  uncertainties?: string[];
+  related_responsibilities?: RelatedResponsibility[];
   calculations?: ResolvedDerivation[];
 }
 export interface AttributionFinding extends ProblemProposal {
   problem_id: string;
-  evidence: Evidence[];
+  evidence: ProblemEvidence[];
 }
 export interface AttributionResult {
   meta: JsonObject;
@@ -52,9 +39,12 @@ export interface AttributionResult {
 export interface AttributionSubmission {
   summary: string;
   Problem: {
-    text: string; reason: string; evidence_status: 'established' | 'uncertain';
-    evidence_indices: (number | {image_number:number;observation:string})[]; checks: TransitionCheckSubmission[]; causes: ResponsibilitySubmission[];
-    uncertainty?: Uncertainty; calculations?: DerivationSubmission[];
+    text: string; reason: string; evidence_status: EvidenceStatus;
+    evidence: { index: number; purposes: EvidencePurpose[]; observation?: string }[];
+    responsibility_boundary: number | null; attribution_reason: string; uncertainties?: string[];
+    related_responsibilities?: { responsibility_boundary: number; attribution_reason: string;
+      evidence_indices: number[]; uncertainties?: string[] }[];
+    calculations?: DerivationSubmission[];
   }[];
   is_correct?: boolean | null;
   correct_reason?: string;

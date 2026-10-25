@@ -21,7 +21,7 @@ function sample(batch: string, id = "q1", reference: unknown = null): RawInput {
 }
 function batchAttribution(inputId: string, correct = true, available = false) {
   const result = attributionResult(correct, "2+2=4", available, inputId);
-  result.Problem[0].evidence.push(canonicalEvidence(inputId, 0, "计算2+2"));
+  result.Problem[0].evidence.push({...canonicalEvidence(inputId, 0, "计算2+2"),purposes:["问题"]});
   return result;
 }
 function runState(config: EvalConfig, plan: TaskPlan): RunState {

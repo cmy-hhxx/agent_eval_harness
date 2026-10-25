@@ -10,7 +10,7 @@ function ref(input = randomUUID(), finding = "f0", version = "a_fast"): ProblemO
   return { version, input_id: input, finding_id: finding,
     attribution: { run: options.run, run_id: "pilot", task_id: randomUUID(), submission_id: randomUUID(), evaluator_version: "r210" },
     source: { file: "/inputs/original.jsonl", line: 3 }, batch_id: "2026-10-14", case_id: input,
-    components: ["模型自身推理"], evidence_status: "established", summary: "判断方向与已有数据相反。" };
+    components: ["模型自身推理"], evidence_status: "已确认", summary: "判断方向与已有数据相反。" };
 }
 
 test("pending references preserve formal classes, occurrences and original responsibility arrays", () => {
@@ -20,7 +20,7 @@ test("pending references preserve formal classes, occurrences and original respo
   const pending = [ref(), ref()]; pending[0]!.components = []; pending[1]!.components = ["工具A", "工具B"];
   library.occurrences.push({ id: randomUUID(), class_id: classId, version: "a_fast", evaluator_version: "r210",
     batch_id: "2026-10-14", case_id: "formal", input_id: randomUUID(), run_id: "formal", task_id: randomUUID(),
-    submission_id: randomUUID(), finding_id: "f0", evidence_status: "established", message_index: 1,
+    submission_id: randomUUID(), finding_id: "f0", evidence_status: "已确认", message_index: 1,
     source: { file: "/inputs/formal.jsonl", line: 1 }, classification: "created", previous_class_id: null, at: options.at });
   const before = structuredClone(library), pendingBefore = structuredClone(pending);
   const next = replacePendingObservations(library, pending, options);

@@ -672,6 +672,13 @@ export async function runEvaluation(options: RunOptions): Promise<Record<string,
           `worker terminal seq ${terminalSeq ?? "unavailable"}.` +
           (manifest.debug ? " Local prefix retained; Worker cleanup skipped." : "");
       }
+      if (!record.metrics && observedTerminal) {
+        try {
+          const finalized = await request<AttemptRecord>(`${workerUrl}/api/attempts/${spec.attemptId}/record`,
+            "GET", undefined, AbortSignal.timeout(1000));
+          if (canonical(finalized.spec) === canonical(spec)) record = finalized;
+        } catch { /* Missing accounting stays visible; do not invent zero consumption. */ }
+      }
       const eventsFile = path.join(attemptDir, "events.jsonl");
       if (manifest.debug && eventsSaved && (await exists(eventsFile))) await compressFile(eventsFile);
       // A submission can commit while terminal records/events are being collected.

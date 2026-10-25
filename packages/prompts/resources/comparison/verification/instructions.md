@@ -20,7 +20,7 @@ result 填 supported（全部适用要求已确认满足）、contradicted（已
 
 先核对已有 Problem 的事实和证据，再核对 Comparison 草稿自己判断的要求状态、核心状态和逐项取舍。
 
-`inspection_context.verification_concerns` 是疑点目录，concern_index 使用该目录的零起始位置。concern_matches 只确认既有 established Problem 已记录同一缺陷；finding_indices 从 `inspection_context.eligible_match_choices` 对应的 eligible_findings.finding_index 选择。逐一对照实际行为、回答片段、完整规范与责任，准确对应才填写匹配。
+`inspection_context.verification_concerns` 是疑点目录，concern_index 使用该目录的零起始位置。concern_matches 只确认既有“已确认”Problem 已记录同一缺陷；finding_indices 从 `inspection_context.eligible_match_choices` 对应的 eligible_findings.finding_index 选择。逐一对照实际行为、回答片段、完整规范与责任，准确对应才填写匹配。
 
 首查疑点经补读原文确认不成立时，可用 concern_refutations 选择 concern_index，填写 source_evidence 和 reason，说明原先遗漏的上下文及反证；至少引用一条真实原材料。不能仅因归因或草稿作了不同判断就撤销疑点。一个疑点只能匹配、反驳或保留待核，不得重复选择；首查记录本身保持原样。
 
@@ -36,7 +36,7 @@ source_reviews 只列需要更正的归因疑点。slot_index 用揭示后 compa
 - 判定缺项或缺来源前，先核对可见材料目录；有可用记录时，用 search_trace 查实体、数值和同口径指标，再读取命中全文，并核查相关最终交付。引用核对其所附分句及同组来源的支持范围，按本方真实引用协议判断；同一文档的片段、译文和重复返回算一份来源。
 - 数字先按完整语境区分目标、阈值、日期、代码和事件名，再对齐实体、单位、期间与指标定义。用 calculate/execute_code 按原始数量与分母核算，检查舍入和近似依据，避免二次舍入制造差异。显式容差、区间和上下限按原条件核验；正确性须核对 correct_reason 与 Problem 内原值、计算和证据，is_correct 不代表整体质量。
 - 时间取自本方原始上下文或用户目标时刻，按可靠 UTC offset 换算；区分发布与事件时间。时间区间按原文核对起止、端点和例外，相对期限与具体日期分别核算。日历检查全部对象、业务类别和年份。
-- 分别核查可见的工具原始返回、模型实际输入、原生成和最终呈现。不能把原始返回当作模型已见内容；误读实际输入归模型，正确返回在输入中丢失或改变归上下文组装与传递，工具自身的执行或返回错误归工具，已恢复的问题保留实际过程影响，不当作最终结果缺陷。答案错误与责任定位分别核实；已有输出缺陷已确认而 causes=[] 时，核对其事实，不仅因责任未定位请求复核。已核实错误来自标准时，记录具体冲突，不给正确回答或工具记责，也不要求候选解释隐藏标准的错误。
+- 分别核查可见的工具原始返回、模型实际输入、原生成和最终呈现。不能把原始返回当作模型已见内容；误读实际输入归模型，正确返回在输入中丢失或改变归上下文组装与传递，工具自身的执行或返回错误归工具，已恢复的问题保留实际过程影响，不当作最终结果缺陷。答案错误与责任定位分别核实；已有输出缺陷已确认而 component=null 时，核对其事实，不仅因责任未定位请求复核。已核实错误来自标准时，记录具体冲突，不给正确回答或工具记责，也不要求候选解释隐藏标准的错误。
 - ranking_tiers 同层表示并列。资源按 `resource_metrics` 与 `comparable_metrics` 核对完成耗时和总 token；直接上报总量与输入加输出可比较，缓存缺失或异常不影响有效总量。token 表示用量，原始耗时表示本次等待；复核请求须落到具体归因事实。
 
 提交时，用 `execute_code` 将结果写成 JSON 文件，再调用对应工具：首查用 `inspect_material`，揭示后用 `submit_evaluation_file`。内容按各工具的 Schema 填写；失败时按反馈修正文件再提交。

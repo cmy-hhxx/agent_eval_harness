@@ -13,7 +13,7 @@ const row = (first = "a", second = "b", winner: string | null = "a"): JsonObject
   evaluation_type: "group_model_comparison", status: "decided", case: { batch_id: "batch", case_id: "question" },
   models: Object.fromEntries([first, second].map(model => [model, { version: name(model) }])),
   assessments: Object.fromEntries([first, second].map(model => [model, { meets_core: true, summary: model + "的正式点评。" }])),
-  evaluations: Object.fromEntries([first, second].map(model => [model, { findings: [] }])),
+  evaluations: Object.fromEntries([first, second].map(model => [model, { Problem: [] }])),
   decision_basis: { tradeoff: "C的表述更简洁，但不改变正式判决。" },
   verdicts: { [first + "__vs__" + second]: { result: winner ? "win" : "both_good", winner_version: winner,
     winner_name: winner ? name(winner) : null, reason: winner ? "这项要求有实质优势。" : "双方均好。" } },
@@ -88,9 +88,9 @@ test("win rates include both-good and both-bad appearances and retain two decima
 
 test("Eris summarizes problem incidence per model battle, deduplicating findings and separating uncertainty", () => {
   const first = row(), second = row("a", "c"), before = structuredClone(first);
-  const problem = (dimension: string, evidence_status: string, type = "problem") => ({ dimension, type, assessment: { evidence_status } });
-  first.evaluations = { a: { findings: [problem("correctness", "established"), problem("correctness", "established"),
-    problem("correctness", "uncertain"), problem("completeness", "uncertain"), problem("relevance", "established", "strength")] }, b: { findings: [] } };
+  const problem = (text: string, evidence_status: string) => ({ text, evidence_status });
+  first.evaluations = { a: { Problem: [problem("correctness", "已确认"), problem("correctness", "已确认"),
+    problem("correctness", "待核实"), problem("completeness", "待核实")] }, b: { Problem: [] } };
   const stats = analysisComparisonStats([first, second].map((source, index) => ({ reference: { runId: "run", taskId: String(index) },
     question: "原问。", scope: analysisComparisonScope(source, config)! })));
   const model = stats.tiers[0]!.models.find(model => model.model === "a")!;

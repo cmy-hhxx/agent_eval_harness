@@ -33,7 +33,7 @@ export function comparisonSubmission(result: ComparisonResult, slots: Comparison
      indices.some(index => row.assessments[label]?.finding_indices.includes(index))));
    if (!row && slot.optional) return null;
    if (slot.kind === 'resource') return { importance: row?.importance ?? 'medium' };
-   return { importance: row?.importance ?? 'medium', better_candidate: row?.better_candidates[0] ?? null,assessments:row?.assessments??Object.fromEntries(Object.keys(result.assessments).map(label=>[label,{status:'met',evidence_status:'established',summary:'受控检查已完成。',finding_indices:[]}])) };
+   return { importance: row?.importance ?? 'medium', better_candidate: row?.better_candidates[0] ?? null,assessments:row?.assessments??Object.fromEntries(Object.keys(result.assessments).map(label=>[label,{status:'met',evidence_status:'已确认',summary:'受控检查已完成。',finding_indices:[]}])) };
   }), preference: result.ranking?.length > 1 ? result.ranking[0][0] : null,
   relative_preference: result.ranking?.[0]?.[0] === 'B' ? 'B' : 'A',
   tradeoff: result.decision_basis.tradeoff };

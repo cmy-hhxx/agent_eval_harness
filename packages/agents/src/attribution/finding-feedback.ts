@@ -18,5 +18,5 @@ export function findingIssueContext(request: AgentRequest, _value: unknown, issu
   if (current===undefined) return undefined;
   return { target: {path},submission_shape:current,
     ...(["investigation_boundary_evidence","responsibility_upstream_required","responsibility_check_required"].includes(issue.code)
-      ? { check_shape:schema.properties.Problem.items.properties.checks.items } : {}) };
+      ? { evidence_shape:schema.properties.Problem.items.properties.evidence.items } : {}) };
 }

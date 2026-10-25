@@ -2,9 +2,9 @@ import { responsibilityLabels as technicalResponsibilityLabels } from "@eval/age
 import { canonical, type PlannedTask, type SubmissionReceipt } from "@eval/contracts";
 import type { AttributionResult, TaskData } from "./types.js";
 
-export type ResponsibilityGroup = "model" | "mixed" | "other" | "unknown" | "unconfirmed";
+export type ResponsibilityGroup = "known" | "unknown" | "unconfirmed";
 export const responsibilityLabels: Record<ResponsibilityGroup, string> = {
-  model: "模型独立责任", mixed: "模型参与的混合责任", other: "其他已知责任", unknown: "未知责任", unconfirmed: "未确认",
+  known: "已定位责任", unknown: "未知责任", unconfirmed: "未确认",
 };
 interface SourceReference { task_id: string; submission_id: string; evaluator_version: string }
 export interface ModelBehaviorFinding {
@@ -24,7 +24,7 @@ export interface ModelBehaviorRow {
   sources: SourceReference[];
   findings: ModelBehaviorFinding[];
 }
-const emptyCounts = (): Record<ResponsibilityGroup, number> => ({ model: 0, mixed: 0, other: 0, unknown: 0, unconfirmed: 0 });
+const emptyCounts = (): Record<ResponsibilityGroup, number> => ({ known: 0, unknown: 0, unconfirmed: 0 });
 function flagSourceConflict(finding: ModelBehaviorFinding) {
   finding.responsibility = "unconfirmed";
   finding.source_conflict = true;
@@ -79,9 +79,8 @@ export function modelBehavior(tasks: readonly PlannedTask[], receipts: Readonly<
     row.sources.push(source);
     for (const finding of (receipt.evaluation as AttributionResult).Problem) {
       const components = technicalResponsibilityLabels(finding).sort();
-      const responsibility: ResponsibilityGroup = finding.evidence_status !== "established" ? "unconfirmed"
-        : !components.length ? "unknown" : finding.causes.some(cause=>cause.kind==='generation'||cause.kind==='request_formation')
-          ? finding.causes.every(cause=>cause.kind==='generation'||cause.kind==='request_formation') ? "model" : "mixed" : "other";
+      const responsibility: ResponsibilityGroup = finding.evidence_status !== "已确认" ? "unconfirmed"
+        : !components.length ? "unknown" : "known";
       const observation = { finding_id: finding.problem_id, responsibility, components, text: finding.text,
         impact: finding.reason, source_conflict: false };
       const existing = row.findings.find(item => item.finding_id === finding.problem_id);
@@ -128,9 +127,9 @@ export function modelBehaviorOverview(summary: ReturnType<typeof modelBehavior>[
   const cell = (value: string) => value.replaceAll("|", "\\|").replace(/[\r\n]/g, " ");
   return "\n\n## 模型行为归因结论\n\n" +
     `已接受归因覆盖 ${summary.accepted_answers}/${summary.planned_answers} 条回答；按回答与发现去重，混合责任只计一次。\n\n` +
-    "| 版本 | 已接受/计划回答 | 模型独立责任 | 模型混合责任 | 其他责任 | 未知责任 | 未确认 |\n|---|---:|---:|---:|---:|---:|---:|\n" +
+    "| 版本 | 已接受/计划回答 | 已定位责任 | 未知责任 | 未确认 |\n|---|---:|---:|---:|---:|\n" +
     Object.entries(summary.by_version).map(([version, value]) => `| ${cell(version)} | ${value.accepted_answers}/${value.planned_answers} | ` +
-      `${value.problems.model} | ${value.problems.mixed} | ${value.problems.other} | ${value.problems.unknown} | ${value.problems.unconfirmed} |`).join("\n") +
+      `${value.problems.known} | ${value.problems.unknown} | ${value.problems.unconfirmed} |`).join("\n") +
     "\n\n[具体行为与归因来源](model-behavior.jsonl) · [逐题说明](task_summaries.md#模型行为归因结论)\n\n" +
     "产品效果与责任归因是两个评价角度，共享同一批证据；问题数量不构成底座能力排名。";
 }

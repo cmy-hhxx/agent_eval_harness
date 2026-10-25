@@ -139,7 +139,7 @@ export function createDashboardViews({
     dimension: { correctness: "正确性", completeness: "完整性", instruction_following: "指令遵循",
       evidence_quality: "证据质量", reasoning: "推理", format: "格式", relevance: "相关性", efficiency: "效率" },
     importance: { high: "高", medium: "中", low: "低" },
-    evidence_status: { established: "已建立", uncertain: "不确定" },
+    evidence_status: { 已确认: "已确认", 待核实: "待核实" },
     status: { decided: "已裁决", needs_review: "待复核", met: "满足", partial: "部分满足", unmet: "不满足", unknown: "未确认", not_applicable: "不适用" },
     stage: { context_recall: "上下文", reasoning: "推理", execution: "执行", final_answer: "最终回答" },
     result: { win: "胜出", both_good: "都好", both_bad: "都差" },
@@ -254,7 +254,7 @@ export function createDashboardViews({
         const hasRequirement = item.criterion_ids.length;
         const oneSided = !hasRequirement && !observed.length && Object.values(item.assessments).some(cell => cell.finding_indices.length);
         const stateLabel = assessment.status === "unknown" ? (oneSided ? "未核查此项" : "证据不足")
-          : assessment.status === "met" && !hasRequirement ? (assessment.evidence_status !== "established" ? "观察待核" : observed.length
+          : assessment.status === "met" && !hasRequirement ? (assessment.evidence_status !== "已确认" ? "观察待核" : observed.length
             ? "已确认问题"
             : "已记录") : scalar(assessment.status, "status");
         const links = assessment.finding_indices.map((findingIndex) => {

@@ -52,11 +52,10 @@ test("a viewed image-only final preserves an unknown formation boundary without 
     assert.equal(delivery.actor_index, null);
     assert.equal(delivery.before.length, 0, "no generation process was collected");
     assert(delivery.after.some(item => item.evidence_id === evidence.evidence_id && !Object.hasOwn(item, "quote")), "the image directory must locate pixels without inventing an observation");
-    const problem:ProblemProposal={text:'图片宽度未达要求',reason:'实际交付宽度1像素，小于所需2像素。',evidence_status:'established',
-      checks:[{transition_index:delivery.transition_index,kind:'delivery',outcome:'unresolved',observation:'已查看图片，生成过程未采集。',before_evidence_ids:[],after_evidence_ids:[evidence.evidence_id]}],
-      causes:[],uncertainty:{evidence_gap:'没有生成输入、调用或渲染记录。',alternatives:['生成尺寸不足。','交付装配替换了图片。']}};
-    assert.deepEqual(investigationIssues(binding.request, problem, [evidence], context.audit, "/problem"), []);
-    assert(investigationIssues(binding.request, problem, [evidence], { ...context.audit, viewedImages: [] }, "/problem")
+    const problem:ProblemProposal={text:'图片宽度未达要求',reason:'实际交付宽度1像素，小于所需2像素。',evidence_status:'已确认',
+      responsibility_boundary:delivery.transition_index,component:null,attribution_reason:'已查看图片，形成过程未采集。',uncertainties:['没有生成或渲染记录。']};
+    assert.deepEqual(investigationIssues(binding.request, problem, [{...evidence,purposes:['问题','归因']}], context.audit, "/problem"), []);
+    assert(investigationIssues(binding.request, problem, [{...evidence,purposes:['问题','归因']}], { ...context.audit, viewedImages: [] }, "/problem")
       .some(issue => issue.code === "investigation_image_required"), "replaying an observation without a real view receipt must still fail");
   } finally { await rm(workdir, { recursive: true, force: true }); }
 });

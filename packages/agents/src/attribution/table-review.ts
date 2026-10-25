@@ -133,7 +133,7 @@ export function attributionTableReview(request: AgentRequest, result: Attributio
         continue;
       }
       const findings = result.Problem.filter(finding => supports(finding.evidence, row, plan, raw, inputId));
-      if (status === "ambiguous" || !findings.some(finding => finding.evidence_status === "established"))
+      if (status === "ambiguous" || !findings.some(finding => finding.evidence_status === "已确认"))
         concerns.push({ kind: "unresolved_conflict", table_id: plan.answer_table_id, row_index: row.row_index,
           reason: `${location}仍有未解决的来源对应冲突，须独立核对对象、别名、时间范围和加工过程。` });
     }

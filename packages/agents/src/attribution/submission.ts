@@ -1,7 +1,7 @@
 import {Ajv2020} from 'ajv/dist/2020.js';
 import {ValidationError, schemaIssues, resolveEvidenceSelection, type AgentRequest, type ToolAudit, type ValidationIssue} from '@eval/contracts';
 import schema from '../../../../schemas/attribution/submission.schema.json' with {type:'json'};
-import type {AttributionResult,AttributionSubmission,Evidence} from './types.js';
+import type {AttributionResult,AttributionSubmission,ProblemEvidence} from './types.js';
 import {resolveAttributionEvidence} from './source-evidence.js';
 import {responsibilityIdentities,responsibilityComponentName} from './responsibility.js';
 import {resolveDerivations} from './derivations.js';
@@ -27,20 +27,41 @@ export function resolveModelSubmission(request:AgentRequest,draft:unknown,audit:
   const edge=(index:number,path:string)=>{const found=edges.find(e=>e.transition_index===index);if(!found)throw new ValidationError([{category:'evidence',code:'transition_invalid',path,message:'选择本任务真实边界编号。',actual:index}]);return found;};
   const resolve=(index:number,path:string,observation?:string)=>resolveAttributionEvidence(request,resolveEvidenceSelection(audit.evidenceBank??[],{evidence_index:index,...(observation?{observation}:{})},path),audit,path);
   const result:AttributionResult={meta:{input_id:request.sources.answer.id},summary:value.summary,Problem:value.Problem.map((p,i)=>{
-    const path='/Problem/'+i,selected=new Map<string,Evidence>();
-    const observations=new Map(p.evidence_indices.flatMap(e=>typeof e==='number'?[]:[[e.image_number,e.observation] as const]));
-    const evidence=(index:number,at:string)=>{const proof=resolve(index,at,observations.get(index));selected.set(proof.evidence_id,proof);return proof;};
-    p.evidence_indices.forEach((index,j)=>evidence(typeof index==='number'?index:index.image_number,path+'/evidence_indices/'+j));
-    const checks=p.checks.map((c,j)=>({...c,kind:edge(c.transition_index,path+'/checks/'+j).kind,
-      before_evidence_ids:c.before_evidence_indices.map((index,k)=>evidence(index,path+'/checks/'+j+'/before_evidence_indices/'+k).evidence_id),
-      after_evidence_ids:c.after_evidence_indices.map((index,k)=>evidence(index,path+'/checks/'+j+'/after_evidence_indices/'+k).evidence_id)}))
-      .map(({before_evidence_indices:_before,after_evidence_indices:_after,...check})=>check);
-    const causes=p.causes.map((cause,j)=>{const boundary=edge(cause.transition_index,path+'/causes/'+j),check=checks.find(c=>c.transition_index===cause.transition_index);return {...cause,
-      actor_index:boundary.actor_index,component:responsibilityComponentName(boundary.actor_index===null?undefined:actors[boundary.actor_index-1]),kind:boundary.kind,
-      role:j===0?'primary' as const:'contributing' as const,evidence_ids:[...new Set([...(check?.before_evidence_ids??[]),...(check?.after_evidence_ids??[])])]};});
-    const calculations=p.calculations?.length?resolveDerivations(p.calculations,(index,at)=>evidence(index,at),path+'/calculations'):undefined;
-    return {problem_id:'p'+(i+1),text:p.text,reason:p.reason,evidence_status:p.evidence_status,evidence:[...selected.values()],checks,causes,
-      ...(p.uncertainty?{uncertainty:p.uncertainty}:{}),...(calculations?{calculations}:{})};
+    const path='/Problem/'+i,selected=new Map<string,ProblemEvidence>();
+    const observations=new Map(p.evidence.map(e=>[e.index,e.observation]));
+    const evidence=(index:number,at:string)=>{
+      const proof=resolve(index,at,observations.get(index)), existing=selected.get(proof.evidence_id);
+      if(existing)return existing;
+      const entry={...proof,purposes:[] as ProblemEvidence['purposes']};selected.set(proof.evidence_id,entry);return entry;
+    };
+    p.evidence.forEach((item,j)=>{
+      const proof=evidence(item.index,path+'/evidence/'+j);
+      proof.purposes=[...new Set([...proof.purposes,...item.purposes])];
+    });
+    const component=(index:number|null,at:string)=>{
+      if(index===null)return null;
+      const boundary=edge(index,at);
+      return boundary.actor_index===null?null:responsibilityComponentName(actors[boundary.actor_index-1]);
+    };
+    const related=p.related_responsibilities?.map((r,j)=>{
+      const at=path+'/related_responsibilities/'+j;
+      const ids=r.evidence_indices.map((index,k)=>{
+        const proof=resolve(index,at+'/evidence_indices/'+k,observations.get(index));
+        if(!selected.get(proof.evidence_id)?.purposes.includes('归因'))throw new ValidationError([{category:'evidence',code:'responsibility_evidence',path:at,message:'关联责任引用本问题中用途为归因的证据；原文只登记一次。'}]);
+        return proof.evidence_id;
+      });
+      return {responsibility_boundary:r.responsibility_boundary,component:component(r.responsibility_boundary,at),
+        attribution_reason:r.attribution_reason,evidence_ids:ids,...(r.uncertainties?{uncertainties:r.uncertainties}:{})};
+    });
+    const calculations=p.calculations?.length?resolveDerivations(p.calculations,(index,at)=>{
+      const proof=resolve(index,at,observations.get(index));
+      if(!selected.has(proof.evidence_id))throw new ValidationError([{category:'evidence',code:'derivation_evidence',path:at,message:'计算原数须引用本问题已登记的证据。'}]);
+      return proof;
+    }):undefined;
+    return {problem_id:'p'+(i+1),text:p.text,reason:p.reason,evidence_status:p.evidence_status,evidence:[...selected.values()],
+      responsibility_boundary:p.responsibility_boundary,component:component(p.responsibility_boundary,path+'/responsibility_boundary'),
+      attribution_reason:p.attribution_reason,...(p.uncertainties?{uncertainties:p.uncertainties}:{}),
+      ...(related?{related_responsibilities:related}:{}),...(calculations?{calculations}:{})};
   }),has_standard_answer:available,is_correct:available?value.is_correct!:null,correct_reason:available?value.correct_reason!:null};
   validateEvaluation(request,result,audit);
   return result;

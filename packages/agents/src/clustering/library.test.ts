@@ -25,7 +25,7 @@ const observation = (id: string, component: string, label: string, inputId: stri
     {
       finding: label,
       reason: "r",
-      evidence_status: "established",
+      evidence_status: "已确认",
     },
   ],
   refs: [
@@ -34,7 +34,7 @@ const observation = (id: string, component: string, label: string, inputId: stri
       case_id: `case-${inputId}`,
       source: { file: "f.jsonl", line: 7 },
       finding_id: `f-${id}`,
-      evidence_status: "established",
+      evidence_status: "已确认",
       message_index: 3,
       quote: "q",
     },
@@ -91,8 +91,8 @@ test("reclassification supersedes one component, retains history, and survives o
 test("clustering creates components and classes and keeps occurrence lineage", () => {
   let library = emptyLibrary("a_fast");
   const observations = [observation("o1", "色值工具", "色值错误", "in-1")];
-  observations[0]!.refs[0]!.evidence_status = "uncertain";
-  observations[0]!.examples[0]!.evidence_status = "uncertain";
+  observations[0]!.refs[0]!.evidence_status = "待核实";
+  observations[0]!.examples[0]!.evidence_status = "待核实";
   observations[0]!.established_count = 0;
   observations[0]!.uncertain_count = 1;
   observations[0]!.established_answer_ids = [];
@@ -127,7 +127,7 @@ test("clustering creates components and classes and keeps occurrence lineage", (
   assert.equal(library.occurrences[0]!.source.line, 7);
   assert.equal(Object.hasOwn(library.occurrences[0]!, "quote"), false, "bank occurrences retain coordinates without copying evidence text");
   assert.equal(library.occurrences[0]!.classification, "created");
-  assert.equal(library.occurrences[0]!.evidence_status, "uncertain");
+  assert.equal(library.occurrences[0]!.evidence_status, "待核实");
 
   library = applyClustering(
     library,
@@ -452,7 +452,7 @@ test("library recalls at most three independent effective answers with source id
     item.refs[0]!.attribution = { run: "/runs/source", run_id: "source", task_id: `attr-${index}`,
       submission_id: `submission-${index}`, evaluator_version: "test" };
   });
-  observations[3]!.refs[0]!.evidence_status = "uncertain";
+  observations[3]!.refs[0]!.evidence_status = "待核实";
   observations[3]!.established_answer_ids = [];
   observations[0]!.refs.push({ ...observations[0]!.refs[0]!, finding_id: "same-answer-second-finding" });
   const library = applyClustering(emptyLibrary("model"), receipt(observations, {
@@ -462,8 +462,8 @@ test("library recalls at most three independent effective answers with source id
   const [problem] = projectLibrary(library).components[0]!.classes;
   assert.equal(problem!.examples.length, 3);
   assert.equal(new Set(problem!.examples.map(item => item.input_id)).size, 3);
-  assert.equal(problem!.examples[0]!.evidence_status, "established");
-  assert(problem!.examples.some(item => item.evidence_status === "uncertain"));
+  assert.equal(problem!.examples[0]!.evidence_status, "已确认");
+  assert(problem!.examples.some(item => item.evidence_status === "待核实"));
   assert.equal(new Set(problem!.examples.map(item => item.batch_id)).size, 2);
   assert(problem!.examples.every(item => item.attribution?.run === "/runs/source" && item.finding_id));
   assert.equal(problem!.occurrences, 5);

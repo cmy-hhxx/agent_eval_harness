@@ -21,7 +21,7 @@
 
 业务链路目录遇到含图片的工具返回时，使用容器下原始文本叶子的坐标登记文本证据，保持原有摘录预算；图片展示占位符不能进入文本证据目录，也不能替代图片读取。
 
-Attribution 模型选择真实 transition_index，程序解析 actor_index、component、边界种类及证据坐标。模型不填写已知身份、名称或功能分类。未知形成主体保留真实断点与 uncertainty；仅有边界差异时责任机制为 inferred，不能将最终接收者替代未知处理者。
+每条问题使用 `problem_id/text/reason/evidence_status/evidence/responsibility_boundary/component/attribution_reason`，有真实缺口时增加 `uncertainties`，确有独立传播或放大时增加 `related_responsibilities`，依赖计算时增加 `calculations`。问题编号、主体名称和证据坐标由程序填写；模型只选稳定编号并写判断。`evidence_status` 为“已确认”或“待核实”，与责任是否已知分开。证据原文去重，`purposes` 标注“问题”“归因”或两者。关联责任只保留一层主体—理由—证据关系。仅有输入输出差异不证明隐藏机制；已知参数生成调用不能因无隐藏推理而写未知。
 
 收据保存接受时的评测器标识和实际判官模型 `judge`；正式行的 `evaluator_version` 必须与收据一致。改写另存 `rewritten.evaluator_version`，统计汇总 `evaluator_versions` 与 `judge_models`。同 run 可混合版本：已接受结果不变，未完成任务使用当前配置。
 
@@ -98,7 +98,7 @@ Attribution 正式结果顶层只有 meta、summary、Problem、has_standard_ans
 
 预测重评复用这套核对，正式 Comparison 增加成对出现的 `evaluation_purpose: "prediction"` 与 `prediction` 元数据，记录原任务、run、比较 ID、题目 ID、提问时刻和适用目标窗口。完整事后标答和来源保存在 `ground_truth`，只核验适用的明确预测结论，不以单次事件证明概率准确；多目标逐项说明，全部命中才判整体正确。判据仍来自原题，原回答和证据坐标不改写。自动入队、原位上传与统计替换见[预测类自动评测](automations.md#预测类自动评测)。
 
-Problem 为数组，每项保留 problem_id、text、reason、evidence_status、evidence、checks、causes，必要时增加 uncertainty、calculations。reason 合并缺陷依据与实际影响；问题编号、证据坐标、实际主体均由程序绑定。第一责任为主责，关联责任只在独立传播或放大证据存在时填写。
+每条问题使用 `problem_id/text/reason/evidence_status/evidence/responsibility_boundary/component/attribution_reason`，有真实缺口时增加 `uncertainties`，确有独立传播或放大时增加 `related_responsibilities`，依赖计算时增加 `calculations`。问题编号、主体名称和证据坐标由程序填写；模型只选稳定编号并写判断。`evidence_status` 为“已确认”或“待核实”，与责任是否已知分开。证据原文去重，`purposes` 标注“问题”“归因”或两者。关联责任只保留一层主体—理由—证据关系。仅有输入输出差异不证明隐藏机制；已知参数生成调用不能因无隐藏推理而写未知。
 
 责任沿请求、工具返回、实际模型输入和最终交付定位。模型误用工具与工具自身错误分开；正确返回不证明模型实际收到。呈现、上下文或环境责任须有本方过程与交付证据。来源坐标合法只证明可定位，不证明责任或语义成立。
 

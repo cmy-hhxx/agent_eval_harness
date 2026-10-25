@@ -1,77 +1,22 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { AgentRegistry } from "@eval/host";
-import { attributionAgent, type AttributionResult } from "./index.js";
+import { attributionAgent } from "./index.js";
 import { businessChainFixture } from "../../../../tests/fixtures/business-chain.js";
-import { attributionSubmission } from "../../../../tests/fixtures/attribution-submission.js";
 import { businessChainDirectoryIssues, investigationIssues } from "./investigation.js";
 import { bindAttributionMaterial } from "@eval/workflows/review";
-import { evidenceSources } from "@eval/tools";
-const codes = (f: ReturnType<typeof businessChainFixture>) => investigationIssues(f.binding.request, f.problem, f.evidence, f.audit, "/problem").map(issue => issue.code);
 
-test('generation primary requires its own boundary check and every relevant upstream check',()=>{
- const f=businessChainFixture(); assert.deepEqual(codes(f),[]);
- const complete=structuredClone(f.problem.checks);
- f.problem.checks=[]; assert(codes(f).includes('responsibility_check_required'));
- f.problem.checks=complete.filter(check=>check.transition_index===f.generated.transition_index);
- assert(codes(f).includes('responsibility_upstream_required'));
- f.problem.checks=complete;
- assert.deepEqual(codes(f),[]);
+test('generation responsibility requires actual input/output and relevant source evidence, without checks forms',()=>{
+ const f=businessChainFixture(),p=f.result.Problem[0];
+ assert.deepEqual(investigationIssues(f.binding.request,p,p.evidence,f.audit,'/Problem/0'),[]);
+ const outputOnly=p.evidence.filter(e=>f.generated.after.some(b=>b.evidence_id===e.evidence_id));
+ assert(investigationIssues(f.binding.request,p,outputOnly,f.audit,'/Problem/0').some(i=>i.code==='investigation_boundary_evidence'));
+ assert(investigationIssues(f.binding.request,p,p.evidence,{...f.audit,traceReads:[]},'/Problem/0').some(i=>i.code==='investigation_read_required'));
 });
-test('a correct source and execution are checked without assigning them responsibility',()=>{
- const f=businessChainFixture(), registry=new AgentRegistry([attributionAgent]);
- const result=registry.resolve(f.binding,attributionSubmission(f.binding.request,f.result,f.audit),f.audit) as AttributionResult;
- registry.validate(f.binding,result,f.audit);
- assert.equal(result.Problem[0].causes.length,1);
- assert.equal(result.Problem[0].causes[0].transition_index,f.generated.transition_index);
- assert.equal(result.Problem[0].causes[0].certainty,'inferred');
- assert(result.Problem[0].checks.some(check=>check.kind==='execution'&&check.outcome==='preserved'));
+test('full serialized reads cover decoded text without duplicate reading',()=>{
+ const f=businessChainFixture(),p=f.result.Problem[0];
+ const audit={...f.audit,traceReads:f.raw.messages.map((m,message_index)=>({candidate:'answer',message_index,kind:'json' as const,path:'',start:0,end:JSON.stringify(m,null,2).length}))};
+ assert.deepEqual(investigationIssues(f.binding.request,p,p.evidence,audit,'/Problem/0'),[]);
 });
-test('boundary differences do not certify a hidden model action',()=>{
- const f=businessChainFixture(); f.cause.certainty='confirmed';
- assert(codes(f).includes('responsibility_mechanism_inferred'));
- f.cause.mechanism_source='explicit_process';
- assert(codes(f).includes('responsibility_mechanism_source'));
-});
-test('available unread boundaries request real protected reads',()=>{
- const f=businessChainFixture(); f.audit.traceReads=[];
- const issues=investigationIssues(f.binding.request,f.problem,f.evidence,f.audit,'/problem');
- assert(issues.some(issue=>issue.code==='investigation_read_required'));
- for(const issue of issues.filter(issue=>issue.code==='investigation_read_required')) {
-  const target=issue.expected as {start:number;end:number}; assert(target.end>target.start);
- }
-});
-test('read coverage cannot let an input quote impersonate the actual return',()=>{
- const f=businessChainFixture(), execution=f.problem.checks.find(check=>check.kind==='execution')!;
- execution.after_evidence_ids=f.problem.checks.find(check=>check.transition_index===f.generated.transition_index)!.before_evidence_ids;
- assert(codes(f).includes('investigation_boundary_evidence'));
-});
-test('serialized complete source reads cover decoded text without duplicate mandatory reading',()=>{
- const f=businessChainFixture();
- f.audit.traceReads=f.raw.messages.map((message,message_index)=>{
-  const source=evidenceSources(message).find(source=>source.kind==='json'&&source.path==='')!;
-  return {candidate:'answer',message_index,kind:'json' as const,path:'',start:0,end:source.text.length};
- });
- assert.deepEqual(codes(f),[]);
-});
-test('preserved and recovered transitions cannot be relabeled as causes without a defect',()=>{
- for(const outcome of ['preserved','recovered'] as const){
-  const f=businessChainFixture();f.problem.checks.find(check=>check.transition_index===f.generated.transition_index)!.outcome=outcome;
-  assert(codes(f).includes('responsibility_formation'));
- }
-});
-test('mechanical transition identity cannot be forged in the formal result',()=>{
- const f=businessChainFixture(); f.cause.actor_index=null;
- assert(codes(f).includes('responsibility_transition_actor'));
- Object.assign(f.binding.request.input.answer as object,{transitions:[]});
- assert(codes(f).includes('transition_directory'));
-});
-test('changed upstream material prevents a claim of first deviation after intact input',()=>{
- const f=businessChainFixture();f.problem.checks.find(check=>check.kind==='transfer')!.outcome='changed';
- assert(codes(f).includes('responsibility_generation_formation'));
- f.cause.basis='independent_addition';assert(!codes(f).includes('responsibility_generation_formation'));
-});
-
 test("English renderer finance sources retain identity, price and exact coordinates without indexing private metadata", () => {
   const f = businessChainFixture(), answer = f.binding.request.input.answer as any;
   const source = answer.citation_inventory.references.find((item: any) => item.reference === "pfJtupL");

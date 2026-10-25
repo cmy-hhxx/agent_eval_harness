@@ -533,10 +533,10 @@ test("image observations require an actual image tool audit", async () => {
       result = attributionResult(false, "2+2=4", false, task.inputIds.answer!),
       audit = emptyAudit();
 
-    result.Problem[0].evidence[0] = { evidence_id: evidenceId(task.inputIds.answer!, 1, "image"), message_index: 1, quote: "[图像观察]图片呈现结果" };
-    result.Problem[0].evidence.push(canonicalEvidence(task.inputIds.answer!, 0, "计算2+2"));
+    result.Problem[0].evidence[0] = { evidence_id: evidenceId(task.inputIds.answer!, 1, "image"), message_index: 1, purposes:["问题"], quote: "[图像观察]图片呈现结果" };
+    result.Problem[0].evidence.push({...canonicalEvidence(task.inputIds.answer!, 0, "计算2+2"),purposes:["问题"]});
     const delivered=canonicalEvidence(task.inputIds.answer!,1,"2+2=4","/content/0/text");
-    result.Problem[0].evidence.push(delivered);
+    result.Problem[0].evidence.push({...delivered,purposes:["问题"]});
     const candidate=Object.values((task.data as TaskData).candidates).find(candidate=>candidate.input_id===task.inputIds.answer)!;
     const binding=bindAttributionMaterial(candidate,input);
     Object.assign(result.Problem[0],unknownFormationFixture(binding.request,[delivered]));
@@ -776,7 +776,7 @@ test("subjective inputs still run attribution and direct evidence needs no force
     const prepared = prepare(task, plan.inputs, {});
     assert(!prepared.evaluation.toolNames.includes("set_task_contract"));
     const result = attributionResult(true, "2+2=4", false, task.inputIds.answer!), audit = emptyAudit();
-    result.Problem[0].evidence.push(canonicalEvidence(task.inputIds.answer!, 0, "计算2+2"));
+    result.Problem[0].evidence.push({...canonicalEvidence(task.inputIds.answer!, 0, "计算2+2"),purposes:["问题"]});
     validateEvaluation(task, plan.inputs, result, audit, {});
     assert.equal(audit.calls, 0);
     const bad = structuredClone(result);
@@ -789,7 +789,7 @@ test("subjective inputs still run attribution and direct evidence needs no force
     );
     const forged = structuredClone(result);
 
-    forged.Problem[0].causes[0].actor_index=99999;
+    forged.Problem[0].responsibility_boundary=99999;
     assert.throws(
       () => validateEvaluation(task, plan.inputs, forged, emptyAudit(), {}),
       (error: unknown) => error instanceof ValidationError && error.issues!.some(issue => issue.code === "responsibility_actor"),

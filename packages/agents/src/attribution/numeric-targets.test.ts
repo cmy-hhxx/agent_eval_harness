@@ -26,9 +26,9 @@ test("candidate wording cannot alter which standard values are selectable", () =
     ["12.90", "-5.51", "36.42", "18.01"]);
   for (const unit of ["%", "个百分点"]) {
     request.input.answer.final_answer = `上证50上涨12.90%，相对上证-5.51${unit}；中证2000上涨36.42%，相对上证18.01${unit}。`;
-    const schema = attributionProfile.modelSubmissionSchema!(request) as {
-      properties: { numeric_checks: { items: { properties: { reference_index: { enum: number[] } } } } };
-    };
-    assert.deepEqual(schema.properties.numeric_checks.items.properties.reference_index.enum, [1, 2, 3, 4]);
+    const schema = attributionProfile.modelSubmissionSchema!(request) as {properties: Record<string,unknown>};
+    assert(!Object.hasOwn(schema.properties, 'numeric_checks'));
+    assert.deepEqual(numericReferenceDirectory(request.input.ground_truth.value).map(item => item.expected),
+      ["12.90", "-5.51", "36.42", "18.01"]);
   }
 });

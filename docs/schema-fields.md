@@ -15,9 +15,9 @@
 | requirements / scoring_points / red_flags | Criteria | Attribution、Comparison | 有不同验收含义；统一作用域和来源绑定避免私规外溢。 |
 | is_correct / correct_reason | Attribution | 标准一致性核对 | 只判断与给定标准答案是否一致，独立于问题归因；无标准时两者固定 null。 |
 | Problem / text / reason / evidence_status | Attribution | Comparison、Score、Clustering、报告 | 正式问题及依据、实际影响与缺陷确定性；允许充分评审后的空数组，摘要不替代问题。 |
-| transition_index / causes | 模型选择、程序绑定 | 归因校验与正式组装 | 稳定转换固定真实主体、边界和证据；模型负责原因、责任确定性与必要 uncertainty。 |
+| responsibility_boundary / component / attribution_reason | 模型选边界并解释，程序解析主体 | 归责与导出 | 绑定真实调用，区分事实偏离与机制推断；主体未知不撤销缺陷。 |
 | accepted_attribution / problem_assignments | Workflow、Score | 单次评分及程序导出 | 完成情况、已确认或待核的问题和恢复状态来自接受收据；模型仅映射选档，程序保留源问题、责任确定性及证据。 |
-| checks / calculations | Attribution 每问题证据闭环 | 程序核查与复算 | 只核查本问题相关前后边界；计算仅在判断依赖时提供，不要求空数组或重复调查表。 |
+| evidence / calculations / uncertainties | 模型选证据与必要计算 | 程序核查与复算 | 用途为问题、归因或两者；原文去重。计算保留单位、期间、分母和假设；真实缺口直接记录。 |
 | evidence_id / evidence refs | Agent 与 Host | 引用校验、复核、查看原文 | 可解析坐标，必需；位置合法不证明语义正确。 |
 | numeric references / table checks | 程序材料导航 | 疑点定位 | 仅作为核查线索，正式判断及必要计算写入对应 Problem。 |
 | comparisons / importance / better_candidate | Comparison | 排名派生、逐项展示 | 共同且可比的差异是判决依据，不能靠问题数替代。 |

@@ -188,8 +188,8 @@
                           },
                           "evidence_status": {
                             "enum": [
-                              "established",
-                              "uncertain"
+                              "已确认",
+                              "待核实"
                             ]
                           },
                           "quote": {
@@ -254,62 +254,33 @@
                               "type": "object",
                               "additionalProperties": false,
                               "required": [
-                                "role",
                                 "component",
-                                "transition_index",
-                                "mechanism_source",
-                                "certainty",
-                                "reason"
+                                "responsibility_boundary",
+                                "attribution_reason"
                               ],
                               "properties": {
-                                "role": {
-                                  "enum": [
-                                    "primary",
-                                    "contributing"
-                                  ]
-                                },
                                 "component": {
-                                  "type": "string"
+                                  "type": "string",
+                                  "minLength": 1
                                 },
-                                "mechanism_source": {
-                                  "enum": [
-                                    "explicit_process",
-                                    "boundary_comparison"
-                                  ]
-                                },
-                                "certainty": {
-                                  "enum": [
-                                    "confirmed",
-                                    "inferred"
-                                  ]
-                                },
-                                "reason": {
-                                  "type": "string"
-                                },
-                                "transition_index": {
-                                  "type": "integer",
+                                "responsibility_boundary": {
+                                  "type": [
+                                    "integer",
+                                    "null"
+                                  ],
                                   "minimum": 1
                                 },
-                                "uncertainty": {
-                                  "type": "object",
-                                  "additionalProperties": false,
-                                  "required": [
-                                    "evidence_gap",
-                                    "alternatives"
-                                  ],
-                                  "properties": {
-                                    "evidence_gap": {
-                                      "type": "string",
-                                      "minLength": 1
-                                    },
-                                    "alternatives": {
-                                      "type": "array",
-                                      "items": {
-                                        "type": "string",
-                                        "minLength": 1
-                                      }
-                                    }
-                                  }
+                                "attribution_reason": {
+                                  "type": "string",
+                                  "minLength": 1
+                                },
+                                "uncertainties": {
+                                  "type": "array",
+                                  "items": {
+                                    "type": "string",
+                                    "minLength": 1
+                                  },
+                                  "minItems": 1
                                 }
                               }
                             }
@@ -390,8 +361,8 @@
                 },
                 "evidence_status": {
                   "enum": [
-                    "established",
-                    "uncertain"
+                    "已确认",
+                    "待核实"
                   ]
                 },
                 "responsibilities": {
@@ -400,62 +371,33 @@
                     "type": "object",
                     "additionalProperties": false,
                     "required": [
-                      "role",
                       "component",
-                      "transition_index",
-                      "mechanism_source",
-                      "certainty",
-                      "reason"
+                      "responsibility_boundary",
+                      "attribution_reason"
                     ],
                     "properties": {
-                      "role": {
-                        "enum": [
-                          "primary",
-                          "contributing"
-                        ]
-                      },
                       "component": {
-                        "type": "string"
+                        "type": "string",
+                        "minLength": 1
                       },
-                      "transition_index": {
-                        "type": "integer",
+                      "responsibility_boundary": {
+                        "type": [
+                          "integer",
+                          "null"
+                        ],
                         "minimum": 1
                       },
-                      "mechanism_source": {
-                        "enum": [
-                          "explicit_process",
-                          "boundary_comparison"
-                        ]
+                      "attribution_reason": {
+                        "type": "string",
+                        "minLength": 1
                       },
-                      "certainty": {
-                        "enum": [
-                          "confirmed",
-                          "inferred"
-                        ]
-                      },
-                      "reason": {
-                        "type": "string"
-                      },
-                      "uncertainty": {
-                        "type": "object",
-                        "additionalProperties": false,
-                        "required": [
-                          "evidence_gap",
-                          "alternatives"
-                        ],
-                        "properties": {
-                          "evidence_gap": {
-                            "type": "string",
-                            "minLength": 1
-                          },
-                          "alternatives": {
-                            "type": "array",
-                            "items": {
-                              "type": "string",
-                              "minLength": 1
-                            }
-                          }
-                        }
+                      "uncertainties": {
+                        "type": "array",
+                        "items": {
+                          "type": "string",
+                          "minLength": 1
+                        },
+                        "minItems": 1
                       }
                     }
                   }

@@ -77,7 +77,7 @@ test("answer-only and short third-party traces survive independent pairs, formal
           const evidence = canonicalEvidence(candidate.input_id, candidate.final_index, final);
 
 
-          if(evaluation.Problem.length)evaluation.Problem[0].evidence = [evidence];
+          if(evaluation.Problem.length)evaluation.Problem[0].evidence = [{...evidence,purposes:["问题"]}];
           if (candidate.version === "baseline_fast") {
             evaluation.is_correct = false;
             evaluation.correct_reason = "最终回答给出5，与标准答案4不一致；缺少生成链路，无法定位责任。";
@@ -160,8 +160,8 @@ test("answer-only and short third-party traces survive independent pairs, formal
         const baseline = object(object(row.evaluations).baseline_fast);
         assert.equal(baseline.is_correct, false);
 
-        assert.deepEqual((baseline.Problem as AttributionResult["Problem"])[0].causes, []);
-        assert((baseline.Problem as AttributionResult["Problem"])[0].uncertainty?.evidence_gap);
+        assert.equal((baseline.Problem as AttributionResult["Problem"])[0].component, null);
+        assert((baseline.Problem as AttributionResult["Problem"])[0].uncertainties?.length);
         assert.deepEqual(object((baseline.Problem as JsonObject[])[0]).stage_trace,
           { tools: [], confidence: "none", source: "none", locations: [{ message_index: 1, tool_name: null }] });
         assert.equal(verdict.result, "win");
@@ -193,7 +193,7 @@ test("answer-only and short third-party traces survive independent pairs, formal
         input.messages[candidate.final_index].content += "\n\n| 项目 | 数值 |\n| --- | --- |\n| 2+2 | 5 |";
         projectedInputs[candidate.input_id] = input;
         const table = parseTraceTables(input,candidate.input_id).find(table=>table.message_index===candidate.final_index)!;
-        evaluation.Problem[0].evidence.push(table.rows[0].evidence);
+        evaluation.Problem[0].evidence.push({...table.rows[0].evidence,purposes:["问题"]});
       }
       const names = Object.fromEntries(config.inputs.versions.map(version=>[version.id,version.display_name||version.name]));
       for (const row of rows) {

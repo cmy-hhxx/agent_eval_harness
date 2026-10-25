@@ -1,5 +1,5 @@
 import { canonical, type AgentRequest, type ValidationIssue } from "@eval/contracts";
-import { traceComponentIdentities, traceComponentOwnsEvidence, type TraceComponentIdentity } from '@eval/tools';
+import { traceComponentIdentities, type TraceComponentIdentity } from '@eval/tools';
 import type { Evidence, ProblemProposal } from "./types.js";
 
 /** Workflow supplies the directory; no taxonomy labels or raw call IDs become actors. */
@@ -19,31 +19,33 @@ export function componentCatalogIssues(request: AgentRequest): ValidationIssue[]
   return canonical(responsibilityIdentities(request)) === canonical(traceComponentIdentities(raw, request.sources.answer.id, answer.final_message_index)) ? [] :
     [{ category: 'evidence', code: 'component_catalog', path: '/answer/component_catalog', message: '主体目录必须对应真实调用及坐标。' }];
 }
-export function responsibilityLabels(problem: Pick<ProblemProposal, 'causes'>): string[] {
-  return [...new Set(problem.causes.map(row=>row.component))];
+export function responsibilityLabels(problem: Pick<ProblemProposal, 'component' | 'related_responsibilities'>): string[] {
+  return [...new Set([problem.component,...(problem.related_responsibilities??[]).map(row=>row.component)].filter((name):name is string=>name!==null))];
 }
-/** Identity is program-owned; causal prose and certainty remain the model's judgment. */
+/** Identity is resolved from registered boundaries; mechanisms are model judgments. */
 export function responsibilityIssues(request:AgentRequest,problem:unknown,selected:readonly (Evidence|undefined)[],path:string):ValidationIssue[]{
-  const value=problem as ProblemProposal|undefined;
-  if(!value||!Array.isArray(value.causes))return [];
-  const issues:ValidationIssue[]=[],actors=responsibilityIdentities(request),ids=new Set(selected.flatMap(e=>e?[e.evidence_id]:[]));
+  const value=problem as ProblemProposal,issues:ValidationIssue[]=[];
+  const actors=responsibilityIdentities(request);
+  const transitions=(request.input.answer as {transitions:{transition_index:number;actor_index:number|null}[]}).transitions;
   const add=(code:string,at:string,message:string)=>issues.push({category:'evidence',code,path:at,message});
-  const gap=(u:ProblemProposal['uncertainty'])=>!!u?.evidence_gap?.trim()&&Array.isArray(u.alternatives)&&u.alternatives.some(a=>a.trim());
-  if(!value.causes.length&&!gap(value.uncertainty))add('responsibility_unresolved_required',path+'/uncertainty','责任未知仍须保留缺陷，并说明真实断点和替代解释。');
-  if(value.evidence_status==='uncertain'&&!gap(value.uncertainty))add('problem_uncertainty_required',path+'/uncertainty','缺陷待核须说明证据缺口与替代解释。');
-  const transitions=(request.input.answer as {transitions:{transition_index:number;kind:string;actor_index:number|null;relation:string}[]}).transitions;
-  if(!value.causes.length&&value.checks.some(c=>c.outcome==='changed'&&transitions.some(t=>t.transition_index===c.transition_index&&t.kind==='request_formation'&&t.relation==='captured'&&t.actor_index!==null)))
-    add('responsibility_unresolved_captured_formation',path+'/uncertainty','参数形成边界已发生偏离且形成主体已采集，不能将主体写成未知。');
-  if(value.causes.length&&value.causes.filter(c=>c.role==='primary').length!==1)add('responsibility_primary',path+'/causes','实际形成责任恰有一个主责；关联责任须有独立作用。');
-  value.causes.forEach((cause,i)=>{
-    const at=path+'/causes/'+i,actor=cause.actor_index===null?undefined:actors[cause.actor_index-1];
-    if(cause.actor_index!==null&&!actor||cause.component!==responsibilityComponentName(actor))add('responsibility_actor',at,'责任主体名称必须由真实边界解析。');
-    if(cause.actor_index===null&&(cause.certainty!=='inferred'||cause.mechanism_source!=='boundary_comparison'))add('responsibility_unknown_actor',at,'未知主体只能保留边界推断。');
-    if(cause.certainty==='inferred'&&!gap(cause.uncertainty))add('responsibility_inference',at+'/uncertainty','机制推断须说明关键缺口和替代解释。');
-    if(cause.certainty==='confirmed'&&cause.uncertainty)add('responsibility_certainty',at,'存在因果关键缺口时机制只能标为推断，缺陷确定性独立判断。');
-    if(!cause.evidence_ids.length||cause.evidence_ids.some(id=>!ids.has(id)))add('responsibility_evidence',at+'/evidence_ids','责任证据必须来自本问题所选真实边界。');
-    if(cause.certainty==='confirmed'&&actor&&!selected.some(e=>e&&!e.source&&cause.evidence_ids.includes(e.evidence_id)&&traceComponentOwnsEvidence(request.sources.answer.value as {messages:unknown[]},actor,e.evidence_id)))add('responsibility_actor_evidence',at,'确证责任须有实际主体的直接过程证据。');
-    if(value.causes.slice(0,i).some(c=>c.transition_index===cause.transition_index))add('responsibility_duplicate',at,'一个问题中同一边界只登记一次责任。');
+  const gap=(items:string[]|undefined)=>!!items?.some(item=>item.trim());
+  if((value.evidence_status==='待核实'||value.component===null)&&!gap(value.uncertainties))
+    add('responsibility_unresolved_required',path+'/uncertainties','缺陷待核实或责任未知时说明真实缺口；缺少内部推理不等于实际调用未知。');
+  const rows=[value,...value.related_responsibilities??[]];
+  const seen=new Set<number>();
+  rows.forEach((r,i)=>{
+    const at=i?path+'/related_responsibilities/'+(i-1):path;
+    if(r.responsibility_boundary===null){if(r.component!==null)add('responsibility_actor',at,'未定位边界时不能填写主体。');return;}
+    const boundary=transitions.find(t=>t.transition_index===r.responsibility_boundary);
+    if(!boundary){add('responsibility_transition',at,'选择本次真实边界编号。');return;}
+    const actual=boundary.actor_index===null?null:responsibilityComponentName(actors[boundary.actor_index-1]);
+    if(r.component!==actual)add('responsibility_actor',at,'主体完全由所选实际边界解析，已知参数生成者不能写为未知。');
+    if(seen.has(r.responsibility_boundary))add('responsibility_duplicate',at,'同一问题的同一责任边界只登记一次。');
+    seen.add(r.responsibility_boundary);
+    if(i){const r=value.related_responsibilities![i-1];
+      if(r.evidence_ids.some(id=>!selected.some(e=>e?.evidence_id===id)))add('responsibility_evidence',at,'关联责任须引用本问题证据。');
+      if(r.component===null&&!gap(r.uncertainties))add('responsibility_unresolved_required',at,'关联主体未知须说明真实断点。');
+    }
   });
   return issues;
 }

@@ -6,7 +6,7 @@ import { problemCategories } from "./dashboard-view.js";
 const observation = (id: string, component: string): ClusteringObservation => ({
   id, component, label: "来源问题", definition: "来源信息与主张不一致。", count: 1, established_count: 1, uncertain_count: 0, established_answer_ids: ["input"],
   examples: [], refs: [{ input_id: "input", finding_id: "finding", case_id: "case", source: { file: "source", line: 1 },
-    message_index: 3, quote: "q", evidence_status: "established" }],
+    message_index: 3, quote: "q", evidence_status: "已确认" }],
 });
 
 test("multiple component and topic views preserve one defect identity", () => {

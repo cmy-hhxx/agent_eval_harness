@@ -658,3 +658,34 @@ test("parallel runs isolate sessions, workspaces, results and cancellation; comp
     await rm(directory, { recursive: true, force: true });
   }
 });
+
+
+test("terminal accounting is reread without repeating model work", { timeout: 10000 }, async t => {
+  const directory = await mkdtemp(path.join(tmpdir(), "eval-final-accounting-"));
+  let runs = 0, records = 0;
+  const worker = await startWorker({identity, async createSession(options) {
+    return {async run() {runs++; assert(!(await options.execute("submit_evaluation", {score:1})).isError);}, async abort() {}, async dispose() {}};
+  }}, path.join(directory,"worker"));
+  const originalFetch = globalThis.fetch;
+  t.mock.method(globalThis,"fetch",async (url:Parameters<typeof fetch>[0],init?:Parameters<typeof fetch>[1]) => {
+    const response = await originalFetch(url,init), address = new URL(String(url));
+    if(address.origin === worker.url && address.pathname.endsWith("/record") && (!init?.method || init.method === "GET")) {
+      const record = await response.json() as {metrics?:{usage:{totalTokens:number}}};
+      records++;
+      if(records === 1) delete record.metrics;
+      else {assert(record.metrics); record.metrics.usage.totalTokens=123;}
+      return Response.json(record);
+    }
+    return response;
+  });
+  try {
+    await runEvaluation({agents:new AgentRegistry([agent]),taskSource:workflow,repository,
+      runtime:{root:directory,workerEntry:"unused"},runId:"accounting",output:{kind:"directory",path:directory},
+      engine:"pi",identity,evaluatorVersion:"test",config:{},plan:{...plan,tasks:plan.tasks.slice(0,1)},
+      policy:{...DEFAULT_POLICY,timeoutSeconds:5},modelForStage:()=>model,concurrency:1,retries:0,retryDelaySeconds:0,
+      workerUrls:[worker.url],signal:AbortSignal.timeout(5000)});
+    const saved=await repository.readRun(path.join(directory,"accounting"));
+    assert.equal(records,2); assert.equal(runs,1); assert.equal(saved!.usage.totalTokens,123);
+    assert.equal(saved!.manifest.states["task-1"].status,"succeeded");
+  } finally {await worker.close();await rm(directory,{recursive:true,force:true});}
+});

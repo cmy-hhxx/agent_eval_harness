@@ -3,9 +3,8 @@ import { bindAttributionMaterial } from "@eval/workflows/review";
 import { type Candidate, type RawInput } from "@eval/workflows/inputs";
 import type { AttributionResult, BusinessChain, ProblemProposal, AttributionTransition, Evidence } from "@eval/agents/attribution";
 import { responsibilityComponentName } from "@eval/agents/attribution";
-import { parseEvidenceCoordinates, resolveEvidence } from "@eval/tools";
+import { parseEvidenceCoordinates, resolveEvidence, evidenceCovers } from "@eval/tools";
 import { emptyAudit } from "./comparison.js";
-import { responsibilityFixture } from "./responsibility.js";
 
 /** Synthetic captured boundaries model the real ETF-to-spot failure without copying server data. */
 export function businessChainFixture(loss = false, question = "Gold prediction for next 6 months", dropSource = false) {
@@ -37,23 +36,16 @@ export function businessChainFixture(loss = false, question = "Gold prediction f
   const chain = chains[0], evidence = [...new Map([...chain.checkpoints.flatMap(point => point.evidence), ...chain.final_evidence, ...transitions.flatMap(edge=>[...edge.before,...edge.after]).map(boundary=>resolveEvidence({messages},boundary,"answer",emptyAudit(),"/fixture",id))]
     .filter((item): item is Evidence => typeof item.quote === "string")
     .map(item => [item.evidence_id, item])).values()];
-  const cause = responsibilityFixture(undefined,{transition_index:generated.transition_index,actor_index:generated.actor_index,kind:generated.kind,
+  const problem:ProblemProposal={text:'ETF份额价错配现货报价',reason:'将GLD.P份额369美元错误作为XAU/USD现货3690美元，预测基准不可用。',evidence_status:'已确认',
+    responsibility_boundary:generated.transition_index,
     component:responsibilityComponentName((binding.request.input.answer as {component_catalog:import('@eval/tools').TraceComponentIdentity[]}).component_catalog[Number(generated.actor_index)-1]),
-    reason:'将ETF份额价格用于现货报价，输入369与输出3690差异可见，内部转换仅属推断。',
-    evidence_ids:[...generated.before,...generated.after].map(e=>e.evidence_id),uncertainty:{evidence_gap:'未记录中间换算过程。',alternatives:['零位误写。','拼接其他价格记忆。']}});
-  const problem:ProblemProposal={text:'ETF份额价错配现货报价',reason:'将GLD.P份额369美元错误作为XAU/USD现货3690美元，预测基准不可用。',evidence_status:'established',
-    checks:transitions.map(edge=>({transition_index:edge.transition_index,kind:edge.kind,outcome:edge.transition_index===generated.transition_index?'changed':'preserved',
-      observation:edge.transition_index===generated.transition_index?'输入保留ETF身份与369价格，生成现货3690。':'该边界保持对象与价格。',
-      before_evidence_ids:edge.before.map(e=>e.evidence_id),after_evidence_ids:edge.after.map(e=>e.evidence_id)})),causes:[cause]};
-  const generationCheck=problem.checks.find(check=>check.transition_index===generated.transition_index)!;
-  const incoming=transitions.filter(edge=>generated.predecessors.includes(edge.transition_index)).flatMap(edge=>edge.after);
-  if(incoming.length){generationCheck.before_evidence_ids=incoming.map(e=>e.evidence_id);cause.evidence_ids=[...new Set([...generationCheck.before_evidence_ids,...generationCheck.after_evidence_ids])];}
+    attribution_reason:'实际输入保留基金代码和份额价格，生成输出改为现货及十倍价格。',uncertainties:['具体换算机制没有记录。']};
   const result:AttributionResult={meta:{input_id:id},summary:problem.text,has_standard_answer:false,is_correct:null,correct_reason:null,
-    Problem:[{...problem,problem_id:'p1',evidence}]};
+    Problem:[{...problem,problem_id:'p1',evidence:evidence.filter(e=>!generated.before.some(b=>b.evidence_id===e.evidence_id) || !generated.predecessors.some(id=>transitions.find(t=>t.transition_index===id)!.after.some(b=>b.evidence_id!==e.evidence_id&&evidenceCovers({messages},candidate.input_id,e.evidence_id,b.evidence_id)))).map(e=>({...e,purposes:['问题','归因']}))}]};
   const audit=emptyAudit();
   audit.traceReads = evidence.flatMap(item => {
     const point=parseEvidenceCoordinates(item.evidence_id)!;
     return point.kind==='image'?[]:[{candidate:'answer',message_index:point.message_index,kind:point.kind,path:point.path,start:point.start,end:point.end}];
   });
-  return { binding, chains, chain, transitions, generated, problem, result, evidence, audit, cause, raw: { messages }, candidate };
+  return { binding, chains, chain, transitions, generated, problem, result, evidence, audit, raw: { messages }, candidate };
 }

@@ -76,7 +76,7 @@ export function comparisonResult(labels: string[] = ["A", "B"], analysis: TaskAn
     decision_basis: {
       tradeoff: "双方均满足同一要求，没有结果差异。",
       comparisons: analysis.requirements.map((criterion) => ({ aspect: criterion.text, criterion_ids: [criterion.id], importance: "high", better_candidates: [], assessments: Object.fromEntries(
-        labels.map((label) => [label, { status: "met", evidence_status: "established", summary: "正确给出4。", finding_indices: [] }]),
+        labels.map((label) => [label, { status: "met", evidence_status: "已确认", summary: "正确给出4。", finding_indices: [] }]),
       ) })),
       decisive_findings: [],
     },
@@ -147,9 +147,9 @@ export function attributionResult(correct=true,answer='2+2=4',available=true,inp
   const id=evidenceId(inputId,1,'text','/content',0,answer.length);
   return {meta:{input_id:inputId},summary:correct?'正确给出结果。':'加法结果错误。',has_standard_answer:available,is_correct:available?correct:null,
     correct_reason:available?(correct?'回答结果4与给定标准4一致。':'回答结果与给定标准4不一致。'):null,
-    Problem:correct?[]:[{problem_id:'p1',text:'加法结果错误',reason:'2+2应为4，实际回答给出了不同的结果。',evidence_status:'established',
-      evidence:[{evidence_id:id,message_index:1,quote:answer}],checks:[{transition_index:1,kind:'delivery',outcome:'unresolved',observation:'已核对交付，但实际生成输入输出未采集。',before_evidence_ids:[],after_evidence_ids:[id]}],
-      causes:[],uncertainty:{evidence_gap:'实际生成输入输出未采集，无法定位形成主体。',alternatives:['上游计算已经错误。','生成或交付引入错误。']}}]};
+    Problem:correct?[]:[{problem_id:'p1',text:'加法结果错误',reason:'2+2应为4，实际回答给出了不同的结果。',evidence_status:'已确认',
+      evidence:[{evidence_id:id,message_index:1,quote:answer,purposes:['问题']}],
+      responsibility_boundary:null,component:null,attribution_reason:'实际交付错误，形成记录未采集。',uncertainties:['实际生成输入输出未采集，无法定位形成主体。']}]};
 }
 
 /** Task result; Criteria uses its source-selection submission, other stages use resolved results. */
@@ -203,13 +203,13 @@ export function taskResult(spec: Pick<AttemptSpec, "evaluation" | "prompt" | "in
     const result = comparisonResult(labels);
     result.task_analysis = fixtureAnalysis(material.task_analysis, spec.inputs);
     for(const label of labels){
-      const failed=material.attributions?.[label]?.Problem.some(item=>item.evidence_status==='established');
+      const failed=material.attributions?.[label]?.Problem.some(item=>item.evidence_status==='已确认');
       result.assessments[label]={meets_core:!failed,core_failure_refs:failed?[result.task_analysis.requirements[0].id]:[],summary:failed?'关键结果错误。':'正确给出结果。'};
     }
     result.decision_basis.comparisons=[...result.task_analysis.requirements,...result.task_analysis.scoring_points,...result.task_analysis.red_flags].map((criterion)=>({
       aspect:criterion.text,criterion_ids:[criterion.id],importance:'high' as const,better_candidates:[],assessments:Object.fromEntries(labels.map(label=>{
         const defects=material.attributions?.[label]?.Problem??[],failed=!result.assessments[label].meets_core;
-        return [label,{status:failed?'unmet':'met',evidence_status:'established',summary:failed?'结果与加法规则不符。':'完成受控要求。',finding_indices:defects.map((_,i)=>i)}];
+        return [label,{status:failed?'unmet':'met',evidence_status:'已确认',summary:failed?'结果与加法规则不符。':'完成受控要求。',finding_indices:defects.map((_,i)=>i)}];
       }))}));
     result.ranking = [labels.filter((label) => result.assessments[label]!.meets_core),
       labels.filter((label) => !result.assessments[label]!.meets_core)].filter((tier) => tier.length);
@@ -418,21 +418,15 @@ export function draftFor(spec: Pick<AttemptSpec, "inputs" | "prompt" | "evidence
     if (index < 0) throw new Error("Fixture must read material before selecting an unavailable span");
     return { evidence_index: index + 1, ...(observation === undefined ? {} : { observation }) };
   };
-  const evidence = (items: unknown) =>
-    (items as { evidence_id: string; quote: string }[]).map(item => {
-      const coordinate = parseEvidenceCoordinates(item.evidence_id);
-      return choose(item.evidence_id, coordinate?.kind === "image" ? item.quote.slice("[图像观察]".length) : undefined);
-    });
   if(material.answer&&"Problem" in result){
     const value=result as unknown as AttributionResult;
     const selections=(ids:string[])=>ids.map(id=>choose(id).evidence_index);
     return {summary:value.summary,...(value.has_standard_answer?{is_correct:value.is_correct,correct_reason:value.correct_reason}:{}),
       Problem:value.Problem.map(item=>({text:item.text,reason:item.reason,evidence_status:item.evidence_status,
-        evidence_indices:evidence(item.evidence).map(row=>row.evidence_index),
-        checks:item.checks.map(check=>({transition_index:check.transition_index,outcome:check.outcome,observation:check.observation,
-          before_evidence_indices:selections(check.before_evidence_ids),after_evidence_indices:selections(check.after_evidence_ids)})),
-        causes:item.causes.map(({transition_index,basis,mechanism_source,reason,certainty,uncertainty})=>({transition_index,basis,mechanism_source,reason,certainty,...(uncertainty?{uncertainty}:{})})),
-        ...(item.uncertainty?{uncertainty:item.uncertainty}:{}),
+        evidence:item.evidence.map(e=>({index:choose(e.evidence_id).evidence_index,purposes:e.purposes})),
+        responsibility_boundary:item.responsibility_boundary,attribution_reason:item.attribution_reason,
+        ...(item.uncertainties?{uncertainties:item.uncertainties}:{}),
+        ...(item.related_responsibilities?{related_responsibilities:item.related_responsibilities.map(r=>({responsibility_boundary:r.responsibility_boundary,attribution_reason:r.attribution_reason,evidence_indices:selections(r.evidence_ids)}))}:{}),
         ...(item.calculations?{calculations:item.calculations.map(calculation=>({...calculation,operands:Object.fromEntries(Object.entries(calculation.operands).map(([name,{evidence_id,...operand}])=>[name,{...operand,evidence_index:choose(evidence_id).evidence_index}]))}))}:{})}))};
   }
   if ("assessments" in result) {

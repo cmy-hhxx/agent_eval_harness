@@ -14,9 +14,7 @@ function fixture(problem=false,recovered=false){
   const attribution={meta:{},summary:'已完成评审。',Problem:problem?[{problem_id:'p1',
     text:recovered?'取数失败后已重试恢复。':'最终回答仍有已确认的非核心展示缺陷。',
     reason:recovered?'已经恢复，最终结果完整正确。':'最终交付存在局部展示缺陷，核心数值仍可用。',
-    evidence_status:'established',evidence:[canonicalEvidence('11111111-1111-4111-8111-111111111111',1,'2+2=4')],checks:[],
-    causes:[{component:'真实生成主体',role:'primary',reason:'源归因责任结论。',certainty:'inferred',
-      uncertainty:{evidence_gap:'未采集形成过程。',alternatives:['可能形成于先前处理。']}}]}]:[],
+    evidence_status:'已确认',evidence:[{...canonicalEvidence('11111111-1111-4111-8111-111111111111',1,'2+2=4'),purposes:['问题']}],responsibility_boundary:1,component:'真实生成主体',attribution_reason:'源归因责任结论。',uncertainties:['内部机制未采集。']}]:[],
     has_standard_answer:false,is_correct:null,correct_reason:null};
   const receipt={taskId:'attribution',evaluatorVersion:'test',evaluation:attribution} as SubmissionReceipt;
   const raw=structuredClone(example.request.sources.answer.value),candidate={input_id:'11111111-1111-4111-8111-111111111111',question:String(raw.messages[0].content),final_index:1} as unknown as Candidate;

@@ -17,7 +17,7 @@ export function captureMarkerProblemIssues(request: AgentRequest, value: unknown
   if (!Array.isArray(findings)) return [];
   return findings.flatMap((entry, index) => {
     const finding = object(entry), evidence = finding?.evidence;
-    if (finding?.evidence_status !== "established" ||
+    if (finding?.evidence_status !== "已确认" ||
       !Array.isArray(evidence) || !evidence.length) return [];
     const onlyCapture = evidence.every(item => {
       const id = object(item)?.evidence_id;
@@ -30,7 +30,7 @@ export function captureMarkerProblemIssues(request: AgentRequest, value: unknown
         marker.path === point.path && point.start >= 0 && point.end > point.start && point.end <= marker.text.length);
     });
     return onlyCapture ? [{ category: "evidence", code: "capture_marker_not_candidate_evidence", path: `/Problem/${index}/evidence`,
-      message: "所选证据全部是独立的可视材料采集占位符，只能证明本次采集未呈现内容，不能确认候选交付有缺陷。请补充真实正文、已查看图像或执行证据；无法确认时保留 uncertain 或删除该问题，不推导用户损害。" } as ValidationIssue] : [];
+      message: "所选证据全部是独立的可视材料采集占位符，只能证明本次采集未呈现内容，不能确认候选交付有缺陷。请补充真实正文、已查看图像或执行证据；无法确认时保留待核实 或删除该问题，不推导用户损害。" } as ValidationIssue] : [];
   });
 }
 
@@ -171,6 +171,6 @@ export function foreignActualIssues(request: AgentRequest, result: import("./typ
         : "peer 仅提供裁判事实，必须同时引用本方回答或真实执行证据；peer、用户提问和规范不能冒充本方 actual。",
       expected: { candidate: "answer", final_message_index: finalIndex } });
   };
-  result.Problem.forEach((problem,index)=>{if(problem.evidence_status==='established')check(problem.evidence,`/Problem/${index}/evidence`,false);});
+  result.Problem.forEach((problem,index)=>{if(problem.evidence_status==='已确认')check(problem.evidence,`/Problem/${index}/evidence`,false);});
   return issues;
 }

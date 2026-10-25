@@ -15,7 +15,7 @@ AIME 使用 workflow: answer-review。每条回答先完成 Attribution，通过
 | is_correct | 仅判断与给定标准答案是否一致；无标准答案固定 null，确实无法判断时为 null |
 | correct_reason | 有标准答案时说明比较对象、依据和原因；无标准答案固定 null |
 
-每条问题保留 `problem_id/text/reason/evidence_status/evidence/checks/causes`，必要时增加 `uncertainty/calculations`。问题编号、证据原文坐标、边界种类与实际责任主体由程序解析；模型填写缺陷、原因和影响，选择证据及真实边界，说明责任、推断与缺口。关联责任只有独立传播或放大依据时才存在。缺陷已成立但责任未知时保留缺陷和真实断点。没有标准答案仍调查事实、过程和交付缺陷。
+每条问题使用 `problem_id/text/reason/evidence_status/evidence/responsibility_boundary/component/attribution_reason`，有真实缺口时增加 `uncertainties`，确有独立传播或放大时增加 `related_responsibilities`，依赖计算时增加 `calculations`。问题编号、主体名称和证据坐标由程序填写；模型只选稳定编号并写判断。`evidence_status` 为“已确认”或“待核实”，与责任是否已知分开。证据原文去重，`purposes` 标注“问题”“归因”或两者。关联责任只保留一层主体—理由—证据关系。仅有输入输出差异不证明隐藏机制；已知参数生成调用不能因无隐藏推理而写未知。
 
 不再要求 strengths、逐项 criterion_assessments、core_assessment、meets_core、core_reason、维度、阶段、重要性、功能分类或重复调查表。原问与适用规则继续作为判断依据。计算只在问题判断确实依赖计算时记录，并保留来源、单位、期间、分母及程序复算能力。
 
@@ -53,3 +53,23 @@ npm run eval -- run --stage attribution --run-id answer-review-run --config conf
 正式结果位于 results/attribution.jsonl、results/score.jsonl 和按需生成的 results/instruction_review.jsonl；恢复 state.json 只引用已接受 JSONL，不重复保存正文。源输入仍在数据源，不复制到run。status、report、validate 使用保存的workflow读取结果；续跑保存任务ID、已用次数、预算和收据，不因模型或参数变化拒绝。
 
 新增日期及增量回答沿既定每日run追加，已接受结果不重复评测。自动恢复只选择仍有额度的可恢复任务，内容失败耗尽额度时保留可定位错误。暂停停止新分配并收尾，停止中断并保存，服务重启等待手动启动。AIME默认并发64，可在独立候选配置调整，不与问财混用。来源与持续执行见 [AIME日常评测](aime-incremental.md)。
+
+### 问题字段与填写责任
+
+| 字段 | 定义与条件 | 填写者 |
+|---|---|---|
+| problem_id | 本条问题编号 | 程序 |
+| text | 哪项主张、行为或交付有什么缺陷，必填 | 模型 |
+| reason | 缺陷成立依据、原句限定及实际影响，必填 | 模型 |
+| evidence_status | 已确认或待核实，仅描述缺陷确定性 | 模型 |
+| evidence | 一份去重原文；用途为问题、归因或两者 | 模型选 index/purposes，程序解析原文坐标；图片观察由模型写 |
+| responsibility_boundary | 实际形成边界编号；未采集可为 null | 模型选择 |
+| component | 该边界的真实主体；未知为 null | 程序 |
+| attribution_reason | 谁在哪个边界形成问题，依据支持到哪里；未知则说明断点 | 模型 |
+| uncertainties | 具体缺口、推断或替代解释；无则省略 | 模型 |
+| related_responsibilities | 仅独立传播或放大时填写边界、理由、证据引用及必要缺口 | 模型选择，程序解析主体；不复制原文 |
+| calculations | 仅问题依赖计算时必填，保留源数、单位、期间、分母、假设及复算 | 模型填源数与口径，程序核验坐标及算术 |
+
+模型常规提交只有 summary 和 Problem；每条问题必填 text、reason、evidence_status、evidence、responsibility_boundary、attribution_reason。有标准答案才额外提交 is_correct、correct_reason；正式六字段始终保留，meta 与 has_standard_answer 完全由程序填写。判断和说明为简洁中文，真实工具名与引文不翻译。
+
+程序验证结构、实际边界身份、证据坐标与读取记录、相关输入输出覆盖和计算一致性。程序不能可靠证明摘要没有漏项、机制文字没有过度推断、关联责任确有独立作用，或正文是否漏交必要计算；同会话确认只是自检，仍须真实样本抽审。规则信号不能直接当作缺陷：零行、旧来源、原句直送及恢复后的工具失败均须结合具体任务和影响判断。

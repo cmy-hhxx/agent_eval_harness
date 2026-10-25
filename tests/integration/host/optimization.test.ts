@@ -50,7 +50,7 @@ async function stateFor(config: EvalConfig, plan: TaskPlan, acceptVerifications 
 
 
 
-    if (result.Problem.length) result.Problem[0].evidence = [actual];
+    if (result.Problem.length) result.Problem[0].evidence = [{...actual,purposes:["问题"]}];
     return result;
   };
   const state: RunState = {

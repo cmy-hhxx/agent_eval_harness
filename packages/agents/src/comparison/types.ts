@@ -2,7 +2,7 @@ import type { ResolvedEvidence, TaskAnalysis } from "@eval/contracts";
 export type { TaskAnalysis } from "@eval/contracts";
 
 export type CriterionStatus = "met" | "partial" | "unmet" | "unknown" | "not_applicable";
-export type EvidenceStatus = "established" | "uncertain";
+export type EvidenceStatus = "已确认" | "待核实";
 
 export interface Evidence extends ResolvedEvidence {
   source?: string;

@@ -37,13 +37,13 @@ export function comparisonCellState(input: ComparisonInput, candidate: string, _
  status: CriterionStatus; evidence_status: EvidenceStatus;
 } {
  return Object.values(comparisonResourceMetrics(input,candidate)).some(value=>value!==null)
-  ? {status:'met',evidence_status:'established'} : {status:'unknown',evidence_status:'uncertain'};
+  ? {status:'met',evidence_status:'已确认'} : {status:'unknown',evidence_status:'待核实'};
 }
 export function comparisonSlotCellState(input: ComparisonInput,candidate:string,slot:ComparisonSlot) {
  return comparisonCellState(input,candidate,slot.criterion_ids,slot.finding_indices[candidate]);
 }
 export function comparisonAdvantageCandidates(assessments:Record<string,{status:CriterionStatus;evidence_status:EvidenceStatus}>,shared=true):string[]{
- return shared && Object.values(assessments).every(cell=>cell.evidence_status==='established'&&!['unknown','not_applicable'].includes(cell.status))?Object.keys(assessments):[];
+ return shared && Object.values(assessments).every(cell=>cell.evidence_status==='已确认'&&!['unknown','not_applicable'].includes(cell.status))?Object.keys(assessments):[];
 }
 export function comparisonSlots(request:AgentRequest):ComparisonSlot[]{
  const input=request.input as unknown as ComparisonInput,labels=Object.keys(input.candidates);

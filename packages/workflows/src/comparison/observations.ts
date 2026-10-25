@@ -69,9 +69,9 @@ export function groupObservations(sources: ProblemSource[]): ClusteringObservati
             finding: finding.text,
             reason: finding.reason,
             evidence_status: finding.evidence_status,
-            responsibilities: finding.causes.filter(cause =>
-              responsibilityLabels({causes:[cause]})[0] === component)
-              .map(({ evidence_ids:_evidence,actor_index:_actor,basis:_basis,kind:_kind,...cause })=>cause),
+            responsibilities: [finding,...finding.related_responsibilities??[]].filter(row=>row.component===component)
+              .map(row=>({component:row.component!,responsibility_boundary:row.responsibility_boundary,
+                attribution_reason:row.attribution_reason,...(row.uncertainties?{uncertainties:row.uncertainties}:{})})),
           },
         });
         groups.set(key, group);
@@ -95,9 +95,9 @@ export function groupObservations(sources: ProblemSource[]): ClusteringObservati
         label: group.label,
         definition: group.definition,
         count: entries.length,
-        established_count: entries.filter((entry) => entry.ref.evidence_status === "established").length,
-        uncertain_count: entries.filter((entry) => entry.ref.evidence_status === "uncertain").length,
-        established_answer_ids: [...new Set(entries.filter(entry => entry.ref.evidence_status === "established")
+        established_count: entries.filter((entry) => entry.ref.evidence_status === "已确认").length,
+        uncertain_count: entries.filter((entry) => entry.ref.evidence_status === "待核实").length,
+        established_answer_ids: [...new Set(entries.filter(entry => entry.ref.evidence_status === "已确认")
           .map(entry => entry.ref.input_id))].sort(),
         examples,
         refs: entries.map((entry) => entry.ref),

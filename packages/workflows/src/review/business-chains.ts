@@ -1,6 +1,6 @@
 import { attributionTaxonomy } from "@eval/prompts";
 import { canonical } from "@eval/contracts";
-import { answerTurnContexts, cite, evidenceSources, messageContentSources, overlapsImagePlaceholder, selectEvidenceSource, traceCallOrigins, traceComponentIdentities, traceExchanges } from "@eval/tools";
+import { answerTurnContexts, cite, evidenceSources, messageContentSources, overlapsImagePlaceholder, selectEvidenceSource, traceCallOrigins, traceComponentIdentities, traceExchanges, type EvidenceSelectionCache } from "@eval/tools";
 import type { BusinessChain, Evidence } from "@eval/agents/attribution";
 import { processSourceInventory } from "./citations.js";
 import { getAnswerGeneration } from "./answer-generation.js";
@@ -17,6 +17,7 @@ export function businessChains(raw: RawInput, inputId: string, finalIndex: numbe
   const inventory = processSourceInventory(raw, inputId, finalIndex), contexts = answerTurnContexts(raw, finalIndex);
   const actors = traceComponentIdentities(raw, inputId, finalIndex);
   const generation = getAnswerGeneration(raw, inputId, finalIndex);
+  const selectionCache: EvidenceSelectionCache = new WeakMap();
   const sourcesByIndex = new Map<number, ReturnType<typeof evidenceSources>>();
   const sourcesAt = (index: number) => {
     if (!sourcesByIndex.has(index)) sourcesByIndex.set(index, evidenceSources(raw.messages[index]));
@@ -24,8 +25,8 @@ export function businessChains(raw: RawInput, inputId: string, finalIndex: numbe
   };
   const at = (index: number, path: string): Evidence[] => {
     const sources = sourcesAt(index);
-    let range = selectEvidenceSource(sources, path);
-    if (range && range.start === range.end) range = selectEvidenceSource(sources.filter(source => source.kind === "json"), path);
+    let range = selectEvidenceSource(sources, path, selectionCache);
+    if (range && range.start === range.end) range = selectEvidenceSource(sources.filter(source => source.kind === "json"), path, selectionCache);
     if (!range) return [];
     if (range.source.quotable === false || overlapsImagePlaceholder(range.source.text, range.start, range.end)) {
       // A multimodal container is navigation, not text evidence for the image inside it.

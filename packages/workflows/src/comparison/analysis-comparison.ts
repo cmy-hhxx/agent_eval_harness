@@ -55,7 +55,7 @@ export function analysisComparisonScope(row: JsonObject, config: EvalConfig): An
       const dimensions = new Map<string, ProblemDimension>();
       for (const finding of findings) {
         const value = dimensions.get(finding.text) ?? { dimension: finding.text, established: false, uncertain: false };
-        value[finding.evidence_status] = true;
+        value[finding.evidence_status === "已确认" ? "established" : "uncertain"] = true;
         dimensions.set(finding.text, value);
       }
       return { model: model.model, modelName: model.modelName, meetsCore: assessments[model.model]!.meets_core,

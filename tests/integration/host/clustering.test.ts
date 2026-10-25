@@ -77,7 +77,7 @@ test("a batch may create every component its own observations use", async () => 
     const evaluation = {
       ...attributionResult(false),
       Problem: [
-        { ...finding, problem_id: "p1", causes: [responsibilityFixture("Search", {evidence_ids: []}), responsibilityFixture("最终回答组织", {evidence_ids: [], role: "contributing"})], text: "检索不足", reason: "检索结果不完整，模型仍给出确定结论。" },
+        { ...finding, problem_id: "p1", ...responsibilityFixture("Search"), related_responsibilities:[{...responsibilityFixture("最终回答组织"),responsibility_boundary:2,evidence_ids:[]}], text: "检索不足", reason: "检索结果不完整，模型仍给出确定结论。" },
       ],
     };
     const dependencies = { [inputId]: { evaluation } } as unknown as Record<string, SubmissionReceipt | undefined>;
@@ -118,7 +118,7 @@ test("clustering bind preserves each shard's reserved component headroom", async
       const inputId = Object.keys(task.dependencies)[0]!;
       const evaluation = attributionResult(false);
       const component = index === 0 ? "Search" : "最终回答组织";
-      evaluation.Problem[0] = { ...evaluation.Problem[0], causes: [responsibilityFixture(component, {evidence_ids: []})], text: "算术错误", reason: "计算不符。" };
+      evaluation.Problem[0] = { ...evaluation.Problem[0], ...responsibilityFixture(component), text: "算术错误", reason: "计算不符。" };
       const dependencies = { [inputId]: { evaluation } } as unknown as Record<string, SubmissionReceipt>;
       const request = comparisonWorkflow.bind(task, {}, dependencies, { tasks: plan.tasks }).request;
       return { request, component: (request.input.items as {component:string}[])[0].component };
@@ -491,7 +491,7 @@ test("library statistics count a jointly attributed finding once", async () => {
   try {
     const plan = await buildPlan(config), task = plan.tasks.find(task => task.stage === "clustering")!;
     const evaluation = problemAttribution("5", "7c4e3ba8-8f7c-46cc-b8fb-3016e10ea2dd");
-    evaluation.Problem[0]!.causes.push(responsibilityFixture("Search",{role:"contributing"}));
+    evaluation.Problem[0]!.related_responsibilities=[{...responsibilityFixture("Search"),responsibility_boundary:2,evidence_ids:[]}];
     const receipts = Object.fromEntries(Object.values(task.dependencies).map(id => [id, attributedReceipt(id, evaluation)]));
     const { taskObservations } = await import("@eval/workflows/comparison");
     const observations = taskObservations(task, id => receipts[id]);

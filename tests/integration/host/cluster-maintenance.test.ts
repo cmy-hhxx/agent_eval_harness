@@ -41,7 +41,7 @@ async function fixture(caseCount = 2, components?: string[], uniqueProblems = fa
 
         if (uniqueProblems) result.Problem[0].text += " " + candidate.batch_id + " " + candidate.case_id;
         if (components) result.Problem = components.map((component, index) => ({ ...structuredClone(result.Problem[0]),
-          problem_id: "f" + index, causes: [responsibilityFixture(component, {evidence_ids: result.Problem[0].evidence.map(item=>item.evidence_id)})] }));
+          problem_id: "f" + index, ...responsibilityFixture(component) }));
         result.Problem.forEach(finding => { finding.reason += candidate.case_id; });
       }
       receipts[task.id] = { taskId: task.id, attemptId: randomUUID(), submissionId: randomUUID(),
@@ -232,7 +232,7 @@ test("bucket requests omit unrelated class examples while keeping model-wide cap
   material.library = { components: ["回答生成：本题事实关系推导与结果使用（消息 1） / 数据解释与计算 / 事实关系推导", "查询工具", "未涉及工具"].map((label, index) => ({
     id: randomUUID(), label, definition: "组件职责", aliases: index === 1 ? [" FinQuery / 数据解释与计算 / 结果完整性 "] : [],
     classes: [{ id: randomUUID(), label: "具体问题" + index, definition: "问题边界", aliases: [], occurrences: 1,
-      examples: [{ input_id: randomUUID(), batch_id: "2026-10-01", case_id: "case", finding_id: "f0", evidence_status: "established",
+      examples: [{ input_id: randomUUID(), batch_id: "2026-10-01", case_id: "case", finding_id: "f0", evidence_status: "已确认",
         run_id: "source", task_id: randomUUID(), submission_id: randomUUID(), reason: index === 2 ? "UNRELATED_EXAMPLE" : "相关样本" }] }],
   })) };
   material.config.clustering.maxClassesPerModel = 3;

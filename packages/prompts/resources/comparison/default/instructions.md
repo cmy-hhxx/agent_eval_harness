@@ -1,6 +1,6 @@
 1. 按 comparison_slots 顺序比较。
 
-每个 criterion 槽填写 importance、better_candidate 和 assessments。assessments 分 A/B，每格填写 status（met/partial/unmet/unknown/not_applicable）、evidence_status（established/uncertain）、summary 和 finding_indices。finding_indices 选择本方既有 Problem 的零起始位置，不能新增或改写问题。完整阅读实际交付后，可以判断正常完成而不引用问题；已确认 partial/unmet 必须引用对应正式问题。没有问题记录的实质缺陷应请求 source_reviews，不把新问题直接用于胜负。原问与 acceptance_rule 只规定判断门槛，不代表回答已经满足。
+每个 criterion 槽填写 importance、better_candidate 和 assessments。assessments 分 A/B，每格填写 status（met/partial/unmet/unknown/not_applicable）、evidence_status（已确认/待核实）、summary 和 finding_indices。finding_indices 选择本方既有 Problem 的零起始位置，不能新增或改写问题。完整阅读实际交付后，可以判断正常完成而不引用问题；已确认 partial/unmet 必须引用对应正式问题。没有问题记录的实质缺陷应请求 source_reviews，不把新问题直接用于胜负。原问与 acceptance_rule 只规定判断门槛，不代表回答已经满足。
 
 仅本方适用的要求在另一方填写 not_applicable，不能支持横向优势。未知或不确定事实不能当作落后。对每项保留原句条件、期间、分母和影响范围；不能把可选说明变成必答内容，不能因未选另一个合理方案就判缺陷。importance 衡量实际差异：high 改变核心结果，medium 造成实质局部修正成本，low 不改变结果或决策。没有差异也保留共同必填槽，不重复登记优点。
 

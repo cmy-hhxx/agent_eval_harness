@@ -34,12 +34,12 @@ export function bindScore(task:PlannedTask,raw:RawInput,dependencies:Record<stri
     const evidence_ids=[...new Set(problem.evidence.map(select))];
     if(!evidence_ids.length)throw Error('已接受归因的问题缺少可供评分引用的依据：'+problem.problem_id);
     const fact:ScoreProblemFact={finding_id:problem.problem_id,description:problem.text,reason:problem.reason,
-      attribution:problem.evidence_status==='established'?'established':'hypothesis',
-      component:problem.causes.find(cause=>cause.role==='primary')!.component,evidence_ids};
+      attribution:problem.evidence_status==='已确认'?'established':'hypothesis',
+      component:problem.component??'主体未确定',evidence_ids};
     problem_facts.push(fact);problems.push({...fact,
-      ...(problem.uncertainty?{uncertainty:problem.uncertainty}:{}),
-      responsibilities:problem.causes.map(cause=>({component:cause.component,role:cause.role,reason:cause.reason,
-        certainty:cause.certainty,...(cause.uncertainty?{uncertainty:cause.uncertainty}:{})}))});
+      attribution_reason:problem.attribution_reason,
+      ...(problem.uncertainties?{uncertainties:problem.uncertainties}:{}),
+      ...(problem.related_responsibilities?{related_responsibilities:problem.related_responsibilities}: {})});
   }
   const accepted={task_id:receipt.taskId,evaluator_version:receipt.evaluatorVersion,summary:attribution.summary,problems};
   const material:AcceptedScoreCase={case_id:candidate.input_id,task_question:question,
