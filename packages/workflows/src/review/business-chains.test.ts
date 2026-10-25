@@ -23,7 +23,7 @@ test("multimodal tool returns expose original text without citing image placehol
   assert(returned.length > 0, "captured return text remains available");
   assert(returned.some(item => item.quote.includes("ID: 30")));
   assert(returned.some(item => item.quote.includes("原始图表说明")));
-  assert(returned.reduce((total, item) => total + item.quote.length, 0) <= 4800);
+  assert(returned.some(item => item.quote === raw.messages[2].output![4].text), "navigation limits must not truncate the boundary used by validation");
   validateEvidenceBankSources(chains.flatMap(chain => chain.checkpoints.flatMap(point =>
     point.evidence.map(item => item.evidence_id))), new Map([[id, raw]]));
   assert.deepEqual(raw, before);

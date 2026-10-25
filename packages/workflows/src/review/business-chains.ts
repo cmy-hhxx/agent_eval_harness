@@ -17,34 +17,34 @@ export function businessChains(raw: RawInput, inputId: string, finalIndex: numbe
     if (!sourcesByIndex.has(index)) sourcesByIndex.set(index, evidenceSources(raw.messages[index]));
     return sourcesByIndex.get(index)!;
   };
-  const at = (index: number, path: string, limit = 4800): Evidence[] => {
+  const at = (index: number, path: string): Evidence[] => {
     const sources = sourcesAt(index);
     let range = selectEvidenceSource(sources, path);
     if (range && range.start === range.end) range = selectEvidenceSource(sources.filter(source => source.kind === "json"), path);
     if (!range) return [];
-    if (overlapsImagePlaceholder(range.source.text, range.start, Math.min(range.end, range.start + limit))) {
+    if (range.source.quotable === false || overlapsImagePlaceholder(range.source.text, range.start, range.end)) {
       // A multimodal container is navigation, not text evidence for the image inside it.
-      let remaining = limit;
       return sources.flatMap(source => {
-        if (source.kind !== "text" || !source.path.startsWith(path + "/") || !source.text.length || remaining <= 0) return [];
-        const end = Math.min(source.text.length, remaining);
+        if (source.quotable === false || source.kind !== "text" || !source.path.startsWith(path + "/") || !source.text.length) return [];
+        const end = source.text.length;
         if (overlapsImagePlaceholder(source.text, 0, end)) return [];
-        remaining -= end;
         return [cite(inputId, index, source, 0, end)];
       });
     }
-    return [cite(inputId, index, range.source, range.start, Math.min(range.end, range.start + limit))];
+    // These coordinates define a boundary, not a preview window. Navigation pages
+    // the body separately; later rows remain part of the same captured return.
+    return [cite(inputId, index, range.source, range.start, range.end)];
   };
   const outputs = (index: number): Evidence[] => sourcesAt(index)
     .filter(source => source.kind === "text" && /^\/output\/\d+\/content(?:\/|$)/u.test(source.path))
     .flatMap(source => at(index, source.path));
   const goalIndex = raw.messages.findIndex(message => message.type === "user_question" || message.role === "user");
-  const goals = goalIndex < 0 ? [] : messageContentSources(raw.messages[goalIndex]).flatMap(source => at(goalIndex, source.path, source.text.length || 4800));
+  const goals = goalIndex < 0 ? [] : messageContentSources(raw.messages[goalIndex]).flatMap(source => at(goalIndex, source.path));
   const exchanges = traceExchanges(raw.messages);
   const lastContext = contexts.at(-1)?.message_index;
   const fallbackInput = contexts.filter(context => context.message_index === lastContext).flatMap(context => sourcesAt(context.message_index)
     .filter(source => source.kind === "text" && source.path.startsWith(context.path + "/") && /\/content(?:\/|$)/u.test(source.path))
-    .flatMap(source => at(context.message_index, source.path, source.text.length || 4800)));
+    .flatMap(source => at(context.message_index, source.path)));
   const generated = generation ? outputs(generation.message_index) : [];
   const intermediates = contexts.filter(context => context.message_index !== generation?.message_index)
     .flatMap(context => outputs(context.message_index));
@@ -80,7 +80,7 @@ export function businessChains(raw: RawInput, inputId: string, finalIndex: numbe
         const fields = output.columns.slice(0, 3).flatMap(column => typeof object(column).key === "string" ? [String(object(column).key)] : []);
         return [...output.columns.slice(0, 3).flatMap((_, c) => at(i, `${prefix}/columns/${c}`)),
           ...(fields.length ? fields.flatMap(field => at(i, `${prefix}/datas/0/${field.replaceAll("~", "~0").replaceAll("/", "~1")}`))
-            : at(i, `${prefix}/datas/0`, 2400)), ...at(i, `${prefix}/query`)];
+            : at(i, `${prefix}/datas/0`)), ...at(i, `${prefix}/query`), ...at(i, prefix)];
       }
       return ["/output", "/result", "/content"].flatMap(path => at(i, path));
     });

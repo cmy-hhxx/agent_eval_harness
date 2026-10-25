@@ -89,7 +89,11 @@ function bindSubmission(request: AgentRequest, submitted: unknown, audit: ToolAu
       issues.push({category:"evidence",code:"investigation_fact_fields",path:`${path}/field_names`,
         actual:fact.field_names,expected:{fact_index:index+1,chain_index:fact.chain_index,step_index:fact.step_index,
           invalid_fields:list(fact.field_names).filter(field=>!fields.includes(field)),retained_fields:fields,
-          evidence_indices:fact.evidence_indices,required_sources:checkpoint?.evidence.map(item=>({message_index:item.message_index,reference:{evidence_id:item.evidence_id}}))??[]},
+          evidence_indices:fact.evidence_indices,
+          evidence_boundaries:chains.flatMap(other=>other.checkpoints.flatMap((boundary,i)=>
+            boundary.evidence.some(item=>proofs.some(proof=>!proof.source&&proof.message_index===item.message_index))
+              ? [{chain_index:other.chain_index,step_index:i+1,step:boundary.step}] : [])),
+          required_sources:checkpoint?.evidence.map(item=>({message_index:item.message_index,reference:{evidence_id:item.evidence_id}}))??[]},
         message:"本事实字段须来自所选 chain_index/step_index 边界的所引原文或路径。先核对证据是否属于该边界，再保留实际字段；普通正文没有结构化字段时填 []，不能借用其他事实或用清空字段掩盖边界错配。"});
     return {...fact, chain_index:fact.chain_index,field_names:fact.field_names,observation:fact.observation,
       source_proofs:proofs.filter(proof=>!proof.source&&checkpoint?.evidence.some(boundary=>boundary.message_index===proof.message_index)),

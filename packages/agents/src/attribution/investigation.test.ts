@@ -52,6 +52,10 @@ test("a wrong target selected by the planner points back to that planner and exa
   assert.deepEqual(codes(f), []);
   f.cause.component = "最终回答组织"; f.cause.actor_index=(f.binding.request.input.answer as any).component_catalog.findIndex((actor:any)=>actor.component===f.cause.component)+1;
   assert(codes(f).includes("responsibility_chain_actor"));
+  const issue = investigationIssues(f.binding.request, f.problem, f.result.findings[0].evidence, f.audit, "/problems/0")
+    .find(item => item.code === "responsibility_chain_actor")!;
+  assert(issue.path.endsWith("/actor_index"));
+  assert((issue.expected as { actor_index_choices: { actor_index: number }[] }).actor_index_choices.some(item => item.actor_index === 1));
 });
 test("captured context preparation can own identity and unit loss; the receiving final node alone cannot prove that responsibility", () => {
   const f = businessChainFixture(true);
