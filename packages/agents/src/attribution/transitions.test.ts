@@ -29,6 +29,18 @@ function build(raw: Raw, chains: BusinessChain[]) {
   return { actors, transitions: buildAttributionTransitions({ raw, inputId, finalIndex, actors, chains }) };
 }
 
+test("large captured histories index structured content without repeated whole-source scans", () => {
+  const entries = Array.from({ length: 6000 }, (_, index) => ({ role: "user", content: [{ text: `public-${index}` }] }));
+  const raw = { messages: [{ type: "llm_turn", input_messages: [
+    { role: "system", content: "private_instruction_omitted" }, ...entries,
+  ], output: [{ role: "assistant", content: "Reviewed" }] }, { type: "final_answer", content: "Reviewed" }] };
+  const started = performance.now();
+  const { transitions } = build(raw, []);
+  const elapsed = performance.now() - started;
+  assert.equal(transitions.find(event => event.kind === "generation")!.before.length, entries.length);
+  assert(elapsed < 3000, `structured history assembly took ${Math.round(elapsed)} ms`);
+});
+
 test("captured tool_call_id links a truncated actual input without content matching or invented actors", () => {
   const args = { command: "fetch SPY and RSP" }, call = { id: "captured-call", type: "function", function: { name: "shell", arguments: JSON.stringify(args) } };
   const capturedInput = { role: "tool", name: "shell", tool_call_id: "captured-call", content: '{"stdout":"SPY=-0.183256;RSP=-0.582027\n…[earlier tool output truncated to save context]' };

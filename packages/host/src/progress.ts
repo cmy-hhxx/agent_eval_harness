@@ -1,17 +1,24 @@
 import type { RunState } from "@eval/contracts";
 
-export function progressSnapshot(state: RunState, now = Date.now()) {
-  const stages: Record<string, { queued: number; ready: number; running: number; accepted: number; recent_completed_per_minute: number }> = {};
+export function progressSnapshot(state: RunState, now = Date.now(), preparing: ReadonlySet<string> = new Set()) {
+  const repairing = (id: string) => state.manifest.states[id].status === "running" &&
+    !preparing.has(id) && state.manifest.states[id].failure?.draft !== undefined &&
+    state.manifest.states[id].failure!.errors.some(error => error.code !== "completion_review_required");
+  const stages: Record<string, { queued: number; ready: number; preparing: number; running: number; repairing: number; accepted: number; failed: number; recent_completed_per_minute: number }> = {};
   const scope = state.manifest.executionScope && new Set(state.manifest.executionScope);
   for (const task of state.manifest.tasks) {
-    const stage = stages[task.stage] ??= { queued: 0, ready: 0, running: 0, accepted: 0, recent_completed_per_minute: 0 };
+    const stage = stages[task.stage] ??= { queued: 0, ready: 0, preparing: 0, running: 0, repairing: 0, accepted: 0, failed: 0, recent_completed_per_minute: 0 };
     const status = state.manifest.states[task.id].status;
-    if (status === "pending" && (!scope || scope.has(task.id))) {
+    if (preparing.has(task.id)) stage.preparing++;
+    if (status === "pending" && !preparing.has(task.id) && (!scope || scope.has(task.id))) {
       stage.queued++;
       if (!state.manifest.pausedStages?.some((pause) => pause.stage === task.stage) &&
         Object.values(task.dependencies).every((id) => state.receipts[id])) stage.ready++;
     }
-    if (status === "running") stage.running++;
+    if (status === "running" && !preparing.has(task.id)) {
+      if (repairing(task.id)) stage.repairing++; else stage.running++;
+    }
+    if (["failed", "timed_out"].includes(status)) stage.failed++;
     const receipt = state.receipts[task.id];
     if (receipt) {
       stage.accepted++;
@@ -22,8 +29,8 @@ export function progressSnapshot(state: RunState, now = Date.now()) {
     id: task.id,
     ...state.manifest.states[task.id],
   }));
-  const running = tasks.filter((task) => task.status === "running");
-  const queued = tasks.filter((task) => task.status === "pending" && (!scope || scope.has(task.id))).length;
+  const running = tasks.filter((task) => task.status === "running" && !preparing.has(task.id));
+  const queued = tasks.filter((task) => task.status === "pending" && !preparing.has(task.id) && (!scope || scope.has(task.id))).length;
   const failures: Record<string, number> = {};
   for (const task of tasks)
     if (["failed", "timed_out"].includes(task.status)) {
@@ -50,13 +57,16 @@ export function progressSnapshot(state: RunState, now = Date.now()) {
     (a, b) => (a.lastProgressAt || a.startedAt || now) - (b.lastProgressAt || b.startedAt || now),
   )[0];
   return {
+    updated_at: new Date(now).toISOString(),
     stages,
     paused_stages: state.manifest.pausedStages ?? [],
     execution_scope_count: state.manifest.executionScope?.length ?? null,
     queued,
-    running: running.length,
+    preparing: preparing.size,
+    running: running.filter(task => !repairing(task.id)).length,
     accepted: Object.keys(state.receipts).length,
-    repairing: running.filter((task) => task.failure?.draft !== undefined).length,
+    repairing: running.filter(task => repairing(task.id)).length,
+    failed: Object.values(failures).reduce((total, count) => total + count, 0),
     failures,
     blocked: tasks.filter((task) => task.status === "blocked").length,
     cancelled: tasks.filter((task) => task.status === "cancelled").length,

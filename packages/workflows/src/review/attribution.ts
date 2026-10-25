@@ -221,6 +221,7 @@ export function modelMaterial(material: Record<string, unknown>, candidate: stri
 /** Both workflows adapt their public task and trace into this single Attribution contract. */
 export function bindAttributionMaterial(candidate: Candidate, original: RawInput, analysis?: TaskAnalysis,
   options: { reference?: unknown; initialContextChars?: number } = {}): AgentBinding {
+  const started = performance.now();
   const raw = attributionTrace(original, candidate.input_id, candidate.final_index);
   const task_analysis: TaskAnalysis = analysis ?? { task_type: "回答评审", goal: candidate.question,
     requirements: [{ id: "r1", text: candidate.question, acceptance_rule: candidate.question, applies_to: [] }], scoring_points: [], red_flags: [] };
@@ -273,25 +274,28 @@ export function bindAttributionMaterial(candidate: Candidate, original: RawInput
     addInitial(i, value, evidence);
   }
   initial.sort((a, b) => a.message_index - b.message_index);
+  const directoryStarted = performance.now();
   const actors = traceComponentIdentities(raw, candidate.input_id, candidate.final_index);
   const chains = businessChains(raw, candidate.input_id, candidate.final_index);
+  const catalog = traceCatalog(raw);
   const answer = {
     identity: { version_id: candidate.version, display_name: candidate.name, answer_model: candidate.llm },
     question: candidate.question, final_message_index: candidate.final_index,
     final_answer: deferred.reduce((text, source) => text.replaceAll(source.text, ""), contentText(raw.messages[candidate.final_index].content)),
     final_evidence: finalSources.filter(source => source.text.length <= limit).map(source => cite(candidate.input_id, candidate.final_index, source, 0, source.text.length)),
     deferred_final_material: deferred.map(source => ({ message_index: candidate.final_index, path: source.path, total_chars: source.text.length })),
-    initial_material: initial, instruction_sources: [], citation_inventory: citationInventory(raw, candidate.input_id, candidate.final_index),
+    initial_material: initial, instruction_sources: [], citation_inventory: citations,
     business_chains: chains,
     execution_nodes: buildAttributionExecutionNodes(raw, actors),
     transitions: buildAttributionTransitions({ raw, inputId: candidate.input_id, finalIndex: candidate.final_index, actors, chains }),
-    catalog: traceCatalog(raw), component_catalog: actors,
+    catalog, component_catalog: actors,
     input_file: "inputs/answer.json", original_answer_timing: { finish_seconds: candidate.answer_timing.finish_seconds },
     answer_generation: getAnswerGeneration(raw, candidate.input_id, candidate.final_index),
     criterion_instruction_sources: criterionInstructionSources(raw, candidate.final_index, task_analysis, candidate.input_id),
     table_check_results: attributionTableChecks(raw, candidate.input_id, candidate.final_index), note: workflowText("attribution-material"),
   };
-  const input = { candidate_id: candidate.input_id, task_analysis, material_availability: { public_task: true, final_delivery: true, process_records: raw.messages.some((message,index)=>index!==candidate.final_index && !["user","system","developer"].includes(message.role??"") && message.type!=="private_instruction_omitted"), actual_model_inputs: answerTurnContexts(raw,candidate.final_index).length>0, call_links: traceCatalog(raw).some(row=>row.call_message_index!==undefined) }, ground_truth: { available: reference !== null, value: reference }, answer };
+  const directoryMs = performance.now() - directoryStarted;
+  const input = { candidate_id: candidate.input_id, task_analysis, material_availability: { public_task: true, final_delivery: true, process_records: raw.messages.some((message,index)=>index!==candidate.final_index && !["user","system","developer"].includes(message.role??"") && message.type!=="private_instruction_omitted"), actual_model_inputs: answerTurnContexts(raw,candidate.final_index).length>0, call_links: catalog.some(row=>row.call_message_index!==undefined) }, ground_truth: { available: reference !== null, value: reference }, answer };
   Object.assign(answer, { norm_directory: attributionNormDirectory({ input, sources }) });
   const navigation = attributionNavigation(answer, raw, candidate.input_id);
   const modelInput = { candidate_id: input.candidate_id, material_availability: input.material_availability,
@@ -299,6 +303,7 @@ export function bindAttributionMaterial(candidate: Candidate, original: RawInput
     task_analysis: taskAnalysisPresentation(task_analysis, { answer: candidate.input_id }, answer.criterion_instruction_sources),
     answer: initialAttributionMaterial(answer, raw, navigation) };
   return { agent: "attribution", profile: "default", request: { input, sources }, modelInput,
+    preparationTimings: { materialMs: performance.now() - started, directoryMs },
     materialNavigation: { answer: navigation },
     projectModelInput: projectComparisonEvidence, presentedReads: presentedMaterialReads(modelInput.answer, "answer", candidate.input_id) };
 }

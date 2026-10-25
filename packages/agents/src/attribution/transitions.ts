@@ -57,6 +57,11 @@ export function buildAttributionTransitions({ raw, inputId, finalIndex, actors, 
   const node = (index: number) => nodes.get(index) ?? null;
   const execution = (index: number) => ({ execution_node_index: node(index), source_node_index: node(index), target_node_index: node(index), input_path: null });
   const sourceCache = new Map<number, ReturnType<typeof evidenceSources>>();
+  const pathIndices = new Map<number, {
+    exact: Map<string, ReturnType<typeof evidenceSources>[number]>;
+    descendants: Map<string, ReturnType<typeof evidenceSources>>;
+    json: ReturnType<typeof evidenceSources>;
+  }>();
   const assistantKeys = new WeakMap<Row, string>();
   const assistantKey = (value: Row) => {
     let key = assistantKeys.get(value);
@@ -72,11 +77,27 @@ export function buildAttributionTransitions({ raw, inputId, finalIndex, actors, 
     return sourceCache.get(index)!;
   };
   const at = (index: number, path: string): Evidence[] => {
-    const selected = selectEvidenceSource(sources(index), path, selectionCache);
+    let paths = pathIndices.get(index);
+    if (!paths) {
+      paths = { exact: new Map(), descendants: new Map(), json: sources(index).filter(source => source.kind === "json") };
+      for (const source of sources(index)) {
+        if (source.kind !== "text") continue;
+        paths.exact.set(source.path, source);
+        if (source.quotable === false || !source.text.trim() || overlapsImagePlaceholder(source.text, 0, source.text.length)) continue;
+        for (let end = source.path.lastIndexOf("/"); end >= 0; end = source.path.lastIndexOf("/", end - 1)) {
+          const parent = source.path.slice(0, end), children = paths.descendants.get(parent) ?? [];
+          children.push(source); paths.descendants.set(parent, children);
+          if (end === 0) break;
+        }
+      }
+      pathIndices.set(index, paths);
+    }
+    const exact = paths.exact.get(path);
+    const selected = exact ? { source: exact, start: 0, end: exact.text.length }
+      : selectEvidenceSource(paths.json, path, selectionCache);
     if (!selected) return [];
     if (selected.source.quotable === false || overlapsImagePlaceholder(selected.source.text, selected.start, selected.end))
-      return sources(index).filter(source => source.kind === "text" && source.quotable !== false && source.path.startsWith(path + "/") &&
-        source.text.trim() && !overlapsImagePlaceholder(source.text, 0, source.text.length))
+      return (paths.descendants.get(path) ?? [])
         .map(source => cite(inputId, index, source, 0, source.text.length));
     return selected.end > selected.start ? [cite(inputId, index, selected.source, selected.start, selected.end)] : [];
   };
@@ -101,7 +122,10 @@ export function buildAttributionTransitions({ raw, inputId, finalIndex, actors, 
       /^\/output\/\d+\/(?:content|reasoning(?:_content)?|analysis|thinking|calculation(?:s|_steps)?)(?:\/|$)/u.test(source.path) &&
       source.text.trim() && source.quotable !== false && !overlapsImagePlaceholder(source.text, 0, source.text.length))
       .map(source => cite(inputId, index, source, 0, source.text.length));
-    return [{ index, entries, output, prose, input: unique(entries.flatMap(entry => entry.evidence)) }];
+    const entriesByEvidence = new Map<string, typeof entries[number]>();
+    for (const entry of entries) for (const evidence of entry.evidence)
+      if (!entriesByEvidence.has(evidence.evidence_id)) entriesByEvidence.set(evidence.evidence_id, entry);
+    return [{ index, entries, entriesByEvidence, output, prose, input: unique(entries.flatMap(entry => entry.evidence)) }];
   });
   type Pending = Omit<AttributionTransition, "transition_index" | "predecessors"> & {
     key: string; target: number; order: number; previous: string[];
@@ -149,7 +173,8 @@ export function buildAttributionTransitions({ raw, inputId, finalIndex, actors, 
     for (const evidence of chain.checkpoints[5].evidence) {
       const model = models.find(model => model.index === evidence.message_index);
       if (!model) continue;
-      const entry = model.entries.find(entry => entry.evidence.some(whole => covers(whole, evidence)));
+      const entry = model.entriesByEvidence.get(evidence.evidence_id)
+        ?? model.entries.find(entry => entry.evidence.some(whole => covers(whole, evidence)));
       let before = chain.checkpoints[3].evidence, previous = [`execution:${chain.chain_index}`], source = `return:${chain.request_index}`;
       let sourceNode = node(chain.request_index);
       if (entry?.value.role === "assistant") {

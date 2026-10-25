@@ -15,6 +15,7 @@ import type {
   ToolAudit,
   MaterialInspection,
   JsonObject,
+  AgentBinding,
 } from "@eval/contracts";
 
 import { AgentRegistry } from "./agents.js";
@@ -115,6 +116,8 @@ export class RunStore {
   readonly inputs: Record<string, unknown>;
   readonly services: EvaluationServices;
   readonly attempts = new Map<string, AttemptSpec>();
+  private readonly bindings = new Map<string, AgentBinding>();
+  readonly checkpointMetrics = { count: 0, snapshotMs: 0, writeMs: 0, savedAt: 0 };
   private readonly evidenceSources = new Map<string, ReadonlyMap<string, unknown>>();
   private writes = Promise.resolve();
   private queuedWrite?: Promise<void>;
@@ -138,7 +141,10 @@ export class RunStore {
     if (this.queuedWrite) return this.queuedWrite;
     const next = this.writes.then(async () => {
       this.queuedWrite = undefined;
+      const snapshotStarted = performance.now();
       const snapshot = checkpointSnapshot(this.state);
+      this.checkpointMetrics.snapshotMs += performance.now() - snapshotStarted;
+      const writeStarted = performance.now();
       const pending = snapshot.manifest.tasks.some(
         (task) => snapshot.receipts[task.id] && !snapshot.receipts[task.id].exported,
       );
@@ -148,6 +154,9 @@ export class RunStore {
       // An already queued checkpoint will compact these references in its own durable write.
       // If this optional compaction fails, the earlier full checkpoint still recovers the accepted result.
       if (pending && !this.queuedWrite) await this.services.repository.writeRun(this.run, snapshot).catch(() => {});
+      this.checkpointMetrics.writeMs += performance.now() - writeStarted;
+      this.checkpointMetrics.count++;
+      this.checkpointMetrics.savedAt = Date.now();
       for (const [id, receipt] of Object.entries(snapshot.receipts))
         if (this.state.receipts[id]?.submissionId === receipt.submissionId && receipt.exported)
           this.state.receipts[id].exported = receipt.exported;
@@ -199,8 +208,8 @@ export class RunStore {
     }
     throw new HttpError(404, "Submission not accepted");
   }
-  async activate(spec: AttemptSpec): Promise<boolean> {
-    return this.exclusive(spec.taskId, () => this.activateExclusive(spec));
+  async activate(spec: AttemptSpec, binding?: AgentBinding): Promise<boolean> {
+    return this.exclusive(spec.taskId, () => this.activateExclusive(spec, binding));
   }
   private exclusive<T>(taskId: string, operation: () => Promise<T>): Promise<T> {
     const result = (this.submissions.get(taskId) || Promise.resolve()).then(operation);
@@ -211,12 +220,12 @@ export class RunStore {
     });
     return result;
   }
-  private async activateExclusive(spec: AttemptSpec): Promise<boolean> {
+  private async activateExclusive(spec: AttemptSpec, preparedBinding?: AgentBinding): Promise<boolean> {
     const state = this.manifest.states[spec.taskId];
     if (!state || (await this.receipt(spec.taskId))) throw new Error("Task already completed or unknown");
     if (spec.inputRevision !== (state.revision || 1)) throw new HttpError(409, "Input revision superseded");
     const task = this.manifest.tasks.find(task => task.id === spec.taskId)!;
-    const binding = this.services.taskSource.bind(task, this.inputs, await this.dependencies(task), { tasks: this.manifest.tasks });
+    const binding = preparedBinding ?? this.services.taskSource.bind(task, this.inputs, await this.dependencies(task), { tasks: this.manifest.tasks });
     const sources = new Map(spec.inputs.map(input => {
       const source = binding.request.sources[input.name];
       if (!source || source.id !== input.id) throw new HttpError(400, "Evidence bank source does not match the active task binding");
@@ -228,7 +237,7 @@ export class RunStore {
     ] };
     spec.evaluation.requiredReads = mergeRequiredReadRanges(requiredReadRanges(spec, sources)).map(range => range.target);
     if (executionStopReason(this.manifest)) return false;
-    if (state.attemptId) { this.attempts.delete(state.attemptId); this.evidenceSources.delete(state.attemptId); }
+    if (state.attemptId) { this.attempts.delete(state.attemptId); this.evidenceSources.delete(state.attemptId); this.bindings.delete(state.attemptId); }
     state.startedAt = state.lastProgressAt = Date.now();
     state.status = "running";
     state.attemptId = spec.attemptId;
@@ -239,6 +248,7 @@ export class RunStore {
       ...(state.failure ?? {}), attemptId: spec.attemptId, evidenceBank: [...spec.evidenceBank] };
     this.evidenceSources.set(spec.attemptId, sources);
     this.attempts.set(spec.attemptId, spec);
+    this.bindings.set(spec.attemptId, binding);
     if (this.manifest.debug)
       await writeJson(
         internalPath(
@@ -266,11 +276,17 @@ export class RunStore {
       await this.save();
       this.attempts.delete(spec.attemptId);
       this.evidenceSources.delete(spec.attemptId);
+      this.bindings.delete(spec.attemptId);
     });
   }
   async accept(value: Submission): Promise<SubmissionReceipt> {
+    const queuedAt = performance.now();
     return this.exclusive(value.taskId, () => {
-      const commit = this.commits.then(() => this.acceptExclusive(value));
+      const commit = this.commits.then(() => {
+        void this.services.logger?.event?.("submission_wait", { component: "host", run_id: this.manifest.runId,
+          task_id: value.taskId, attempt_id: value.attemptId, lockWaitMs: performance.now() - queuedAt });
+        return this.acceptExclusive(value);
+      });
       this.commits = commit.then(() => {}, () => {});
       return commit;
     });
@@ -325,7 +341,7 @@ export class RunStore {
         value.contentSubmissions > (spec.recovery?.contentSubmissions ?? 0) + 1 + spec.policy.repairAttempts)
         throw new HttpError(400, "Invalid shared content submission count");
       this.validateAudit(spec, value.audit);
-      const binding = this.services.taskSource.bind(task, this.inputs, await this.dependencies(task), { tasks: this.manifest.tasks });
+      const binding = this.bindings.get(spec.attemptId)!;
       let canonicalValue: JsonObject;
       try { canonicalValue = this.services.agents.resolveInspection(binding, value.value, value.audit); }
       catch (error) { this.registerValidationReads(spec, error); throw error; }
@@ -438,14 +454,20 @@ export class RunStore {
       await this.save();
     }
     let evaluation: unknown;
+    const validationStarted = performance.now(), validationCpu = process.cpuUsage();
     try {
-      const binding = this.services.taskSource.bind(task, this.inputs, await this.dependencies(task), { tasks: this.manifest.tasks });
+      const binding = this.bindings.get(spec.attemptId)!;
       evaluation = this.services.agents.resolve(binding, value.evaluation, value.audit);
       this.services.agents.validate(binding, evaluation, value.audit);
     } catch (error) {
       this.registerValidationReads(spec, error);
       if (error instanceof HttpError) throw error;
       throw new HttpError(422, error instanceof Error ? error.message : String(error));
+    } finally {
+      const cpu = process.cpuUsage(validationCpu);
+      void this.services.logger?.event?.("submission_validation", { component: "host", run_id: this.manifest.runId,
+        task_id: value.taskId, attempt_id: value.attemptId, submission_id: value.submissionId,
+        validationMs: performance.now() - validationStarted, validationCpuMs: (cpu.user + cpu.system) / 1000 });
     }
     if (spec.evaluation.completionReview && !value.completionReview) {
       const candidate = { id: value.submissionId, attemptId: value.attemptId, evaluation: structuredClone(value.evaluation),
@@ -510,6 +532,7 @@ export class RunStore {
     }
     this.attempts.delete(value.attemptId);
     this.evidenceSources.delete(value.attemptId);
+    this.bindings.delete(value.attemptId);
     return receipt;
   }
 }

@@ -9,7 +9,7 @@ const reviewRequired = (error: unknown) => error instanceof HttpError && error.i
 async function fixture() {
   const source = { messages: [{content:'本次实际交付与来源'}] };
   const binding: AgentBinding = {agent:'reads',profile:'default',request:{input:{},sources:{answer:{id,value:source}}}};
-  let validations = 0, rejectBusiness = false;
+  let validations = 0, bindings = 0, rejectBusiness = false;
   const profile: AgentProfile = {
     id:'default',requestSchema:{type:'object'},submissionSchema:{type:'object',additionalProperties:false,
       required:['summary','Problem'],properties:{summary:{type:'string'},Problem:{type:'array'}}},
@@ -28,7 +28,7 @@ async function fixture() {
   const repository: RunRepository = { async readRun() { return structuredClone(state); }, async readTasks() { return structuredClone(state); },
     async writeRun() {}, createResultWriter() { return async () => {}; } };
   const store = new RunStore("/unused-fixture", state, { [id]: { traces: [source] } },
-    { agents, repository, taskSource: { id: "reads", bind: () => binding } });
+    { agents, repository, taskSource: { id: "reads", bind: () => { bindings++; return binding; } } });
   const prepared = agents.prepare(binding);
   const spec: AttemptSpec = { runId: "read-test", taskId: task.id, attemptId: "attempt", inputRevision: 1, engine,
     evaluation: prepared.evaluation, policy: { ...DEFAULT_POLICY, maxToolCalls: 0 }, prompt: "Read sources.",
@@ -40,7 +40,7 @@ async function fixture() {
     usage: emptyUsage(), audit: { calls: 0, requiredReadCalls: 0, traceReads: [], viewedImages: [],
       calculations: [], artifacts: [], tableChecks: [], evidenceBank: [] } };
 
-  return {store,state,spec,submission,validations:()=>validations,rejectBusiness:()=>{rejectBusiness=true;}};
+  return {store,state,spec,submission,validations:()=>validations,bindings:()=>bindings,rejectBusiness:()=>{rejectBusiness=true;}};
 }
 
 test('Exxon summary with missing Problem records is provisional, never a successful receipt', async()=>{
@@ -58,6 +58,7 @@ test('Exxon summary with missing Problem records is provisional, never a success
     completionReview:{candidateId:'corrected',reason:'摘要两项缺陷均已登记，并分别保留对应来源及限定。'}});
   assert.deepEqual(receipt.evaluation,corrected);
   assert.equal(f.validations(),3);
+  assert.equal(f.bindings(),1, 'one attempt reuses material while each submission is fully validated');
 });
 
 test('an actually reviewed empty Problem remains acceptable without a minimum problem count',async()=>{

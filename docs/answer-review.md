@@ -23,6 +23,10 @@ AIME 使用 workflow: answer-review。每条回答先完成 Attribution，通过
 
 动态必读使用受保护预算，内容修复仍使用既有有限预算；重复缺口无进展时有界停止。未完成、必要证据未读或预算耗尽保存在 state 的失败/未完成状态，不成为成功的空问题结果。结构检查不能证明任意自然语言判断的语义完整性，真实样本仍须抽审；技术接收数与有效评审数分别报告。
 
+运行进度以活动 Host 的 `/api/progress` 为准：`updated_at` 是实时观测时间，`checkpoint.savedAt` 是最后落盘时间。queued 等待派发，preparing 等待材料组装或派发确认，running 已派发执行（含首次完成性确认），repairing 是有实际拒收的内容修复，accepted 和 failed 分别为正式收据与终止失败；这些计数互不重复。preparing 仅存在内存，不新增持久化任务状态。Host 不在线时，state 是恢复快照，不能据其 running 宣称模型仍在执行。
+
+同次尝试复用已组装材料，证据路径索引只在一次组装内存在；提交和确认仍重新执行结构、证据和业务验收，不缓存通过结论。统一 runtime.log 中的 task_prepared、submission_wait、submission_validation、attempt_metrics 分别记录排队、材料/目录/准备 CPU、激活/派发、提交锁等待、验收和 Worker 耗时。materialMs 包含 directoryMs；requiredReadMs 是 submissionMs 内的受保护补读子集，不重复相加。modelMs 是 SDK assistant 消息开始至结束的观测时长，工具、Host 材料 IO 和提交分别计时。输入等待不算模型空闲，但总任务 deadline 始终有效，额度和重试上限不增加。
+
 Rewrite 只接收 summary、问题和理由文本槽位，不接触证据，不改变原归因或评分。可选改写记录放在 `meta.rewritten`，保持正式顶层六字段。
 
 ## Score

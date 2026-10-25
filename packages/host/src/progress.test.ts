@@ -30,4 +30,17 @@ test("progress separates execution failures from dependency blocks and cancellat
   assert.equal(progress.cancelled, 1);
   assert.equal(progress.queued, 1);
   assert.deepEqual(state, before);
+  const active = { attemptId: 'a', contentSubmissions: 1, fileErrors: 0, repeatedErrors: 0, stopped: false, draft: {},
+    errors: [{ category: 'decision' as const, code: 'completion_review_required', path: '/', message: 'Review' }] };
+  state.manifest.states.pending.status = 'running';
+  state.manifest.states.pending.failure = active;
+  const review = progressSnapshot(state, 1000);
+  assert.equal(review.running, 1);
+  assert.equal(review.repairing, 0, 'first completion confirmation is not a content repair');
+  active.errors[0].code = 'missing_evidence';
+  assert.equal(progressSnapshot(state, 1000).repairing, 1);
+  const preparing = progressSnapshot(state, 1000, new Set(['pending']));
+  assert.equal(preparing.preparing, 1);
+  assert.equal(preparing.running + preparing.repairing + preparing.queued, 0);
+  assert.equal(preparing.updated_at, '1970-01-01T00:00:01.000Z');
 });

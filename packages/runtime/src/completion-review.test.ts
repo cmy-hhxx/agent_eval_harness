@@ -30,6 +30,7 @@ for (const confirm of [true,false]) test('same-session completion review '+(conf
     if(url.pathname.endsWith('/checkpoint')){await store.checkpoint(task.id,await body(req) as unknown as FailureContext);return json(res,{saved:true});}
     if(url.pathname==='/api/submissions')return json(res,await store.accept(await body(req) as unknown as Submission));
     if(url.pathname.startsWith('/api/submissions/'))return json(res,await store.findSubmission(url.pathname.split('/').at(-1)!));
+    if(confirm)await new Promise(resolve=>setTimeout(resolve,1100));
     return json(res,source);
   });
   const directory=await mkdtemp(path.join(tmpdir(),'completion-review-'));
@@ -48,7 +49,7 @@ for (const confirm of [true,false]) test('same-session completion review '+(conf
     }
   },async abort(){},async dispose(){}};}},directory);
   const prepared=agents.prepare(binding),spec:AttemptSpec={runId:'test',taskId:'task',attemptId:'attempt',inputRevision:1,engine,
-    evaluation:prepared.evaluation,policy:{...DEFAULT_POLICY,repairAttempts:0,maxToolCalls:1},prompt:'Review.',evidenceBank:[],
+    evaluation:prepared.evaluation,policy:{...DEFAULT_POLICY,repairAttempts:0,maxToolCalls:1,idleTimeoutSeconds:1},prompt:'Review.',evidenceBank:[],
     inputs:[{id,name:'answer'}],hostUrl:host.url,deadline:Date.now()+10000,
     model:{provider:'test',baseUrl:'http://127.0.0.1',api:'openai-completions',apiKeyEnv:'TEST_KEY',model:'test',thinking:'off',contextWindow:10000,maxOutputTokens:1000}};
   try{

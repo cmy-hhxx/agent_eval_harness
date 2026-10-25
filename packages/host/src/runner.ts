@@ -250,7 +250,9 @@ export async function runEvaluation(options: RunOptions): Promise<Record<string,
     }
     await store.save();
     const current = store;
-    const snapshot = () => ({ ...progressSnapshot(saved), in_flight_tasks: busy.size });
+    const preparing = new Set<string>();
+    const snapshot = () => ({ ...progressSnapshot(saved, Date.now(), preparing), in_flight_tasks: busy.size,
+      checkpoint: { ...current.checkpointMetrics } });
     // A task may expose a stage-specific view of its source without persisting a second input.
     const attemptSources = new Map<string, Map<string, unknown>>();
     const lock = await readJson<{ pid: number; token: string }>(layout.lockFile);
@@ -398,8 +400,10 @@ export async function runEvaluation(options: RunOptions): Promise<Record<string,
       task: PlannedTask,
       worker: (typeof workers)[number],
       prepared: ReturnType<typeof options.agents.prepare>,
-      sources: AgentBinding["request"]["sources"],
+      binding: AgentBinding,
+      timing: Record<string, number>,
     ): Promise<void> {
+      const sources = binding.request.sources;
       let workerUrl = worker.url;
       const identity = identities[engineForTask(task)]!;
       const state = manifest.states[task.id];
@@ -447,6 +451,7 @@ export async function runEvaluation(options: RunOptions): Promise<Record<string,
       // Automatic retries and explicit resume share the task's cumulative content cap.
       state.channel = model.provider;
       const policy = { ...options.policy, repairAttempts: contentRemaining(task) - 1 };
+      const renderStarted = performance.now();
       const spec: AttemptSpec = {
         runId: options.runId,
         debug: manifest.debug,
@@ -468,6 +473,7 @@ export async function runEvaluation(options: RunOptions): Promise<Record<string,
         deadline: Date.now() + options.policy.timeoutSeconds * 1000,
         ...(options.modelRequests ? { controlModelRequests: true } : {}),
       };
+      timing.renderMs = performance.now() - renderStarted;
       const bound = new Map<string, unknown>();
       for (const ref of spec.inputs) {
         const source = sources[ref.name];
@@ -478,7 +484,9 @@ export async function runEvaluation(options: RunOptions): Promise<Record<string,
       modelRequests.register(spec, task);
       try {
       let lastSeq = -1;
-      if (!await current.activate(spec)) return;
+      const activateStarted = performance.now();
+      if (!await current.activate(spec, binding)) return;
+      timing.activateMs = performance.now() - activateStarted;
       const attemptDir = internalPath(
         run,
         "tasks",
@@ -498,7 +506,7 @@ export async function runEvaluation(options: RunOptions): Promise<Record<string,
       let eventsSaved = false;
       let attemptDidNotStart = false;
       try {
-        options.onProgress?.(`running ${task.stage} ${task.id} attempt ${state.attempts}`);
+        const dispatchStarted = performance.now();
         for (let dispatch = 0; ; dispatch++) {
           try {
             await request(`${workerUrl}/api/attempts`, "POST", spec, controller.signal);
@@ -523,6 +531,11 @@ export async function runEvaluation(options: RunOptions): Promise<Record<string,
             }
           }
         }
+        timing.dispatchMs = performance.now() - dispatchStarted;
+        preparing.delete(task.id);
+        options.onProgress?.(`running ${task.stage} ${task.id} attempt ${state.attempts}`);
+        void options.logger?.event?.("task_prepared", { component: "host", run_id: options.runId,
+          task_id: task.id, attempt_id: spec.attemptId, channel: model.provider, timings: timing });
         if (manifest.debug || options.onEvent)
           stream = consumeEvents(
             workerUrl,
@@ -801,6 +814,12 @@ export async function runEvaluation(options: RunOptions): Promise<Record<string,
       if (manifest.debug) await writeJson(path.join(attemptDir, "attempt.json"), record);
       state.durationMs = (state.durationMs || 0) + Date.now() - state.startedAt!;
       if (record.metrics) {
+        await options.logger?.event?.("attempt_metrics", { component: "host", run_id: options.runId,
+          task_id: task.id, attempt_id: spec.attemptId, channel: model.provider,
+          timings: record.metrics.timings ?? {}, usage: record.metrics.usage,
+          calls: record.metrics.audit.calls, requiredReadCalls: record.metrics.audit.requiredReadCalls,
+          contentSubmissions: receipt?.submissionStats?.contentSubmissions ?? state.failure?.contentSubmissions ?? 0,
+          confirmed: Boolean(receipt), status: state.status });
         for (const key of Object.keys(saved.usage) as (keyof typeof saved.usage)[])
           saved.usage[key] += record.metrics.usage[key] || 0;
         saved.recordedAttempts++;
@@ -918,9 +937,18 @@ export async function runEvaluation(options: RunOptions): Promise<Record<string,
           blocked = true;
           continue;
         }
+        preparing.add(task.id);
+        options.onProgress?.(`preparing ${task.stage} ${task.id}`);
+        await yieldToIO();
+        const preparationStarted = performance.now(), cpuStarted = process.cpuUsage();
         const binding = options.taskSource.bind(task, inputs, acceptedDependencies, { tasks: manifest.tasks });
-        if (paused(task)) continue;
+        const bindingMs = performance.now() - preparationStarted;
+        if (paused(task)) { preparing.delete(task.id); continue; }
         const prepared = options.agents.prepare(binding);
+        const cpu = process.cpuUsage(cpuStarted);
+        const timing = { queuedMs: Math.max(0, Date.now() - (manifest.states[task.id].nextRetryAt ?? manifest.startedAt)),
+          bindingMs, profileMs: performance.now() - preparationStarted - bindingMs,
+          preparationCpuMs: (cpu.user + cpu.system) / 1000, ...binding.preparationTimings };
         const capable = eligible.filter(
           (w) =>
             w.health.identity.engine === engineForTask(task) &&
@@ -928,17 +956,17 @@ export async function runEvaluation(options: RunOptions): Promise<Record<string,
         );
         if (!capable.length) throw new Error("Required engine or tools not available");
         const worker = capable.find((w) => !busy.has(w) && !unavailable.has(w));
-        if (!worker) continue;
+        if (!worker) { preparing.delete(task.id); continue; }
         if (options.channelConcurrency) {
           const channel = (options.modelForTask?.(task, manifest.states[task.id].channel) ?? options.modelForStage(task.stage)).provider;
           const limit = options.channelConcurrency[channel];
-          if (limit !== undefined && [...runningChannels.values()].filter(value => value === channel).length >= limit) continue;
+          if (limit !== undefined && [...runningChannels.values()].filter(value => value === channel).length >= limit) { preparing.delete(task.id); continue; }
           runningChannels.set(task.id, channel);
         }
         delete manifest.states[task.id].nextRetryAt;
         busy.add(worker);
         scheduled = true;
-        const promise = execute(task, worker, prepared, binding.request.sources)
+        const promise = execute(task, worker, prepared, binding, timing)
           .catch(async (error) => {
             if (await current.receipt(task.id)) return;
             manifest.states[task.id].status = controller.signal.aborted ? "cancelled" : "failed";
@@ -957,6 +985,7 @@ export async function runEvaluation(options: RunOptions): Promise<Record<string,
               });
           })
           .finally(() => {
+            preparing.delete(task.id);
             running.delete(task.id);
             runningChannels.delete(task.id);
             busy.delete(worker);

@@ -411,7 +411,9 @@ export interface AttemptRecord {
   evidenceBank?: import("./evidence-selection.js").EvidenceBank;
   spec: AttemptSpec;
   status?: AttemptStatus;
-  metrics?: { usage: Usage; audit: ToolAudit };
+  metrics?: { usage: Usage; audit: ToolAudit; timings?: {
+    inputIoMs: number; modelMs: number; toolMs: number; submissionMs: number; requiredReadMs: number;
+  } };
   pendingSubmission?: Submission;
   error?: string;
   artifactError?: string;
@@ -481,6 +483,8 @@ export interface AgentDefinition {
   profiles: Record<string, AgentProfile>;
 }
 export interface AgentBinding {
+  /** Measured once during this assembly; never exposed as model fields. */
+  preparationTimings?: Record<string, number>;
   /** Workflow-owned navigation passed to tools without entering modelInput or evidence registration. */
   materialNavigation?: JsonObject;
   agent: string;
@@ -552,6 +556,7 @@ export interface EvaluationLog {
 }
 /** Logging is best effort: failures are reported separately and never revoke a receipt. */
 export interface LogSink {
+  event?(event: string, context: JsonObject & { component: string }): Promise<boolean>;
   error(error: unknown, context: LogContext): Promise<void>;
   evaluation(record: EvaluationLog): Promise<boolean>;
 }

@@ -73,14 +73,14 @@ function progressCounts(progress = {}) {
   const failures = Object.values(progress.failures || {}).reduce((total, n) => total + n, 0);
   const blocked = progress.blocked || 0, cancelled = progress.cancelled || 0;
   return { failures, blocked, cancelled,
-    total: (progress.accepted || 0) + (progress.queued || 0) + (progress.running || 0) + failures + blocked + cancelled };
+    total: (progress.accepted || 0) + (progress.queued || 0) + (progress.preparing || 0) + (progress.running || 0) + (progress.repairing || 0) + failures + blocked + cancelled };
 }
 function statusText(run) {
   const counts = progressCounts(run.progress);
   const stopped = [[counts.failures, "失败"], [counts.blocked, "阻塞"], [counts.cancelled, "取消"]]
     .filter(([count]) => count).map(([, status]) => status);
   if (run.status === "finished" && stopped.length) return `已结束（有${stopped.join("、")}）`;
-  if (run.status === "running" && !run.live) return "运行中（Host 接口未就绪）";
+  if (run.status === "running" && !run.live) return "Host 未连接 · 上次快照";
   return label(run.status);
 }
 function renderRuns() {
@@ -127,7 +127,7 @@ function renderOverview() {
   const totalTasks = progressCounts(progress).total;
   const libraryModels = Object.keys(run.problem_library || {}).length;
   const engineLabel = run.engine === "prime" ? "Prime" : "Pi";
-  $("#run-description").textContent = `${engineLabel} · ${progress.accepted || 0}/${totalTasks} 已接受${libraryModels ? ` · 问题库 ${libraryModels} 个模型` : ""}`;
+  $("#run-description").textContent = `${engineLabel} · ${progress.accepted || 0}/${totalTasks} 已接受${libraryModels ? ` · 问题库 ${libraryModels} 个模型` : ""}${run.live && progress.updated_at ? ` · 更新 ${new Date(progress.updated_at).toLocaleTimeString()}` : ""}`;
   $("#run-actions").innerHTML = run.status === "running"
     ? `<form id="concurrency-form" class="inline-form"><label for="live-concurrency">并发</label><input id="live-concurrency" type="number" min="1" value="${Number(progress.concurrency) || 1}" required /><button class="button" type="submit">调整</button></form><button class="button button-danger" type="button" data-stop="${escapeHtml(run.run_id)}">停止</button>`
     : `<button class="button" type="button" data-resume="${escapeHtml(run.run_id)}">续跑此运行</button><button class="button button-danger" type="button" data-delete="${escapeHtml(run.run_id)}">删除运行</button>`;
@@ -136,7 +136,9 @@ function renderOverview() {
     const counts = run.stages?.[stage] || {};
     const total = Object.values(counts).reduce((sum, n) => sum + n, 0);
     const failures = (counts.failed || 0) + (counts.timed_out || 0);
-    const note = `${counts.running || 0} 执行${failures ? ` · ${failures} 失败` : ""}${counts.blocked ? ` · ${counts.blocked} 阻塞` : ""}${counts.cancelled ? ` · ${counts.cancelled} 取消` : ""}`;
+    const live = run.live ? progress.stages?.[stage] : undefined;
+    const note = live ? `${live.queued || 0} 排队 · ${live.preparing || 0} 等待材料准备 · ${live.running || 0} 模型执行 · ${live.repairing || 0} 修复 · ${live.failed || 0} 失败`
+      : `${counts.running || 0} 上次执行${failures ? ` · ${failures} 失败` : ""}${counts.blocked ? ` · ${counts.blocked} 阻塞` : ""}${counts.cancelled ? ` · ${counts.cancelled} 取消` : ""}`;
     return `<div class="stage-row"><strong>${stageLabel(stage)}</strong><span class="stage-count">${total ? `${counts.succeeded || 0}/${total}` : "—"}</span><span class="stage-note">${total ? note : "未启用"}</span></div>`;
   }).join("");
 }

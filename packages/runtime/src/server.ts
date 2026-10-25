@@ -106,6 +106,8 @@ export async function startWorker(
       },
       usage = emptyUsage();
     const record: AttemptRecord = { spec, evidenceBank: [...audit.evidenceBank!] };
+    const timings = { inputIoMs: 0, modelMs: 0, toolMs: 0, submissionMs: 0, requiredReadMs: 0 };
+    let modelStarted: number | undefined;
     const saveRecord = () => writeJson(path.join(attempt.directory, "attempt.json"), record);
     let accepted: SubmissionReceipt | undefined,
       submissions = 0,
@@ -127,13 +129,15 @@ export async function startWorker(
         void stop(attempt, "timed_out", "Model/tool idle timeout");
       }, spec.policy.idleTimeoutSeconds * 1000);
     };
-    activity();
+    // Fetching material from Host is preparation, not an idle model. The total
+    // deadline remains armed even while Host is busy preparing another task.
     try {
       await saveRecord();
       await mkdir(path.join(attempt.directory, "workspace/inputs"), {
         recursive: true,
       });
       const inputs = new Map<string, unknown>();
+      const inputStarted = performance.now();
       for (const ref of spec.inputs) {
         const value = await request<unknown>(
           `${spec.hostUrl}/api/inputs/${safeId(ref.id)}?attempt=${safeId(spec.attemptId)}`,
@@ -146,6 +150,8 @@ export async function startWorker(
         await writeJson(path.join(attempt.directory, "workspace/inputs", `${safeId(ref.name)}.json`),
           presentation ? presentSource(value, presentation) : value);
       }
+      timings.inputIoMs = performance.now() - inputStarted;
+      activity();
       const artifacts = new ArtifactStore(path.join(attempt.directory, "artifacts"));
       const definitions = registry.select(spec.evaluation.toolNames).map(tool =>
         tool.name === "inspect_material" && !spec.evaluation.fileSubmission && spec.evaluation.inspectionSchema
@@ -304,7 +310,9 @@ export async function startWorker(
             const args = { candidate: target.candidate, message_index: target.message_index, path: target.path,
               offset: missing.start, max_chars: Math.min(16000, target.end - missing.start) };
             emit(attempt, "tool_start", { name: "read_trace", args, required_material: true });
+            const readStarted = performance.now();
             const read = await runtime.execute("read_trace", args, controller.signal, explorationLimit());
+            timings.requiredReadMs += performance.now() - readStarted;
             emit(attempt, "tool_end", { name: "read_trace", result: read, required_material: true });
             if (read.isError) {
               const message=read.content.map(item => item.text ?? "").join("\n");
@@ -681,6 +689,7 @@ export async function startWorker(
           if (accepted) return runtime.withBudget({ ...textResult({ accepted: true }), terminate: true }, explorationLimit());
           if (controller.signal.aborted) throw controller.signal.reason;
           emit(attempt, "tool_start", { name, args });
+          const toolStarted = performance.now();
           const submissionTool = submissionTools.find((tool) => tool.name === name) ??
             (name === "inspect_material" ? definitions.find(tool => tool.name === name) : undefined);
           // Host validation/commit queues are active work. Keep the overall
@@ -710,6 +719,7 @@ export async function startWorker(
               isError: true,
             };
           } finally {
+            timings[submissionTool ? "submissionMs" : "toolMs"] += performance.now() - toolStarted;
             if (submissionTool) pendingSubmissions--;
           }
           if (submissionTool && !accepted && !completionCandidate && submissions >= 1 + spec.policy.repairAttempts) {
@@ -738,7 +748,9 @@ export async function startWorker(
               errorMessage?: string;
             };
           };
+          if (event.type === "message_start" && event.message?.role === "assistant") modelStarted = performance.now();
           if (event.type === "message_end" && event.message?.role === "assistant") {
+            if (modelStarted !== undefined) { timings.modelMs += performance.now() - modelStarted; modelStarted = undefined; }
             for (const key of Object.keys(usage) as (keyof Usage)[])
               usage[key] += event.message.usage?.[key] || 0;
             emit(attempt, "usage", usage);
@@ -855,6 +867,7 @@ export async function startWorker(
           ));
       }
     } finally {
+      if (modelStarted !== undefined) timings.modelMs += performance.now() - modelStarted;
       clearTimeout(deadline);
       clearTimeout(idle!);
       controller.abort();
@@ -897,7 +910,7 @@ export async function startWorker(
         attempt.status.failure = record.failure;
       }
       record.evidenceBank = [...audit.evidenceBank!];
-      record.metrics = { usage, audit };
+      record.metrics = { usage, audit, timings };
       record.status = attempt.status;
       // A failed persistence leaves the workspace intact for recovery.
       await saveRecord();
@@ -913,7 +926,7 @@ export async function startWorker(
       emit(attempt, "finished", attempt.status);
       await attempt.saved;
       record.evidenceBank = [...audit.evidenceBank!];
-      record.metrics = { usage, audit };
+      record.metrics = { usage, audit, timings };
       record.status = attempt.status;
       await saveRecord();
       for (const client of attempt.clients.keys()) client.end();
