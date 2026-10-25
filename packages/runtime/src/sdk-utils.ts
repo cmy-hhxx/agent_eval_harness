@@ -112,6 +112,8 @@ export function transformPayload(
   activeNames?: readonly string[],
 ): unknown {
   const payload = object(value);
+  // Omitting reasoning is not an opt-out: gateways may enable it by default.
+  if(config.api==='openai-responses'&&config.thinking==='off')payload.reasoning={effort:'none'};
   if (config.supportsDeveloperRole === false) {
     // Some endpoints accept developer messages but treat them as user content.
     const messages = config.api === "openai-completions" ? payload.messages : payload.input;

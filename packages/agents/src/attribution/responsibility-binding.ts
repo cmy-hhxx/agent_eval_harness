@@ -46,8 +46,9 @@ export function finalResponsibilityReview(request:AgentRequest,draft:unknown,res
     return sources.get(p.message_index)!.find(s=>s.kind===p.kind&&s.path===p.path)?.text.slice(p.start,p.end)??'';
   }).join('\n');
   const finalGenerations=answer.transitions.filter(t=>t.kind==='generation'&&responsibilityDisplay(request,t.transition_index).component==='终稿生成轮');
-  const problems=submitted.Problem.map((problem,i)=>{
-    const proof=value.Problem[i].evidence??[];
+  const targets=submitted.Problem.length?submitted.Problem:[{text:String((request.input.answer as JsonObject).question??''),reason:'',responsibility_boundary:null,related_responsibilities:undefined}];
+  const comparisons=targets.map((problem,i)=>{
+    const proof=value.Problem[i]?.evidence??[];
     const selected=[problem,...problem.related_responsibilities??[]].flatMap(r=>{
       const t=answer.transitions.find(t=>'boundary:'+t.transition_index===r.responsibility_boundary);return t?[t]:[];
     });
@@ -103,7 +104,8 @@ export function finalResponsibilityReview(request:AgentRequest,draft:unknown,res
   }).filter(item=>!initialEvidence.some(e=>covers(e,item.reference)));
   return {question:(request.input.answer as JsonObject).question,
     answer:(request.input.answer as JsonObject).final_answer,
-    originals,problems,choices:[...choices,...transferChoices].filter(c=>!value.Problem.length||reviewBoundaries.has(c.responsibility_boundary)),...(emptyReview?{empty_review:emptyReview}:{}),read_requests:required,
+    originals,problems:submitted.Problem.length?comparisons:[],choices:[...choices,...transferChoices].filter(c=>reviewBoundaries.has(c.responsibility_boundary)),
+    ...(emptyReview?{empty_review:{boundaries:emptyReview,source_comparison:comparisons[0].source_comparison}}:{}),read_requests:required,
     initial_result:value,
     submission_bindings:submitted.Problem.map(p=>({
       responsibility_boundary:p.responsibility_boundary,evidence:p.evidence,

@@ -20,3 +20,5 @@
 唯一工具 submit_evaluation 的参数是完整归因对象 {"summary":"…","Problem":[…]}，不是 candidate/message_index/path 等读取参数。将 initial_result 的 summary、每条问题的 text/reason/evidence_status/attribution_reason 与 submission_bindings 对应的责任编号、evidence 和 calculations 合并提交；不要提交 meta/has_standard_answer/problem_id/component/证据原文。有标准答案才提交 is_correct/correct_reason。正确项原样复制，只改明确错误或拆开已有混合缺陷。新拆问题引用本轮已提供 evidence_index，不能编造编号。
 
 执行返回只写 SQL取数异常时，只能确认该次执行失败，不能自行断言某个SQL表达式非法或内部算法错误。
+
+初稿若是“占位／待补充／暂缓”等未完成空稿，不能把空 Problem 当作正确内容保留。用已直接提供的问句相关原始请求、返回和生成输入输出完成本次归因，不能以占位摘要正式提交；这不是扩展漏报调查。

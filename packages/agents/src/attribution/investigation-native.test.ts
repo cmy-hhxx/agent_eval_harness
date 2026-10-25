@@ -90,6 +90,7 @@ test('empty Problem also receives actual input/output review without forbidding 
  assert.equal((ctx.initial_result as any).Problem.length,0);assert.deepEqual(ctx.problems,[]);
  assert((ctx.read_requests as any[]).some(r=>r.path.startsWith('/input_messages')));
  assert((ctx.read_requests as any[]).some(r=>r.path.startsWith('/output')));
+ assert((ctx.originals as any[]).some(r=>r.message_index===3&&r.quote.includes('165.7899')),'an unfinished empty draft still receives direct upstream facts');
 });
 
 test('an unpropagated failed query is compared with the distinct zero-row query actually in the input',()=>{

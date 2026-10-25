@@ -200,6 +200,14 @@ const request = () => ({
   prompt_cache_retention: "24h",
 });
 
+test('Responses thinking off is explicit even behind a custom gateway',()=>{
+  for(const reasoning of [undefined,{effort:'high'}]){
+    const payload={reasoning};
+    transformPayload(payload,{...model,provider:'evaluation-gateway',model:'deepseek-v4.1-flash',api:'openai-responses',thinking:'off'});
+    assert.deepEqual(payload.reasoning,{effort:'none'});
+  }
+});
+
 test("Responses channels do not receive explicit cache extensions without declaring support", () => {
   for (const support of [undefined, false]) {
     const config = { ...model, provider: "openai", model: "gpt-6-luna", supportsExplicitPromptCaching: support };
