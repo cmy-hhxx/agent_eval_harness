@@ -15,21 +15,21 @@ AIME 使用 workflow: answer-review。每条回答先完成 Attribution，通过
 | is_correct | 仅判断与给定标准答案是否一致；无标准答案固定 null，确实无法判断时为 null |
 | correct_reason | 有标准答案时说明比较对象、依据和原因；无标准答案固定 null |
 
-每条问题使用 `problem_id/text/reason/evidence_status/evidence/component/attribution_reason`，有真实缺口时增加 `uncertainties`，确有独立传播或放大时增加 `related_responsibilities`，依赖计算时增加 `calculations`。问题编号、主体名称和证据坐标由程序填写；模型只选稳定编号并写判断。`evidence_status` 为“已确认”或“待核实”，与责任是否已知分开。证据原文去重，`purposes` 标注“问题”“归因”或两者。关联责任只保留一层主体—理由—证据关系。仅有输入输出差异不证明隐藏机制；已知参数生成调用不能因无隐藏推理而写未知。
+每条问题使用 `problem_id/text/reason/evidence_status/evidence/component/attribution_reason`，责任链写入 `responsibility_chain`，有真实缺口时增加 `uncertainties`，确有独立传播或放大时增加 `related_responsibilities`，依赖计算时增加 `calculations`。问题编号、主体名称和证据坐标由程序填写；模型只选稳定编号并写判断。`evidence_status` 为“已确认”或“待核实”，与责任是否已知分开。证据原文去重，`purposes` 标注“问题”“归因”或两者。关联责任只保留一层主体—理由—证据关系。仅有输入输出差异不证明隐藏机制；已知参数生成调用不能因无隐藏推理而写未知。
 
 不再要求 strengths、逐项 criterion_assessments、core_assessment、meets_core、core_reason、维度、阶段、重要性、功能分类或重复调查表。原问与适用规则继续作为判断依据。计算只在问题判断确实依赖计算时记录，并保留来源、单位、期间、分母及程序复算能力。
 
 证据目录、执行节点与转换边界保留在程序端，使用 read_execution 定位，read_trace/search_trace/view_image 读取实际材料。导航编号不构成已读；可读但未读不能写成未采集。生成主责须检查本问题相关来源、实际输入与生成输出，不沿宽泛输入引用遍历全部历史祖先。正确工具不因最终回答错误背责；已知参数生成者不能改成未知。只有输入输出差异时，机制仍是推断。
 
-公共 Runtime 保留动态必读受保护预算和无进展停止；归因已关闭证据业务门，改由模型核查完成性及真实样本抽审。模型判断尚未完成时不得确认，未确认或预算耗尽由 state 保留失败原因。结构检查不能证明任意自然语言判断的语义完整性，真实样本仍须抽审；技术接收数与有效评审数分别报告。
+公共 Runtime 保留动态必读受保护预算和无进展停止；归因已关闭证据业务门，改由模型核查完成性及真实样本抽审。未形成完整提交或预算耗尽由 state 保留失败原因。结构检查不能证明任意自然语言判断的语义完整性，真实样本仍须抽审；技术接收数与有效评审数分别报告。
 
 运行进度以活动 Host 的 `/api/progress` 为准：`updated_at` 是实时观测时间，`checkpoint.savedAt` 是最后落盘时间。queued 等待派发，preparing 等待材料组装或派发确认，running 已派发执行（含一次独立复核），repairing 是有实际拒收的内容修复，accepted 和 failed 分别为正式收据与终止失败；这些计数互不重复。preparing 仅存在内存，不新增持久化任务状态。Host 不在线时，state 是恢复快照，不能据其 running 宣称模型仍在执行。
 
-同次尝试复用已组装材料，证据路径索引只在一次组装内存在；提交和确认仍重新执行结构、程序身份及计算验收，不缓存通过结论。统一 runtime.log 中的 task_prepared、submission_wait、submission_validation、attempt_metrics 分别记录排队、材料/目录/准备 CPU、激活/派发、提交锁等待、验收和 Worker 耗时。materialMs 包含 directoryMs；requiredReadMs 是 submissionMs 内的受保护补读子集，不重复相加。modelMs 是 SDK assistant 消息开始至结束的观测时长，工具、Host 材料 IO 和提交分别计时。输入等待不算模型空闲，但总任务 deadline 始终有效，额度和重试上限不增加。
+同次尝试复用已组装材料，证据路径索引只在一次组装内存在；初稿和复核提交仍执行结构、程序身份及计算验收，不缓存通过结论。统一 runtime.log 中的 task_prepared、submission_wait、submission_validation、attempt_metrics 分别记录排队、材料/目录/准备 CPU、激活/派发、提交锁等待、验收和 Worker 耗时。materialMs 包含 directoryMs；requiredReadMs 是 submissionMs 内的受保护补读子集，不重复相加。modelMs 是 SDK assistant 消息开始至结束的观测时长，工具、Host 材料 IO 和提交分别计时。输入等待不算模型空闲，但总任务 deadline 始终有效，额度和重试上限不增加。
 
 边界覆盖先按已解析路径和范围排除不可能覆盖的组合，再对剩余组合执行原始来源校验；部分引用仍须落在真实原文范围，不用同文内容替代坐标。该索引不跨尝试保存。
 
-初稿进入一次独立上下文复核，复用当前模型、工具与原有任务预算，复核用低推理档（原来关闭推理则保持关闭），直接提供相关原始请求、返回及实际生成输入输出、真实组件选项和完整六字段初稿。重点核对事实与责任形成位置，不主动展开漏报调查，不按组件配额改归责。复核直接提交修订稿，正确内容原样保留；没有成功确认轮或复核修复循环。复核必须交回完整归因，不提供确认或未完成出口；无充分反证的判断原样保留。复核后只沿用结构、真实身份、证据坐标和计算检查，不额外按摘要措辞、完成性问卷或必读数量／覆盖率拒收。结构或来源无效时保留问题草稿，不能复活已被推翻的初稿。
+初稿进入一次独立上下文复核，复用当前模型、工具与原有任务预算，复核关闭推理，直接提供相关原始请求、返回及实际生成输入输出、真实组件选项和完整六字段初稿；原文去重，组件选项限于相关调用。复核仅暴露现有 submit_evaluation，不重新调查。重点核对事实与责任形成位置，不主动展开漏报调查，不按组件配额改归责。复核直接提交修订稿，正确内容原样保留；没有成功确认轮或复核修复循环。复核必须交回完整归因，不提供确认或未完成出口；无充分反证的判断原样保留。复核后只沿用结构、真实身份、证据坐标和计算检查，不额外按摘要措辞、完成性问卷或必读数量／覆盖率拒收。结构或来源无效时保留问题草稿，不能复活已被推翻的初稿。
 
 Rewrite 只接收 summary、问题和理由文本槽位，不接触证据，不改变原归因或评分。可选改写记录放在 `meta.rewritten`，保持正式顶层六字段。
 
@@ -80,3 +80,7 @@ npm run eval -- run --stage attribution --run-id answer-review-run --config conf
 归因探索与修复共用从开始即公开的既有总额度，提交不再解锁额外工具次数，不增加总预算或重试。进度 Token 仅累计已归档尝试，同时显示待归档次数和统计覆盖范围；零值不代表没有实际消耗。checkpoint.writeMs 是累计持久化墙钟时间，不是事件循环阻塞时间；snapshotMs 仅衡量快照构造，不涵盖全部持久化 CPU。
 
 责任组件对齐组件健康度报表：规划子模型、Expert 推理轮、终稿生成轮及具体工具名称由实际调用解析；内部模型代号只用于溯源。展示名相同不合并不同调用。报表风险信号不自动成立为缺陷。
+
+责任链节点由模型选择现有 boundary 并写 state/evidence_indices，程序解析 component、stage、message_index、evidence_ids 与 primary/related/context。component 始终是独立主责组件，related_responsibilities 仅登记成立的关联责任；链中的正常返回、零行、历史页面不计责任。未采集处理调用的 transfer 节点 component 为 null，页面显示“输入材料变化（处理调用未采集）”；没有独立上游调用时显示“已采集输入”。终稿责任同时呈现上游状态与具体生成错误，不把整条链当作健康度组件。stats.json 与 report.md 分别统计主责问题数、关联责任数。
+
+复核以现有问题的实体标识匹配直接原始请求/返回，补入初稿未引用的相关反证，并与实际生成输入输出对照；标识只检索材料，不决定错误或责任，不沿历史祖先展开。已有问题中若不同缺陷的形成位置不同则分别登记，不拓展漏报调查。

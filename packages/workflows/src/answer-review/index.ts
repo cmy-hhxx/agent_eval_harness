@@ -284,7 +284,16 @@ export async function reportAnswerReview(run:string,state?:RunState){
   const summary={workflow:'answer-review',run_id:state.manifest.runId,status:state.manifest.status,active_stages:(state.manifest.config as AnswerReviewConfig).reviewStages??['score','attribution'],stages,tokens:state.usage,concurrency:state.manifest.concurrency,
     completed_instruction_reviews:state.manifest.tasks.filter(t=>t.stage==='instruction-review'&&state.receipts[t.id]).length,completed_scores:results.length,score_execution,completed_attributions:state.manifest.tasks.filter(t=>t.stage==='attribution'&&state.receipts[t.id]).length,
     execution_task_statuses:Object.fromEntries([...new Set(Object.values(state.manifest.states).map(s=>s.status))].map(status=>[status,Object.values(state.manifest.states).filter(s=>s.status===status).length])),paused_stages:state.manifest.pausedStages??[]};
-  await writeJson(path.join(run,'stats.json'),summary);
+  const responsibility_counts={primary:{} as Record<string,number>,related:{} as Record<string,number>};
+  for(const task of state.manifest.tasks.filter(t=>t.stage==='attribution')){
+    const result=state.receipts[task.id]?.evaluation as AttributionResult|undefined;
+    for(const problem of result?.Problem??[]){
+      responsibility_counts.primary[problem.component]=(responsibility_counts.primary[problem.component]??0)+1;
+      for(const related of problem.related_responsibilities??[])responsibility_counts.related[related.component]=(responsibility_counts.related[related.component]??0)+1;
+    }
+  }
+  const report={...summary,responsibility_counts};
+  await writeJson(path.join(run,'stats.json'),report);
   const lines=['# 独立回答评测','',`状态：${summary.status}`,''];
   if(summary.active_stages.includes('score')){
     lines.push('| 题目 | 模型 | 最终总分 / 区间 | 状态 |','|---|---|---|---|');
@@ -294,7 +303,10 @@ export async function reportAnswerReview(run:string,state?:RunState){
     for(const task of state.manifest.tasks.filter(t=>t.stage==='attribution')){const receipt=state.receipts[task.id];if(!receipt)continue;const c=(task.data as TaskData).candidate,value=receipt.evaluation as AttributionResult;
       lines.push(`| ${c.case_id} | ${c.version} | ${value.Problem.length} | ${value.summary.replaceAll('|','\\|').replaceAll('\n',' ')} |`);}
   }
-  lines.push('');await atomicWrite(path.join(run,'report.md'),lines.join('\n'));return summary;
+  lines.push('','| 责任组件 | 主责问题数 | 关联责任数 |','|---|---:|---:|');
+  for(const component of new Set([...Object.keys(responsibility_counts.primary),...Object.keys(responsibility_counts.related)]))
+    lines.push(`| ${component} | ${responsibility_counts.primary[component]??0} | ${responsibility_counts.related[component]??0} |`);
+  lines.push('');await atomicWrite(path.join(run,'report.md'),lines.join('\n'));return report;
 }
 export function validateAnswerReview(state:RunState){
   for(const task of state.manifest.tasks){const r=state.receipts[task.id];if(!r)continue;if(r.taskId!==task.id)throw Error('任务收据身份不一致');if(task.stage==='score'&&!isFormalScore(task,r))continue;if(!r.exported||r.exported.id!==((task.data as TaskData).rewriteOf??task.id))throw Error('正式结果引用与任务不一致');

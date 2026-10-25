@@ -71,7 +71,7 @@ test('final responsibility recall reads the existing Problem and offers only cap
  assert(reads.filter(r=>r.message_index===6).some(r=>evidenceSources(original[r.message_index]).find(s=>s.kind===r.kind&&s.path===r.path)?.text.slice(r.start,r.end).includes('165.7899')));
  assert(!reads.some(r=>[1,2,3].includes(r.message_index)),'unrelated weather ancestors stay outside the review');
  assert((context.choices as any[]).some(c=>c.component==='finquery 取数服务'));
- assert(!(context.choices as any[]).some(c=>c.component.includes('web_fetch')));
+ assert(!(context.choices as any[]).some(c=>c.component?.includes('web_fetch')));
  assert(finalResponsibilityReview(f.binding.request,{Problem:[problem]},{Problem:[{component:'finquery 取数服务'}]},f.audit));
  assert(responsibilityBindingIssues(f.binding.request,null,f.evidence,f.audit,'/Problem/0').some(i=>i.code==='responsibility_unresolved'));
 });
@@ -124,4 +124,18 @@ test('parameter formation never recalls historical same-tool returns as missing 
  const draft={Problem:[{responsibility_boundary:'boundary:'+parameter.transition_index},{responsibility_boundary:'boundary:'+final.transition_index}]};
  const ctx=finalResponsibilityReview(f.binding.request,draft,{Problem:[{component:'Expert 推理轮',evidence:f.evidence.filter(e=>e.message_index===5)},{component:'终稿生成轮',evidence:[]}]},f.audit)!;
  assert(!(ctx.read_requests as any[]).some(r=>r.message_index===1||r.message_index===2));
+});
+
+test('review includes uncited direct counterevidence rather than anchoring to the initial price return',()=>{
+ const f=material([{role:'user',content:'SLB均线'},
+ {type:'tool_call',name:'shell',call_id:'price',input:{command:'SLB price'}},
+ {type:'tool_result',name:'shell',call_id:'price',output:{stdout:'SLB last 53.1'}},
+ {type:'tool_call',name:'shell',call_id:'ma',input:{command:'SLB MA50'}},
+ {type:'tool_result',name:'shell',call_id:'ma',output:{stdout:'SLB MA50 52.47'}},
+ {type:'llm_turn',name:'llm-call-0',input_messages:[{role:'tool',tool_call_id:'price',content:'SLB last 53.1'},{role:'tool',tool_call_id:'ma',content:'SLB MA50 52.47'}],output:[{role:'assistant',content:'SLB 53.1低于52.5均线'}]},
+ {type:'final_answer',role:'assistant',content:'SLB 53.1低于52.5均线'}],'SLB均线');
+ const edge=f.transitions.find(t=>responsibilityDisplay(f.binding.request,t.transition_index).component==='终稿生成轮')!;
+ const p={text:'SLB均线方向错误',reason:'SLB 52.5没有来源',responsibility_boundary:'boundary:'+edge.transition_index};
+ const ctx=finalResponsibilityReview(f.binding.request,{Problem:[p]},{Problem:[{component:'终稿生成轮',evidence:f.evidence.filter(e=>e.message_index===2)}]},f.audit)!;
+ assert((ctx.originals as any[]).some(e=>e.message_index===4&&e.quote.includes('52.47')));
 });

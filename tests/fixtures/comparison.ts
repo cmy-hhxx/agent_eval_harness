@@ -160,7 +160,7 @@ export function taskResult(spec: Pick<AttemptSpec, "evaluation" | "prompt" | "in
       const value=review.initial_result;
       return {summary:value.summary,Problem:value.Problem.map((p:any,i:number)=>({text:p.text,reason:p.reason,
         evidence_status:p.evidence_status,attribution_reason:p.attribution_reason,...review.submission_bindings[i],
-        ...(p.uncertainties?{uncertainties:p.uncertainties}:{})})).map(({problem_id:_id,...p}:any)=>p),
+        ...(p.uncertainties?{uncertainties:p.uncertainties}:{})})),
         ...(value.has_standard_answer?{is_correct:value.is_correct,correct_reason:value.correct_reason}:{})};
     }
   }
@@ -435,6 +435,7 @@ export function draftFor(spec: Pick<AttemptSpec, "inputs" | "prompt" | "evidence
       Problem:value.Problem.map(item=>({text:item.text,reason:item.reason,evidence_status:item.evidence_status,
         evidence:item.evidence.map(e=>({index:choose(e.evidence_id).evidence_index,purposes:e.purposes})),
         responsibility_boundary:boundary(item.component),attribution_reason:item.attribution_reason,
+        responsibility_chain:[{responsibility_boundary:null,state:'已采集输入',evidence_indices:selections(item.evidence.map(e=>e.evidence_id))}],
         ...(item.uncertainties?{uncertainties:item.uncertainties}:{}),
         ...(item.related_responsibilities?{related_responsibilities:item.related_responsibilities.map(r=>({responsibility_boundary:boundary(r.component),attribution_reason:r.attribution_reason,evidence_indices:selections(r.evidence_ids)}))}:{}),
         ...(item.calculations?{calculations:item.calculations.map(calculation=>({...calculation,operands:Object.fromEntries(Object.entries(calculation.operands).map(([name,{evidence_id,...operand}])=>[name,{...operand,evidence_index:choose(evidence_id).evidence_index}]))}))}:{})}))};

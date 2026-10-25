@@ -308,6 +308,43 @@
               }
             },
             "description": "问题是否成立确实需要计算时才填写，放在这条Problem内；不需要就省略，不放到顶层。"
+          },
+          "responsibility_chain": {
+            "type": "array",
+            "minItems": 1,
+            "description": "按实际发生顺序列上游组件及输入状态、材料变化、生成错误。输入状态不是责任。终稿责任必填；正常零行/历史网页不自动归责工具。程序解析组件和主责/关联角色，未提供的主责节点由程序补齐。",
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "responsibility_boundary",
+                "state",
+                "evidence_indices"
+              ],
+              "properties": {
+                "responsibility_boundary": {
+                  "type": [
+                    "string",
+                    "null"
+                  ],
+                  "pattern": "^boundary:[1-9][0-9]*$",
+                  "description": "选择真实调用或材料传递boundary；只有无独立上游记录的已采集输入才填null。"
+                },
+                "state": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "evidence_indices": {
+                  "type": "array",
+                  "minItems": 1,
+                  "uniqueItems": true,
+                  "items": {
+                    "type": "integer",
+                    "minimum": 1
+                  }
+                }
+              }
+            }
           }
         }
       },

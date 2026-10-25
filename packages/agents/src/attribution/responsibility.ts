@@ -65,5 +65,14 @@ export function responsibilityIssues(request:AgentRequest,problem:unknown,_selec
     if((r.component===UNKNOWN_COMPONENT||(!i&&value.evidence_status==='待核实'))&&!r.uncertainties?.some(text=>text.trim()))
       issues.push({category:'decision',code:'responsibility_unresolved_required',path:at+'/uncertainties',message:'责任未定位或缺陷待核实时须说明真实断点；没有隐藏推理不等于调用未知。'});
   }
+  const answer=request.input.answer as unknown as ResponsibilityMaterial;
+  for(const [i,item] of (value.responsibility_chain??[]).entries()){
+    const at=path+'/responsibility_chain/'+i;
+    const captured=item.component===null?item.message_index===null&&['input','transfer'].includes(item.stage):
+      answer.transitions.some(t=>t.kind===item.stage&&responsibilityDisplay(request,t.transition_index).component===item.component&&
+        answer.execution_nodes.some(n=>n.execution_node_index===t.execution_node_index&&n.message_index===item.message_index));
+    if(!captured||item.role==='primary'&&item.component!==value.component||item.role==='related'&&!value.related_responsibilities?.some(r=>r.component===item.component))
+      issues.push({category:'evidence',code:'responsibility_chain_identity',path:at,message:'责任链的调用身份和责任角色由程序解析，不能编造组件或把输入状态当作责任。'});
+  }
   return issues;
 }

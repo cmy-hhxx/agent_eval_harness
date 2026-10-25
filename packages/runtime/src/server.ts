@@ -667,7 +667,7 @@ export async function startWorker(
       const createSession = (sessionSpec:AttemptSpec) => backend.createSession({
         spec:sessionSpec,
         workdir: runtime.context.workdir,
-        tools: modelTools,
+        tools: modelTools.filter(tool=>submissionTools.some(s=>s.name===tool.name)||sessionSpec.evaluation.toolNames.includes(tool.name)),
         ...(spec.controlModelRequests ? { modelRequest: async (signal?: AbortSignal) => {
           const combined = signal ? AbortSignal.any([signal, controller.signal]) : controller.signal;
           const callId = randomUUID(), waitingAt = Date.now();
@@ -698,6 +698,7 @@ export async function startWorker(
         } } : {}),
         async execute(name, args, signal) {
           activity();
+          if(reviewing&&!submissionTools.some(tool=>tool.name===name))return {...textResult({error:'独立复核只提交完整修订稿；相关原文已直接提供，不重新调查。'}),isError:true};
           if(pendingReview&&!reviewing)return {...textResult({accepted:false,review_pending:true}),terminate:true};
           if (accepted) return runtime.withBudget({ ...textResult({ accepted: true }), terminate: true }, explorationLimit());
           if (controller.signal.aborted) throw controller.signal.reason;
@@ -857,8 +858,8 @@ export async function startWorker(
         const prompt=JSON.stringify(projectEvidenceReferences(material,audit.evidenceBank!));
         await runtime.context.persistEvidenceBank?.([...audit.evidenceBank!]);
         const reviewSpec:AttemptSpec={...spec,prompt,recovery:undefined,
-          model:{...spec.model,thinking:spec.model.thinking==='off'?'off':'low'},evaluation:{...spec.evaluation,
-          systemPrompt:spec.evaluation.completionReview!}};
+          model:{...spec.model,thinking:'off'},evaluation:{...spec.evaluation,
+          toolNames:[],systemPrompt:spec.evaluation.completionReview!}};
         attempt.session=await createSession(reviewSpec);
         audit.traceReads.push(...(read_requests as unknown as TraceRead[]??[]));
         const started=performance.now();

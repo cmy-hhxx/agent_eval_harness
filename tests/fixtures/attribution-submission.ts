@@ -33,6 +33,7 @@ export function attributionSubmission(request:AgentRequest,result:AttributionRes
     text:p.text,reason:p.reason,evidence_status:p.evidence_status,
     evidence:p.evidence.map(e=>({index:ref(e.evidence_id),purposes:e.purposes,...(parseEvidenceCoordinates(e.evidence_id)?.kind==='image'?{observation:e.quote.replace('[图像观察]','')}:{})})),
     responsibility_boundary:boundary(p.component),attribution_reason:p.attribution_reason,
+    responsibility_chain:[{responsibility_boundary:null,state:'已采集输入',evidence_indices:p.evidence.map(e=>ref(e.evidence_id))}],
     ...(p.uncertainties?{uncertainties:p.uncertainties}:{}),
     ...(p.related_responsibilities?{related_responsibilities:p.related_responsibilities.map(r=>({responsibility_boundary:boundary(r.component)!,attribution_reason:r.attribution_reason,evidence_indices:r.evidence_ids.map(ref),...(r.uncertainties?{uncertainties:r.uncertainties}:{})}))}:{}),...(p.calculations?{calculations:p.calculations.map(c=>({...c,operands:Object.fromEntries(Object.entries(c.operands).map(([name,{evidence_id,...o}])=>[name,{...o,evidence_index:ref(evidence_id)}]))}))}:{})}))};
 }

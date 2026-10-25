@@ -63,6 +63,11 @@ test('Attribution immediately enables one Score session, with attribution-only r
  const restored=await answerReviewRepository.readRun(path.join(config.output.path,'flow'));
  assert.deepEqual(restored.receipts[a.id].evaluation,before[a.id].evaluation);
  assert.deepEqual((restored.receipts[a.id].exported!.row.meta as any).rewritten,(exported.meta as any).rewritten);
+ const counted=structuredClone(restored);
+ (counted.receipts[a.id].evaluation as any).Problem=[{component:'finquery 取数服务',related_responsibilities:[{component:'终稿生成轮'}],
+   responsibility_chain:[{component:'web_search 网页检索',role:'context',state:'返回历史页面'}]}];
+ const report=await reportAnswerReview(path.join(config.output.path,'flow'),counted);
+ assert.deepEqual(report.responsibility_counts,{primary:{'finquery 取数服务':1},related:{'终稿生成轮':1}});
  // Exercise actual Host dispatch after appending to a saved day, not just checkpoint decoding.
  const version=config.inputs.versions[0],file=version.sources[0].path;
  const next={...sessionRaw('two'),batch_id:'b1'};

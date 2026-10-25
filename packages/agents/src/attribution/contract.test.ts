@@ -23,7 +23,7 @@ function plain(reference:unknown=null){
 test('model contract omits program identity, correctness availability and all removed forms',()=>{
  const f=plain(),schema=attributionSubmissionSchema(f.binding.request);
  assert.deepEqual(Object.keys(schema.properties).sort(),['Problem','summary']);
- assert.deepEqual(Object.keys(schema.properties.Problem.items.properties).sort(),['attribution_reason','calculations','evidence','evidence_status','reason','related_responsibilities','responsibility_boundary','text','uncertainties']);
+ assert.deepEqual(Object.keys(schema.properties.Problem.items.properties).sort(),['attribution_reason','calculations','evidence','evidence_status','reason','related_responsibilities','responsibility_boundary','responsibility_chain','text','uncertainties']);
  for(const extra of [{meta:{}},{has_standard_answer:true}])assert.throws(()=>f.registry.resolve(f.binding,{summary:'实际加法结果正确。',Problem:[],...extra},f.audit),ValidationError);
 });
 test('evidence-backed completed no-problem review has exactly six formal fields and nullable correctness',()=>{
@@ -91,4 +91,17 @@ test('same display component retains distinct internal call selections',()=>{
  assert.deepEqual(draft,before,'the receipt retains exact submitted choices; display names never bind calls');
  draft.Problem[0].related_responsibilities[0].responsibility_boundary=`boundary:${calls[0].transition_index}`;
  assert.throws(()=>resolveModelSubmission(f.binding.request,draft,f.audit),ValidationError);
+});
+
+test('responsibility chain displays observed transfer without inventing an actor or changing responsibility counts',()=>{
+ const f=businessChainFixture(),draft=attributionSubmission(f.binding.request,f.result,f.audit),p=draft.Problem[0];
+ const tool=f.transitions.find(t=>t.kind==='execution')!,transfer=f.transitions.find(t=>t.kind==='transfer')!;
+ p.responsibility_chain=[{responsibility_boundary:`boundary:${tool.transition_index}`,state:'原始返回正确',evidence_indices:p.evidence.map(e=>e.index)},
+   {responsibility_boundary:`boundary:${transfer.transition_index}`,state:'实际输入中字段丢失，处理调用未采集',evidence_indices:p.evidence.map(e=>e.index)}];
+ const result=resolveModelSubmission(f.binding.request,draft,f.audit).Problem[0];
+ assert.equal(result.component,f.problem.component);assert.equal(result.related_responsibilities,undefined);
+ assert.equal(result.responsibility_chain![0].component,'finquery 取数服务');assert.equal(result.responsibility_chain![0].role,'context');
+ assert.equal(result.responsibility_chain![1].component,null);assert.equal(result.responsibility_chain![1].stage,'transfer');
+ assert.equal(result.responsibility_chain!.at(-1)!.role,'primary');
+ p.responsibility_chain[0].responsibility_boundary='boundary:999999';assert.throws(()=>resolveModelSubmission(f.binding.request,draft,f.audit),ValidationError);
 });

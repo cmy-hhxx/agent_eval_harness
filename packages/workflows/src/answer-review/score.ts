@@ -38,6 +38,7 @@ export function bindScore(task:PlannedTask,raw:RawInput,dependencies:Record<stri
       component:problem.component??'主体未确定',evidence_ids};
     problem_facts.push(fact);problems.push({...fact,
       attribution_reason:problem.attribution_reason,
+      ...(problem.responsibility_chain?{responsibility_chain:problem.responsibility_chain}:{}),
       ...(problem.uncertainties?{uncertainties:problem.uncertainties}:{}),
       ...(problem.related_responsibilities?{related_responsibilities:problem.related_responsibilities}: {})});
   }

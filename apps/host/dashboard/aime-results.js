@@ -43,6 +43,10 @@ export function mountAimeResults(root, options = {}) {
         const section = node('section'); section.className = 'aime-finding';
         section.append(node('h4',finding.text),node('p',finding.evidence_status));
         const reason = node('p'); reason.append(node('strong','依据：'),doc.createTextNode(finding.reason)); section.append(reason);
+        if(finding.responsibility_chain?.length){
+          const chain=node('p',finding.responsibility_chain.map(step=>`${step.component??(step.stage==='transfer'?'输入材料变化（处理调用未采集）':'已采集输入')}（${step.state}）`).join(' → '));
+          chain.className='aime-responsibility-chain';section.append(chain);
+        }
         section.append(valueView({component:finding.component,attribution_reason:finding.attribution_reason}));
         if (finding.uncertainties) section.append(valueView({uncertainties:finding.uncertainties}));
         if (finding.related_responsibilities) section.append(valueView({related_responsibilities:finding.related_responsibilities}));

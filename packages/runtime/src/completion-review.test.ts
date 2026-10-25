@@ -51,13 +51,14 @@ for (const mode of ['revised','unsubmitted','invalid','budget'] as const) test('
         return;
       }
       assert.equal(session,2);assert.equal(options.spec.evaluation.systemPrompt,profile.completionReview);
-      assert.equal(options.spec.model.model,'test');assert.equal(options.spec.model.thinking,'low');
+      assert.equal(options.spec.model.model,'test');assert.equal(options.spec.model.thinking,'off');
+      assert.deepEqual(options.tools.map(t=>t.name),['submit_evaluation']);
       assert.deepEqual(JSON.parse(prompt),{initial_result:candidate});
       assert.equal(options.spec.recovery,undefined);
       if(mode==='unsubmitted')return;
       if(mode==='budget')assert.equal((await options.execute('read_trace',{candidate:'answer',message_index:0,path:'/content'})).isError,true);
       if(mode==='invalid'){
-        await options.execute('submit_evaluation',{summary:7});return;
+        await options.execute('submit_evaluation',{candidate:'answer',message_index:11,path:'/output'});return;
       }
       assert.equal((await options.execute('submit_evaluation',revised)).terminate,true);
     },async abort(){},async dispose(){}};

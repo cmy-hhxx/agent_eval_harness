@@ -22,7 +22,10 @@ export function finalResponsibilityReview(request:AgentRequest,draft:unknown,res
     const node=answer.execution_nodes.find(n=>n.execution_node_index===t.execution_node_index)!;
     return [{responsibility_boundary:'boundary:'+t.transition_index,component,action:({generation:'生成正文',request_formation:'生成调用参数',execution:'执行请求',transfer:'传递材料',delivery:'交付'})[t.kind],message_index:node.message_index,call_name:String(raw.messages[node.message_index].name??'')}];
   });
+  const transferChoices=answer.transitions.filter(t=>t.kind==='transfer').map(t=>({responsibility_boundary:'boundary:'+t.transition_index,
+    component:null,action:'材料传递（处理调用未采集）',message_index:null,call_name:''}));
   const reads=new Map<string,TraceRead>();
+  const reviewBoundaries=new Set<string>();
   const add=(items:{evidence_id:string}[])=>items.flatMap(item=>{
     const p=parseEvidenceCoordinates(item.evidence_id);
     if(!p||p.input_id!==request.sources.answer.id||p.kind==='image'||p.end<=p.start)return [];
@@ -37,22 +40,37 @@ export function finalResponsibilityReview(request:AgentRequest,draft:unknown,res
     if(!sources.has(a.message_index))sources.set(a.message_index,evidenceSources(raw.messages[a.message_index]));
     return evidenceCovers(raw,request.sources.answer.id,outer.evidence_id,inner.evidence_id,sources.get(a.message_index),selectionCache);
   };
+  const original=(items:{evidence_id:string}[])=>items.map(item=>{
+    const p=parseEvidenceCoordinates(item.evidence_id);if(!p||p.kind==='image')return '';
+    if(!sources.has(p.message_index))sources.set(p.message_index,evidenceSources(raw.messages[p.message_index]));
+    return sources.get(p.message_index)!.find(s=>s.kind===p.kind&&s.path===p.path)?.text.slice(p.start,p.end)??'';
+  }).join('\n');
+  const finalGenerations=answer.transitions.filter(t=>t.kind==='generation'&&responsibilityDisplay(request,t.transition_index).component==='终稿生成轮');
   const problems=submitted.Problem.map((problem,i)=>{
     const proof=value.Problem[i].evidence??[];
     const selected=[problem,...problem.related_responsibilities??[]].flatMap(r=>{
       const t=answer.transitions.find(t=>'boundary:'+t.transition_index===r.responsibility_boundary);return t?[t]:[];
     });
     // A broad reference to the entire input must not select every historical chain.
-    const directChains=answer.business_chains.filter(c=>selected.some(t=>t.kind!=='generation'&&t.chain_indices.includes(c.chain_index))||
+    // Select counterevidence from original requests/returns as well as initial citations.
+    // Identifiers only retrieve material; they never assign blame or decide a defect.
+    const identifiers=[...new Set((problem.text+' '+problem.reason).match(/\b[A-Z][A-Z0-9.]{1,9}\b/g)??[])]
+      .filter(s=>!['ETF','ETFS','USD','EPS','TTM','CEO','SQL','PE','PB','YTD','Q1','Q2','Q3','Q4'].includes(s));
+    const relevant=(c:typeof answer.business_chains[number])=>{
+      const text=original([...c.checkpoints[2].evidence,...c.checkpoints[3].evidence]);
+      return identifiers.some(id=>new RegExp('(^|[^a-z0-9])'+id.replace(/\./g,'\\.')+'([^a-z0-9]|$)','i').test(text));
+    };
+    const directChains=answer.business_chains.filter(c=>relevant(c)||selected.some(t=>t.kind!=='generation'&&t.chain_indices.includes(c.chain_index))||
       proof.some(e=>[c.request_index,...c.return_indices].includes(e.message_index)||
         c.checkpoints[5].evidence.some(entry=>covers(entry,e))));
-    const generations=selected.filter(t=>t.kind==='generation'||t.kind==='request_formation');
+    const generations=[...new Set([...selected.filter(t=>t.kind==='generation'||t.kind==='request_formation'),...finalGenerations])];
     const generationMessages=generations.filter(t=>responsibilityDisplay(request,t.transition_index).component==='终稿生成轮').flatMap(t=>answer.execution_nodes.filter(n=>n.execution_node_index===t.execution_node_index).map(n=>n.message_index));
     // If the selected return has no captured propagation, disambiguate it from
     // same-tool records actually present in this input. Do not follow ancestors
     // or claim that one invocation's empty result belongs to another invocation.
     const missingTools=new Set(directChains.filter(c=>!c.context_indices.some(i=>generationMessages.includes(i))).map(c=>c.tool_component));
     const chains=answer.business_chains.filter(c=>directChains.includes(c)||missingTools.has(c.tool_component)&&c.context_indices.some(i=>generationMessages.includes(i)));
+    for(const t of answer.transitions)if(selected.includes(t)||generations.includes(t)||chains.some(c=>t.chain_indices.includes(c.chain_index)))reviewBoundaries.add('boundary:'+t.transition_index);
     const inputs=chains.flatMap(c=>c.checkpoints[5].evidence).filter(e=>generations.some(t=>t.before.some(b=>covers(b,e))));
     const selectedInputs=proof.filter(e=>generations.some(t=>t.before.some(b=>covers(b,e))));
     // For an unsupported assertion with no linked source, the captured input of
@@ -76,18 +94,20 @@ export function finalResponsibilityReview(request:AgentRequest,draft:unknown,res
   const required=[...reads.values()].filter((r,i,all)=>!all.some((other,j)=>j!==i&&other.message_index===r.message_index&&other.kind===r.kind&&other.path===r.path&&other.start<=r.start&&other.end>=r.end));
   if(required.reduce((n,r)=>n+r.end-r.start,0)>240000)throw new ValidationError([{category:'decision',code:'review_material_too_large',path:'/Problem',
     message:'本问题相关原文超过单轮复核材料预算，不能截断证据或直接确认；保留草稿为未完成。'}]);
+  const initialEvidence=value.Problem.flatMap(p=>p.evidence??[]);
   const originals=required.map(read=>{
     const source=evidenceSources(raw.messages[read.message_index]).find(s=>s.kind===read.kind&&s.path===read.path);
     if(!source)throw new Error('复核原始材料不存在');
     const id=[...reads].find(([,r])=>r===read)![0];
     return {reference:{evidence_id:id},message_index:read.message_index,path:read.path,quote:source.text.slice(read.start,read.end)};
-  });
+  }).filter(item=>!initialEvidence.some(e=>covers(e,item.reference)));
   return {question:(request.input.answer as JsonObject).question,
     answer:(request.input.answer as JsonObject).final_answer,
-    originals,problems,choices,...(emptyReview?{empty_review:emptyReview}:{}),read_requests:required,
+    originals,problems,choices:[...choices,...transferChoices].filter(c=>!value.Problem.length||reviewBoundaries.has(c.responsibility_boundary)),...(emptyReview?{empty_review:emptyReview}:{}),read_requests:required,
     initial_result:value,
-    submission_bindings:submitted.Problem.map((p,i)=>({problem_id:value.Problem[i].problem_id,
+    submission_bindings:submitted.Problem.map(p=>({
       responsibility_boundary:p.responsibility_boundary,evidence:p.evidence,
+      ...(p.responsibility_chain?{responsibility_chain:p.responsibility_chain}:{}),
       ...(p.related_responsibilities?{related_responsibilities:p.related_responsibilities}:{}),
       ...(p.calculations?{calculations:p.calculations}:{})})),
   } as unknown as JsonObject;
