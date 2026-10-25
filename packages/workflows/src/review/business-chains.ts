@@ -1,5 +1,5 @@
 import { attributionTaxonomy } from "@eval/prompts";
-import { answerTurnContexts, cite, evidenceSources, messageContentSources, parseEvidenceCoordinates, selectEvidenceSource, traceComponentIdentities, traceExchanges } from "@eval/tools";
+import { answerTurnContexts, cite, evidenceSources, messageContentSources, overlapsImagePlaceholder, parseEvidenceCoordinates, selectEvidenceSource, traceComponentIdentities, traceExchanges } from "@eval/tools";
 import type { BusinessChain, Evidence } from "@eval/agents/attribution";
 import { processSourceInventory } from "./citations.js";
 import { getAnswerGeneration } from "./answer-generation.js";
@@ -22,6 +22,17 @@ export function businessChains(raw: RawInput, inputId: string, finalIndex: numbe
     let range = selectEvidenceSource(sources, path);
     if (range && range.start === range.end) range = selectEvidenceSource(sources.filter(source => source.kind === "json"), path);
     if (!range) return [];
+    if (overlapsImagePlaceholder(range.source.text, range.start, Math.min(range.end, range.start + limit))) {
+      // A multimodal container is navigation, not text evidence for the image inside it.
+      let remaining = limit;
+      return sources.flatMap(source => {
+        if (source.kind !== "text" || !source.path.startsWith(path + "/") || !source.text.length || remaining <= 0) return [];
+        const end = Math.min(source.text.length, remaining);
+        if (overlapsImagePlaceholder(source.text, 0, end)) return [];
+        remaining -= end;
+        return [cite(inputId, index, source, 0, end)];
+      });
+    }
     return [cite(inputId, index, range.source, range.start, Math.min(range.end, range.start + limit))];
   };
   const outputs = (index: number): Evidence[] => sourcesAt(index)
