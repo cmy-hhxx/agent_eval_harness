@@ -12,19 +12,20 @@ import { attributionSubmissionSchema } from "./submission-schema.js";
 import { attributionFindingBasis } from "./finding-basis.js";
 import { businessChainReads } from "./investigation.js";
 import { investigationMaterial } from "./investigation-material.js";
+import { responsibilityFunctions } from "./responsibility.js";
 export { attributionFindingBasis } from "./finding-basis.js";
 export { attributionNormDirectory, type AttributionNorm } from "./norm-directory.js";
 export { numericReferenceDirectory } from "./units.js";
 export * from "./types.js";
-export { responsibilityLabels } from "./responsibility.js";
+export { responsibilityLabels, responsibilityFunctions } from "./responsibility.js";
 export { attributionTableChecks, attributionTableReview } from "./table-review.js";
 export type { TableReviewConcern } from "./table-review.js";
 // Attribution resolves evidence IDs into source locations before the result is accepted.
 const toolNames = [
   "read_trace", "search_trace", "view_image", "calculate", "execute_code",
-  "read_artifact", "edit_json",
+  "read_artifact",
 ];
-const prompt = agentPrompt("attribution", toolNames, { fileSubmission: true, draftWriteInCallLimit: true });
+const prompt = agentPrompt("attribution", toolNames, { fileSubmission:false });
 export const attributionProfile: AgentProfile = {
   id: "default",
 
@@ -37,13 +38,16 @@ export const attributionProfile: AgentProfile = {
   renderPrompt(input, policy, failure) {
     const analysis = input.task_analysis as { requirements: Record<string, unknown>[]; scoring_points: Record<string, unknown>[]; red_flags: Record<string, unknown>[] };
     const answer = input.answer as Record<string, unknown>;
-    const { norm_directory: _norms, ...answerMaterial } = answer;
+    const { norm_directory: _norms, component_catalog: _actors, ...answerMaterial } = answer;
     const requirements: Record<string, unknown>[] = analysis.requirements.map((item,index) => ({ ...item,
       requirement_index: Number(item.requirement_index ?? index) + 1 }));
     const { allow_standard_conflict, ...material } = input;
     const shown = { ...material, task_analysis: { ...analysis, requirements },
-      responsibility_taxonomy: attributionTaxonomy,
-      responsibility_choices: (answer.component_catalog as { component: string }[]).map(actor => actor.component),
+      responsibility_functions: responsibilityFunctions.map((row, index) => ({ function_index: index + 1, ...row })),
+      responsibility_stages: attributionTaxonomy.stages.map((stage, index) => ({ failure_stage_index: index + 1, stage })),
+      investigation_steps: attributionTaxonomy.investigation_steps.map((step, index) => ({ step_index: index + 1, step })),
+      responsibility_actors: (answer.component_catalog as { component: string; kind: string; role: string; message_indices: number[] }[])
+        .map(({component,kind,role,message_indices},index)=>({actor_index:index+1,component,kind,role,message_indices})),
       ...(allow_standard_conflict === true ? { standard_answer_review: standardConflictInstructions } : {}),
       criterion_check_count: requirements.length+analysis.scoring_points.length+analysis.red_flags.length,
       criterion_checks: [...requirements,...analysis.scoring_points,...analysis.red_flags].map(item => ({ text:item.text })),

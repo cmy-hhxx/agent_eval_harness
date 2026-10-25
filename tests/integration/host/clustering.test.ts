@@ -28,7 +28,7 @@ function problemAttribution(answer: string, inputId: string): AttributionResult 
     ...result.findings[0]!,
     type: "problem",
     reason: "原文给出5，正确结果应为4。",
-    problem: { diagnosis: "other" as const, investigation: [], component: [responsibilityFixture("最终作答节点（原始名称未提供）", {evidence_ids: []})], label: "算术错误", definition: "计算与事实不符。" },
+    problem: { diagnosis: "other" as const, investigation: [], component: [responsibilityFixture("最终回答组织", {evidence_ids: []})], label: "算术错误", definition: "计算与事实不符。" },
   };
   return result;
 }
@@ -78,7 +78,7 @@ test("a batch may create every component its own observations use", async () => 
     const evaluation = {
       ...attributionResult(false),
       findings: [
-        { ...finding, finding_id: "f0", problem: { diagnosis: "other" as const, investigation: [], component: [responsibilityFixture("Search", {evidence_ids: []}), responsibilityFixture("最终作答节点（原始名称未提供）", {evidence_ids: [], role: "contributing"})], label: "检索不足", definition: "检索结果不完整，模型仍给出确定结论。" } },
+        { ...finding, finding_id: "f0", problem: { diagnosis: "other" as const, investigation: [], component: [responsibilityFixture("Search", {evidence_ids: []}), responsibilityFixture("最终回答组织", {evidence_ids: [], role: "contributing"})], label: "检索不足", definition: "检索结果不完整，模型仍给出确定结论。" } },
       ],
     };
     const dependencies = { [inputId]: { evaluation } } as unknown as Record<string, SubmissionReceipt | undefined>;
@@ -118,7 +118,7 @@ test("clustering bind preserves each shard's reserved component headroom", async
     const bound = shards.map((task, index) => {
       const inputId = Object.keys(task.dependencies)[0]!;
       const evaluation = attributionResult(false);
-      const component = index === 0 ? "Search" : "最终作答节点（原始名称未提供）";
+      const component = index === 0 ? "Search" : "最终回答组织";
       evaluation.findings[0]!.problem = { diagnosis: "other" as const, investigation: [], component: [responsibilityFixture(component, {evidence_ids: []})], label: "算术错误", definition: "计算不符。" };
       const dependencies = { [inputId]: { evaluation } } as unknown as Record<string, SubmissionReceipt>;
       const request = comparisonWorkflow.bind(task, {}, dependencies, { tasks: plan.tasks }).request;
@@ -409,7 +409,7 @@ test("explicit deferred reclassification preserves original receipts and uses on
         const material = parsedMaterial(options.spec) as { answer: { final_answer: string } };
         const value = problemAttribution(material.answer.final_answer, options.spec.inputs.find(input => input.name === "answer")!.id);
         value.findings.push({ ...structuredClone(value.findings[0]!), finding_id: "f-second", importance: "low",
-          problem: { diagnosis: "other" as const, investigation: [], component: [responsibilityFixture("最终作答节点（原始名称未提供）", {evidence_ids: []})], label: "第二现象", definition: "与计算错误具有不同边界的第二现象。" } });
+          problem: { diagnosis: "other" as const, investigation: [], component: [responsibilityFixture("最终回答组织", {evidence_ids: []})], label: "第二现象", definition: "与计算错误具有不同边界的第二现象。" } });
         result = value;
       }
       if (options.spec.evaluation.id === "clustering") {

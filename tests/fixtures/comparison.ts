@@ -17,6 +17,8 @@ import { comparisonSubmission } from "./comparison-submission.js";
 import { normSelection } from "./attribution-submission.js";
 import type { ComparisonSlot } from "@eval/agents/comparison";
 import { comparisonWorkflow } from "@eval/workflows/comparison";
+import { responsibilityFunctions, type AttributionSubmission } from "@eval/agents/attribution";
+import { attributionTaxonomy } from "@eval/prompts";
 
 export const fakeIdentity: EngineIdentity = {
   engine: "pi",
@@ -178,7 +180,7 @@ export function attributionResult(correct = true, answer = "2+2=4", available = 
         },
         problem: correct
           ? null
-          : { diagnosis: "other" as const, investigation: [], component: [responsibilityFixture("最终作答节点（原始名称未提供）", {evidence_ids: ([{ evidence_id: evidenceId(inputId, 1, "text", "/content", 0, answer.length), message_index: 1, quote: answer }]).map(item=>item.evidence_id)})], label: "算术错误", definition: "计算与事实不符。" },
+          : { diagnosis: "other" as const, investigation: [], component: [responsibilityFixture("最终回答组织", {evidence_ids: ([{ evidence_id: evidenceId(inputId, 1, "text", "/content", 0, answer.length), message_index: 1, quote: answer }]).map(item=>item.evidence_id)})], label: "算术错误", definition: "计算与事实不符。" },
       },
     ],
   };
@@ -488,10 +490,13 @@ export function draftFor(spec: Pick<AttemptSpec, "inputs" | "prompt" | "evidence
       evidence_status:row.assessment.evidence_status,evidence_indices:selections(row.evidence),
       basis_index:row.dimension==="instruction_following"?normSelection(norms,row):row.assessment.requirement_index===null?null:row.assessment.requirement_index+1,
     });
+    const investigation_facts:AttributionSubmission["investigation_facts"]=[];
+    const actors=(material as unknown as {responsibility_actors:{actor_index:number;component:string}[]}).responsibility_actors;
     return {
       summary:result.summary,meets_core:core.meets_core,core_reason:core.reason,
       core_requirements:core.criterion_ids.map(id => material.task_analysis.requirements.find(item => item.id === id)!.requirement_index),
-      is_correct:material.ground_truth.available?result.is_correct:null,correctness_reason:material.ground_truth.available?result.correctness_reason:"",correctness_evidence_indices:correctness,
+      ...(material.ground_truth.available?{is_correct:result.is_correct,correctness_reason:result.correctness_reason,correctness_evidence_indices:correctness}:{}),
+      investigation_facts,
       criterion_assessments:(result.criterion_assessments as AttributionResult["criterion_assessments"]).filter(row => row.status !== "not_applicable")
         .map(row => ({status:row.status,evidence_status:row.evidence_status,summary:row.summary,evidence_indices:selections(row.evidence)})),
       numeric_checks:(result.numeric_checks as AttributionResult["numeric_checks"]).map(({expected,matches:_matches,...row}) => ({...row,
@@ -499,7 +504,23 @@ export function draftFor(spec: Pick<AttemptSpec, "inputs" | "prompt" | "evidence
       strengths:(result.findings as AttributionResult["findings"]).filter(row=>row.type==="strength").map(observation),
       problems:(result.findings as AttributionResult["findings"]).filter(row=>row.type==="problem").map(row=>{
         const observed=observation(row),problem=structuredClone(row.problem!);
-        return {...observed,impact:row.assessment.impact,...problem,component:problem.component.map(({evidence_ids,...cause})=>({...cause,evidence_indices:selections(row.evidence.filter(item=>!evidence_ids.length||evidence_ids.includes(item.evidence_id)))}))};
+        const investigation_fact_indices=problem.investigation.flatMap(chain=>chain.steps.flatMap(step=>{
+          if(step.status==='not_collected')return [];
+          const proof=row.evidence.filter(item=>step.evidence_ids.includes(item.evidence_id));
+          const fact={chain_index:chain.chain_index,step_index:attributionTaxonomy.investigation_steps.indexOf(step.step)+1,
+            field_names:[...new Set(problem.component.filter(cause=>cause.chain_index===chain.chain_index).flatMap(cause=>cause.field_names))]
+              .filter(field=>proof.some(item=>item.quote.includes(field))),observation:step.observation,evidence_indices:selections(proof)};
+          const prior=investigation_facts.findIndex(item=>JSON.stringify(item)===JSON.stringify(fact));
+          if(prior>=0)return [prior+1];investigation_facts.push(fact);return [investigation_facts.length];
+        }));
+        return {...observed,impact:row.assessment.impact,diagnosis:problem.diagnosis,label:problem.label,investigation_fact_indices,
+          component:problem.component.map(cause=>({actor_index:actors.find(actor=>actor.component===cause.component)?.actor_index,
+            function_index:responsibilityFunctions.findIndex(item=>item.technical_domain===cause.technical_domain&&item.functional_component===cause.functional_component)+1,
+            step_index:attributionTaxonomy.investigation_steps.indexOf(cause.chain_step)+1,failure_stage_index:attributionTaxonomy.stages.indexOf(cause.failure_stage)+1,
+            business_component:cause.business_component,chain_index:cause.chain_index,field_names:cause.field_names,
+            mechanism_source:cause.mechanism_source,mechanism:cause.mechanism,certainty:cause.certainty,
+            ...(cause.certainty==='inferred'?{evidence_gap:cause.evidence_gap,alternatives:cause.alternatives}:{}),
+            evidence_indices:selections(row.evidence.filter(item=>!cause.evidence_ids.length||cause.evidence_ids.includes(item.evidence_id)))}))};
       }),
       image_observations:[...new Map([...images(result.correctness_evidence ?? []),...(result.findings as AttributionResult["findings"]).flatMap(row=>images(row.evidence))].map(item=>[item.image_number,item])).values()],
     };

@@ -33,6 +33,7 @@ import { object } from "@eval/contracts";
 import { services } from "../../../tests/fixtures/services.js";
 import { attributionAgent } from "@eval/agents/attribution";
 import { traceReadCoverage } from "@eval/tools";
+import { agentPrompt } from "@eval/prompts";
 import { buildPlan, type AttributionResult } from "@eval/workflows/comparison";
 import { AgentRegistry, RunStore, type EvaluationServices } from "@eval/host";
 import { startWorker } from "@eval/runtime/worker";
@@ -59,8 +60,10 @@ interface WorkerHarnessOptions {
 
 const fileProfile: Partial<AgentProfile> = {
   fileSubmission: true, jsonStringSubmission:false, draftWriteInCallLimit:false,
+  toolNames:[...attributionAgent.profiles.default.toolNames,"edit_json"],
   toolDescriptions: {
     ...Object.fromEntries(Object.entries(attributionAgent.profiles.default.toolDescriptions).filter(([name])=>name!=="submit_evaluation")),
+    edit_json:agentPrompt("attribution",["edit_json"],{fileSubmission:true}).toolDescriptions.edit_json,
     submit_evaluation_file: "Submit the complete evaluation JSON file.",
   },
 };
@@ -88,7 +91,7 @@ test("saved flat findings survive later drafting and repair without extra call a
     assert.equal((await options.execute("submit_evaluation_file", { path: "evaluation-draft.json" })).terminate, true);
   }, async abort() {}, async dispose() {} }), {
     material: "source", policy: { maxToolCalls: 3, repairAttempts: 1 },
-    profile: { ...fileProfile, draftWriteInCallLimit: attributionAgent.profiles.default.draftWriteInCallLimit,
+    profile: { ...fileProfile, draftWriteInCallLimit: true,
       toolNames: ["read_trace", "calculate", "edit_json"], requiredReads: () => [],
       toolDescriptions: { read_trace: "Read source.", calculate: "Calculate.", edit_json: "Update draft.", submit_evaluation_file: "Submit draft." },
       submissionSchema: { type: "object", required: ["summary", "problems"], properties: {
@@ -776,7 +779,7 @@ test("exhausted exploration budget still permits submission and two repairs", as
       },
       async abort() {},
       async dispose() {},
-    }), { policy: { maxToolCalls: 2, repairAttempts: 2 } },
+    }), { policy: { maxToolCalls: 2, repairAttempts: 2 }, profile:{...fileProfile,draftWriteInCallLimit:true} },
   );
   try {
     await fixture.start();

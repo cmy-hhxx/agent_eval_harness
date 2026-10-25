@@ -4,6 +4,11 @@ import schema from "../../../../schemas/attribution/submission.schema.json" with
 import { resolveJudgment } from "./resolve.js";
 import { validateJudgment, validateEvaluation } from "./validate.js";
 import { attributionFindingBasis } from "./finding-basis.js";
+import { responsibilityFunctions, responsibilityIdentities } from "./responsibility.js";
+import { attributionTaxonomy } from "@eval/prompts";
+import { businessChainDirectory, investigationIssues } from "./investigation.js";
+import type { ProblemProposal, Evidence } from "./types.js";
+import { resolveAttributionEvidence } from "./source-evidence.js";
 
 const object = (value: unknown): Record<string, any> => value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, any> : {};
 const list = (value: unknown): any[] => Array.isArray(value) ? value : [];
@@ -16,10 +21,10 @@ function bindSubmission(request: AgentRequest, submitted: unknown, audit: ToolAu
   if (value.standard_conflict === true && request.input.allow_standard_conflict !== true)
     issues.push({ category: "decision", code: "standard_conflict_disabled", path: "/standard_conflict",
       message: "本次未开启标准答案复核，按提供的标准核对结果，不提交标准冲突。" });
-  if(!standard)for(const [field,empty]of [["is_correct",null],["correctness_reason",""],["correctness_evidence_indices",[]]] as const)
-    if(Object.hasOwn(value,field) && (Array.isArray(empty)?!Array.isArray(value[field])||value[field].length>0:value[field]!==empty))
-      issues.push({category:"decision",code:"correctness_without_standard",path:`/${field}`,actual:value[field],expected:empty,
-        message:"没有标准答案时，is_correct=null、correctness_reason=空字符串、correctness_evidence_indices=[]；仍须独立核验实际事实和交付。"});
+  if(!standard)for(const field of ["is_correct","correctness_reason","correctness_evidence_indices"])
+    if(Object.hasOwn(value,field))
+      issues.push({category:"decision",code:"correctness_without_standard",path:`/${field}`,actual:value[field],
+        message:"没有标准答案时不提交正确性包装字段，由程序填充；仍须独立核验实际事实和交付。"});
   if(value.standard_conflict===true&&!standard)
     issues.push({category:"decision",code:"standard_conflict_without_standard",path:"/standard_conflict",actual:true,
       message:"没有标准答案时不能声明标准冲突；事实和交付按实际核验结果记录。"});
@@ -59,6 +64,30 @@ function bindSubmission(request: AgentRequest, submitted: unknown, audit: ToolAu
     catch (error) { if (!(error instanceof ValidationError)) throw error; issues.push(...error.issues!); return { evidence_id: "" }; }
   };
   const references = (numbers: unknown, path: string) => list(numbers).map((number,index) => reference(number,`${path}/${index}`));
+  const actors = responsibilityIdentities(request), chains = businessChainDirectory(request);
+  const facts = list(value.investigation_facts).map(object).map((fact, index) => {
+    const path = `/investigation_facts/${index}`;
+    const evidence = references(fact.evidence_indices, `${path}/evidence_indices`);
+    const proofs = evidence.flatMap(ref => {
+      try { return [resolveAttributionEvidence(request, ref, audit, path)]; }
+      catch (error) { if (!(error instanceof ValidationError)) throw error; issues.push(...error.issues!); return []; }
+    });
+    const step = attributionTaxonomy.investigation_steps[Number(fact.step_index) - 1];
+    const chain = chains.find(chain => chain.chain_index === fact.chain_index);
+    const checkpoint = chain?.checkpoints.find(point => point.step === step);
+    if (!chain || !step || checkpoint?.availability !== "available")
+      issues.push({category:"evidence",code:"investigation_fact_boundary",path,
+        message:"调查事实只能关联本方已采集的真实链路边界；未采集环节由程序说明，不用其他环节替代。"});
+    if (list(fact.field_names).some(field => !proofs.some(proof => {
+      const point = parseEvidenceCoordinates(proof.evidence_id);
+      return !proof.source && checkpoint?.evidence.some(boundary=>boundary.message_index===proof.message_index) &&
+        (proof.quote.includes(field) || point && point.kind !== "image" && point.path.includes(field));
+    })))
+      issues.push({category:"evidence",code:"investigation_fact_fields",path:`${path}/field_names`,
+        message:"共享事实的字段必须分别出现在本事实引用的原文或坐标中，不能借用另一事实的字段。"});
+    return {...fact, chain_index:fact.chain_index,field_names:fact.field_names,observation:fact.observation,
+      evidence_indices:fact.evidence_indices,step,evidence_ids:evidence.map(ref=>ref.evidence_id)};
+  });
   const numericRows=list(value.numeric_checks).map(object);
   const correctnessNumbers = [...new Set([...list(value.correctness_evidence_indices), ...numericRows.filter(row=>Object.hasOwn(row,"evidence_index")).map(row => row.evidence_index)])];
   const correctness = correctnessNumbers.map(number => reference(number, list(value.correctness_evidence_indices).includes(number)
@@ -88,22 +117,50 @@ function bindSubmission(request: AgentRequest, submitted: unknown, audit: ToolAu
           message:"指令遵循须选择有真实规范来源的依据。"});
       const ruleBound=row.dimension === "instruction_following" || selected?.kind === "own_rule";
       const component = type === "problem" ? list(row.component).map(object).map((cause, index) => {
-        const { evidence_indices, ...fields } = cause;
-        return { ...fields, evidence_ids: references(evidence_indices, `${path}/component/${index}/evidence_indices`).map(ref => ref.evidence_id) };
+        const { evidence_indices, function_index, step_index, failure_stage_index, ...fields } = cause;
+        return { ...fields, actor_index:cause.actor_index,chain_index:cause.chain_index,field_names:list(cause.field_names),
+          role:index === 0 ? "primary" : "contributing",
+          component:actors[Number(cause.actor_index)-1]?.component,
+          ...responsibilityFunctions[Number(function_index)-1],
+          chain_step:attributionTaxonomy.investigation_steps[Number(step_index)-1],
+          failure_stage:attributionTaxonomy.stages[Number(failure_stage_index)-1], reason:cause.mechanism,
+          evidence_gap:cause.certainty === "confirmed" ? null : cause.evidence_gap,
+          alternatives:cause.certainty === "confirmed" ? [] : cause.alternatives,
+          evidence_ids: references(evidence_indices, `${path}/component/${index}/evidence_indices`).map(ref => ref.evidence_id) };
       }) : [];
-      const investigation = type === "problem" ? list(row.investigation).map(object).map((chain, i) => ({
-        chain_index: chain.chain_index, steps: list(chain.steps).map(object).map((step, j) => {
-          const { evidence_indices, ...fields } = step;
-          return { ...fields, evidence_ids: references(evidence_indices, `${path}/investigation/${i}/steps/${j}/evidence_indices`).map(ref => ref.evidence_id) };
+      const linkedFacts = type === "problem" ? list(row.investigation_fact_indices).flatMap((number, index) => {
+        const fact = Number.isSafeInteger(number) ? facts[Number(number)-1] : undefined;
+        if (fact) return [fact];
+        issues.push({category:"evidence",code:"investigation_fact_reference",path:`${path}/investigation_fact_indices/${index}`,
+          message:"选择 investigation_facts 中已有事实的正整数序号，不能引用缺失行或另一张目录。",actual:number});
+        return [];
+      }) : [];
+      for (const cause of component) if (cause.chain_index !== null && list(cause.field_names).some(field =>
+        !linkedFacts.some(fact => fact.chain_index === cause.chain_index && list(fact.field_names).includes(field))))
+        issues.push({category:"evidence",code:"investigation_fact_scope",path:`${path}/investigation_fact_indices`,
+          message:"每条问题须关联核实自身实际字段的调查事实，不能因使用同一链路就借用其他字段的核查。"});
+      const investigation = [...new Set(linkedFacts.map(fact=>fact.chain_index))].map(chain_index => ({
+        chain_index, steps: attributionTaxonomy.investigation_steps.flatMap(step => {
+          const checked = linkedFacts.filter(fact=>fact.chain_index === chain_index && fact.step === step);
+          const checkpoint = chains.find(chain=>chain.chain_index === chain_index)?.checkpoints.find(point=>point.step === step);
+          if (checked.length) return [{step,status:"checked",observation:checked.map(fact=>fact.observation).join("；"),
+            evidence_ids:[...new Set(checked.flatMap(fact=>fact.evidence_ids))]}];
+          return checkpoint?.availability === "not_collected" ? [{step,status:"not_collected",observation:checkpoint.note,evidence_ids:[]}] : [];
         }),
-      })) : [];
+      }));
       const evidence = references([...new Set([...list(row.evidence_indices), ...list(row.component).flatMap(cause => list(object(cause).evidence_indices)),
-        ...list(row.investigation).flatMap(chain => list(object(chain).steps).flatMap(step => list(object(step).evidence_indices)))])], `${path}/evidence_indices`);
+        ...linkedFacts.flatMap(fact=>list(fact.evidence_indices))])], `${path}/evidence_indices`);
+      if(type === "problem") {
+        const selected:Evidence[]=evidence.flatMap(ref=>{try{return [resolveAttributionEvidence(request,ref,audit,path)];}
+          catch(error){if(!(error instanceof ValidationError))throw error;issues.push(...error.issues!);return [];}});
+        issues.push(...investigationIssues(request,{component,diagnosis:row.diagnosis,investigation,label:row.label,definition:row.reason} as ProblemProposal,selected,audit,path)
+          .map(issue=>({...issue,path:issue.path.replace(/\/investigation(?:\/.*)?$/u,"/investigation_fact_indices")})));
+      }
       return { type, dimension: row.dimension, stage: row.stage, importance: row.importance, text: row.text, reason: row.reason, evidence,
         ...(ruleBound ? {norm_index:selected?.norm_index ?? null} : {}),
         assessment: { observation: row.text, evidence_status: row.evidence_status, impact: type === "strength" ? row.reason : row.impact,
           ...(ruleBound ? {} : {requirement_index:selected?.requirement_index ?? null}) },
-        ...(type === "problem" ? {problem: {component,diagnosis:row.diagnosis,investigation,label:row.label,definition:row.definition}} : {}),
+        ...(type === "problem" ? {problem: {component,diagnosis:row.diagnosis,investigation,label:row.label,definition:row.reason}} : {}),
       };
     }),
     ...(Object.hasOwn(value,"table_resolutions") ? { table_resolutions: list(value.table_resolutions).map(object).map((row,index) => ({
@@ -161,6 +218,10 @@ function modelIssues(issues: ValidationIssue[], bound: ReturnType<typeof bindSub
       .replace(/^\/core_assessment\/(?:requirement_indices|criterion_ids)/u,"/core_requirements")
       .replace(/^\/core_assessment$/u,"/core_requirements")
       .replace(/^\/correctness_evidence/u,"/correctness_evidence_indices")
+      .replace(/\/investigation(?:\/.*)?$/u,"/investigation_fact_indices")
+      .replace(/\/component\/(\d+)\/(?:technical_domain|functional_component)$/u,"/component/$1/function_index")
+      .replace(/\/component\/(\d+)\/chain_step$/u,"/component/$1/step_index")
+      .replace(/\/component\/(\d+)\/failure_stage$/u,"/component/$1/failure_stage_index")
       .replace(/(\/findings\/\d+)\/(?:assessment|problem)\//u,"$1/")
       .replace(/\/evidence(?=\/|$)/u,"/evidence_indices").replace(/\/criterion_id$/u,"")
       .replace(/\/observation$/u,"/text").replace(/\/problem$/u,"")};

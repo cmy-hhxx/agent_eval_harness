@@ -14,7 +14,7 @@ function fixture(){
  return {request,tool:quote(1,'/output'),input:quote(2,'/input_messages/0/content'),final:quote(3,'/content')};
 }
 test('each problem requires exactly one primary cause and valid function taxonomy',()=>{
- const f=fixture(),cause=responsibilityFixture('最终作答节点（原始名称未提供）',{evidence_ids:[f.final.evidence_id]});
+ const f=fixture(),cause=responsibilityFixture('最终回答组织',{actor_index:2,evidence_ids:[f.final.evidence_id]});
  const check=(component:unknown[])=>responsibilityIssues(f.request,{component},[f.final],'/problem');
  assert.deepEqual(check([cause]),[]);assert(check([]).some(x=>x.code==='responsibility_primary'));
  assert(check([cause,{...cause,mechanism:'另一失误。'}]).some(x=>x.code==='responsibility_primary'));
@@ -22,7 +22,7 @@ test('each problem requires exactly one primary cause and valid function taxonom
  assert.deepEqual(responsibilityLabels({component:[cause]}),['模型推断与生成/事实关系推导']);
 });
 test('inference needs explicit missing evidence and alternative explanations, while the defect can stay established',()=>{
- const f=fixture(),cause=responsibilityFixture('最终作答节点（原始名称未提供）',{evidence_ids:[f.final.evidence_id]});
+ const f=fixture(),cause=responsibilityFixture('最终回答组织',{actor_index:2,evidence_ids:[f.final.evidence_id]});
  for(const patch of [{evidence_gap:null},{alternatives:[]}])assert(responsibilityIssues(f.request,{component:[{...cause,...patch}]},[f.final],'/problem').some(x=>x.code==='responsibility_inference'));
  assert.deepEqual(responsibilityIssues(f.request,{component:[cause]},[f.final],'/problem'),[]);
 });
@@ -33,16 +33,16 @@ test('confirmed tool responsibility needs that tool process, and a model node is
  assert(responsibilityIssues(f.request,{component:[wrong]},[f.input],'/problem').some(x=>x.code==='responsibility_process_missing'));
  assert(responsibilityIssues(f.request,{component:[wrong]},[f.input],'/problem').some(x=>x.code==='responsibility_actor_locator'));
  assert(!responsibilityChoices(f.request).includes('llm-call-0'));
- const mislabeled={...wrong,component:'最终作答节点（原始名称未提供）',certainty:'inferred'};
+ const mislabeled={...wrong,actor_index:2,component:'最终回答组织',certainty:'inferred'};
  assert(responsibilityIssues(f.request,{component:[mislabeled]},[f.input],'/problem').some(x=>x.code==='responsibility_actor_domain'));
 });
 test('confirmed context loss needs the actual model input, not just an original tool return',()=>{
- const f=fixture(),cause=responsibilityFixture('最终作答节点（原始名称未提供）',{technical_domain:'上下文工程',functional_component:'实际输入传递',certainty:'confirmed',evidence_gap:null,alternatives:[],evidence_ids:[f.tool.evidence_id]});
+ const f=fixture(),cause=responsibilityFixture('最终回答组织',{actor_index:2,technical_domain:'上下文工程',functional_component:'实际输入传递',certainty:'confirmed',evidence_gap:null,alternatives:[],evidence_ids:[f.tool.evidence_id]});
  assert(responsibilityIssues(f.request,{component:[cause]},[f.tool],'/problem').some(x=>x.code==='responsibility_process_missing'));
  cause.evidence_ids=[f.input.evidence_id];assert.deepEqual(responsibilityIssues(f.request,{component:[cause]},[f.input,f.final],'/problem'),[]);
 });
 test('selected actor names retain their source coordinates and forged identities or node links are rejected',()=>{
- const f=fixture(),cause=responsibilityFixture(undefined,{evidence_ids:[f.final.evidence_id]});
+ const f=fixture(),cause=responsibilityFixture(undefined,{actor_index:2,evidence_ids:[f.final.evidence_id]});
  const problem=resolveProblemSubmission(f.request,{diagnosis:"other",investigation:[],component:[cause],label:'价格口径错误',definition:'ETF份额价混作现货价。'},[f.final],'/problem');
  const actor=responsibilityIdentities(f.request).find(actor=>actor.component===problem.component[0].component)!;
  assert.deepEqual(actor.message_indices,[2,3]);
@@ -54,7 +54,21 @@ test('selected actor names retain their source coordinates and forged identities
  assert(componentCatalogIssues(f.request).length);
 });
 test('a contributing cause cannot borrow absent evidence or duplicate the primary mechanism',()=>{
- const f=fixture(),cause=responsibilityFixture('最终作答节点（原始名称未提供）',{evidence_ids:[f.final.evidence_id]});
+ const f=fixture(),cause=responsibilityFixture('最终回答组织',{actor_index:2,evidence_ids:[f.final.evidence_id]});
  assert(responsibilityIssues(f.request,{component:[cause,{...cause,role:'contributing'}]},[f.final],'/problem').some(x=>x.code==='responsibility_duplicate'));
  assert(responsibilityIssues(f.request,{component:[{...cause,evidence_ids:[f.tool.evidence_id]}]},[f.final],'/problem').some(x=>x.code==='responsibility_evidence'));
+});
+test('same-name actors keep their real name and cannot borrow another record to confirm responsibility',()=>{
+ const raw={messages:[{type:'llm_turn',name:'Planner',output:[{role:'assistant',content:'选择ETF。'}]},
+  {type:'llm_turn',name:'Planner',output:[{role:'assistant',content:'选择现货。'}]},{role:'assistant',content:'最终交付。'}]};
+ const actors=traceComponentIdentities(raw,id,2);
+ const request={input:{answer:{final_message_index:2,component_catalog:actors}},sources:{answer:{id,value:raw}}} as unknown as AgentRequest;
+ const leaf=evidenceSources(raw.messages[0]).find(row=>row.path==='/output/0/content')!;
+ const evidence=cite(id,0,leaf,0,leaf.text.length);
+ const cause=responsibilityFixture('Planner',{actor_index:1,technical_domain:'模型推断与生成',functional_component:'事实关系推导',
+  certainty:'confirmed',evidence_gap:null,alternatives:[],evidence_ids:[evidence.evidence_id]});
+ assert.deepEqual(responsibilityIssues(request,{component:[cause]},[evidence],'/problem'),[]);
+ cause.actor_index=2;
+ assert(responsibilityIssues(request,{component:[cause]},[evidence],'/problem').some(issue=>issue.code==='responsibility_actor_evidence'));
+ assert.deepEqual(actors.slice(0,2).map(actor=>actor.component),['Planner','Planner']);
 });

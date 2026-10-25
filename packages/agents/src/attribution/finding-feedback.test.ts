@@ -11,7 +11,7 @@ function fixture(){const request=structuredClone(example.request);setFixtureNorm
  draft:attributionSubmission(request,example.result as AttributionResult,audit)};}
 test("saved draft submission keeps a shallow schema with numeric directory selections",()=>{
  const f=fixture(),prepared=prepareFixtureEvidence(f.registry,f.binding),schema=prepared.evaluation.outputSchema as any;
- assert.equal(prepared.evaluation.fileSubmission,true);assert(schema.properties.strengths.items.properties.evidence_indices);
+ assert.equal(prepared.evaluation.fileSubmission,false);assert(schema.properties.strengths.items.properties.evidence_indices);
  assert(!schema.properties.strengths.items.properties.assessment);assert(!schema.properties.strengths.items.properties.problem);
 });
 test("missing flat fields receive the exact current writable field shape",()=>{

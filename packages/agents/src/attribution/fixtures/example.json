@@ -42,7 +42,7 @@
         ],
         "component_catalog": [
           {
-            "component": "最终作答节点（原始名称未提供）",
+            "component": "最终回答组织",
             "kind": "model",
             "role": "final_answer",
             "identity_status": "role_only",

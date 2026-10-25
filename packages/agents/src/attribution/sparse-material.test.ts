@@ -46,7 +46,7 @@ test("final-only answers can confirm correctness and core delivery without priva
   assert(f.norms.every(norm => norm.roles.every(role => role === "user")));
   const schema = attributionProfile.modelSubmissionSchema!(f.request) as {
     properties: { problems: { items: { properties: { component: { items: { enum: string[] } } } } } } };
-  assert((schema.properties.problems.items.properties.component.items as any).properties.component.enum.includes("最终作答节点（原始名称未提供）"));
+  assert.equal((schema.properties.problems.items.properties.component.items as any).properties.actor_index.maximum,1);
   const accepted = f.resolve();
   assert.equal(accepted.is_correct, true);
   assert.equal(accepted.core_assessment.meets_core, true);
@@ -67,7 +67,7 @@ test("a confirmed final-answer error stays established when its component cannot
     importance: "high", text: "加法结果错误。", reason: "回答为5，标准答案为4，未提供过程记录。",
     evidence: [f.evidence], assessment: { requirement_index: 0, observation: "最终结果为5。",
       evidence_status: "established", impact: "唯一所求结果不能使用。" },
-    problem: { diagnosis: "other" as const, investigation: [], component: [responsibilityFixture("最终作答节点（原始名称未提供）",{evidence_ids:[f.evidence.evidence_id]})], label: "结果错误", definition: "最终结果错误，现有材料无法定位出错环节。" } }];
+    problem: { diagnosis: "other" as const, investigation: [], component: [responsibilityFixture("最终回答组织",{evidence_ids:[f.evidence.evidence_id]})], label: "结果错误", definition: "最终结果错误，现有材料无法定位出错环节。" } }];
   const accepted = f.resolve();
   assert.equal(accepted.is_correct, false);
   assert.equal(accepted.core_assessment.meets_core, false);
@@ -75,7 +75,7 @@ test("a confirmed final-answer error stays established when its component cannot
   assert.equal(accepted.findings[0].problem!.component[0].certainty,"inferred");
   assert.equal(accepted.findings[0].stage, "final_answer");
   const invented = attributionSubmission(f.request, accepted, f.audit);
-  invented.problems[0].component = [responsibilitySubmissionFixture("InvisibleCalculator")];
+  invented.problems[0].component = [responsibilitySubmissionFixture(f.request,"InvisibleCalculator")];
   assert.throws(() => f.registry.resolve(f.binding, invented, f.audit), error =>
     error instanceof ValidationError && error.issues!.some(issue => issue.code === "schema_enum" ||
       issue.code === "responsibility_actor"));

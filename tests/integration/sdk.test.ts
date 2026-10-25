@@ -30,7 +30,7 @@ for (const engine of ["pi", "prime"] as Engine[])
         serverErrors: string[] = [];
       let permits = 0, activePermits = 0;
       const stageRequests = { criteria: 0, attribution: 0, comparison: 0, verification: 0, "instruction-review": 0 };
-      const expectedStageRequests = { criteria: 1, attribution: engine === "pi" ? 8 : 4, comparison: 1, verification: 4, "instruction-review": 2 };
+      const expectedStageRequests = { criteria: 1, attribution: engine === "pi" ? 4 : 2, comparison: 1, verification: 4, "instruction-review": 2 };
       const gateway = await listen(async (req, res) => {
         try {
           assert(activePermits > 0, "every real SDK HTTP request must hold a model permit");

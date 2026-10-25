@@ -350,10 +350,6 @@
             "type": "string",
             "minLength": 1
           },
-          "definition": {
-            "type": "string",
-            "minLength": 1
-          },
           "component": {
             "type": "array",
             "uniqueItems": true,
@@ -361,83 +357,26 @@
               "type": "object",
               "additionalProperties": false,
               "required": [
-                "technical_domain",
-                "functional_component",
-                "component",
-                "failure_stage",
-                "mechanism",
-                "reason",
-                "role",
-                "certainty",
-                "evidence_gap",
-                "alternatives",
-                "evidence_indices",
+                "actor_index",
+                "function_index",
                 "business_component",
                 "chain_index",
-                "chain_step",
+                "step_index",
+                "failure_stage_index",
                 "field_names",
-                "mechanism_source"
+                "mechanism_source",
+                "mechanism",
+                "certainty",
+                "evidence_indices"
               ],
               "properties": {
-                "technical_domain": {
-                  "type": "string",
-                  "minLength": 1
+                "actor_index": {
+                  "type": "integer",
+                  "minimum": 1
                 },
-                "functional_component": {
-                  "type": "string",
-                  "minLength": 1
-                },
-                "component": {
-                  "type": "string",
-                  "minLength": 1
-                },
-                "failure_stage": {
-                  "type": "string",
-                  "minLength": 1
-                },
-                "mechanism": {
-                  "type": "string",
-                  "minLength": 1
-                },
-                "reason": {
-                  "type": "string",
-                  "minLength": 1
-                },
-                "role": {
-                  "enum": [
-                    "primary",
-                    "contributing"
-                  ]
-                },
-                "certainty": {
-                  "enum": [
-                    "confirmed",
-                    "inferred"
-                  ]
-                },
-                "evidence_gap": {
-                  "type": [
-                    "string",
-                    "null"
-                  ],
-                  "minLength": 1
-                },
-                "alternatives": {
-                  "type": "array",
-                  "uniqueItems": true,
-                  "items": {
-                    "type": "string",
-                    "minLength": 1
-                  }
-                },
-                "evidence_indices": {
-                  "type": "array",
-                  "minItems": 1,
-                  "uniqueItems": true,
-                  "items": {
-                    "type": "integer",
-                    "minimum": 1
-                  }
+                "function_index": {
+                  "type": "integer",
+                  "minimum": 1
                 },
                 "business_component": {
                   "type": "string",
@@ -450,17 +389,14 @@
                   ],
                   "minimum": 1
                 },
-                "chain_step": {
-                  "enum": [
-                    "用户目标",
-                    "查询规划与标的选择",
-                    "工具请求参数",
-                    "原始返回及字段含义",
-                    "返回整理与上下文传递",
-                    "模型实际输入",
-                    "数据解释与计算",
-                    "核验与最终交付"
-                  ]
+                "step_index": {
+                  "type": "integer",
+                  "minimum": 1,
+                  "maximum": 8
+                },
+                "failure_stage_index": {
+                  "type": "integer",
+                  "minimum": 1
                 },
                 "field_names": {
                   "type": "array",
@@ -475,8 +411,66 @@
                     "explicit_process",
                     "boundary_comparison"
                   ]
+                },
+                "mechanism": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "certainty": {
+                  "enum": [
+                    "confirmed",
+                    "inferred"
+                  ]
+                },
+                "evidence_indices": {
+                  "type": "array",
+                  "uniqueItems": true,
+                  "items": {
+                    "type": "integer",
+                    "minimum": 1
+                  },
+                  "minItems": 1
+                },
+                "evidence_gap": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "alternatives": {
+                  "type": "array",
+                  "minItems": 1,
+                  "uniqueItems": true,
+                  "items": {
+                    "type": "string",
+                    "minLength": 1
+                  }
                 }
-              }
+              },
+              "allOf": [
+                {
+                  "if": {
+                    "properties": {
+                      "certainty": {
+                        "const": "inferred"
+                      }
+                    },
+                    "required": [
+                      "certainty"
+                    ]
+                  },
+                  "then": {
+                    "required": [
+                      "evidence_gap",
+                      "alternatives"
+                    ]
+                  },
+                  "else": {
+                    "properties": {
+                      "evidence_gap": false,
+                      "alternatives": false
+                    }
+                  }
+                }
+              ]
             },
             "minItems": 1
           },
@@ -488,68 +482,12 @@
               "other"
             ]
           },
-          "investigation": {
+          "investigation_fact_indices": {
             "type": "array",
+            "uniqueItems": true,
             "items": {
-              "type": "object",
-              "additionalProperties": false,
-              "required": [
-                "chain_index",
-                "steps"
-              ],
-              "properties": {
-                "chain_index": {
-                  "type": "integer",
-                  "minimum": 1
-                },
-                "steps": {
-                  "type": "array",
-                  "minItems": 8,
-                  "maxItems": 8,
-                  "items": {
-                    "type": "object",
-                    "additionalProperties": false,
-                    "required": [
-                      "step",
-                      "status",
-                      "observation",
-                      "evidence_indices"
-                    ],
-                    "properties": {
-                      "step": {
-                        "enum": [
-                          "用户目标",
-                          "查询规划与标的选择",
-                          "工具请求参数",
-                          "原始返回及字段含义",
-                          "返回整理与上下文传递",
-                          "模型实际输入",
-                          "数据解释与计算",
-                          "核验与最终交付"
-                        ]
-                      },
-                      "status": {
-                        "enum": [
-                          "checked",
-                          "not_collected"
-                        ]
-                      },
-                      "observation": {
-                        "type": "string",
-                        "minLength": 1
-                      },
-                      "evidence_indices": {
-                        "type": "array",
-                        "uniqueItems": true,
-                        "items": {
-                          "type": "integer",
-                          "minimum": 1
-                        }
-                      }
-                    }
-                  }
-                }
-              }
+              "type": "integer",
+              "minimum": 1
             }
           }
         },
@@ -564,11 +502,56 @@
           "evidence_indices",
           "basis_index",
           "label",
-          "definition",
           "component",
           "diagnosis",
-          "investigation"
+          "investigation_fact_indices"
         ]
+      }
+    },
+    "investigation_facts": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "chain_index",
+          "step_index",
+          "field_names",
+          "observation",
+          "evidence_indices"
+        ],
+        "properties": {
+          "chain_index": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "step_index": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 8
+          },
+          "field_names": {
+            "type": "array",
+            "uniqueItems": true,
+            "items": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "observation": {
+            "type": "string",
+            "minLength": 1
+          },
+          "evidence_indices": {
+            "type": "array",
+            "uniqueItems": true,
+            "items": {
+              "type": "integer",
+              "minimum": 1
+            },
+            "minItems": 1
+          }
+        }
       }
     }
   },
@@ -581,8 +564,6 @@
     "numeric_checks",
     "strengths",
     "problems",
-    "is_correct",
-    "correctness_reason",
-    "correctness_evidence_indices"
+    "investigation_facts"
   ]
 }

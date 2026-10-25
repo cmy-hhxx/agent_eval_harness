@@ -33,7 +33,8 @@ export function businessChainFixture(loss = false, question = "Gold prediction f
   const chains = (binding.request.input.answer as { business_chains: BusinessChain[] }).business_chains;
   const chain = chains[0], evidence = [...new Map([...chain.checkpoints.flatMap(point => point.evidence), ...chain.final_evidence]
     .map(item => [item.evidence_id, item])).values()];
-  const cause = responsibilityFixture(undefined, { business_component: "finquery 返回的价格口径解释与使用", chain_index: 1,
+  const cause = responsibilityFixture(undefined, { actor_index:(binding.request.input.answer as {component_catalog:{component:string}[]}).component_catalog.findIndex(actor=>actor.component==='最终回答组织')+1,
+    business_component: "finquery 返回的价格口径解释与使用", chain_index: 1,
     chain_step: "数据解释与计算", field_names: ["etf code", "etf name", "Closing Price[20261022]"],
     mechanism: "将ETF份额价格用于现货黄金报价构造，输入369与输出3690的十倍差异可见，具体转换动作未记录。",
     evidence_ids: evidence.map(item => item.evidence_id), evidence_gap: "未记录中间换算或计算过程。",

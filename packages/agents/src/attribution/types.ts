@@ -58,6 +58,8 @@ export interface ProblemProposal {
   definition: string;
 }
 export interface Responsibility {
+  /** One-based source-directory selection; identical display names remain distinct. */
+  actor_index: number;
   role: "primary" | "contributing";
   technical_domain: string;
   functional_component: string;
@@ -94,7 +96,28 @@ export interface BusinessChain {
   checkpoints: { step: string; availability: "available" | "not_collected"; evidence: Evidence[]; note: string }[];
   final_evidence: Evidence[];
 }
-export type ResponsibilitySubmission = Omit<Responsibility, "evidence_ids"> & { evidence_indices: number[] };
+export interface ResponsibilitySubmission {
+  actor_index: number;
+  function_index: number;
+  business_component: string;
+  chain_index: number | null;
+  step_index: number;
+  failure_stage_index: number;
+  field_names: string[];
+  mechanism_source: Responsibility["mechanism_source"];
+  mechanism: string;
+  certainty: Responsibility["certainty"];
+  evidence_indices: number[];
+  evidence_gap?: string;
+  alternatives?: string[];
+}
+export interface InvestigationFactSubmission {
+  chain_index: number;
+  step_index: number;
+  field_names: string[];
+  observation: string;
+  evidence_indices: number[];
+}
 export interface AttributionFinding extends Finding {
   /** Stable within this answer; used to preserve problem-library occurrence lineage. */
   finding_id: string;
@@ -147,9 +170,9 @@ export interface AttributionSubmission {
   meets_core: boolean | null;
   core_reason: string;
   core_requirements: number[];
-  is_correct: boolean | null;
-  correctness_reason: string;
-  correctness_evidence_indices: number[];
+  is_correct?: boolean | null;
+  correctness_reason?: string;
+  correctness_evidence_indices?: number[];
   standard_conflict?: boolean;
   criterion_assessments: {
     status: Exclude<CriterionAssessment["status"], "not_applicable">;
@@ -158,9 +181,10 @@ export interface AttributionSubmission {
     evidence_indices: number[];
   }[];
   strengths: ObservationSubmission[];
-  problems: (ObservationSubmission & Omit<ProblemProposal,"component" | "investigation"> & {
+  investigation_facts: InvestigationFactSubmission[];
+  problems: (ObservationSubmission & Pick<ProblemProposal,"diagnosis" | "label"> & {
     component:ResponsibilitySubmission[]; impact:string;
-    investigation: { chain_index: number; steps: (Omit<ChainInvestigation["steps"][number], "evidence_ids"> & { evidence_indices: number[] })[] }[];
+    investigation_fact_indices: number[];
   })[];
   numeric_checks: {
     label: string; reference_index: number; actual: string | number | null; scale: string;

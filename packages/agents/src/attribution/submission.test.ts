@@ -52,7 +52,7 @@ function captureFixture(marker: string) {
   f.draft.problems=[{basis_index:null,dimension:"format",stage:"final_answer",importance:"low",
     text:"可视交付有缺口。",reason:"所选材料只提供了采集状态。",impact:"图中内容无法交付给用户。",
     evidence_status:"established",evidence_indices:[selectEvidence(f.audit.evidenceBank!,capture).evidence_index],
-    diagnosis: "other", investigation: [], component:[responsibilitySubmissionFixture("最终作答节点（原始名称未提供）",[selectEvidence(f.audit.evidenceBank!,capture).evidence_index],{technical_domain:"交付与呈现",functional_component:"实际呈现"})],label:"展示缺失",definition:"原始可视内容无法正常呈现。"}];
+    diagnosis: "other", investigation_fact_indices: [], component:[responsibilitySubmissionFixture(f.request,"最终回答组织",[selectEvidence(f.audit.evidenceBank!,capture).evidence_index],{technical_domain:"交付与呈现",functional_component:"实际呈现"})],label:"展示缺失"}];
   return {...f,capture,final};
 }
 
@@ -113,7 +113,7 @@ test("model-returned objects keep a bounded responsibility layer and program-own
     return Math.max(next,...Object.values(value.properties??{}).map(item=>depth(item,next)),value.items?depth(value.items,next):next,
       ...(value.allOf??[]).map((item:any)=>depth(item,next)));
   }
-  assert.equal(depth(schema),4); // Root → problem → related chain → checked business step.
+  assert.equal(depth(schema),3); // Root → problem → responsibility; shared facts are parallel rows.
   assert(!JSON.stringify(schema).includes('"evidence_id"'));
   assert(!JSON.stringify(schema).includes('"criterion_id"'));
 });
@@ -174,7 +174,7 @@ test("a minor ancillary defect does not contradict a met task requirement, while
   (f.request.sources.answer.value as {messages:{content:string}[]}).messages[1].content+="。。";
   f.draft.problems.push({...f.draft.strengths[0],dimension:"format",importance:"low",text:"句尾重复了句号。",
     reason:"计算值4正确，句尾多写的句号不改变数值。",impact:"不影响计算结果的使用。",
-    diagnosis: "other", investigation: [], component:[responsibilitySubmissionFixture("最终作答节点（原始名称未提供）",f.draft.strengths[0].evidence_indices)],label:"标点重复",definition:"正确数值之后出现重复句号。"});
+    diagnosis: "other", investigation_fact_indices: [], component:[responsibilitySubmissionFixture(f.request,"最终回答组织",f.draft.strengths[0].evidence_indices)],label:"标点重复"});
   const result=f.registry.resolve(f.binding,f.draft,f.audit) as AttributionResult;
   assert.equal(result.criterion_assessments[0].status,"met");
   assert.equal(result.findings[1].type,"problem");
@@ -185,11 +185,11 @@ test("a minor ancillary defect does not contradict a met task requirement, while
   }
 });
 
-test("no-standard submissions use explicit empty correctness fields and preserve independent read errors",()=>{
+test("no-standard submissions omit program correctness fields and preserve independent read errors",()=>{
   const request=structuredClone(example.request) as AgentRequest;
   request.input.ground_truth={available:false,value:null};
   const f=fixture(request);
-  assert.equal(f.draft.is_correct,null);assert.equal(f.draft.correctness_reason,"");assert.deepEqual(f.draft.correctness_evidence_indices,[]);
+  assert(!Object.hasOwn(f.draft,"is_correct"));assert(!Object.hasOwn(f.draft,"correctness_reason"));assert(!Object.hasOwn(f.draft,"correctness_evidence_indices"));
   f.registry.validate(f.binding,f.registry.resolve(f.binding,f.draft,f.audit),f.audit);
   for(const [key,value]of [["is_correct",true],["correctness_reason","已核对标准"],["correctness_evidence_indices",[1]]] as const)
     assert.throws(()=>f.registry.resolve(f.binding,{...f.draft,[key]:value},f.audit),ValidationError);

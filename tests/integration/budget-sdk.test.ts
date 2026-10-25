@@ -154,7 +154,7 @@ for (const engine of ["pi", "prime"] as const)
 // A schema-valid unknown norm cannot establish compliance; final delivery is explicitly selected.
 // File submission and its reserved writer remain available after repair exploration is exhausted.
 for (const engine of ["pi", "prime"] as const)
-    test(`${engine}: Responses file profile repairs an unknown basis selector after exploration is exhausted`,
+    test(`${engine}: Responses structured profile repairs an unknown basis selector after exploration is exhausted`,
       { timeout: 60000 }, async () => {
         const { directory, config, models } = await fixtureConfig();
         const norm = "结论优先：正文第一句明确判断，随后使用 Markdown 解释依据。";
@@ -168,8 +168,7 @@ for (const engine of ["pi", "prime"] as const)
         const normProof = cite(request.sources.answer.id, 1, normSource, 0, normSource.text.length);
         Object.assign(request.input.answer as object, { final_evidence: [finalProof] });
         const norms = setFixtureNormDirectory(request);
-        const fileProfile={...attributionProfile,draftWriteInCallLimit:false};
-        const registry = new AgentRegistry([{ id: "attribution", profiles: { default: fileProfile } }]);
+        const registry = new AgentRegistry([{ id: "attribution", profiles: { default: attributionProfile } }]);
         const analysis = request.input.task_analysis as unknown as TaskAnalysis;
         const modelAnalysis = { task_type: analysis.task_type, goal: analysis.goal,
           ...Object.fromEntries((["requirements", "scoring_points", "red_flags"] as const).map(kind => [kind,
@@ -219,9 +218,8 @@ for (const engine of ["pi", "prime"] as const)
             issue.code === "finding_basis_invalid" && issue.path === `/strengths/${findingIndex}/basis_index`) &&
             error.issues!.every(issue => issue.path === `/strengths/${findingIndex}/basis_index`),
           "a nonexistent directory entry is rejected without changing the submitted judgment");
-        const submissions = ["submit_evaluation_file"];
+        const submissions = ["submit_evaluation"];
         const allTools = [...attributionProfile.toolNames, ...submissions];
-        const writeDraft = (value: unknown) => ({ path: "evaluation.json", set_json: JSON.stringify(value) });
         const frames = (payload: Record<string, unknown>) => {
           const outputs = (payload.input as Record<string, unknown>[]).filter(item => item.type === "function_call_output").map(item => String(item.output));
           return outputs.flatMap(output => output.split("\n").flatMap(line => {
@@ -233,65 +231,36 @@ for (const engine of ["pi", "prime"] as const)
         const gateway = await listen(async (req, res) => {
           try {
             const payload = object(await body(req)), current = ++requests;
-            assert(current <= 9, "two real file writes, two content submissions, and four exploration calls terminate the loop");
+            assert(current <= 7, "five exploration calls and two native submissions terminate the loop");
             const definitions = payload.tools as Record<string, unknown>[];
             const names = definitions.map(tool => tool.name);
             const history = frames(payload), budget = object(history.filter(frame => frame.budget).at(-1)?.budget ?? {});
             const contentFeedback = history.filter(frame => Array.isArray(frame.errors) && frame.budget &&
               Object.hasOwn(object(frame.budget), "content_remaining"));
-            assert.deepEqual(names, current === 7 ? ["execute_code", "edit_json", ...submissions]
-              : current >= 8 ? submissions : allTools,
-              `request ${current}: file submission and protected draft writes follow their independent budgets`);
-            assert(!names.includes("submit_evaluation"), "built-in attribution never exposes direct nested JSON arguments");
-            const fileTool = definitions.find(tool => tool.name === "submit_evaluation_file")!;
-            const scalarSchema = object(fileTool.parameters);
-            assert.equal(scalarSchema.additionalProperties, false);
-            assert.deepEqual(scalarSchema.required, ["path"]);
-            assert.deepEqual(scalarSchema.properties, { path: { type: "string", minLength: 1 } });
-            const description = String(fileTool.description);
-            const contentSchema = object(JSON.parse(description.slice(description.indexOf('\n{"file_content_schema":') + 1)).file_content_schema);
-            assert.equal(object(object(object(contentSchema.properties).strengths).items).type, "object");
-            if (current === 3) {
-              const errors = history.flatMap(frame => Array.isArray(frame.errors) ? frame.errors : []);
-              assert(errors.some(value => object(value).code === "finding_basis_invalid" &&
-                object(value).path === `/strengths/${findingIndex}/basis_index`));
-              assert.equal(budget.content_remaining, 3, "one rejected file consumes one of the four submissions allowed by three repairs");
-              assert.equal(object(budget.exploration).remaining, 4);
+            assert.deepEqual(names, current === 7 ? submissions : allTools);
+            assert(!names.includes("submit_evaluation_file"));
+            const schema = object(definitions.find(tool=>tool.name==="submit_evaluation")!.parameters);
+            assert.equal(object(object(object(schema.properties).strengths).items).type,"object");
+            if(current === 2){
+              assert(history.flatMap(frame=>Array.isArray(frame.errors)?frame.errors:[]).some(value=>object(value).code==="finding_basis_invalid"));
+              assert.equal(budget.content_remaining,3);
+              assert.equal(object(budget.exploration).remaining,5);
             }
-            if (current === 5) {
-              const read = history.find(frame => frame.selection_path === "/content" && Array.isArray(frame.evidence));
-              const evidence = (read?.evidence as { quote: string; reference: { evidence_index: number } }[] | undefined)?.[0];
-              assert.equal(evidence?.quote, final.text);
+            if(current === 4){
+              const read=history.find(frame=>frame.selection_path==="/content"&&Array.isArray(frame.evidence));
+              assert.equal((read?.evidence as {quote:string}[]|undefined)?.[0]?.quote,final.text);
             }
-            if (current >= 7) {
-              assert.equal(object(budget.exploration).used, 5, "the initial writer and four repair exploration calls are charged");
-              assert.equal(object(budget.exploration).remaining, 0);
-              assert.deepEqual(budget.draft_writes, { used: current === 7 ? 0 : 1,
-                remaining: current === 7 ? 1 : 0, tools: ["execute_code", "edit_json"] });
-              assert.equal(contentFeedback.length, 1, "exploration adds no content rejection or repair");
-              assert.equal(object(contentFeedback[0]!.budget).content_remaining, 3,
-                "content feedback retains the cumulative ledger independently of exploration-only budget frames");
+            if(current === 7){
+              assert.equal(object(budget.exploration).used,5);
+              assert.equal(object(budget.exploration).remaining,0);
+              assert.equal(contentFeedback.length,1,"exploration does not spend another content repair");
+              assert.equal(object(contentFeedback[0]!.budget).content_remaining,3);
             }
-            if (current === 9) assert(history.some(frame => frame.message && /预算|额度/.test(String(frame.message))),
-              "an exhausted code call is rejected without creating writer credit");
-            let name: string, args: Record<string, unknown>;
-            if (current === 1) {
-              name = "edit_json"; args = writeDraft(draft);
-            } else if (current === 2) {
-              name = "submit_evaluation_file"; args = { path: "evaluation.json" };
-            } else if (current === 3 || current === 5) {
-              name = "search_trace"; args = { candidate: "answer", query: current === 3 ? final.text : "=4" };
-            } else if (current === 4) {
-              name = "read_trace"; args = { candidate: "answer", message_index: 2, path: "/content" };
-            } else if (current === 6) {
-              name = "calculate"; args = { operation: "add", operands: ["2", "2"] };
-            } else if (current === 7) {
-              name = "edit_json"; args = writeDraft(validDraft);
-            } else if (current === 8) {
-              name = "execute_code"; args = { language: "python", code: "raise RuntimeError('exhausted code call must never execute')" };
-            } else {
-              name = "submit_evaluation_file"; args = { path: "evaluation.json" };
-            }
+            let name:string,args:Record<string,unknown>;
+            if(current===1||current===7){name="submit_evaluation";args=(current===1?draft:validDraft) as unknown as Record<string,unknown>;}
+            else if(current===2||current===4){name="search_trace";args={candidate:"answer",query:current===2?final.text:"=4"};}
+            else if(current===3){name="read_trace";args={candidate:"answer",message_index:2,path:"/content"};}
+            else{name="calculate";args={operation:"add",operands:["2","2"]};}
             const id = `file-${current}`;
             res.writeHead(200, { "content-type": "text/event-stream" });
             const call = { type: "function_call", id: `fc_${id}`, call_id: `call_${id}`, name, arguments: JSON.stringify(args) };
@@ -326,11 +295,11 @@ for (const engine of ["pi", "prime"] as const)
             workerUrls: [worker.url], runtime: services.runtime,
           });
           assert.deepEqual(gatewayErrors, []);
-          assert.equal(requests, 9);
+          assert.equal(requests, 7);
           const saved = await repository.readRun(path.join(config.output.path, runId)), receipt = saved.receipts["final-evidence-repair"];
           assert.equal(saved.manifest.states["final-evidence-repair"].attempts, 1);
           assert.deepEqual(receipt?.submissionStats, { contentSubmissions: 2, fileErrors: 0 });
-          assert.equal(receipt?.audit.calls, 6, "two real draft writes, three source reads, and one calculation execute; the exhausted extra writer does not run");
+          assert.equal(receipt?.audit.calls, 5, "three source reads and two calculations spend exploration independently of native content repairs");
           assert.equal(receipt?.audit.requiredReadCalls, 0);
           const textRead = { candidate: "answer", message_index: 2, kind: "text", path: "/content", start: 0, end: final.text.length };
           assert.deepEqual(receipt?.audit.traceReads, [textRead, textRead],

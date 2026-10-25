@@ -2,6 +2,8 @@ import { selectEvidence, type AgentRequest, type TaskAnalysis, type ToolAudit } 
 import { attributionNormDirectory, attributionFindingBasis, numericReferenceDirectory, type AttributionResult, type AttributionSubmission } from "@eval/agents/attribution";
 import { parseEvidenceCoordinates, traceComponentIdentities } from "@eval/tools";
 import { businessChains } from "@eval/workflows/review";
+import { responsibilitySubmissionFixture } from "./responsibility.js";
+import { attributionTaxonomy } from "@eval/prompts";
 type NormChoice = { norm_index: number; requirement_index: number | null; evidence: { evidence_id: string }[] };
 /** Construct the current program-owned directory for a hand-built request. */
 export function setFixtureNormDirectory(request: AgentRequest) {
@@ -59,18 +61,31 @@ export function attributionSubmission(request: AgentRequest, result: Attribution
     return {dimension:row.dimension,stage:row.stage,importance:row.importance,text:row.text,reason:row.reason,
       evidence_status:row.assessment.evidence_status,evidence_indices:refs(row.evidence),basis_index};
   };
+  const investigation_facts:AttributionSubmission["investigation_facts"]=[];
   const submission:AttributionSubmission={
     summary:result.summary,meets_core:result.core_assessment.meets_core,core_reason:result.core_assessment.reason,
     core_requirements:result.core_assessment.criterion_ids.map(id=>task.requirements.findIndex(item=>item.id===id)+1),
-    is_correct:truth.available?result.is_correct:null,correctness_reason:truth.available?result.correctness_reason:"",correctness_evidence_indices:truth.available?correctness:[],
+    ...(truth.available?{is_correct:result.is_correct,correctness_reason:result.correctness_reason,correctness_evidence_indices:correctness}:{}),
     ...(truth.available && result.standard_conflict === true ? {standard_conflict:true} : {}),
     criterion_assessments:result.criterion_assessments.flatMap(row=>row.status==="not_applicable"?[]:[{
       status:row.status,evidence_status:row.evidence_status,summary:row.summary,evidence_indices:refs(row.evidence)}]),
     strengths:result.findings.filter(row=>row.type==="strength").map(observation),
+    investigation_facts,
     problems:result.findings.filter(row=>row.type==="problem").map(row=>{
       const observed=observation(row),problem=structuredClone(row.problem!);
-      return {...observed,impact:row.assessment.impact,...problem,investigation:problem.investigation.map(chain=>({...chain,steps:chain.steps.map(({evidence_ids,...step})=>({...step,evidence_indices:refs(row.evidence.filter(item=>evidence_ids.includes(item.evidence_id)))}))})),component:problem.component.map(({evidence_ids,...cause})=>({...cause,
-        evidence_indices:refs(row.evidence.filter(item=>evidence_ids.includes(item.evidence_id)))}))};
+      const investigation_fact_indices=problem.investigation.flatMap(chain=>chain.steps.flatMap(step=>{
+        if(step.status === "not_collected")return [];
+        const evidence=row.evidence.filter(item=>step.evidence_ids.includes(item.evidence_id));
+        const fact={chain_index:chain.chain_index,step_index:attributionTaxonomy.investigation_steps.indexOf(step.step)+1,
+          field_names:[...new Set(problem.component.filter(cause=>cause.chain_index===chain.chain_index).flatMap(cause=>cause.field_names))]
+            .filter(field=>evidence.some(item=>{const point=parseEvidenceCoordinates(item.evidence_id);return item.quote.includes(field)||point&&point.kind!=="image"&&point.path.includes(field);})),
+          observation:step.observation,evidence_indices:refs(evidence)};
+        const found=investigation_facts.findIndex(row=>JSON.stringify(row)===JSON.stringify(fact));
+        if(found>=0)return [found+1];investigation_facts.push(fact);return [investigation_facts.length];
+      }));
+      return {...observed,impact:row.assessment.impact,diagnosis:problem.diagnosis,label:problem.label,investigation_fact_indices,
+        component:problem.component.map(cause=>responsibilitySubmissionFixture(request,cause.component,
+          refs(row.evidence.filter(item=>cause.evidence_ids.includes(item.evidence_id))),cause))};
     }),
     numeric_checks:result.numeric_checks.map(({expected,matches:_matches,...row})=>({...row,
       reference_index:directory.findIndex(item=>item.expected===expected)+1,evidence_index:correctness[row.evidence_index]})),

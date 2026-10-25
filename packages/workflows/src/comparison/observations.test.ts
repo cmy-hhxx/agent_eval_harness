@@ -29,7 +29,7 @@ const problem = (
   problem: { diagnosis: "other" as const, investigation: [], component: [responsibilityFixture(component, {evidence_ids: ([canonicalEvidence("11111111-1111-4111-8111-111111111111", 3, `q-${finding_id}`)]).map(item=>item.evidence_id)})], label, definition: "d" },
 });
 const strength = (finding_id: string): AttributionFinding => ({
-  ...problem(finding_id, "最终作答节点（原始名称未提供）", "无", "无"),
+  ...problem(finding_id, "最终回答组织", "无", "无"),
   type: "strength",
   problem: null,
 });
@@ -43,7 +43,7 @@ const source = (inputId: string, caseId: string, findings: AttributionFinding[])
 
 test("joint responsibility expands by component while preserving one finding identity", () => {
   const finding = problem("f1", "FinQuery", "口径冲突", "返回值冲突且模型忽略冲突");
-  finding.problem!.component.push(responsibilityFixture("最终作答节点（原始名称未提供）",{role:"contributing"}));
+  finding.problem!.component.push(responsibilityFixture("最终回答组织",{role:"contributing"}));
   const observations = groupObservations([source("in-1", "case-1", [finding])]);
   assert.deepEqual(observations.map((item) => item.component).sort(), ["工具业务实现/结果完整性", "模型推断与生成/事实关系推导"]);
   assert(observations.every((item) => item.count === 1 && item.refs[0]!.finding_id === "f1"));
@@ -61,7 +61,7 @@ test("observations collapse identical problems and keep exact finding coordinate
     source("in-1", "case-b", [problem("f1", "色值工具", "色值错误", "颜色错了"), strength("f2")]),
     source("in-2", "case-a", [
       problem("f1", " 色值工具 ", "色值错误", "颜色不对"),
-      problem("f2", "最终作答节点（原始名称未提供）", "算术错误", "算错了"),
+      problem("f2", "最终回答组织", "算术错误", "算错了"),
     ]),
   ]);
   assert.equal(observations.length, 2);
@@ -101,9 +101,9 @@ test("confirmed and suspected occurrences share a class proposal but keep distin
 
 test("identical wording across cases yields one observation with an accurate count", () => {
   const observations = groupObservations([
-    source("in-1", "case-1", [problem("f1", "最终作答节点（原始名称未提供）", "算术错误", "算错")]),
-    source("in-2", "case-2", [problem("f1", "最终作答节点（原始名称未提供）", "算术错误", "算错")]),
-    source("in-3", "case-3", [problem("f1", "最终作答节点（原始名称未提供）", "算术错误", "算错")]),
+    source("in-1", "case-1", [problem("f1", "最终回答组织", "算术错误", "算错")]),
+    source("in-2", "case-2", [problem("f1", "最终回答组织", "算术错误", "算错")]),
+    source("in-3", "case-3", [problem("f1", "最终回答组织", "算术错误", "算错")]),
   ]);
   assert.equal(observations.length, 1);
   assert.equal(observations[0]!.count, 3);
@@ -124,7 +124,7 @@ test("matching labels with different definitions remain separate observations", 
 
 test("a peer-first finding keeps the owner's real evidence coordinates in every responsibility association and one distinct sample", () => {
   const ownerId = "11111111-1111-4111-8111-111111111111", peerId = "22222222-2222-4222-8222-222222222222";
-  const finding = problem("date-conflict", "最终作答节点（原始名称未提供）", "日期口径错误", "实际输出与来源不一致");
+  const finding = problem("date-conflict", "最终回答组织", "日期口径错误", "实际输出与来源不一致");
   finding.problem!.component.push(responsibilityFixture("Search",{role:"contributing"}));
   finding.evidence = [{ ...canonicalEvidence(peerId, 15, "对方工具返回的节假日表"), source: "peer_B", source_input_id: peerId },
     canonicalEvidence(ownerId, 3, "本方实际输出的日期")];
@@ -147,7 +147,7 @@ test("a peer-first finding keeps the owner's real evidence coordinates in every 
 });
 
 test("an owner sample without genuine own evidence fails explicitly instead of substituting peer coordinates or placeholders", () => {
-  const finding = problem("f1", "最终作答节点（原始名称未提供）", "日期错误", "待核日期");
+  const finding = problem("f1", "最终回答组织", "日期错误", "待核日期");
   for (const fields of [{ source: "peer_B", source_input_id: "22222222-2222-4222-8222-222222222222" },
     { source: "peer_B" }, { source_input_id: "22222222-2222-4222-8222-222222222222" }]) {
     finding.evidence = [{ ...canonicalEvidence("22222222-2222-4222-8222-222222222222", 15, "外来日期证据"), ...fields }];
@@ -158,7 +158,7 @@ test("an owner sample without genuine own evidence fails explicitly instead of s
 });
 
 function sample(input_id: string, batch_id: string, status: "established" | "uncertain", dimension: AttributionFinding["dimension"] = "correctness"): ProblemSource {
-  const findings = [problem("finding", "最终作答节点（原始名称未提供）", "算术错误", input_id)];
+  const findings = [problem("finding", "最终回答组织", "算术错误", input_id)];
   findings[0]!.text = input_id;
   findings[0]!.dimension = dimension;
   findings[0]!.assessment.evidence_status = status;

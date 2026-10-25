@@ -191,7 +191,7 @@ test("cluster CLI accepts repeated run selections and previews without creating 
 });
 
 test("new clustering plans isolate responsibility buckets and preserve each model's budget chain", async t => {
-  const f = await fixture(2, ["最终作答节点（原始名称未提供）", "FinQuery"]); t.after(() => rm(f.directory, { recursive: true, force: true }));
+  const f = await fixture(2, ["最终回答组织", "FinQuery"]); t.after(() => rm(f.directory, { recursive: true, force: true }));
   f.config.clustering.maxCasesPerTask = 100; f.config.clustering.maxNewClassesPerTask = 3; f.config.clustering.minSupport = 3;
   const { plan } = await prepareClusteringJob(f.runs, f.config), tasks = plan.tasks.filter(task => task.stage === "clustering");
   assert.equal(tasks.length, 6, "two responsibility buckets plus one directory pass per model");
@@ -225,7 +225,7 @@ test("ordinary targeted attribution reviews in scope must finish before clusteri
 });
 
 test("bucket requests omit unrelated class examples while keeping model-wide caps and complete consolidation", async t => {
-  const f = await fixture(2, ["最终作答节点（原始名称未提供）", "FinQuery"]); t.after(() => rm(f.directory, { recursive: true, force: true }));
+  const f = await fixture(2, ["最终回答组织", "FinQuery"]); t.after(() => rm(f.directory, { recursive: true, force: true }));
   f.config.clustering.maxCasesPerTask = 100;
   const { plan } = await prepareClusteringJob(f.runs, f.config);
   const material = plan.inputs.a_fast as { library: ProblemProjection; config: { clustering: { maxClassesPerModel: number } } };

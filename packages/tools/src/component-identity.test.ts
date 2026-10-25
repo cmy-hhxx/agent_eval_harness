@@ -15,7 +15,7 @@ test("actor identities retain named planners and tools, while the anonymous fina
     { type: "final_answer", content: "黄金3690" },
   ] };
   const before = structuredClone(raw), actors = traceComponentIdentities(raw, id, 5);
-  assert.deepEqual(actors.map(actor => actor.component), ["planner-search", "planner-finquery", "finquery", "最终作答节点（原始名称未提供）"]);
+  assert.deepEqual(actors.map(actor => actor.component), ["planner-search", "planner-finquery", "finquery", "最终回答组织"]);
   assert.deepEqual(actors[2].message_indices, [2, 3]);
   assert.deepEqual(actors[3].message_indices, [4, 5]);
   assert.equal(actors[3].identity_status, "role_only");
@@ -34,12 +34,14 @@ test("multiple unnamed and same-name model records remain individually navigable
     { role: "assistant", content: "完成" },
   ] };
   const actors = traceComponentIdentities(raw, id, 4);
-  assert.equal(new Set(actors.map(actor => actor.component)).size, 5);
+  assert.equal(actors.length, 5);
   assert.deepEqual(actors.map(actor => actor.message_indices), [[0], [1], [2], [3], [4]]);
   assert(actors.slice(0, 2).every(actor => actor.identity_status === "unknown_identity" && actor.identity_gap));
   assert(!JSON.stringify(actors.map(actor => actor.component)).includes("opaque-model"));
-  assert.equal(actors[2].component, "Planner（同名记录1）");
-  assert.equal(actors[3].component, "Planner（同名记录2）");
+  assert.equal(actors[0].component, "中间推理处理");
+  assert.equal(actors[1].component, "中间推理处理");
+  assert.equal(actors[2].component, "Planner");
+  assert.equal(actors[3].component, "Planner");
 });
 
 test("an explicit final node name takes precedence over the anonymous generation locator", () => {

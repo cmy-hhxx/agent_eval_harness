@@ -99,7 +99,7 @@ const submissions = {
     meets_core: true, core_reason: "给出所求结果。", core_requirements: [1],
     criterion_assessments: [{ status: "met", evidence_status: "established", summary: "结果正确。", evidence_indices: [1] }],
     numeric_checks: [{ label: "结果", reference_index: 1, actual: "4", scale: "1", mode: "exact", evidence_index: 1 }],
-    strengths: [], problems: [],
+    strengths: [], problems: [], investigation_facts: [],
   } satisfies AttributionSubmission,
   comparison: {
     a_summary: "已完成。", b_summary: "已完成。", preference: null, relative_preference: "A",

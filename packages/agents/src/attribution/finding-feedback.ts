@@ -8,5 +8,7 @@ export function findingIssueContext(request: AgentRequest, _value: unknown, issu
   let current = schema;
   for (const part of path.split('/').filter(Boolean)) current = /^\d+$/u.test(part) ? current?.items : current?.properties?.[part];
   if (current===undefined) return undefined;
-  return { target: {path},submission_shape:current };
+  return { target: {path},submission_shape:current,
+    ...(["investigation_incomplete","investigation_stage_evidence"].includes(issue.code)
+      ? { investigation_fact_shape:schema.properties.investigation_facts.items } : {}) };
 }

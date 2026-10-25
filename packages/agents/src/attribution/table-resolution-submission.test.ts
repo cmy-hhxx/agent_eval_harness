@@ -37,7 +37,7 @@ function fixture(sourceCount = 1, noteChars = 1040, finalNoteChars = 0, sourceCo
   const finalExcerpt = choose(excerpt(finalIndex, answer.indexOf("588000.SH"), answer.indexOf("588000.SH") + 9));
   const draft: AttributionSubmission = {
     summary: "代码一致，来源使用简称，回答使用基金全称。", meets_core: true, core_reason: "代码与基金对象可对应。", core_requirements: [1],
-    is_correct: null, correctness_reason: "", correctness_evidence_indices: [], numeric_checks: [],
+    numeric_checks: [], investigation_facts: [],
     criterion_assessments: [{ status: "met", evidence_status: "established", summary: "列出原查询对象。", evidence_indices: [finalExcerpt] }],
     strengths: [], problems: [], table_resolutions: [{
       table_index: parseTraceTables(raw, inputId).findIndex(table => table.table_id === checks[0].answer_table_id) + 1,
@@ -119,7 +119,7 @@ function conflictFixture() {
   f.draft.problems.push({ dimension: "correctness", stage: "final_answer", importance: "high", text: "基金代码与原查询不同",
     reason: "相同基金全称，原查询为588001.SH，回答为588000.SH。", impact: "核心标的代码不可用。",
     evidence_status: "established", basis_index: 1, evidence_indices: indices,
-    diagnosis: "other", investigation: [], component: [responsibilitySubmissionFixture("最终作答节点（原始名称未提供）", indices)], label: "基金代码错误", definition: "最终基金代码与同一名称的原查询代码不一致。" });
+    diagnosis: "other", investigation_fact_indices: [], component: [responsibilitySubmissionFixture(f.request,"最终回答组织", indices)], label: "基金代码错误" });
   f.draft.table_resolutions![0].outcome = "conflict";
   f.draft.table_resolutions![0].reason = "完整行与聚焦代码、名称证据均确认同一基金的代码冲突。";
   return f;

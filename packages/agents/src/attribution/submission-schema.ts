@@ -4,7 +4,8 @@ import { numericReferenceDirectory } from "./units.js";
 import { normDirectoryIssues } from "./norm-directory.js";
 import { attributionFindingBasis } from "./finding-basis.js";
 import type { TaskAnalysis } from "@eval/contracts";
-import { componentCatalogIssues, responsibilityChoices, responsibilitySchema } from "./responsibility.js";
+import { componentCatalogIssues, responsibilityIdentities, responsibilityFunctions } from "./responsibility.js";
+import { attributionTaxonomy } from "@eval/prompts";
 
 /** The tool contract and repair feedback share the same request-derived shape. */
 export function attributionSubmissionSchema(request: AgentRequest) {
@@ -13,9 +14,10 @@ export function attributionSubmissionSchema(request: AgentRequest) {
   const schema = structuredClone(submissionSchema);
   if (request.input.allow_standard_conflict !== true)
     delete (schema.properties as Record<string, unknown>).standard_conflict;
-  const responsibility = responsibilitySchema("evidence_indices");
-  Object.assign(responsibility.properties.component, { enum: responsibilityChoices(request) });
-  Object.assign(schema.properties.problems.items.properties.component, { minItems: 1, items: responsibility });
+  const responsibility = schema.properties.problems.items.properties.component.items;
+  Object.assign(responsibility.properties.actor_index, { maximum: responsibilityIdentities(request).length });
+  Object.assign(responsibility.properties.function_index, { maximum: responsibilityFunctions.length });
+  Object.assign(responsibility.properties.failure_stage_index, { maximum: attributionTaxonomy.stages.length });
   const analysis=request.input.task_analysis as unknown as TaskAnalysis;
   const checkCount=[...analysis.requirements,...analysis.scoring_points,...analysis.red_flags]
     .filter(item=>!item.applies_to.length||item.applies_to.includes(request.input.candidate_id as string)).length;
@@ -28,10 +30,12 @@ export function attributionSubmissionSchema(request: AgentRequest) {
     Object.assign(schema.properties[field].items.properties.basis_index, { enum: [...indices, null] });
   const groundTruth = request.input.ground_truth as { available: boolean; value: unknown };
   if (!groundTruth.available) {
-    Object.assign(schema.properties.is_correct,{const:null});
-    Object.assign(schema.properties.correctness_reason,{const:""});
-    Object.assign(schema.properties.correctness_evidence_indices,{maxItems:0});
-  } else Object.assign(schema.properties.correctness_reason,{minLength:1});
+    for (const field of ["is_correct", "correctness_reason", "correctness_evidence_indices"] as const)
+      delete (schema.properties as Record<string, unknown>)[field];
+  } else {
+    schema.required.push("is_correct", "correctness_reason", "correctness_evidence_indices");
+    Object.assign(schema.properties.correctness_reason,{minLength:1});
+  }
   const references = groundTruth.available ? numericReferenceDirectory(groundTruth.value) : [];
   if (!references.length) Object.assign(schema.properties.numeric_checks, { maxItems: 0 });
   else (schema.properties.numeric_checks.items.properties.reference_index as { enum?: number[] }).enum = references.map(item => item.reference_index + 1);

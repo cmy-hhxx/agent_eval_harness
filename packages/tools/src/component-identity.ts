@@ -61,10 +61,10 @@ export function traceComponentIdentities(raw: { messages: unknown[] }, inputId: 
     }
     const existing = tool && name ? rows.find(actor => actor.kind === "tool" && actor.component === name) : undefined;
     if (existing) { existing.message_indices.push(index); continue; }
-    const fallback = role === "final_answer" ? "最终作答节点（原始名称未提供）"
-      : role === "model_call" ? `模型节点（原始名称及职责角色未提供，轨迹第${index + 1}条）`
-      : role === "tool" ? `工具节点（原始名称未提供，轨迹第${index + 1}条）`
-      : `责任节点（名称及职责角色未提供，轨迹第${index + 1}条）`;
+    const fallback = role === "final_answer" ? "最终回答组织"
+      : role === "model_call" ? "中间推理处理"
+      : role === "tool" ? "工具执行"
+      : "流程处理";
     rows.push({ component: name ?? fallback, kind, role,
       identity_status: name ? "named" : role === "unknown" || role === "model_call" ? "unknown_identity" : "role_only",
       message_indices: [index], identity_evidence: nameKey ? proof(origin.index, `/${nameKey}`)
@@ -76,8 +76,7 @@ export function traceComponentIdentities(raw: { messages: unknown[] }, inputId: 
   const names = new Map<string, TraceComponentIdentity[]>();
   for (const row of rows) names.set(row.component, [...names.get(row.component) ?? [], row]);
   for (const duplicates of names.values()) if (duplicates.length > 1)
-    duplicates.forEach((row, index) => {
-      row.component += `（同名记录${index + 1}）`;
+    duplicates.forEach(row => {
       row.identity_gap = "存在多条同名节点记录，无法确认是否属于同一业务节点；按轨迹记录分别定位。";
     });
   return rows;

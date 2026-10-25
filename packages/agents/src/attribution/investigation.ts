@@ -82,10 +82,15 @@ export function investigationIssues(request: AgentRequest, problem: ProblemPropo
   const related = chains.filter(chain => problem.component.some(cause => cause.chain_index === chain.chain_index) ||
     chain.final_evidence.some(item => selected.some(proof => !proof.source && overlaps(item, proof, raw))));
   for (const chain of related) {
+    for (const checkpoint of chain.checkpoints.filter(point=>critical.has(point.step))) for (const item of checkpoint.evidence) {
+      const read=target(item);
+      if(read&&!readCovered(audit,read,raw))add("investigation_read_required",`${path}/investigation`,
+        `继续读取链路 ${chain.chain_index} 的${checkpoint.step}；已采集边界未完整读取，不能据此判定来源缺失或上下文丢失。`,read);
+    }
     const entries = problem.investigation.filter(entry => entry.chain_index === chain.chain_index);
     const where = `${path}/investigation`;
     if (entries.length !== 1 || canonical(entries[0].steps.map(row => row.step).sort()) !== canonical([...attributionTaxonomy.investigation_steps].sort())) {
-      add("investigation_incomplete", where, `相关链路 ${chain.chain_index} 必须沿八个环节追查。investigation 是 [{chain_index,steps:[...]}]，不是扁平步骤数组；每步填写观察、证据或明确未采集的材料，不能在最终生成节点结束。`, {
+      add("investigation_incomplete", where, `相关链路 ${chain.chain_index} 须核实所有已采集边界。在 investigation_facts 登记各步实际观察和证据，并由本问题引用对应序号；未采集边界由程序说明，不能在最终生成节点结束。`, {
         required_chain_index: chain.chain_index,
         checkpoints: chain.checkpoints.map(point => ({ step: point.step, availability: point.availability,
           sources: point.evidence.map(item => ({ message_index: item.message_index, reference: { evidence_id: item.evidence_id } })) })),
@@ -119,11 +124,6 @@ export function investigationIssues(request: AgentRequest, problem: ProblemPropo
             required_sources: group.map(item => ({ message_index: item.message_index, reference: { evidence_id: item.evidence_id } })),
           });
       }
-      if (critical.has(checkpoint.step)) for (const item of checkpoint.evidence) {
-        const read = target(item);
-        if (read && !readCovered(audit, read, raw))
-          add("investigation_read_required", where, `继续读取链路 ${chain.chain_index} 的${checkpoint.step}；材料存在但尚未完整读取，不能据此形成来源缺失、上下文丢失或标的口径结论。`, read);
-      }
     }
   }
   for (const [index, cause] of problem.component.entries()) {
@@ -140,7 +140,7 @@ export function investigationIssues(request: AgentRequest, problem: ProblemPropo
     const proof = selected.filter(item => cause.evidence_ids.includes(item.evidence_id));
     if (chain) {
       const actor = (request.input.answer as { component_catalog: { kind: string; component: string; message_indices: number[] }[] })
-        .component_catalog.find(actor => actor.component === cause.component);
+        .component_catalog[cause.actor_index - 1];
       const nodes = cause.chain_step === "查询规划与标的选择" ? [chain.planner_index]
         : cause.chain_step === "工具请求参数" ? [chain.planner_index, chain.request_index]
         : cause.chain_step === "原始返回及字段含义" ? chain.return_indices
@@ -164,7 +164,7 @@ export function investigationIssues(request: AgentRequest, problem: ProblemPropo
       add("responsibility_formation", location, "模型生成已包含相同错误，交付没有改变该内容；主责应定位此前形成标的或价格口径错误的步骤。");
     if (chain && cause.technical_domain === "上下文工程" && cause.certainty === "confirmed") {
       const actor = (request.input.answer as { component_catalog: { component: string; message_indices: number[] }[] })
-        .component_catalog.find(actor => actor.component === cause.component);
+        .component_catalog[cause.actor_index - 1];
       if (!actor?.message_indices.some(index => chain.context_indices.includes(index) && index !== chain.context_indices.at(-1)))
         add("responsibility_transfer_actor", location, "接收输入的最终节点本身不能确证为上游整理者；须有实际处理者的输入输出记录，否则责任及机制保留推断并说明缺口。");
     }

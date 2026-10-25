@@ -61,7 +61,7 @@ for (const clustering of [false, true]) test(`rewrite embeds named text in stage
             finding.reason = "原文给出5，正确结果应为4。";
             finding.assessment.observation = material.answer.final_answer;
             finding.assessment.impact = "唯一所求结果错误，未完成计算要求。";
-            finding.problem = { diagnosis: "other" as const, investigation: [], component: [responsibilityFixture("最终作答节点（原始名称未提供）", {evidence_ids: []})], label: "计算错误", definition: "计算与事实不符。" };
+            finding.problem = { diagnosis: "other" as const, investigation: [], component: [responsibilityFixture("最终回答组织", {evidence_ids: []})], label: "计算错误", definition: "计算与事实不符。" };
           }
           const result = await submitFor(options, draftFor(options.spec, evaluation));
           assert.equal(result.isError, undefined, JSON.stringify(result));

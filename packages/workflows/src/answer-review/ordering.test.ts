@@ -23,3 +23,11 @@ test('a small or empty cohort retains identities and still brings its longest an
   assert.deepEqual(reviewExecutionOrder([],200,2),[]);
   assert.deepEqual(reviewExecutionOrder(input.slice(0,1),200,1),input.slice(0,1));
 });
+test('Fast and Expert interleave their quick and long cohorts despite different trace lengths',()=>{
+  const fast=candidates([2,4,6,8]).map(row=>({...row,input_id:'f'+row.input_id,version:'fast'}));
+  const expert=candidates([40,80,120,160]).map(row=>({...row,input_id:'e'+row.input_id,version:'expert'}));
+  const input=[...fast,...expert],ordered=reviewExecutionOrder(input,8,2);
+  assert.deepEqual(ordered.map(row=>row.version),['fast','expert','fast','expert','fast','expert','fast','expert']);
+  assert.deepEqual(ordered.slice(0,4).map(row=>row.final_index),[2,40,8,160]);
+  assert.equal(new Set(ordered.map(row=>row.input_id)).size,input.length);
+});

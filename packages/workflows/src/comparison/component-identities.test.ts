@@ -24,7 +24,7 @@ test("workflow binds distinct named planners and an anonymous final actor withou
     component_catalog: TraceComponentIdentity[]; catalog: { message_index: number; name?: string; invoking_model_message_index?: number }[];
   };
   assert.deepEqual(answer.component_catalog.map(actor => [actor.component, actor.message_indices]), [
-    ["planner-search", [1]], ["planner-finquery", [2]], ["finquery", [3, 4]], ["最终作答节点（原始名称未提供）", [5, 6]],
+    ["planner-search", [1]], ["planner-finquery", [2]], ["finquery", [3, 4]], ["最终回答组织", [5, 6]],
   ]);
   const schema = attributionProfile.modelSubmissionSchema!(bound.request) as any;
   const choices = schema.properties.problems.items.properties.component.items.properties.component.enum;

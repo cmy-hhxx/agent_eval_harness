@@ -16,6 +16,8 @@ export function responsibilityIdentities(request: AgentRequest): TraceComponentI
 export function responsibilityChoices(request: AgentRequest): string[] {
   return responsibilityIdentities(request).map(actor => actor.component);
 }
+export const responsibilityFunctions = Object.entries(attributionTaxonomy.domains).flatMap(([technical_domain, components]) =>
+  components.map(functional_component => ({ technical_domain, functional_component })));
 export function componentCatalogIssues(request: AgentRequest): ValidationIssue[] {
   const raw = request.sources.answer.value as { messages: unknown[] };
   const answer = request.input.answer as { final_message_index: number };
@@ -32,8 +34,9 @@ export function responsibilitySchema(evidenceField: "evidence_ids" | "evidence_i
   const text = { type: "string", minLength: 1 };
   return {
     type: "object", additionalProperties: false,
-    required: ["role", "technical_domain", "functional_component", "component", "business_component", "chain_index", "chain_step", "field_names", "mechanism_source", "failure_stage", "mechanism", "certainty", "reason", evidenceField, "evidence_gap", "alternatives"],
+    required: ["actor_index", "role", "technical_domain", "functional_component", "component", "business_component", "chain_index", "chain_step", "field_names", "mechanism_source", "failure_stage", "mechanism", "certainty", "reason", evidenceField, "evidence_gap", "alternatives"],
     properties: {
+      actor_index: { type: "integer", minimum: 1 },
       role: { enum: ["primary", "contributing"] }, technical_domain: text, functional_component: text, component: { ...text },
       business_component: text, chain_index: { type: ["integer", "null"], minimum: 1 },
       chain_step: { enum: attributionTaxonomy.investigation_steps }, field_names: { type: "array", uniqueItems: true, items: text },
@@ -66,10 +69,10 @@ export function responsibilityIssues(request: AgentRequest, problem: unknown, se
   rows.forEach((entry, index) => {
     const row = object(entry); if (!row) return;
     const location = `${path}/component/${index}`;
-    const actor = actors.find(actor => actor.component === row.component);
+    const actor = Number.isSafeInteger(row.actor_index) ? actors[Number(row.actor_index) - 1] : undefined;
     if (typeof row.component === "string" && isComponentLocator(row.component))
       add("responsibility_actor_locator", `${location}/component`, "调用ID、span ID及UUID只能用于导航，不能作为实际组件名称。", row.component);
-    if (!actor) add("responsibility_actor", `${location}/component`, "实际组件须选择Workflow登记的具体责任主体，不能填写技术分类或自行改名。", row.component);
+    if (!actor || actor.component !== row.component) add("responsibility_actor", `${location}/actor_index`, "实际组件须选择Workflow登记的具体责任主体，名称由程序原样回填，不能用同名节点互相替代。", row.actor_index);
     const modelActor = actor?.kind === "model";
     if (modelActor && ["工具业务实现", "工具接入与协议"].includes(String(row.technical_domain)))
       add("responsibility_actor_domain", location, "llm_turn是模型节点，不能因有name而认作工具；定位其推断、控制或实际相关技术功能。", row.component);
@@ -86,6 +89,8 @@ export function responsibilityIssues(request: AgentRequest, problem: unknown, se
     if (row.certainty === "confirmed") {
       if (row.evidence_gap !== null) add("responsibility_certainty", `${location}/evidence_gap`, "确证责任的 evidence_gap 为 null；因果关键材料仍缺失时改为 inferred，不改变缺陷确定性。");
       const own = selected.filter((item): item is Evidence => !!item && !item.source && refs.includes(item.evidence_id));
+      if (actor && !own.some(item=>actor.message_indices.includes(item.message_index)))
+        add("responsibility_actor_evidence", location, "确证责任须有所选具体节点的实际证据，同名其他节点的材料不能替代。");
       const messages = own.map(item => ({ item, message: object(raw.messages[item.message_index]), point: parseEvidenceCoordinates(item.evidence_id) }));
       const actualTool = actor?.kind === "tool" && messages.some(({ message, item }) => message && toolRecord(message) && actor.message_indices.includes(item.message_index));
       if (["工具业务实现", "工具接入与协议"].includes(String(row.technical_domain)) && !actualTool)
@@ -102,7 +107,7 @@ export function responsibilityIssues(request: AgentRequest, problem: unknown, se
       if (["运行环境与资源", "交付与呈现"].includes(String(row.technical_domain)) && !messages.some(({ message }) => message && (toolRecord(message) || message.type === "llm_turn")))
         add("responsibility_process_missing", location, "确证环境或呈现责任须有本方真实过程证据；纯最终回答及采集缺口不能证明故障。");
     }
-    const key = JSON.stringify([row.technical_domain, row.functional_component, row.component, row.failure_stage, row.mechanism]);
+    const key = JSON.stringify([row.technical_domain, row.functional_component, row.actor_index, row.failure_stage, row.mechanism]);
     if (seen.has(key)) add("responsibility_duplicate", location, "同一失误机制只记一次，不能重复列为主责和关联责任。");
     seen.add(key);
   });

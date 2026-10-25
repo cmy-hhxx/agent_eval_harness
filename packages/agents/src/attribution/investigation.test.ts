@@ -28,23 +28,23 @@ test("correct tool return followed by wrong interpretation retains the full busi
 test("a wrong target selected by the planner points back to that planner and exact request, not the final node", () => {
   const f = businessChainFixture(false, "请预测未来6个月XAU/USD现货黄金，必须查询现货美元每盎司，不能使用ETF代理。");
   assert(f.chain.checkpoints[0].evidence.some(item => item.quote.includes("不能使用ETF代理")));
-  f.cause.component = "查询规划 Agent"; f.cause.business_component = "黄金现货查询的标的选择";
+  f.cause.component = "查询规划 Agent"; f.cause.actor_index=1; f.cause.business_component = "黄金现货查询的标的选择";
   f.cause.chain_step = "查询规划与标的选择"; f.cause.field_names = ["query"];
   f.cause.mechanism_source = "explicit_process"; f.cause.certainty = "confirmed"; f.cause.evidence_gap = null; f.cause.alternatives = [];
   f.cause.mechanism = "公开任务明确要求现货时仍计划查询ETF标的；工具依照该计划执行。";
   assert.deepEqual(codes(f), []);
-  f.cause.component = "最终作答节点（原始名称未提供）";
+  f.cause.component = "最终回答组织"; f.cause.actor_index=(f.binding.request.input.answer as any).component_catalog.findIndex((actor:any)=>actor.component===f.cause.component)+1;
   assert(codes(f).includes("responsibility_chain_actor"));
 });
 test("captured context preparation can own identity and unit loss; the receiving final node alone cannot prove that responsibility", () => {
   const f = businessChainFixture(true);
   assert.deepEqual(f.chain.context_indices, [4, 5]);
   f.problem.diagnosis = "context_loss";
-  Object.assign(f.cause, { component: "结果整理 Agent", technical_domain: "上下文工程", functional_component: "压缩摘要",
+  Object.assign(f.cause, { actor_index:(f.binding.request.input.answer as any).component_catalog.findIndex((actor:any)=>actor.component==="结果整理 Agent")+1, component: "结果整理 Agent", technical_domain: "上下文工程", functional_component: "压缩摘要",
     business_component: "finquery 返回的身份与单位整理", chain_step: "返回整理与上下文传递", certainty: "confirmed", mechanism_source: "explicit_process",
     evidence_gap: null, alternatives: [], mechanism: "整理前含ETF身份和美元单位，整理输出只保留price，最终输入沿用该输出。" });
   assert.deepEqual(codes(f), []);
-  f.cause.component = "最终作答节点（原始名称未提供）";
+  f.cause.component = "最终回答组织"; f.cause.actor_index=(f.binding.request.input.answer as any).component_catalog.findIndex((actor:any)=>actor.component===f.cause.component)+1;
   assert(codes(f).includes("responsibility_transfer_actor"));
 });
 test("readable but unread actual input cannot be called missing, including an uncertain source-absence finding", () => {
@@ -202,7 +202,7 @@ test("a tenfold boundary relation cannot self-declare an explicit confirmed proc
 test("an earlier preparer's complete source never substitutes for the final model's input after the source was dropped", () => {
   const f = businessChainFixture(true, undefined, true), last = f.chain.context_indices.at(-1)!;
   f.problem.diagnosis = "context_loss";
-  Object.assign(f.cause, { component: "结果整理 Agent", technical_domain: "上下文工程", functional_component: "压缩摘要",
+  Object.assign(f.cause, { actor_index:(f.binding.request.input.answer as any).component_catalog.findIndex((actor:any)=>actor.component==="结果整理 Agent")+1, component: "结果整理 Agent", technical_domain: "上下文工程", functional_component: "压缩摘要",
     business_component: "finquery 返回整理时删除身份与单位", chain_step: "返回整理与上下文传递", certainty: "confirmed", mechanism_source: "explicit_process",
     evidence_gap: null, alternatives: [], mechanism: "整理前含ETF身份和美元单位，整理输出仅保留price且最后实际输入没有恢复身份与单位。" });
   assert(f.chain.references.includes("pfJtupL"));
@@ -256,7 +256,7 @@ test("prose calculations can clear invented field names without allowing entity 
     .find(issue => issue.code === "responsibility_fields")!.expected, undefined);
 });
 
-test("incomplete investigation feedback exposes the nested submission contract and durable evidence choices", () => {
+test("incomplete investigation feedback exposes shared fact fields and durable evidence choices", () => {
   const f = businessChainFixture(), registry = new AgentRegistry([attributionAgent]);
   f.problem.investigation = [];
   const draft = attributionSubmission(f.binding.request, f.result, f.audit);
@@ -264,7 +264,8 @@ test("incomplete investigation feedback exposes the nested submission contract a
     assert(error instanceof ValidationError);
     const expected = error.issues!.find(issue => issue.code === "investigation_incomplete")!.expected as any;
     assert.equal(expected.submission_shape.type, "array");
-    assert.deepEqual(expected.submission_shape.items.required, ["chain_index", "steps"]);
+    assert.equal(expected.submission_shape.items.type,"integer");
+    assert.deepEqual(expected.investigation_fact_shape.required, ["chain_index","step_index","field_names","observation","evidence_indices"]);
     assert.equal(expected.required_chain_index, 1);
     assert.equal(expected.checkpoints.length, 8);
     assert(expected.checkpoints.flatMap((point: any) => point.sources).every((source: any) => Number.isInteger(source.reference.evidence_index)));
@@ -287,7 +288,7 @@ test("stage repair feedback provides selectable source indices that repair the a
     const indices = expected.required_sources.map((source: any) => source.reference.evidence_index);
     assert(indices.every((index: number) => Number.isInteger(index) && index > 0));
     assert(!JSON.stringify(expected).includes(`ev_${f.candidate.input_id}_`));
-    const step = draft.problems[0].investigation[0].steps.find(step => step.step === expected.step)!;
+    const step = draft.investigation_facts.find(fact => fact.step_index === 5)!;
     step.evidence_indices = [...new Set([...step.evidence_indices, ...indices])] as number[];
     return true;
   });

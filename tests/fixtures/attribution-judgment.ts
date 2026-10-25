@@ -24,7 +24,8 @@ export function attributionJudgment(request: AgentRequest, result: AttributionRe
     return { ...strength,
       ...(finding.dimension === "instruction_following" ? { norm_index: normSelection(norms, finding), assessment: observed }
         : { assessment: { ...observed, requirement_index } }),
-      ...(finding.type === "problem" ? { problem: structuredClone(finding.problem!) } : {}),
+      ...(finding.type === "problem" ? { problem: {...structuredClone(finding.problem!),component:finding.problem!.component.map(cause=>({...cause,
+        actor_index:(request.input.answer as {component_catalog:{component:string}[]}).component_catalog.findIndex(actor=>actor.component===cause.component)+1}))} } : {}),
       evidence: refs(finding.evidence) };
   };
   const draft = {
