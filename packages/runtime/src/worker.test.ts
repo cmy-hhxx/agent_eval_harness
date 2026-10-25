@@ -1669,6 +1669,66 @@ test("a session stopping after rejected submission repairs within the same attem
   } finally { await fixture.close(); }
 });
 
+test("dynamic investigation reads show real pages and preserve the verdict allowance",async()=>{
+  const target:TraceRead={candidate:'answer',message_index:0,kind:'text',path:'/content',start:0,end:3};
+  const fixture=await harness(async options=>({async run(){
+    const draft={ok:true},pending=await submitFor(options,draft),feedback=JSON.parse(pending.content[0].text!);
+    assert.equal(feedback.material_pending,true);assert.equal(feedback.budget.content_remaining,1);
+    assert.equal(pending.content.slice(1).map(b=>b.text).join('\n').includes('abc'),true);
+    assert.equal((await submitFor(options,draft)).terminate,true);
+  },async abort(){},async dispose(){}}),{material:'abc',policy:{repairAttempts:0,maxToolCalls:1},profile:{requiredReads:()=>[],
+    validateSubmission(_request,_value,audit){return traceReadCoverage(audit,target).covered?[]:[{category:'evidence',code:'investigation_read_required',path:'/proof',message:'读取原文。',expected:{read_requests:[target]}}];},
+  }});
+  try{await fixture.start();const status=await fixture.done();assert.equal(status.state,'succeeded',status.error);
+    const receipt=(await fixture.store.receipt(fixture.spec.taskId))!;
+    assert.equal(receipt.submissionStats!.contentSubmissions,1);assert(traceReadCoverage(receipt.audit,target).covered);
+    assert.equal(receipt.audit.calls,1);assert.deepEqual(receipt.submitted,{ok:true});
+  }finally{await fixture.close();}
+});
+test("a repeated dynamic read gap after actual coverage stops without spending a verdict",async()=>{
+  const target:TraceRead={candidate:'answer',message_index:0,kind:'text',path:'/content',start:0,end:3};
+  const fixture=await harness(async options=>({async run(){
+    assert.equal(JSON.parse((await submitFor(options,{ok:true})).content[0].text!).material_pending,true);
+    const rejected=await submitFor(options,{ok:true});assert.equal(rejected.isError,true);
+  },async abort(){},async dispose(){}}),{material:'abc',policy:{repairAttempts:0,maxToolCalls:1},profile:{requiredReads:()=>[],
+    validateSubmission(){return [{category:'evidence',code:'investigation_read_required',path:'/proof',message:'重复缺口。',expected:{read_requests:[target]}}];},
+  }});
+  try{await fixture.start();const status=await fixture.done();assert.notEqual(status.state,'succeeded');
+    assert.equal(status.failure?.contentSubmissions,0);assert(status.failure?.errors.some(e=>e.code==='investigation_read_no_progress'));
+  }finally{await fixture.close();}
+});
+
+test("dynamic investigation reads cannot exceed the existing read budget",async()=>{
+  const targets:TraceRead[]=[{candidate:'answer',message_index:0,kind:'text',path:'/content',start:0,end:3},
+    {candidate:'answer',message_index:1,kind:'text',path:'/content',start:0,end:5}];
+  const fixture=await harness(async options=>({async run(){await submitFor(options,{ok:true});},async abort(){},async dispose(){}}),
+    {material:'abc',policy:{repairAttempts:0,maxToolCalls:1},profile:{requiredReads:()=>[],validateSubmission(_request,_value,audit){
+      const missing=targets.filter(target=>!traceReadCoverage(audit,target).covered);
+      return missing.length?[{category:'evidence',code:'investigation_read_required',path:'/proof',message:'补读。',expected:{read_requests:missing}}]:[];
+    }}});
+  try{await fixture.start();const status=await fixture.done();assert.notEqual(status.state,'succeeded');
+    assert.equal(status.failure?.contentSubmissions,0);assert.match(status.error??'',/budget|预算/u);
+    assert.equal(await fixture.store.receipt(fixture.spec.taskId),undefined);
+  }finally{await fixture.close();}
+});
+test("a verdict with other errors still spends its repair while dynamic pages do not",async()=>{
+  const target:TraceRead={candidate:'answer',message_index:0,kind:'text',path:'/content',start:0,end:3};
+  const fixture=await harness(async options=>({async run(){
+    assert.equal((await submitFor(options,{ok:true})).isError,true);
+    const pending=await submitFor(options,{ok:true,corrected:true});
+    assert.equal(JSON.parse(pending.content[0].text!).material_pending,true);
+    assert.equal((await submitFor(options,{ok:true,corrected:true})).terminate,true);
+  },async abort(){},async dispose(){}}),{material:'abc',policy:{repairAttempts:1,maxToolCalls:1},profile:{requiredReads:()=>[],
+    submissionSchema:{type:'object',additionalProperties:false,required:['ok'],properties:{ok:{const:true},corrected:{type:'boolean'}}},
+    validateSubmission(_request,value,audit){return [
+      ...(!traceReadCoverage(audit,target).covered?[{category:'evidence' as const,code:'investigation_read_required',path:'/proof',message:'补读。',expected:{read_requests:[target]}}]:[]),
+      ...(!(value as {corrected?:boolean}).corrected?[{category:'decision' as const,code:'fixture_verdict_wrong',path:'/corrected',message:'修正判断。'}]:[])];},
+  }});
+  try{await fixture.start();const status=await fixture.done();assert.equal(status.state,'succeeded',status.error);
+    assert.equal((await fixture.store.receipt(fixture.spec.taskId))!.submissionStats!.contentSubmissions,2);
+  }finally{await fixture.close();}
+});
+
 test("submission batches independent short required sources before charging a verdict", async () => {
   const material = "abc--def--ghi";
   const targets: TraceRead[] = [[0,3],[5,8],[10,13]].map(([start,end]) => ({candidate:"answer",message_index:0,kind:"text",path:"/content",start,end}));

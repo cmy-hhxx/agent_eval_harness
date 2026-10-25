@@ -12,6 +12,16 @@ import { bindAttributionMaterial } from "@eval/workflows/review";
 import { cite, evidenceSources, selectEvidenceSource } from "@eval/tools";
 
 const codes = (f: ReturnType<typeof businessChainFixture>) => investigationIssues(f.binding.request, f.problem, f.evidence, f.audit, "/problem").map(issue => issue.code);
+test("optional field metadata is assembled without rewriting the responsibility judgment",()=>{
+  const f=businessChainFixture(),registry=new AgentRegistry([attributionAgent]);
+  const draft=attributionSubmission(f.binding.request,f.result,f.audit) as any;
+  for(const fact of draft.investigation_facts)delete fact.field_names;
+  for(const cause of draft.problems[0].component)delete cause.field_names;
+  const accepted=registry.resolve(f.binding,draft,f.audit) as AttributionResult;
+  registry.validate(f.binding,accepted,f.audit);
+  const cause=accepted.findings.find(f=>f.type==='problem')!.problem!.component[0];
+  assert.deepEqual(cause.field_names,[]);assert.equal(cause.mechanism,f.cause.mechanism);
+});
 test("a read original return leaf beyond the directory preview stays in its actual boundary",()=>{
   const seed=businessChainFixture(),question='查找 MU 的杠杆 ETF。',title='MULL - Leveraged Micron Technology ETF';
   const messages=[{type:'user_question',role:'user',content:question},

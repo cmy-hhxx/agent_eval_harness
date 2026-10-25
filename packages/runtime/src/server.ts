@@ -18,6 +18,7 @@ import {
   type Submission,
   type SubmissionReceipt,
   type ToolAudit,
+  type TraceRead,
   type ToolDefinition,
   type Usage,
   type WorkerEvent,
@@ -278,11 +279,21 @@ export async function startWorker(
         };
       };
       const materialSources = new Map<string, ReturnType<typeof evidenceSources>>();
-      const supplyRequiredMaterial = async () => {
+      const investigationReads = (errors:ValidationIssue[]):TraceRead[] => errors
+        .filter(issue=>issue.code==='investigation_read_required').flatMap(issue=>{
+          const expected=issue.expected as {read_requests?:unknown[]}|undefined;
+          return (expected?.read_requests??[issue.expected]).filter((value):value is TraceRead=>{
+            const read=value as TraceRead|undefined;
+            return !!read&&inputs.has(read.candidate)&&Number.isSafeInteger(read.message_index)&&read.message_index>=0&&
+              ['text','json'].includes(read.kind)&&typeof read.path==='string'&&Number.isSafeInteger(read.start)&&
+              Number.isSafeInteger(read.end)&&read.start>=0&&read.end>read.start;
+          });
+        });
+      const supplyRequiredMaterial = async (dynamic:TraceRead[] = []) => {
         const content: ReturnType<typeof textResult>["content"] = [];
         const read_requests: {candidate:string;message_index:number;path:string;offset:number;max_chars:number}[] = [];
         let used = 0;
-        reading: for (const target of spec.evaluation.requiredReads ?? []) {
+        reading: for (const target of [...spec.evaluation.requiredReads ?? [],...dynamic]) {
           for (;;) {
             const missing = traceReadCoverage(audit, target).missing[0];
             if (!missing) break;
@@ -300,7 +311,10 @@ export async function startWorker(
             emit(attempt, "tool_start", { name: "read_trace", args, required_material: true });
             const read = await runtime.execute("read_trace", args, controller.signal, explorationLimit());
             emit(attempt, "tool_end", { name: "read_trace", result: read, required_material: true });
-            if (read.isError) throw new Error(read.content.map(item => item.text ?? "").join("\n"));
+            if (read.isError) {
+              const message=read.content.map(item => item.text ?? "").join("\n");
+              controller.abort(new Error(message));void attempt.session?.abort();throw new Error(message);
+            }
             if (traceReadCoverage(audit, target).missing[0]?.start === missing.start)
               throw new Error("Required material read made no progress");
             const { budget: _budget, ...page } = read.details as Record<string, unknown>;
@@ -314,6 +328,7 @@ export async function startWorker(
         reserveFileDraft();
         // Deliver every recorded page before judging the draft or charging a verdict.
         const feedback = textResult({ accepted: false, material_pending: true,
+          ...(dynamic.length?{draft_preserved:true,errors:failure.errors}:{}),
           next_tool: nextContentTool(), read_requests, instructions: spec.evaluation.toolDescriptions.read_trace,
           budget: { content_remaining: Math.max(0, 1 + spec.policy.repairAttempts - submissions) },
         });
@@ -335,9 +350,9 @@ export async function startWorker(
             terminate: true,
           };
         controller.signal.throwIfAborted();
-        if (submissions >= 1 + spec.policy.repairAttempts) throw new Error("提交修正次数已耗尽");
-        const material = await supplyRequiredMaterial();
+        const material = await supplyRequiredMaterial(investigationReads(failure.errors));
         if (material) return material;
+        if (submissions >= 1 + spec.policy.repairAttempts) throw new Error("提交修正次数已耗尽");
         let result: unknown;
         try {
           result = await load();
@@ -350,7 +365,7 @@ export async function startWorker(
         }
         submissions++;
         runtime.clearDraftWrite();
-        emit(attempt, "submission", { accepted: false, content_loaded: true, evaluation: result,
+        const emitLoaded = () => emit(attempt, "submission", { accepted: false, content_loaded: true, evaluation: result,
           contentSubmissions: (spec.recovery?.contentSubmissions || 0) + submissions,
           ...(jsonRepairs ? { jsonRepairs } : {}) });
         await writeJson(draftPath, result);
@@ -382,8 +397,7 @@ export async function startWorker(
             if (error instanceof HttpError && error.status < 500) {
               // A definitive rejection is no longer an unacknowledged submission.
               delete record.pendingSubmission;
-              return rejected(
-                error.issues || [
+              const errors = error.issues || [
                   {
                     category: "structure",
                     code: "submission_rejected",
@@ -391,9 +405,20 @@ export async function startWorker(
                     actual: error.status,
                     message: error.message,
                   },
-                ],
-                result,
-              );
+                ];
+              const reads=investigationReads(errors);
+              if(errors.length&&errors.every(issue=>issue.code==='investigation_read_required')&&reads.length){
+                // Host has rejected definitively; this is material delivery, not a new verdict.
+                submissions--;
+                await rejected(errors,result,false,false);
+                const material=await supplyRequiredMaterial(reads);
+                if(material)return material;
+                const message='调查补读后同一缺口无进展：原文已被实际读取，但校验仍要求相同坐标，停止循环重提。';
+                const feedback=await rejected([{category:'evidence',code:'investigation_read_no_progress',path:'/',message,expected:{read_requests:reads}}],result,false,false);
+                controller.abort(new Error(message));void attempt.session?.abort();return feedback;
+              }
+              emitLoaded();
+              return rejected(errors,result);
             }
             try {
               accepted = await request<SubmissionReceipt>(
@@ -410,6 +435,7 @@ export async function startWorker(
           }
         }
         if (!accepted) throw new Error("Host did not acknowledge submission");
+        emitLoaded();
         await writeJson(path.join(attempt.directory, "receipt.json"), accepted);
         delete record.pendingSubmission;
         emit(attempt, "submission", {

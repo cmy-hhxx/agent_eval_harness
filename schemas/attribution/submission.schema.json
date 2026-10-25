@@ -365,7 +365,6 @@
                 "chain_index",
                 "step_index",
                 "failure_stage_index",
-                "field_names",
                 "mechanism_source",
                 "mechanism",
                 "certainty",
@@ -401,6 +400,7 @@
                   "minimum": 1
                 },
                 "field_names": {
+                  "description": "可省略，程序组装为空数组；填写时须来自所引原文或坐标，不新增判断。",
                   "type": "array",
                   "uniqueItems": true,
                   "items": {
@@ -512,7 +512,7 @@
       }
     },
     "investigation_facts": {
-      "description": "只填写已核实且与问题有关的边界，不补八步空模板。每行必须完整提交 chain_index、step_index、field_names、observation、evidence_indices，禁止额外字段；相同事实可供多个问题引用。",
+      "description": "只填写已核实且与问题有关的边界，不补八步空模板。每行提交 chain_index、step_index、observation、evidence_indices，field_names 可省略，禁止额外字段；相同事实可供多个问题引用。",
       "type": "array",
       "items": {
         "type": "object",
@@ -520,7 +520,6 @@
         "required": [
           "chain_index",
           "step_index",
-          "field_names",
           "observation",
           "evidence_indices"
         ],
@@ -535,7 +534,7 @@
             "maximum": 8
           },
           "field_names": {
-            "description": "仅列本事实所选链路/环节的所引原文或路径中实际存在的字段；纯正文分析填 []，不能借用父对象未引用的字段或其他边界字段。",
+            "description": "可省略，程序组装为空数组；主动填写时仅列本事实所引原文或路径实际存在的字段，不能借用父对象未引用的字段或其他边界字段。",
             "type": "array",
             "uniqueItems": true,
             "items": {
