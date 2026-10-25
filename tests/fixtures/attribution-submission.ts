@@ -26,7 +26,7 @@ export function attributionSubmission(request:AgentRequest,result:AttributionRes
     if(component==='责任主体未确定')return null;
     const matches=(request.input.answer as {transitions:{transition_index:number}[]}).transitions.filter(t=>responsibilityDisplay(request,t.transition_index).component===component);
     if(matches.length!==1)throw new Error('Fixture needs an explicit unique responsibility call');
-    return matches[0].transition_index;
+    return `boundary:${matches[0].transition_index}`;
   };
   const ref=(id:string)=>selectEvidence(bank,{evidence_id:id}).evidence_index;
   return {summary:result.summary,...(result.has_standard_answer?{is_correct:result.is_correct,correct_reason:result.correct_reason!}:{}),Problem:result.Problem.map(p=>({

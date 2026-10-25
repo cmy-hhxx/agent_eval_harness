@@ -3,6 +3,7 @@ import {ValidationError, schemaIssues, resolveEvidenceSelection, type AgentReque
 import schema from '../../../../schemas/attribution/submission.schema.json' with {type:'json'};
 import type {AttributionResult,AttributionSubmission,ProblemEvidence} from './types.js';
 import {resolveAttributionEvidence} from './source-evidence.js';
+import {responsibilityBindingIssues} from './responsibility-binding.js';
 import {responsibilityDisplay} from './responsibility.js';
 import {resolveDerivations} from './derivations.js';
 import type {AttributionTransition} from './transitions.js';
@@ -16,6 +17,7 @@ export function validateModelSubmission(request:AgentRequest,draft:unknown,_audi
     if(!available&&Object.hasOwn(value,key))issues.push({category:'decision',code:'correctness_without_standard',path:'/'+key,message:'无标准答案时不提交正确性字段，程序固定填null；仍调查实际问题。'});
     if(available&&!Object.hasOwn(value,key))issues.push({category:'decision',code:'correctness_required',path:'/'+key,message:'有标准答案时须填写比较判断及具体依据。'});
   }
+  if(Array.isArray(value.Problem)&&value.Problem.some(p=>p?.responsibility_boundary===null||(Array.isArray(p?.related_responsibilities)&&p.related_responsibilities.some(r=>r?.responsibility_boundary===null))))issues.push({category:'decision',code:'responsibility_unresolved',path:'/Problem',message:'责任主体无法定位，本次保留问题草稿为未完成；不能删除缺陷、编造主体或正式输出未知责任。'});
   return issues;
 }
 export function resolveModelSubmission(request:AgentRequest,draft:unknown,audit:ToolAudit):AttributionResult{
@@ -28,8 +30,8 @@ export function resolveModelSubmission(request:AgentRequest,draft:unknown,audit:
   const resolve=(index:number,path:string,observation?:string)=>resolveAttributionEvidence(request,resolveEvidenceSelection(audit.evidenceBank??[],{evidence_index:index,...(observation?{observation}:{})},path),audit,path);
   const result:AttributionResult={meta:{input_id:request.sources.answer.id},summary:value.summary,Problem:value.Problem.map((p,i)=>{
     const seenBoundaries=new Set<number>();
-    const selectBoundary=(index:number|null,at:string)=>{if(index===null)return;edge(index,at);if(seenBoundaries.has(index))throw new ValidationError([{category:'decision',code:'responsibility_duplicate',path:at,message:'同一问题的同一责任调用只登记一次。'}]);seenBoundaries.add(index);};
-    selectBoundary(p.responsibility_boundary,'/Problem/'+i+'/responsibility_boundary');
+    const selectBoundary=(selection:string|null,at:string)=>{if(selection===null)return null;const index=Number(selection.slice('boundary:'.length));edge(index,at);if(seenBoundaries.has(index))throw new ValidationError([{category:'decision',code:'responsibility_duplicate',path:at,message:'同一问题的同一责任调用只登记一次。'}]);seenBoundaries.add(index);return index;};
+    const primary=selectBoundary(p.responsibility_boundary,'/Problem/'+i+'/responsibility_boundary');
     const path='/Problem/'+i,selected=new Map<string,ProblemEvidence>();
     const observations=new Map(p.evidence.map(e=>[e.index,e.observation]));
     const evidence=(index:number,at:string)=>{
@@ -47,16 +49,20 @@ export function resolveModelSubmission(request:AgentRequest,draft:unknown,audit:
         const proof=resolve(index,at+'/evidence_indices/'+k,observations.get(index));
         return proof.evidence_id;
       });
-      selectBoundary(r.responsibility_boundary,at);
-      return {...responsibilityDisplay(request,r.responsibility_boundary),
+      const relatedBoundary=selectBoundary(r.responsibility_boundary,at);
+      const bindingIssues=responsibilityBindingIssues(request,relatedBoundary,r.evidence_indices.map(index=>resolve(index,at)),audit,at);
+      if(bindingIssues.length)throw new ValidationError(bindingIssues);
+      return {...responsibilityDisplay(request,relatedBoundary),
         attribution_reason:r.attribution_reason,evidence_ids:ids,...(r.uncertainties?{uncertainties:r.uncertainties}:{})};
     });
+    const bindingIssues=responsibilityBindingIssues(request,primary,[...selected.values()].filter(e=>e.purposes.includes('归因')),audit,path+'/responsibility_boundary');
+    if(bindingIssues.length)throw new ValidationError(bindingIssues);
     const calculations=p.calculations?.length?resolveDerivations(p.calculations,(index,at)=>{
       const proof=resolve(index,at,observations.get(index));
       return proof;
     }):undefined;
     return {problem_id:'p'+(i+1),text:p.text,reason:p.reason,evidence_status:p.evidence_status,evidence:[...selected.values()],
-      ...responsibilityDisplay(request,p.responsibility_boundary),
+      ...responsibilityDisplay(request,primary),
       attribution_reason:p.attribution_reason,...(p.uncertainties?{uncertainties:p.uncertainties}:{}),
       ...(related?{related_responsibilities:related}:{}),...(calculations?{calculations}:{})};
   }),has_standard_answer:available,is_correct:available?value.is_correct!:null,correct_reason:available?value.correct_reason!:null};

@@ -5,6 +5,20 @@ import { cite, evidenceSources, selectEvidenceSource } from "@eval/tools";
 import { businessChains } from "./business-chains.js";
 import { getAnswerGeneration } from "./answer-generation.js";
 
+test("uncited compressed zero-row input remains linked to its unique actual query",()=>{
+  const id="19b0f4da-601f-46d2-83bc-1adec8758217",query='Leveraged ETF that has holding of POM';
+  const raw={messages:[{role:'user',content:query},
+    {type:'tool_call',name:'finquery',input:{query}},
+    {type:'tool_result',name:'finquery',output:{query,status_code:0,datas:[],model_sql:"holding_code='POM.O'",data_sql:"holding_code='POCT.B'"}},
+    {type:'llm_turn',input_messages:[{role:'user',content:'Financial data you fetched:\n'+JSON.stringify({serial_number:'bgr159t',query,row_count:0})}],output:[{role:'assistant',content:'筛选无结果。'}]},
+    {type:'final_answer',content:'筛选无结果。'}]};
+  const chain=businessChains(raw,id,4)[0];
+  assert.deepEqual(chain.context_indices,[3]);
+  assert(chain.checkpoints[5].evidence.some(e=>e.quote.includes('row_count')));
+  assert(chain.checkpoints[3].evidence.some(e=>e.quote.includes('POCT.B')));
+  assert(chain.checkpoints[5].evidence.every(e=>!e.quote.includes('POCT.B')));
+});
+
 test("financial return navigation retains failure status and execution identity beside rows",()=>{
   const id="19b0f4da-601f-46d2-83bc-1adec8758217";
   for(const [status_code,status_msg]of [[0,'ok'],[-2601,'SQL取数异常'],[-2601,'SQL取数异常'.repeat(400)]] as const){

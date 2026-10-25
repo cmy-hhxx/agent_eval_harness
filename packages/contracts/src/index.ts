@@ -143,6 +143,7 @@ export interface ToolAudit {
 }
 export type { ReviewCase, ReviewQuote, ReviewAudit } from "./review.js";
 export interface CompletionCandidate {
+  focusedReview?: boolean;
   id: string;
   superseded?: boolean;
   attemptId: string;
@@ -460,6 +461,8 @@ export interface AgentProfile {
   resultSchema?: JsonSchema;
   /** Prompt-owned instructions for a short same-session review; not a semantic correctness proof. */
   completionReview?: string;
+  /** Program-selected context for one bounded same-session review/correction round. */
+  completionReviewContext?(request:AgentRequest,draft:unknown,result:unknown,audit:ToolAudit):JsonObject|undefined;
   systemPrompt: string;
   instructions: string;
   submissionNudge: string;

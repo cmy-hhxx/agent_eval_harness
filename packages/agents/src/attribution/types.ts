@@ -39,8 +39,8 @@ export interface AttributionSubmission {
   Problem: {
     text: string; reason: string; evidence_status: EvidenceStatus;
     evidence: { index: number; purposes: EvidencePurpose[]; observation?: string }[];
-    responsibility_boundary: number | null; attribution_reason: string; uncertainties?: string[];
-    related_responsibilities?: { responsibility_boundary: number; attribution_reason: string;
+    responsibility_boundary: string | null; attribution_reason: string; uncertainties?: string[];
+    related_responsibilities?: { responsibility_boundary: string; attribution_reason: string;
       evidence_indices: number[]; uncertainties?: string[] }[];
     calculations?: DerivationSubmission[];
   }[];

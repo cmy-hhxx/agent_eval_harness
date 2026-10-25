@@ -15,7 +15,7 @@ export function attributionNavigation(answer: JsonObject, raw: RawInput, inputId
       sources: row.sources.map(source => ({ ...source, evidence: reference(source.evidence) })),
     }))) : [];
   const responsibility_choices = (answer.transitions as AttributionTransition[]).filter(t => t.execution_node_index !== null).map(t => ({
-    transition_index:t.transition_index, execution_node_index:t.execution_node_index,
+    transition_index:t.transition_index, responsibility_boundary:`boundary:${t.transition_index}`, execution_node_index:t.execution_node_index,
     message_index:(answer.execution_nodes as AttributionExecutionNode[]).find(n=>n.execution_node_index===t.execution_node_index)!.message_index,
     component:responsibilityComponent(answer as unknown as ResponsibilityMaterial, raw, t.transition_index), kind:t.kind,
   }));

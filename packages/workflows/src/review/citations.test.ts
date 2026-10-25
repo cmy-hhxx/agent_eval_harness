@@ -167,28 +167,12 @@ test("deferred answer paragraphs retain context previews and candidate-specific 
     data: { stage: "attribution", candidates: { A: candidate }, reference: null } satisfies TaskData };
   const binding = bindTask(task, { [inputId]: raw }, { criteria: receipt }, { tasks: [criteriaTask, task] });
   const original = citationInventory(raw, inputId, 2).references[0];
-  const shown = (binding.modelInput!.answer as { citation_inventory: { references: {
-    occurrences: { quote: string; reference: { evidence_id: string }; context: {
-      quote_preview: string; has_more: boolean; reference: { evidence_id: string };
-      read_request: { candidate: string; offset: number }; end_offset: number;
-    } }[]; sources: { quote: string; origin: string; reference: { evidence_id: string }; read_request: { candidate: string } }[];
-  }[] } }).citation_inventory.references[0];
-  assert.equal(shown.occurrences[0].reference.evidence_id, original.occurrences[0].evidence_id);
-  assert.equal(shown.occurrences[0].quote, "[^7]");
-  const context = shown.occurrences[0].context;
-  assert.equal(context.quote_preview, paragraph.slice(0, 200));
-  assert.equal(context.has_more, true);
-  assert.equal(context.reference.evidence_id, original.occurrences[0].context.evidence_id);
-  assert.equal(context.read_request.candidate, "answer");
-  assert.equal(context.read_request.offset, 0);
-  assert.equal(context.end_offset, paragraph.length);
-  assert.equal(resolveEvidence(raw, context.reference, "answer", audit, "/evidence", inputId).quote, paragraph);
-  assert.equal(Object.hasOwn(context, "evidence_id"), false);
-  assert.equal(Object.hasOwn(context, "quote"), false);
-  assert.equal(shown.sources[0].quote, source);
-  assert.equal(shown.sources[0].origin, "tool_return");
-  assert.equal(shown.sources[0].read_request.candidate, "answer");
-  assert.equal(shown.sources[0].reference.evidence_id, original.sources[0].evidence_id);
+  const shown=binding.modelInput!.answer as {deferred_final_material:{read_request:{candidate:string;offset:number;max_chars:number};total_chars:number}[]};
+  const deferred=shown.deferred_final_material[0];
+  assert.equal(deferred.read_request.candidate,'answer');assert.equal(deferred.read_request.offset,0);
+  assert.equal(deferred.total_chars,paragraph.length);assert(deferred.read_request.max_chars<=16000);
+  assert.equal(resolveEvidence(raw,original.occurrences[0].context,'answer',audit,'/evidence',inputId).quote,paragraph);
+
 });
 
 test("A footnotes index complete result blocks rather than tool-call or message counts", () => {

@@ -9,6 +9,7 @@ import type { Candidate, RawInput } from "@eval/workflows/inputs";
 import type { AttributionTransition } from "./transitions.js";
 import { responsibilityDisplay } from "./responsibility.js";
 import { attributionSubmissionSchema } from "./submission-schema.js";
+import { responsibilityBindingIssues, finalResponsibilityReview } from './responsibility-binding.js';
 
 function nativeFixture(loss = false, unrelated = false) {
   const question = "核对XOM的MA50支撑，并给出结论。";
@@ -57,10 +58,21 @@ test('parameter creator remains identifiable without prose or hidden reasoning',
  assert.equal(display.component,'Expert 推理轮');assert(!Object.hasOwn(display,'responsibility_boundary'));
  assert(!display.component.includes('责任主体未确定'));
 });
-test('boundary selection stays a bounded integer rather than an expanded enumeration',()=>{
+test('final responsibility recall reads the existing Problem and offers only captured calls',()=>{
+ const f=nativeFixture(true,true),edge=f.transitions.find(t=>responsibilityDisplay(f.binding.request,t.transition_index).component==='终稿生成轮')!;
+ const problem={text:'均线支撑无依据',reason:'原始返回有均线，实际输入丢失。',attribution_reason:'材料传递中丢失均线字段。',responsibility_boundary:'boundary:'+edge.transition_index};
+ const context=finalResponsibilityReview(f.binding.request,{Problem:[problem]},{Problem:[{component:'终稿生成轮'}]},f.audit)!;
+ assert.deepEqual((context.problems as any[])[0].Problem,problem);
+ assert((context.choices as any[]).some(c=>c.component==='finquery 取数服务'));
+ assert(!(context.choices as any[]).some(c=>c.component.includes('web_fetch')));
+ assert.equal(finalResponsibilityReview(f.binding.request,{Problem:[problem]},{Problem:[{component:'finquery 取数服务'}]},f.audit),undefined);
+ assert(responsibilityBindingIssues(f.binding.request,null,f.evidence,f.audit,'/Problem/0').some(i=>i.code==='responsibility_unresolved'));
+});
+test('responsibility identifiers cannot be confused with valid numeric node indices',()=>{
  const f=nativeFixture(),s=attributionSubmissionSchema(f.binding.request);
  const p=s.properties.Problem.items.properties;
- assert.equal((p.responsibility_boundary as {maximum?:number}).maximum,f.transitions.length);
+ const field=new Ajv2020({strict:false}).compile(p.responsibility_boundary);
+ assert(field('boundary:1'));assert(!field(1));assert(!field('1'));assert(!field('node:1'));
  const validate=new Ajv2020({strict:false}).compile(s);
  assert(!validate({summary:'检查完成。',Problem:[{text:'问题',reason:'依据',evidence_status:'已确认',evidence:[{index:1,purposes:['问题']}],responsibility_boundary:f.transitions.length+1,attribution_reason:'定位依据'}]}));
 });

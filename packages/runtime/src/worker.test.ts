@@ -1654,6 +1654,32 @@ test("a session stopping after rejected submission repairs within the same attem
   } finally { await fixture.close(); }
 });
 
+test("targeted completion review recalls from the current Problem without extra material calls",async()=>{
+  const fixture=await harness(async options=>({async run(){
+    const pending=await options.execute('submit_evaluation',{ok:true}),feedback=JSON.parse(pending.content[0].text!);
+    assert.equal(feedback.review_pending,true);assert(!pending.content.some(c=>c.text?.includes('abc')));
+    assert.equal(feedback.errors[0].expected.focused_review.problems[0].attribution_reason,'参数生成错误。');
+    assert.equal((await options.execute('confirm_evaluation',{reason:'已按整条问题核对实际组件。'})).terminate,true);
+  },async abort(){},async dispose(){}}),{material:'abc',policy:{repairAttempts:0,maxToolCalls:1},profile:{requiredReads:()=>[],
+    completionReview:'Recall actual components once.',completionReviewContext(){return {problems:[{attribution_reason:'参数生成错误。'}],choices:[{component:'Expert 推理轮'}]};},
+  }});
+  try{await fixture.start();const status=await fixture.done();assert.equal(status.state,'succeeded',status.error);
+    const receipt=(await fixture.store.receipt(fixture.spec.taskId))!;assert.equal(receipt.submissionStats!.contentSubmissions,1);assert.equal(receipt.audit.calls,0);
+  }finally{await fixture.close();}
+});
+
+test("targeted completion review stops a second correction without another repair loop",async()=>{
+  const fixture=await harness(async options=>({async run(){
+    await options.execute('submit_evaluation',{ok:true});await options.execute('submit_evaluation',{ok:false});await options.execute('submit_evaluation',{ok:true});
+  },async abort(){},async dispose(){}}),{material:'abc',policy:{repairAttempts:3},profile:{requiredReads:()=>[],
+    submissionSchema:{type:'object',required:['ok'],properties:{ok:{type:'boolean'}}},
+    completionReview:'Review once.',completionReviewContext(){return {problems:[],choices:[]};},
+  }});
+  try{await fixture.start();const status=await fixture.done();assert.equal(status.state,'failed');
+    assert(status.failure?.errors.some(e=>e.code==='completion_review_incomplete'));assert.equal(status.failure?.contentSubmissions,3);
+  }finally{await fixture.close();}
+});
+
 test("dynamic investigation reads show real pages and preserve the verdict allowance",async()=>{
   const target:TraceRead={candidate:'answer',message_index:0,kind:'text',path:'/content',start:0,end:3};
   const fixture=await harness(async options=>({async run(){

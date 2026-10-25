@@ -95,7 +95,7 @@ export const readExecutionTool: Omit<ToolDefinition, "description"> = {
     const matchedSides = (boundary: Record<string, unknown>) => (["before", "after"] as const)
       .filter(side => rows(boundary[side]).some(matchesEvidence));
     const summary = (boundary: Record<string, unknown>) => ({
-      transition_index: boundary.transition_index, kind: boundary.kind, actor_index: boundary.actor_index,
+      transition_index: boundary.transition_index, responsibility_boundary:`boundary:${boundary.transition_index}`, kind: boundary.kind, actor_index: boundary.actor_index,
       action: action(boundary), component: choiceByIndex.get(boundary.transition_index)?.component ?? nodeByIndex.get(boundary.execution_node_index)?.component ?? null,
       message_index: nodeByIndex.get(boundary.execution_node_index)?.message_index ?? null,
       execution_node_index: boundary.execution_node_index, source_node_index: boundary.source_node_index,
@@ -129,7 +129,7 @@ export const readExecutionTool: Omit<ToolDefinition, "description"> = {
       render = node => ({ execution_node_index: node.execution_node_index, kind: node.kind, actor_index: node.actor_index,
           message_index: node.message_index, component: node.component, ...(node.summary === undefined ? {} : { summary: node.summary }),
           responsibility_choices: boundaries.filter(boundary => boundary.execution_node_index === node.execution_node_index)
-            .map(boundary => ({ transition_index: boundary.transition_index, action: action(boundary), ...(choiceByIndex.has(boundary.transition_index)?{component:choiceByIndex.get(boundary.transition_index)!.component}:{}) })),
+            .map(boundary => ({ transition_index: boundary.transition_index, responsibility_boundary:`boundary:${boundary.transition_index}`, action: action(boundary), ...(choiceByIndex.has(boundary.transition_index)?{component:choiceByIndex.get(boundary.transition_index)!.component}:{}) })),
           boundary_count: boundaries.filter(boundary => related(boundary, node.execution_node_index as number)).length,
           read_request: request("boundaries", { execution_node_index: node.execution_node_index as number }),
         });

@@ -471,11 +471,18 @@ export class RunStore {
         message: value.submissionId,
         validationMs: performance.now() - validationStarted, validationCpuMs: (cpu.user + cpu.system) / 1000 });
     }
+    const reviewContext=this.services.agents.completionReviewContext(this.bindings.get(spec.attemptId)!,value.evaluation,evaluation,value.audit);
+    const focusedReview=previousCandidate?.focusedReview||reviewContext!==undefined;
+    if(focusedReview&&!value.completionReview&&previousCandidate?.focusedReview&&previousCandidate.previous!==undefined)
+      throw new ValidationError([{category:'decision',code:'completion_review_incomplete',path:'/',
+        message:'定向归因复核仅允许一次修正；不能再次循环改稿，本次保留草稿为未完成。'}]);
     if (spec.evaluation.completionReview && !value.completionReview) {
       const candidate = { id: value.submissionId, attemptId: value.attemptId, evaluation: structuredClone(value.evaluation),
+        ...(focusedReview?{focusedReview:true}:{}),
         ...(previousCandidate ? { previous: structuredClone(previousCandidate.evaluation) } : {}) };
       const errors = [{ category: 'decision' as const, code: 'completion_review_required', path: '/',
         message: spec.evaluation.completionReview, expected: { candidate_id: candidate.id, next_tool: 'confirm_evaluation',
+          ...(focusedReview?{focused_review:{...reviewContext,correction_remaining:previousCandidate?.focusedReview?0:1}}:{}),
           ...(candidate.previous ? { previous_candidate: candidate.previous } : {}) } }];
       state.failure = { ...state.failure, draft: structuredClone(value.evaluation), completionCandidate: candidate, errors,
         evidenceBank: [...value.audit.evidenceBank ?? []], contentSubmissions: value.submissionStats?.contentSubmissions ?? 1,

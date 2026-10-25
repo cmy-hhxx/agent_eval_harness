@@ -178,7 +178,7 @@ function jsonObjects(text: string): { start: number; end: number; value: Record<
 }
 
 /** References identify source material; they do not prove a whole sentence or a rendered view. */
-function buildCitationInventory(raw: { messages: unknown[] }, inputId: string, finalIndex: number, contexts: { message_index: number; path: string }[]): CitationInventory {
+function buildCitationInventory(raw: { messages: unknown[] }, inputId: string, finalIndex: number, contexts: { message_index: number; path: string }[], includeUncited = false): CitationInventory {
   const directory = new Map<string, CitationSource[]>();
   const protocols = new Set<CitationFormat>();
   const add = (format: CitationFormat, reference: string, evidence: Evidence, origin: CitationSource["origin"],
@@ -324,6 +324,13 @@ function buildCitationInventory(raw: { messages: unknown[] }, inputId: string, f
         context: occurrenceContext(inputId, finalIndex, source, marker.start, marker.end) });
       references.set(key, entry);
     }
+  if (includeUncited) for (const [key, sources] of directory) {
+    if (references.has(key) || !key.startsWith('trace:')) continue;
+    const reference = key.slice(key.lastIndexOf(':') + 1);
+    const primary=sources.filter(source=>source.origin==='tool_return');
+    const count=new Set((primary.length?primary:sources).map(source=>source.quote)).size;
+    references.set(key, {reference, format:'trace', status:count===1?'resolved':'ambiguous', occurrences:[], sources});
+  }
   const documents = new Map<string, CitationInventory["document_groups"][number]>();
   for (const reference of references.values()) for (const source of reference.sources) {
     if (!source.document_url) continue;
@@ -341,5 +348,5 @@ export function citationInventory(raw: { messages: unknown[] }, inputId: string,
 }
 /** Navigation through captured processing inputs; this does not certify final citation eligibility. */
 export function processSourceInventory(raw: { messages: unknown[] }, inputId: string, finalIndex: number): CitationInventory {
-  return buildCitationInventory(raw, inputId, finalIndex, answerTurnContexts(raw, finalIndex));
+  return buildCitationInventory(raw, inputId, finalIndex, answerTurnContexts(raw, finalIndex), true);
 }

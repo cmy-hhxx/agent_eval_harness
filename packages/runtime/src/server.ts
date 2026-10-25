@@ -427,6 +427,7 @@ export async function startWorker(
                   },
                 ];
               if (spec.evaluation.completionReview && errors.length === 1 && errors[0].code === 'completion_review_required') {
+                const focused=(errors[0].expected as {focused_review?:{correction_remaining:number}})?.focused_review;
                 completionCandidate = submission;
                 failure = { evidenceBank: [...audit.evidenceBank!], draft: structuredClone(result), errors,
                   contentSubmissions: submission.submissionStats!.contentSubmissions, fileErrors: submission.submissionStats!.fileErrors,
@@ -435,9 +436,15 @@ export async function startWorker(
                 record.failure = failure;
                 await saveRecord();
                 emitLoaded();
-                return textResult({ accepted: false, review_pending: true, candidate_id: submission.submissionId,
+                const response=textResult({ accepted: false, review_pending: true, candidate_id: submission.submissionId,
                   next_tool: 'confirm_evaluation', instructions: spec.evaluation.completionReview, errors,
-                  budget: { content_remaining: Math.max(0, 1 + spec.policy.repairAttempts - submissions) } });
+                  budget: { content_remaining: focused?focused.correction_remaining:Math.max(0, 1 + spec.policy.repairAttempts - submissions) } });
+                return response;
+              }
+              if(errors.some(e=>['completion_review_incomplete','responsibility_unresolved'].includes(e.code))){
+                const response=await rejected(errors,result,false,false);
+                failure.stopped=true;record.failure=failure;await saveRecord();
+                controller.abort(new Error(errors.map(e=>e.message).join('; ')));void attempt.session?.abort();return response;
               }
               const material = await supplyRejectedMaterial(errors, result, !completionReview);
               if (material) return material;

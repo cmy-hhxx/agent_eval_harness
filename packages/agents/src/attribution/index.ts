@@ -7,6 +7,7 @@ import resultSchema from "../../../../schemas/attribution/result.schema.json" wi
 import { validateEvaluation } from "./validate.js";
 import { resolveModelSubmission, validateModelSubmission } from "./submission.js";
 import { numericReferenceDirectory } from "./units.js";
+import { finalResponsibilityReview } from './responsibility-binding.js';
 import { findingIssueContext } from "./finding-feedback.js";
 import { attributionSubmissionSchema } from "./submission-schema.js";
 import { attributionFindingBasis } from "./finding-basis.js";
@@ -28,6 +29,7 @@ const prompt = agentPrompt("attribution", toolNames, { fileSubmission:false });
 export const attributionProfile: AgentProfile = {
   id: "default",
   completionReview: attributionCompletionReview,
+  completionReviewContext: finalResponsibilityReview,
 
   requestSchema,
   submissionSchema,

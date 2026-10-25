@@ -131,7 +131,10 @@
           "component": {
             "type": "string",
             "minLength": 1,
-            "description": "程序按真实调用职责生成的中文名称，如终稿生成轮、Expert 推理轮、finquery 取数服务；确实无法定位才填责任主体未确定。"
+            "description": "程序按实际调用解析的具体组件；无法定位则本次评审未完成，不生成正式结果。",
+            "not": {
+              "const": "责任主体未确定"
+            }
           },
           "related_responsibilities": {
             "type": "array",
@@ -170,7 +173,10 @@
                 "component": {
                   "type": "string",
                   "minLength": 1,
-                  "description": "程序按真实调用职责生成的中文名称，如终稿生成轮、Expert 推理轮、finquery 取数服务；确实无法定位才填责任主体未确定。"
+                  "description": "程序按实际调用解析的具体组件；无法定位则本次评审未完成，不生成正式结果。",
+                  "not": {
+                    "const": "责任主体未确定"
+                  }
                 }
               }
             },

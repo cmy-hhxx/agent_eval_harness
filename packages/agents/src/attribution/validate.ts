@@ -6,7 +6,7 @@ import {responsibilityIssues} from './responsibility.js';
 import {validateDerivations} from './derivations.js';
 const validator=new Ajv2020({allErrors:true,strict:false}).compile(schema);
 
-/** Evidence business gates are disabled. Acceptance checks structure, owned identities and arithmetic only. */
+/** Final shape checks. Submission additionally checks call binding and final-generation material. */
 export function validateEvaluation(request:AgentRequest,result:unknown,_audit:ToolAudit):void{
   if(!validator(result))throw new ValidationError(schemaIssues(validator.errors,result));
   const value=result as unknown as AttributionResult,issues:ValidationIssue[]=[];

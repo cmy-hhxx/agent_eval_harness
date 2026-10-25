@@ -9,9 +9,6 @@ export function attributionSubmissionSchema(request:AgentRequest){
 }
 export function attributionSubmissionShape(request:AgentRequest){
   const value=structuredClone(schema);
-  const count=(request.input.answer as {transitions:unknown[]}).transitions.length;
-  Object.assign(value.properties.Problem.items.properties.responsibility_boundary,{maximum:count});
-  Object.assign(value.properties.Problem.items.properties.related_responsibilities.items.properties.responsibility_boundary,{maximum:count});
   if((request.input.ground_truth as {available:boolean}).available)value.required.push('is_correct','correct_reason');
   else {delete (value.properties as Record<string,unknown>).is_correct;delete (value.properties as Record<string,unknown>).correct_reason;}
   return value;

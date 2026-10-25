@@ -81,12 +81,9 @@
             "description": "选择能说明问题和责任的原文。同一段原文只列一次，用purposes标明用途。"
           },
           "responsibility_boundary": {
-            "type": [
-              "integer",
-              "null"
-            ],
-            "minimum": 1,
-            "description": "从已展示的 responsibility_choices 或 final_generation_choices 选择实际形成问题的调用编号；只有真实主体无法定位才填null。未查编号、没有隐藏推理不等于主体未知。编号只保留在内部，正式结果由程序显示组件名称。"
+            "type": "string",
+            "pattern": "^boundary:[1-9][0-9]*$",
+            "description": "复制实际形成调用的责任标识，例如 boundary:19；不能填节点编号、裸数字或null。确实未采集责任主体时停止确认，保留问题草稿为未完成，不编造组件。"
           },
           "attribution_reason": {
             "type": "string",
@@ -116,8 +113,9 @@
               ],
               "properties": {
                 "responsibility_boundary": {
-                  "type": "integer",
-                  "minimum": 1
+                  "type": "string",
+                  "pattern": "^boundary:[1-9][0-9]*$",
+                  "description": "复制有独立传播或放大证据的责任选项标识。"
                 },
                 "attribution_reason": {
                   "type": "string",
