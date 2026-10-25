@@ -1,9 +1,9 @@
 import { overlapsImagePlaceholder, parseEvidenceCoordinates } from "@eval/contracts";
-import { evidenceSources, selectEvidenceSource } from "./evidence.js";
+import { evidenceSources, selectEvidenceSource, type EvidenceSelectionCache } from "./evidence.js";
 
 /** Mechanical containment of real physical coordinates; display quotes never identify a source. */
 export function evidenceCovers(raw: { messages: unknown[] }, inputId: string, coveringId: string, coveredId: string,
-  precomputedSources?: ReturnType<typeof evidenceSources>): boolean {
+  precomputedSources?: ReturnType<typeof evidenceSources>, selectionCache?: EvidenceSelectionCache): boolean {
   const coordinates = [coveringId, coveredId].map(id => parseEvidenceCoordinates(id));
   const [covering, covered] = coordinates;
   if (!covering || !covered || covering.kind === "image" || covered.kind === "image" ||
@@ -21,7 +21,7 @@ export function evidenceCovers(raw: { messages: unknown[] }, inputId: string, co
   if (covering.kind !== "json" || covered.kind !== "text") return false;
   // Locate only the actual rendered source. A complete serialized leaf proves its text origin;
   // partial JSON strings, matching values at other paths and decoded display quotes do not.
-  const leaf = selectEvidenceSource(sources.filter(source => source.kind === "json"), covered.path);
+  const leaf = selectEvidenceSource(sources.filter(source => source.kind === "json"), covered.path, selectionCache);
   return !!leaf && covering.path === leaf.source.path && covering.start <= leaf.start && covering.end >= leaf.end;
 }
 

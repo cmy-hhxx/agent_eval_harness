@@ -69,11 +69,35 @@ function jsonPathRange(text: string, path: string): { start: number; end: number
   };
   return locate(JSON.parse(text), 0, 0, parts);
 }
-export function selectEvidenceSource(sources: ReturnType<typeof evidenceSources>, path?: string) {
+type EvidenceRange = { start: number; end: number };
+/** Optional call-scoped index; callers retain it only while assembling one request. */
+export type EvidenceSelectionCache = WeakMap<ReturnType<typeof evidenceSources>[number], Map<string, EvidenceRange>>;
+function indexJsonRanges(text: string): Map<string, EvidenceRange> {
+  const ranges = new Map<string, EvidenceRange>();
+  const visit = (value: unknown, start: number, depth: number, path: string): number => {
+    if (value === null || typeof value !== "object") return start + JSON.stringify(value).length;
+    const entries = Object.entries(value), array = Array.isArray(value);
+    if (!entries.length) return start + 2;
+    let cursor = start + 2 + (depth + 1) * 2, end = cursor;
+    for (const [key, child] of entries) {
+      const childPath = path + "/" + key.replaceAll("~", "~0").replaceAll("/", "~1");
+      const valueStart = cursor + (array ? 0 : JSON.stringify(key).length + 2);
+      end = visit(child, valueStart, depth + 1, childPath);
+      ranges.set(childPath, { start: cursor, end });
+      cursor = end + 2 + (depth + 1) * 2;
+    }
+    return end + 2 + depth * 2;
+  };
+  visit(JSON.parse(text), 0, 0, "");
+  ranges.set("", { start: 0, end: text.length });
+  return ranges;
+}
+export function selectEvidenceSource(sources: ReturnType<typeof evidenceSources>, path?: string, cache?: EvidenceSelectionCache) {
   const text = path !== undefined ? sources.find((source) => source.kind === "text" && source.path === path) : undefined;
   if (text) return { source: text, start: 0, end: text.text.length };
   const json = sources.find((source) => source.kind === "json")!;
-  const range = jsonPathRange(json.text, path ?? "");
+  if (cache && !cache.has(json)) cache.set(json, indexJsonRanges(json.text));
+  const range = cache ? cache.get(json)!.get(path ?? "") : jsonPathRange(json.text, path ?? "");
   return range ? { source: json, ...range } : undefined;
 }
 function coordinateRepair(raw: { messages: unknown[] }, candidate: string, inputId: string, index: number, kind: "text" | "json", path: string, audit: EvidenceAudit) {

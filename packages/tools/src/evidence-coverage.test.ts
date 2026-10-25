@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { evidenceId, evidenceSources, selectEvidenceSource } from "./evidence.js";
+import { evidenceId, evidenceSources, selectEvidenceSource, type EvidenceSelectionCache } from "./evidence.js";
 import { evidenceCovers, evidenceOverlaps } from "./evidence-coverage.js";
 
 const ID = "11111111-1111-4111-8111-111111111111", PEER = "22222222-2222-4222-8222-222222222222";
@@ -44,12 +44,31 @@ test("request-local precomputed sources preserve coverage checks without renderi
   const expected = cases.map(([covering, covered]) => evidenceCovers(material, ID, covering, covered));
   assert.deepEqual(expected, [true, true, false, false, false, false, false, false, false, false, false]);
   Object.defineProperty(material.messages[0], "content", { get() { throw new Error("message rendered again"); } });
-  assert.deepEqual(cases.map(([covering, covered]) => evidenceCovers(material, ID, covering, covered, sources)), expected);
+  const cache: EvidenceSelectionCache = new WeakMap();
+  assert.deepEqual(cases.map(([covering, covered]) => evidenceCovers(material, ID, covering, covered, sources, cache)), expected);
   const image = { messages: [{ content: "data:image/png;base64,AA==" }] }, imageSources = evidenceSources(image.messages[0]);
   const imageJson = imageSources.find(source => source.kind === "json")!;
   const placeholder = evidenceId(ID, 0, "json", "", 0, imageJson.text.length);
   assert.equal(evidenceCovers(image, ID, placeholder, placeholder), false);
-  assert.equal(evidenceCovers(image, ID, placeholder, placeholder, imageSources), false);
+  assert.equal(evidenceCovers(image, ID, placeholder, placeholder, imageSources, cache), false);
+});
+
+test("a request-local JSON path index exactly preserves one-shot offsets and isolates source objects", () => {
+  const cache: EvidenceSelectionCache = new WeakMap();
+  const content = { "a/b~c": [{ text: '前文\n"😀"\\后文', empty: {}, list: [] }, null, -1.25, true], "": { tail: "x" } };
+  for (const material of [{ content }, { content: { ...content, prefix: "another source" } }]) {
+    const sources = evidenceSources(material).filter(source => source.kind === "json"), json = sources[0];
+    const paths = ["", "/content", "/content/a~1b~0c", "/content/a~1b~0c/0", "/content/a~1b~0c/0/text",
+      "/content/a~1b~0c/0/empty", "/content/a~1b~0c/0/list", "/content/a~1b~0c/1", "/content/a~1b~0c/2",
+      "/content/a~1b~0c/3", "/content/", "/content//tail", "/content/prefix", "/missing", "/content/tool_calls", "/bad~2"];
+    const expected = paths.map(path => selectEvidenceSource(sources, path));
+    assert.deepEqual(paths.map(path => selectEvidenceSource(sources, path, cache)), expected);
+    Object.defineProperty(json, "text", { get() { throw new Error("cached JSON was parsed or scanned again"); } });
+    for (const [index, path] of paths.entries()) {
+      const selected = selectEvidenceSource(sources, path, cache), original = expected[index];
+      assert.equal(selected?.start, original?.start); assert.equal(selected?.end, original?.end);
+    }
+  }
 });
 
 test("image placeholders and fabricated text paths never provide physical coverage", () => {

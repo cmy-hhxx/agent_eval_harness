@@ -1,6 +1,6 @@
 import { canonical } from "@eval/contracts";
 import { answerTurnContexts, cite, evidenceCovers, evidenceId, evidenceSources, images, messageContentSources, overlapsImagePlaceholder,
-  selectEvidenceSource, traceCallOrigins, type TraceComponentIdentity } from "@eval/tools";
+  selectEvidenceSource, traceCallOrigins, type EvidenceSelectionCache, type TraceComponentIdentity } from "@eval/tools";
 import type { BusinessChain, Evidence, TransitionKind } from "./types.js";
 
 export type { TransitionKind } from "./types.js";
@@ -28,12 +28,13 @@ export function buildAttributionTransitions({ raw, inputId, finalIndex, actors, 
   actors: TraceComponentIdentity[]; chains: BusinessChain[];
 }): AttributionTransition[] {
   const sourceCache = new Map<number, ReturnType<typeof evidenceSources>>();
+  const selectionCache: EvidenceSelectionCache = new WeakMap();
   const sources = (index: number) => {
     if (!sourceCache.has(index)) sourceCache.set(index, evidenceSources(raw.messages[index]));
     return sourceCache.get(index)!;
   };
   const at = (index: number, path: string): Evidence[] => {
-    const selected = selectEvidenceSource(sources(index), path);
+    const selected = selectEvidenceSource(sources(index), path, selectionCache);
     if (!selected) return [];
     if (selected.source.quotable === false || overlapsImagePlaceholder(selected.source.text, selected.start, selected.end))
       return sources(index).filter(source => source.kind === "text" && source.quotable !== false && source.path.startsWith(path + "/") &&
@@ -93,7 +94,7 @@ export function buildAttributionTransitions({ raw, inputId, finalIndex, actors, 
   }
   const outputEvents = [...pending];
   const covers = (container: TransitionBoundary, item: TransitionBoundary) => container.message_index === item.message_index &&
-    evidenceCovers(raw, inputId, container.evidence_id, item.evidence_id, sources(container.message_index));
+    evidenceCovers(raw, inputId, container.evidence_id, item.evidence_id, sources(container.message_index), selectionCache);
   for (const chain of chains) {
     const transfers = new Map<string, Pending>();
     for (const evidence of chain.checkpoints[5].evidence) {
