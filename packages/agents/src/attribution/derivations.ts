@@ -12,15 +12,15 @@ export interface DerivationOperandResolved extends Omit<DerivationOperandSubmiss
   evidence_id: string;
 }
 export interface DerivationRange {
-  lower: string;
-  upper: string;
+  lower: number;
+  upper: number;
   include_lower: boolean;
   include_upper: boolean;
 }
 interface DerivationFields {
   label: string;
   operation: "比值" | "相对变化" | "复利增长" | "年化" | "四则运算";
-  result: string | DerivationRange;
+  result: number | DerivationRange;
   /** Display multiplier, not an error tolerance. Percent results use 100. */
   scale: "1" | "100";
   decimal_places: number;
@@ -79,6 +79,16 @@ export function validateDerivations(rows: readonly ResolvedDerivation[], path = 
       catch { invalid(`/operands/${name}/value`, "原数token须为有限十进制数值，可含规范千分位。", operand.value); }
     }
     if (issues.length !== before) return;
+    const results = typeof row.result === 'number' ? [row.result] : row.result && typeof row.result === 'object' ? [row.result.lower,row.result.upper] : [];
+    if (!results.length || results.some(value=>typeof value!=='number'||!Number.isFinite(value))) {
+      invalid('/result','计算结果及区间两端必须是有限JSON数字，不接受字符串。',row.result);return;
+    }
+    for(const value of results){
+      const exact=fraction('value',{value:String(value)}),numerator=BigInt(exact.numerator);
+      if((numerator<0n?-numerator:numerator)*10n**BigInt(row.decimal_places)>BigInt(Number.MAX_SAFE_INTEGER)*BigInt(exact.denominator))
+        reject(at+'/result','derivation_result_precision','结果在声明小数位下超出安全表示范围；须明确调整结果单位和显示精度，不能直接截断或省略必要计算。',value);
+    }
+    if(issues.length!==before)return;
     const requireNames = (...expected: string[]) => {
       if (names.length !== expected.length || expected.some(name => !Object.hasOwn(operands, name)))
         invalid("/operands", `该运算须且仅须操作数：${expected.join("、")}。`, names);
@@ -147,13 +157,13 @@ export function validateDerivations(rows: readonly ResolvedDerivation[], path = 
       if (issues.length !== before) return;
       values.display_scale = row.scale;
       const scaled = `(${expression})*display_scale`;
-      if (typeof row.result === "string") {
-        if (!matchesRounded(scaled, values, row.result, row.decimal_places)) reject(`${at}/result`, "derivation_result_mismatch", "结果与源数复算及声明精度不符；修改计算或结论后重新提交，不自动改写。", row.result);
+      if (typeof row.result === "number") {
+        if (!matchesRounded(scaled, values, String(row.result), row.decimal_places)) reject(`${at}/result`, "derivation_result_mismatch", "结果与源数复算及声明精度不符；修改计算或结论后重新提交，不自动改写。", row.result);
       } else {
         if (!upperExpression || typeof row.result.include_lower !== "boolean" || typeof row.result.include_upper !== "boolean") invalid("/result", "上下界结果仅用于区间比值，且必须声明两端是否包含。");
-        else if (sign(fraction("upper-lower", { upper: row.result.upper, lower: row.result.lower })) < 0 ||
-          !matchesRounded(scaled, values, row.result.lower, row.decimal_places) ||
-          !matchesRounded(`(${upperExpression})*display_scale`, values, row.result.upper, row.decimal_places))
+        else if (sign(fraction("upper-lower", { upper: String(row.result.upper), lower: String(row.result.lower) })) < 0 ||
+          !matchesRounded(scaled, values, String(row.result.lower), row.decimal_places) ||
+          !matchesRounded(`(${upperExpression})*display_scale`, values, String(row.result.upper), row.decimal_places))
           reject(`${at}/result`, "derivation_result_mismatch", "结果上下界与源数区间复算不符；正分母范围的较大端对应比值下界。", row.result);
       }
     } catch (error) { invalid("/result", `计算无法执行：${error instanceof Error ? error.message : String(error)}`); }

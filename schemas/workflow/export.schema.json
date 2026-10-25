@@ -509,10 +509,9 @@
                     },
                     "result": {
                       "type": [
-                        "string",
+                        "number",
                         "object"
                       ],
-                      "minLength": 1,
                       "additionalProperties": false,
                       "required": [
                         "lower",
@@ -522,12 +521,10 @@
                       ],
                       "properties": {
                         "lower": {
-                          "type": "string",
-                          "minLength": 1
+                          "type": "number"
                         },
                         "upper": {
-                          "type": "string",
-                          "minLength": 1
+                          "type": "number"
                         },
                         "include_lower": {
                           "type": "boolean"
@@ -535,7 +532,8 @@
                         "include_upper": {
                           "type": "boolean"
                         }
-                      }
+                      },
+                      "description": "单值填JSON数字，如2.1，不加引号；区间填写上下界对象，两端也用数字。声明decimal_places，程序精确复算；按声明小数位放大后不得超过安全整数范围。"
                     },
                     "scale": {
                       "enum": [

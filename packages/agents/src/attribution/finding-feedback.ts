@@ -16,7 +16,7 @@ export function findingIssueContext(request: AgentRequest, _value: unknown, issu
   let current = schema;
   for (const part of path.split('/').filter(Boolean)) current = /^\d+$/u.test(part) ? current?.items : current?.properties?.[part];
   if (current===undefined) return undefined;
-  const decimal = /\/calculations\/\d+\/(?:result|scale|factor|operands\/[^/]+\/value)$/u.test(path);
+  const decimal = /\/calculations\/\d+\/(?:scale|factor|operands\/[^/]+\/value)$/u.test(path);
   return { target: {path},submission_shape:current,
     ...(decimal && typeof issue.actual === 'number' ? {
       repair_action: `仅把 ${path} 的数字改成带双引号的十进制字符串：${JSON.stringify(String(issue.actual))}。数字内容不变；不要重新计算、删除问题或重写其他字段。修正后的完整结果仍会重新验收。`,

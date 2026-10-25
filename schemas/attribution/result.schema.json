@@ -251,12 +251,11 @@
                   "description": "填写参与计算的原数及其单位、期间、含义和证据编号。比值用numerator、denominator；相对变化用base、observed；复利用rate、periods，可选base；年化用value；四则运算自行命名变量。区间比值将denominator替换为denominator_lower、denominator_upper。"
                 },
                 "result": {
-                  "description": "单个结果填十进制字符串，如\"2.10\"，不要填JSON数字；区间结果才填写上下界对象。",
+                  "description": "单值填JSON数字，如2.1，不加引号；区间填写上下界对象，两端也用数字。声明decimal_places，程序精确复算；按声明小数位放大后不得超过安全整数范围。",
                   "type": [
-                    "string",
+                    "number",
                     "object"
                   ],
-                  "minLength": 1,
                   "additionalProperties": false,
                   "required": [
                     "lower",
@@ -266,12 +265,10 @@
                   ],
                   "properties": {
                     "lower": {
-                      "type": "string",
-                      "minLength": 1
+                      "type": "number"
                     },
                     "upper": {
-                      "type": "string",
-                      "minLength": 1
+                      "type": "number"
                     },
                     "include_lower": {
                       "type": "boolean"

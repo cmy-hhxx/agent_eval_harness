@@ -22,7 +22,7 @@
 
 组件目录、规则命中、风险信号只是调查线索：零行可能是合法空结果；旧来源可适用于历史问题；原句直送可能是接口设计；工具报错后必须检查是否恢复。只登记残留缺陷或有证据的独立过程损失。时间戳、报告期、发布日期分开；题设下明确条件的分析不自动有错。合理近似或题目容差内差异不是缺陷。
 
-问题成立或影响判断依赖计算时必须填 calculations，不能把算式只藏在 reason 里。计算中的 operands.*.value、result、scale、factor 都用字符串保存十进制数字，例如 result:"2.10"；decimal_places 才是整数。操作数绑定已选证据的原始数字，保留单位、期间、业务角色，明确分母和假设，供程序复算。operation 使用“比值”“相对变化”“复利增长”“年化”“四则运算”；复利的期数单位为“期”、无量纲倍数为“比值”；按当前速度年化不是全年指引。区间不自行绑定情景，成本和市值分母不混用。计算工具只验证算术，不证明来源真实或被评模型用了该算法。不依赖计算则省略 calculations。
+问题成立或影响判断依赖计算时必须填 calculations，不能把算式只藏在 reason 里。源数 operands.*.value、scale、factor 仍用十进制字符串；计算结果 result 用JSON数字，例如 result:2.1，区间的 lower/upper 也用数字；decimal_places 用整数。结果按声明小数位放大后须在安全整数范围内，程序精确复算，不静默转换或截断。操作数绑定已选证据的原始数字，保留单位、期间、业务角色，明确分母和假设，供程序复算。operation 使用“比值”“相对变化”“复利增长”“年化”“四则运算”；复利的期数单位为“期”、无量纲倍数为“比值”；按当前速度年化不是全年指引。区间不自行绑定情景，成本和市值分母不混用。计算工具只验证算术，不证明来源真实或被评模型用了该算法。不依赖计算则省略 calculations。
 
 有标准答案时，is_correct 的 true/false 仅表示与给定标准是否一致，不代表整体质量；确实无法判定填 null 并在 correct_reason 解释比较对象、依据与具体障碍。无标准答案时不提交这两个字段，由程序固定填 null，仍调查真实问题。正确性解释不能代替问题理由和归责依据。
 
@@ -32,7 +32,7 @@
 
 正式问题和关联责任均不输出 responsibility_boundary。这个字段只用于内部选择实际调用，程序按组件健康度报表命名，原始模型名和调用编号留在内部提交及目录用于溯源。你只选编号，不填写已知主体名称。text、reason、attribution_reason、uncertainties用真实名称和具体动作解释，不用节点、边界或证据编号代替正文。原文引用和工具真实名称可以保留原语言，业务数字、日期和单位照常保留。中文标点直接书写，不输出字面量\u201c等转义文本。
 
-可选字段不适用就省略：calculation仅在对应问题的calculations中，result/value/scale/factor用字符串，decimal_places用整数。formula仅四则运算填写；其他运算省略，不能填空。未知责任时同时在attribution_reason与uncertainties说明实际断点；没有隐藏推理只限制机制解释，不抹掉已知调用。
+可选字段不适用就省略：calculation仅在对应问题的calculations中，result及区间两端用数字，value/scale/factor用字符串，decimal_places用整数。formula仅四则运算填写；其他运算省略，不能填空。未知责任时同时在attribution_reason与uncertainties说明实际断点；没有隐藏推理只限制机制解释，不抹掉已知调用。
 
 组件目录采用：planner-search 检索规划子模型、planner-finquery 取数规划子模型、Expert 推理轮、终稿生成轮、finquery 取数服务、shell 代码解释器、web_search 网页检索、web_fetch 网页抓取、view_skill / read_file 技能加载、stock_ner_parse 实体识别、记忆与用户上下文工具、工具调用运行时、输出后处理与渲染。程序按真实调用命名，不按问题猜组件；没有独立运行时或后处理记录，不凭工具失败或最终异常编造这两类主体。主模型生成图表参数属于 Expert 推理轮，形成最终正文属于终稿生成轮；具体动作及偏差写 attribution_reason，shell 忠实执行参数不承担参数形成责任。
 
