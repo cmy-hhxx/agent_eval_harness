@@ -11,6 +11,7 @@ export interface AnalysisReference extends RunReference { collectionId: string; 
 export interface AnalysisCaseLookup { collectionId: string; runId: string; query: string; comparisonTier?: string }
 export interface AnalysisQuery {
   collectionId?: string; includeTests?: boolean; runId?: string; view?: "inputs" | "comparisons" | "statistics"; query?: string; offset?: number; limit?: number;
+  breakdown?: "date" | "task" | "difficulty";
   sample?: boolean; excludeCases?: { batchId: string; caseId: string }[];
   comparisonTier?: string; outcome?: "win" | "both_good" | "both_bad" | "all"; includeAnalysis?: boolean;
 }
@@ -23,6 +24,12 @@ export interface AnalysisDataSource {
   read(reference: AnalysisReference | AnalysisCaseLookup, options?: AnalysisReadOptions): Promise<JsonObject>;
   search(reference: AnalysisReference, query: string | string[], options?: { offset?: number; limit?: number; scope?: "evidence" | "all" }): Promise<JsonObject>;
   image(reference: AnalysisReference): Promise<ToolResult>;
+}
+export interface AnalysisAssetReference { collectionId: string; assetId: string }
+export interface AnalysisAssetQuery { collectionId?: string; query?: string; includeTests?: boolean; offset?: number; limit?: number }
+export interface AnalysisAssetSource {
+  list(query: AnalysisAssetQuery): Promise<JsonObject>;
+  read(reference: AnalysisAssetReference, options?: { offset?: number; limit?: number }): Promise<JsonObject>;
 }
 export interface WebSearchQuery {
   query: string;

@@ -79,7 +79,8 @@ export function investigationIssues(request: AgentRequest, problem: ProblemPropo
   const raw = request.sources.answer.value as { messages: unknown[] };
   const add = (code: string, location: string, message: string, expected?: unknown) =>
     issues.push({ category: "evidence", code, path: location, message, ...(expected === undefined ? {} : { expected }) });
-  const related = chains.filter(chain => problem.component.some(cause => cause.chain_index === chain.chain_index));
+  const related = chains.filter(chain => problem.component.some(cause => cause.chain_index === chain.chain_index) ||
+    problem.investigation.some(entry => entry.chain_index === chain.chain_index));
   const actors = (request.input.answer as {component_catalog:import('@eval/tools').TraceComponentIdentity[]}).component_catalog;
   for (const entry of problem.investigation) {
     const chain=chains.find(chain=>chain.chain_index===entry.chain_index);
@@ -89,6 +90,7 @@ export function investigationIssues(request: AgentRequest, problem: ProblemPropo
     const finalContext=chain.context_indices.at(-1);
     const allInputs=chain.checkpoints.find(point=>point.step==="模型实际输入")!.evidence;
     const inputs=allInputs.filter(item=>item.message_index===finalContext||nodes.has(item.message_index));
+    const finalInputs=allInputs.filter(item=>item.message_index===finalContext);
     const returned=chain.checkpoints.find(point=>point.step==="原始返回及字段含义")!.evidence;
     const finalIndex=(request.input.answer as {final_message_index:number}).final_message_index;
     const delivered=evidenceSources(raw.messages[finalIndex]).filter(source=>source.kind==='text'&&/^\/content(?:\/|$)/u.test(source.path))
@@ -108,10 +110,14 @@ export function investigationIssues(request: AgentRequest, problem: ProblemPropo
       if(step.status!=="checked")continue;
       if(!step.evidence_ids.length||step.evidence_ids.some(id=>!selected.some(item=>item.evidence_id===id)))
         add("investigation_evidence",path+"/investigation","已检查事实须引用本问题的实际证据。");
+      for(const item of selected.filter(item=>!item.source&&step.evidence_ids.includes(item.evidence_id))){
+        const read=target(item);if(read&&!readCovered(audit,read,raw))
+          add("investigation_read_required",path+"/investigation","已检查事实引用的原文尚未完整展示，须补读本段。",read);
+      }
       const groups=step.step==="返回整理与上下文传递"?[returned,intermediates,inputs]
         :step.step==="数据解释与计算"?[inputs,generated.length?generated:chain.final_evidence]
         :step.step==="核验与最终交付"?(chain.delivery_changed===false?[[...generated,...delivered]]:[generated,delivered])
-        :step.step==="模型实际输入"?[inputs]:[checkpoint.evidence];
+        :step.step==="模型实际输入"?[finalInputs.length?finalInputs:inputs]:[checkpoint.evidence];
       for(const group of groups.filter(group=>group.length))if(!group.some(point=>selected.some(item=>!item.source&&step.evidence_ids.includes(item.evidence_id)&&overlaps(item,point,raw))))
         add("investigation_stage_evidence",path+"/investigation",step.step+" 的事实须有对应边界证据，不能用其他阶段替代。",{chain_index:chain.chain_index,step:step.step,
           required_sources:group.map(item=>({message_index:item.message_index,reference:{evidence_id:item.evidence_id}}))});

@@ -160,7 +160,7 @@ test("report preserves aligned comparison reasoning without reloading inputs", a
       manifest: {
         format: "evaluation-run" as const,
         debug: false,
-        runId: "verdicts",
+        runId: "run",
         status: "finished" as const,
         engine: fakeIdentity,
         evaluatorVersion: fakeEvaluatorVersion,

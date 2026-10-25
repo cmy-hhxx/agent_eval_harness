@@ -491,7 +491,6 @@ export function draftFor(spec: Pick<AttemptSpec, "inputs" | "prompt" | "evidence
       basis_index:row.dimension==="instruction_following"?normSelection(norms,row):row.assessment.requirement_index===null?null:row.assessment.requirement_index+1,
     });
     const investigation_facts:AttributionSubmission["investigation_facts"]=[];
-    const actors=(material as unknown as {responsibility_actors:{actor_index:number;component:string}[]}).responsibility_actors;
     return {
       summary:result.summary,meets_core:core.meets_core,core_reason:core.reason,
       core_requirements:core.criterion_ids.map(id => material.task_analysis.requirements.find(item => item.id === id)!.requirement_index),
@@ -514,7 +513,7 @@ export function draftFor(spec: Pick<AttemptSpec, "inputs" | "prompt" | "evidence
           if(prior>=0)return [prior+1];investigation_facts.push(fact);return [investigation_facts.length];
         }));
         return {...observed,impact:row.assessment.impact,diagnosis:problem.diagnosis,label:problem.label,investigation_fact_indices,
-          component:problem.component.map(cause=>({actor_index:actors.find(actor=>actor.component===cause.component)?.actor_index,
+          component:problem.component.map(cause=>({actor_index:cause.actor_index,
             function_index:responsibilityFunctions.findIndex(item=>item.technical_domain===cause.technical_domain&&item.functional_component===cause.functional_component)+1,
             step_index:attributionTaxonomy.investigation_steps.indexOf(cause.chain_step)+1,failure_stage_index:attributionTaxonomy.stages.indexOf(cause.failure_stage)+1,
             business_component:cause.business_component,chain_index:cause.chain_index,field_names:cause.field_names,

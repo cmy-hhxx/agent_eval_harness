@@ -17,7 +17,7 @@ import { writeRunOverview } from "./run-overview.js";
 /** Codecs are pure business conversions. Only this module accesses run files. */
 export interface RunCodec<Checkpoint> {
   encode(state: RunState): Checkpoint;
-  overview?(checkpoint: Checkpoint): unknown;
+  overview?(checkpoint: Checkpoint, state: RunState): unknown;
   references(checkpoint: Checkpoint, taskIds?: ReadonlySet<string>): ResultReference[];
   resultId(row: JsonObject): string;
   decode(
@@ -68,7 +68,7 @@ export function createRunRepository<Checkpoint>(
   }
   return {
     async writeRun(run, state) {
-      const checkpoint = codec.encode(state), overview = codec.overview?.(checkpoint);
+      const checkpoint = codec.encode(state), overview = codec.overview?.(checkpoint, state);
       await atomicWrite(locateRun(run).stateFile, JSON.stringify(checkpoint) + "\n");
       if (codec.overview) await writeRunOverview(run, overview);
     },

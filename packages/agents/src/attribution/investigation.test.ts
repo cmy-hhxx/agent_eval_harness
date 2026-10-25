@@ -216,6 +216,8 @@ test("a tenfold boundary relation cannot self-declare an explicit confirmed proc
   const source = evidenceSources(f.raw.messages[index]).find(source => source.path === "/reasoning_content")!;
   const point = cite(f.candidate.input_id, index, source, 0, source.text.length);
   f.evidence.push(point); f.cause.evidence_ids.push(point.evidence_id);
+  const read=parseEvidenceCoordinates(point.evidence_id)!;
+  if(read.kind!=='image')f.audit.traceReads.push({candidate:'answer',message_index:index,kind:read.kind,path:read.path,start:read.start,end:read.end});
   f.cause.mechanism = "记录的推理明确将369乘10得到3690，并作为XAU/USD报价输出。";
   f.cause.reason = "该节点的reasoning_content直接记录了转换步骤，输入及生成边界与之相符。";
   assert.deepEqual(codes(f), []);
@@ -241,14 +243,17 @@ test("an earlier preparer's complete source never substitutes for the final mode
   f.audit.traceReads = f.audit.traceReads.filter(read => read.message_index !== last);
   assert(codes(f).includes("investigation_read_required"));
 });
-test("a whole final JSON reference cannot bypass its cited business chain", () => {
+test("final JSON evidence does not invent an unselected chain, while explicit invalid links still fail", () => {
   const f = businessChainFixture(), index = f.candidate.final_index;
   const source = evidenceSources(f.raw.messages[index]).find(source => source.kind === "json")!;
   const point = cite(f.candidate.input_id, index, source, 0, source.text.length);
   f.problem.investigation = []; f.cause.chain_index = null;
   const issues = investigationIssues(f.binding.request, f.problem, [point], f.audit, "/problem");
   assert(!issues.some(issue => issue.code === "investigation_incomplete"));
-  assert(issues.some(issue => issue.code === "responsibility_chain"));
+  assert(!issues.some(issue => issue.code === "responsibility_chain"));
+  f.cause.chain_index=999;
+  assert(investigationIssues(f.binding.request,f.problem,[point],f.audit,"/problem")
+    .some(issue=>issue.code==="responsibility_chain"));
 });
 
 test("field repair feedback lists actual selected names without silently rewriting invented aliases", () => {

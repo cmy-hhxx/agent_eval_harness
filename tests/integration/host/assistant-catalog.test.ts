@@ -42,6 +42,13 @@ test("catalog reads current AIME without overviews, namespaces equal run IDs and
   await writeFile(resultFile, "not JSON\n"); assert.equal((await catalog.list({})).total, 2); await writeFile(resultFile, result);
   const inputs = await catalog.list({ collectionId, runId: "same", view: "inputs" });
   assert.equal((inputs.items as { reference: { collectionId: string } }[])[0].reference.collectionId, collectionId);
+  const progress = inputs.summary as { activeStages: string[]; completedInputCount: number; inputCompletionRate: number; stages: Record<string, { enabled: boolean; completionRate: number | null }> };
+  assert.deepEqual(progress.activeStages, ["attribution"]);
+  assert.equal(progress.completedInputCount, 1);
+  assert.equal(progress.inputCompletionRate, 100);
+  assert.equal(progress.stages.attribution.completionRate, 100);
+  assert.equal(progress.stages.score.enabled, false);
+  assert.equal(progress.stages.score.completionRate, null);
   const accepted = await catalog.read({ collectionId, runId: "same", taskId: task.id });
   assert.equal(accepted.workflow, "answer-review");
   const evidence = await catalog.read({ collectionId, runId: "same", taskId: task.id, sourceId }, { offset: 2, limit: 1 });
@@ -61,4 +68,10 @@ test("catalog reads current AIME without overviews, namespaces equal run IDs and
   assert.equal(partial.complete, false);
   assert.deepEqual(partial.errors.map(item => item.runId), ["broken"]);
   assert.match(partial.errors[0].message, /缺少 overview/);
+  assert.equal(((await catalog.list({ collectionId })).runDirectory as { complete: boolean }).complete, true,
+    "another collection's unreadable run does not make the requested collection incomplete");
+  const scoped = await new CatalogAnalysisData(root, { stateFile: "must-not-read", logFile: "must-not-read", deliveryFile: "must-not-read" })
+    .list({ view: "statistics", collectionId, breakdown: "date" });
+  assert.deepEqual(scoped.history, { status: "unavailable", retryable: false,
+    error: "发布累计统计没有可验证的目录范围，不能用于指定 collectionId；请读取该目录内运行或公开统计资产。" });
 });

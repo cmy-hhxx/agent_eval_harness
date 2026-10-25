@@ -1,4 +1,4 @@
-import { responsibilityFixture, responsibilitySubmissionFixture } from "../../../../tests/fixtures/responsibility.js";
+import { responsibilityFixture } from "../../../../tests/fixtures/responsibility.js";
 import assert from "node:assert/strict";
 import test from "node:test";
 import { AgentRegistry } from "@eval/host";
@@ -75,9 +75,9 @@ test("a confirmed final-answer error stays established when its component cannot
   assert.equal(accepted.findings[0].problem!.component[0].certainty,"inferred");
   assert.equal(accepted.findings[0].stage, "final_answer");
   const invented = attributionSubmission(f.request, accepted, f.audit);
-  invented.problems[0].component = [responsibilitySubmissionFixture(f.request,"InvisibleCalculator")];
+  invented.problems[0].component[0].actor_index=(f.request.input.answer as {component_catalog:unknown[]}).component_catalog.length+1;
   assert.throws(() => f.registry.resolve(f.binding, invented, f.audit), error =>
-    error instanceof ValidationError && error.issues!.some(issue => issue.code === "schema_enum" ||
+    error instanceof ValidationError && error.issues!.some(issue => issue.code === "schema_maximum" ||
       issue.code === "responsibility_actor"));
 });
 

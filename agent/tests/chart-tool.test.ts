@@ -78,6 +78,29 @@ test("statistics chart selectors cannot silently override supplied numbers or un
   ]) await assert.rejects(tool.execute(invalid, context), /参数无效/);
 });
 
+test("ratio charts bind precomputed values and each model's actual denominator without recalculation", async () => {
+  const models = [
+    { modelName: "A组Fast", comparisonCount: 3, wins: 1, losses: 0, both_good: 1, both_bad: 1, winRate: 33.33, meetsCoreRate: 66.67 },
+    { modelName: "B组Fast", comparisonCount: 3, wins: 0, losses: 1, both_good: 1, both_bad: 1, winRate: 0, meetsCoreRate: null },
+  ];
+  const tool = chartTool({ ...noData, async list() { return { kind: "inputs", summary: { ...timing,
+    formalComparisonStats: { tiers: [{ comparisonTier: "Fast", comparisonCount: 3, models,
+      references: [{ collectionId: "0_wencai/0_daily_eval", runId: "run", taskId: "accepted" }] }] } } }; } });
+  const statistics = { collectionId: "0_wencai/0_daily_eval", runId: "run", comparisonTier: "Fast", metric: "winRate" };
+  const chart = JSON.parse((await tool.execute({ title: "Fast胜率", statistics }, context)).content[0].text!).chart;
+  assert.equal(chart.type, "bar");
+  assert.equal(chart.unit, "%");
+  assert.deepEqual(chart.categories, ["A组Fast（3场）", "B组Fast（3场）"]);
+  assert.deepEqual(chart.series, [{ name: "胜率", values: [33.33, 0] }]);
+  const core = JSON.parse((await tool.execute({ title: "核心达标", statistics: { ...statistics, metric: "meetsCoreRate" } }, context)).content[0].text!).chart;
+  assert.deepEqual(core.series[0].values, [66.67, null]);
+  models[0].modelName = "模".repeat(120);
+  const longName = JSON.parse((await tool.execute({ title: "完整模型名称", statistics }, context)).content[0].text!).chart;
+  assert.equal(longName.categories[0], models[0].modelName + "（3场）", "denominators must not truncate valid model identities");
+  delete (models[0] as Partial<typeof models[0]>).winRate;
+  await assert.rejects(tool.execute({ title: "缺少比例", statistics }, context), /预计算比例/);
+});
+
 test("missing or inconsistent formal counts cannot become zero-valued chart observations", async () => {
   const model = { model: "a", modelName: "A组", comparisonCount: 2, wins: 1, losses: 1, both_good: 0, both_bad: 0 };
   for (const models of [undefined, [], [{ ...model, wins: null }], [{ ...model, losses: undefined }],

@@ -1,6 +1,6 @@
 import path from "node:path";
 import { parseArgs } from "node:util";
-import { AssistantAccounts, createFileLogger, runLock } from "@eval/data";
+import { AssistantAccounts, EvaluationAssets, createFileLogger, runLock } from "@eval/data";
 import { AssistantSessions, serveAssistant } from "@eval/runtime/assistant";
 import { assistantEndpoints } from "@eval/assistant/server";
 import { createEris } from "@eval/assistant";
@@ -41,7 +41,7 @@ try {
   const server = await serveAssistant({ ...config.listen, access, userId: "cmy", webDirectory: path.join(ROOT, "dist/agent/web"), endpoints(url) {
     sessions = new AssistantSessions({ directory, url, model, internalAuthorization: access.internalAuthorization,
       models: new GatewayAssistantModels(directory, model, gateways),
-      ...createEris({ data, search: createSerperSearch({ apiKey: process.env.SEARCH_API_KEY }), web: createWebReader() }),
+      ...createEris({ data, assets: new EvaluationAssets(config.dataRoot), search: createSerperSearch({ apiKey: process.env.SEARCH_API_KEY }), web: createWebReader() }),
       onError: error => { void logger.error(error, { component: "assistant", event: "error" }); },
     });
     return assistantEndpoints(sessions);

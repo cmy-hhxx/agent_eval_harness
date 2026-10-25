@@ -1,22 +1,21 @@
-查询服务器运行、统计与对战目录。累计评测数量、完成进度和总体结论使用 `{"view":"statistics"}`，读取后结合用户问题分析已有数据，解释主要差异及其边界。查看运行目录用 `{}`，返回目录和 currentRun.summary。
+读取评测统计或目录，按需求直接调用：
+- 整体表现与进度：{"view":"statistics"}，一次返回已发布累计统计和运行中批次的预计算统计。
+- 历史趋势与分类：{"view":"statistics","breakdown":"date","limit":20}，读取已存每日统计；breakdown 也可用 task（任务类型）或 difficulty（难度）。history.breakdown.nextOffset 续页，分组不改变累计统计范围。
+- 指定运行：{"collectionId":"目录返回值","runId":"目录返回值"}，返回回答目录与完整运行统计；query 和分页不改变统计范围。
+- 批量读评语：{"view":"comparisons","includeAnalysis":true}，返回原问、双方 assessments、问题维度、胜负理由和 tradeoff。
+- 随机找案例：{"view":"comparisons","sample":true,"limit":5}，直接返回不同题的完整原问和评测摘要，由你挑选；excludeCases 排除已看题的全部档位。
+- 运行目录：{}，返回真实 collectionId、runId、workflow 与 currentRun.summary。
 
-view:"inputs" 或 "comparisons" 可省略 runId，优先有输入的运行中批次，其次最近有输入的运行，返回实际 runId 和 selectionReason；无需先查目录。已知目标运行或继续筛选、翻页、换题时传该 runId，服务端严格限定在指定运行，空结果不会自动换批次。随机找一场高质量问句的对战用 `{"view":"comparisons","sample":true,"limit":1}`，自动附完整原问和评测摘要。
+inputs/comparisons 不传 runId 时自动选有输入的运行中批次，其次最近批次。继续筛选、翻页或换题时沿用返回的 collectionId 和 runId，不会自动扩大范围。comparisons 的 comparisonTier、outcome 精确筛选；默认排除双方都好，outcome:"all" 包含全部结果。nextOffset 续读目录；sample 的 selection 只说明本次随机召回范围，不代表质量或总体分布。
 
-view:"statistics" 不传 runId：history 是最近完整发布的累计快照，currentRuns 是运行中批次，可能重叠，分别展示。snapshotAt 是快照时点，requestDates 是数据日期；history 不含问题维度，缺失快照返回 unavailable。
-runDirectory.complete=false 时，errors 列出未读运行，目录及自动选择仅覆盖可读运行，不能称为全量或把缺失当零。history 按自身 status 使用；已知 runId 可直接查询，不依赖目录索引。
-历史 totalCaseCount=纳入题数，caseCount=至少完成一场的题数；progress.completedCaseCount=完成全部预期对战的题数，completedBattleCount/expectedBattleCount=已完成/预期场数。progress.battleCompletionRate=场次完成百分比，caseCompletionRate=全部对战已完成题数占 totalCaseCount 的百分比，均保留两位小数，分母为零时为 null。stats 分模型、档位，evaluated 是全部参战场次，等于 wins + losses + both_good + both_bad；这四项分别为胜、负、都好、都差场数。winRate 是 wins/evaluated 的百分比，分母包含都好和都差；accuracy.rate 也是0–100的百分比。已有计数和比例直接用于回答，按展示精度舍入；材料足够即可归纳结论。
-accuracy 仅覆盖其 count 个有标准答案的样本；first/total 为首字/总耗时（毫秒），input/output 为 token 数。
+所有比例已由程序计算，单位为百分数（0–100），直接用于回答：
+- history.stats[].winRate：wins 占 evaluated 的比例，evaluated 包含 wins、losses、both_good、both_bad；lossRate / bothGoodRate / bothBadRate 分别是负、都好、都差比例。accuracy.rate 仅覆盖 accuracy.count 个有标准答案的样本。breakdown.items[].stats 使用同一口径；日期分组的 totalCaseCount、任务/难度分组的 count 是纳入题数。
+- history.progress.battleCompletionRate / caseCompletionRate：已完成对战 / 预期对战、全部对战完成题 / 纳入题。caseCount 是至少完成一场的题数，totalCaseCount 是纳入题数。
+- summary.formalComparisonStats.tiers[].models：四类场数、comparisonCount、winRate、lossRate、bothGoodRate、bothBadRate、meetsCoreRate（核心达标率）；problemDimensions 中 establishedRate / uncertainRate 是对应问题场数占该模型参战场数的比例。同场同维度去重，维度可重叠。
+- summary.attributionCompletionRate / battleCompletionRate：已归因回答 / 纳入回答、已接受正式对战 / 预期正式对战。模型参战场数不能相加当总场数。
+- Answer-review 的 summary.activeStages 是启用的主阶段；completedInputCount / inputCompletionRate 给出这些阶段全部完成的回答数与比例，分母为 inputCount。stages[].completionRate 是单阶段完成率，enabled:false 表示未启用；后置 instruction-review 单列，不代替主阶段完成。
 
-view:"comparisons" 查询正式对战。query 字面筛选原问、模型或判词，comparisonTier、outcome 精确筛选档位与胜负；默认排除双方都好，可用 outcome:"both_good" 或 "all" 纳入。includeAnalysis:true 同页返回原问、双方 assessments、问题维度、outcomes.reason 和 tradeoff，适合批量分析；按 nextOffset 读完目标范围。
-sample:true 先随机召回最多20道不同题，只对完整原问做一次语义筛选，返回有明确目标、需要实质推理或权衡的题目；不按字数、模型输赢或术语筛选。返回数量最多为 limit，可以不足；不通过、漏判或筛选失败的题目不会作为样本返回。items[].questionSelectionReason 给出入选理由，不是评测判词。
-换题时 excludeCases 合并已展示的 items[].case 与 selection.rejectedCases，排除同题全部档位。selection.checkedCaseCount、qualifiedCaseCount 只描述本次候选池；remainingCaseCount 包含未抽取题目与未返回的合格题目，unreviewedCaseCount 是其中尚未筛选的题数。空结果只表示本次候选无合格题目，不代表整个运行没有；需要继续时沿用 runId 和排除项。不扩大范围、不用低质量题补足数量。普通分页、指定题目与全量统计不使用质量筛选，精选案例不代表总体分布。
+history 是最近完整发布快照，currentRuns 是运行中批次，两者可能重叠，不能直接相加。snapshotAt 是统计时点，requestDates 是被评数据日期。model 用于定位，modelName 用于展示。first/total 是首字/总耗时（毫秒），input/output 是 token 数。
+statistics 指定 collectionId 时只展示该目录的当前运行；发布历史缺少可核验的目录范围，会明确返回不可用。要看该来源的历史，沿 list_assets 读取对应已存统计或报告，不套用其他来源的累计胜率。
 
-summaryScope=run：query 筛选不改变统计范围，全局统计无需翻页。inputCount=回答数，evaluatedInputCount=已归因数，caseCount=去重题数；formalComparisonStats.formalResultCount=正式结果份数，comparisonCount=对局场数，tiers 分档。模型参战分母不能相加当场数。
-tiers.models.meetsCoreCount 是核心达标场数；problemDimensions 为 established（已确认）、uncertain（待核验）问题场数，同场同维度同状态去重，维度间可重叠。同题多模型对战不是独立样本，胜率差不直接代表统计显著性。
-summary.batches 是被评数据日期，sampleTimeRange=null 表示样本发生日期未登记。statisticsError 表示统计不可用，已返回的目录仍可使用；retryable:false 的错误需要修复来源后再读。
-
-model 用于定位，modelName 用于展示，comparisonTier=null 表示档位未知。图表引用 statistics:{runId,comparisonTier}。
-
-所有运行和材料引用必须携带目录返回的 collectionId 与 runId；同名 runId 不能跨来源或任务混用。
-
-运行项返回 collectionId、runId 和 workflow。Answer-review 使用 inputs 和正式任务结果，没有 comparisons 胜负；测试结果仅在明确需要时设置 includeTests:true。
+null 或 unavailable 表示未知，不补零；参战样本为0时，胜率等比例为null，不能说成0%。runDirectory.complete=false 时 errors 给出缺失范围；statisticsError.retryable:true 表示仍在保存，可稍后重读；false 按维护操作处理，目录仍可使用。Answer-review 提供评分、归因和进度，没有 comparisons。测试目录仅显式 includeTests:true 时纳入。所有后续引用完整保留 collectionId + runId。

@@ -1,8 +1,8 @@
 // Business data binding for the upstream ToolRow / ToolDetails components.
 const parse=value=>{try{return JSON.parse(value??'null');}catch{return null;}};
-const label={runId:'运行',inputId:'输入',taskId:'任务',collectionId:'来源与任务',sourceId:'证据来源',evaluatorVersion:'评测器',status:'状态',state:'状态',model:'模型',batchId:'批次',caseId:'样本',messageIndex:'消息',offset:'起点',total:'总数',accepted:'已接受',name:'文件',bytes:'字节',role:'角色',chars:'字符数',nextOffset:'下一页',hasMore:'还有内容'};
+const label={runId:'运行',inputId:'输入',taskId:'任务',collectionId:'来源与任务',assetId:'资产',sourceId:'证据来源',evaluatorVersion:'评测器',status:'状态',state:'状态',model:'模型',batchId:'批次',caseId:'样本',messageIndex:'消息',offset:'起点',total:'总数',accepted:'已接受',name:'文件',bytes:'字节',archived:'归档',format:'格式',role:'角色',chars:'字符数',nextOffset:'下一页',hasMore:'还有内容'};
 const fields=value=>Object.entries(value??{}).filter(([key,v])=>label[key]&&['string','number','boolean'].includes(typeof v)).map(([key,value])=>({label:label[key],value:String(value)}));
-const referenceText=value=>[value?.collectionId,value?.runId,value?.inputId,value?.taskId,value?.messageIndex===undefined?null:`消息 ${value.messageIndex}`].filter(Boolean).join(' · ');
+const referenceText=value=>[value?.collectionId,value?.assetId,value?.runId,value?.inputId,value?.taskId,value?.messageIndex===undefined?null:`消息 ${value.messageIndex}`].filter(Boolean).join(' · ');
 const operationLabel={add:'加法',subtract:'减法',multiply:'乘法',divide:'除法'};
 const operationSymbol={add:' + ',subtract:' − ',multiply:' × ',divide:' ÷ '};
 const statusText=(model,output)=>output?.error==='interrupted'?'已中断':({succeeded:'已完成',running:'进行中',cancelled:'已取消',failed:'未完成'}[output?.state]??{preparing:'准备中',running:'进行中',ok:'已完成',error:'未完成',stopped:'已停止'}[model.state]??'准备中');
@@ -112,16 +112,11 @@ export function analysisToolModel(name,model){
    ...(rows(item.evidence).length?{groups:[{label:'证据位置',items:rows(item.evidence).map(entry=>({title:entry.evidence_id,fields:[]}))}]}:{}),
   }))}}:{})};
  }
- if(name==='show_comparison'){
-  const issues=rows(output?.issues).filter(issue=>string(issue.path)&&string(issue.reason));
-  if(output?.kind==='comparison-check'&&!output.error&&issues.length)return {
-   summary:`比较图草稿 · 待修订（${issues.length}项）`,
-   details:{items:issues.map((issue,index)=>({title:`核对意见 ${index+1}`,description:issue.reason,fields:[{label:'位置',value:issue.path}]}))},
-  };
-  return {summary:`显示比较图 · ${status}`};
- }
- if(name==='show_chart')return {summary:`显示${({line:'趋势图',pie:'环形组成图',heatmap:'热力矩阵',radial_heatmap:'环形热力图',scatter:'散点图',waterfall:'瀑布图',histogram:'分布图',bubble:'气泡图',bubble_matrix:'气泡矩阵',slope:'坡度图',interval:'区间图',boxplot:'箱线图',violin:'小提琴图',rose:'玫瑰图',concentric:'多层环形图',radial_progress:'多环进度图',radar:'雷达图',waffle:'华夫图',sunburst:'旭日图',treemap:'矩形树图',sankey:'桑基图',chord:'弦图',ecdf:'累积分布图',ridgeline:'山脊图'}[output?.chart?.type??args.type])??'图表'} · ${status}`};
+ if(name==='show_comparison')return {summary:`显示比较图 · ${status}`};
+ if(name==='show_chart')return {summary:`显示${({bar:'柱状对比图',line:'趋势图',pie:'环形组成图',heatmap:'热力矩阵',radial_heatmap:'环形热力图',scatter:'散点图',waterfall:'瀑布图',histogram:'分布图',bubble:'气泡图',bubble_matrix:'气泡矩阵',slope:'坡度图',interval:'区间图',boxplot:'箱线图',violin:'小提琴图',rose:'玫瑰图',concentric:'多层环形图',radial_progress:'多环进度图',radar:'雷达图',waffle:'华夫图',sunburst:'旭日图',treemap:'矩形树图',sankey:'桑基图',chord:'弦图',ecdf:'累积分布图',ridgeline:'山脊图'}[output?.chart?.type??args.type])??'图表'} · ${status}`};
  let summary=`评测分析 · ${status}`;
+ if(name==='list_assets')summary=output?.total===undefined?`查询评测资产 · ${status}`:`评测资产 · ${output.total}项匹配 · 本页${output.items?.length??0}项`;
+ if(name==='read_asset')summary=`读取${string(output?.name)||'评测资产'} · ${status}`;
  if(name==='list_data'){
   const progress=output?.kind==='runs'?output.currentRun?.summary:output?.summary;
   summary=output?.kind==='comparisons'?`查询正式对战 · ${output.total} 场匹配 · 本页 ${output.items?.length??0} 场`:progress?`${output.kind==='runs'?'最近一轮':'本轮'} · ${progress.inputCount} 条回答 · ${progress.caseCount} 道题`:output?.total===undefined?`查询评测目录 · ${status}`:`找到 ${output.total} ${output.kind==='runs'?'次运行':output.kind==='inputs'?'条回答':'项结果'}`;

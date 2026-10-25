@@ -7,6 +7,7 @@ import { init } from 'echarts/core';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { createEris } from '@eval/assistant';
+import type { JsonObject } from '@eval/contracts';
 import { ROOT } from '../../tests/fixtures/services.js';
 const data = await import(pathToFileURL(path.join(ROOT, 'agent/src/client/chart-data.js')).href);
 const { chartFromToolOutput } = await import(pathToFileURL(path.join(ROOT, 'agent/src/client/charts.js')).href);
@@ -20,6 +21,7 @@ const samples = [
   { ...base, type: 'scatter', xValues: [2, 4, 9], xLabel: '时间', xUnit: '秒' },
   { ...base, type: 'waterfall', series: [{ name: '金额变动', values: [100, -130, 40] }] },
   { ...base, type: 'histogram' },
+  { ...base, type: 'bar', series: [{ name: 'A组', values: [10, 0, -3] }, { name: 'B组', values: [null, 5, -2] }] },
 ];
 const context = { scope: { userId: 'test', sessionId: 'test' }, callId: 'chart', signal: new AbortController().signal, progress() {} };
 const unexpected = async (): Promise<never> => { throw new Error('Unexpected dependency'); };
@@ -32,6 +34,25 @@ test('Unicode text accepted by the tool remains a visible chart receipt at every
     xLabel: '😀'.repeat(80), xUnit: '😀'.repeat(40), annotations: [{ categoryIndex: 0, seriesIndex: 0, note: '😀'.repeat(100) }] };
   const result = await tool.execute(chart, context);
   assert.deepEqual(chartFromToolOutput(result.content[0].text, 'ok'), chart);
+});
+
+test('horizontal bars preserve negative, zero and unknown observations and show their exact labels', async () => {
+  const chart = samples.at(-1)!;
+  const receipt = await tool.execute(chart, context);
+  assert.deepEqual(chartFromToolOutput(receipt.content[0].text, 'ok'), chart);
+  const option = researchOption(chart, 700), bars = option.series.filter((series: JsonObject) => series.type === 'bar');
+  assert.deepEqual(bars[0].data.map((point: JsonObject) => point.value), [10, 0, -3]);
+  assert.equal(bars[1].data[0].value, null);
+  assert.equal(bars[0].data[2].label.position, 'left');
+  assert.match(data.chartReading(chart, bars[1].data[0]), /未知/);
+  const engine = init(null, null, { renderer: 'svg', ssr: true, width: 700, height: 350 });
+  try {
+    engine.setOption(option);
+    const svg = engine.renderToSVGString();
+    assert(!/NaN|Infinity/.test(svg));
+    assert(svg.includes('>0<'));
+    assert(svg.includes('>—<'));
+  } finally { engine.dispose(); }
 });
 
 test('tiny accepted measurements produce finite geometry in every renderer without changing receipts', async () => {
@@ -226,7 +247,8 @@ test('compact layers use observed quartiles and keep unknown differences unknown
 });
 
 test('every local template uses the current tool contract and the same receipt renderer', async () => {
-  assert.equal(new Set(chartTemplates.map((t: { chart: { type: string } }) => t.chart.type)).size, 24);
+  const declared = ((tool.inputSchema.properties as JsonObject).type as JsonObject).enum as string[];
+  assert.deepEqual([...new Set(chartTemplates.map((t: { chart: { type: string } }) => t.chart.type))].sort(), [...declared].sort());
   for (const { chart } of chartTemplates) {
     const result = await tool.execute({ ...chart, references: [{ collectionId: "0_wencai/0_daily_eval", runId: 'test' }] }, context);
     assert.deepEqual(chartFromToolOutput(result.content[0].text, 'ok'), chart);

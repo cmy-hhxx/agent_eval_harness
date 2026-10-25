@@ -120,9 +120,6 @@ export function comparisonResourceText(metrics: { finish_seconds: number | null;
 }
 
 /** Eris owns its instructions and tool wording separately from evaluation profiles. */
-export const erisComparisonCheck = resource("eris/comparison-check.md");
-export const erisQuestionSelection = resource("eris/question-selection.md");
-
 export function erisPrompt(toolNames: string[]) {
   if (new Set(toolNames).size !== toolNames.length) throw new Error("Duplicate prompt tool in Eris");
   const toolDescriptions = Object.fromEntries(toolNames.map((name) => {

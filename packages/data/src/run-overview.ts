@@ -14,6 +14,16 @@ export async function writeRunOverview(run: string, value: unknown): Promise<voi
   await writeJson(locateRun(run).overviewFile, { state: await stateIdentity(run), value });
 }
 
+export async function readRunOverview<T>(run: string): Promise<T> {
+  const before = await stateIdentity(run);
+  const record = await readJson<{ state: typeof before; value: T }>(locateRun(run).overviewFile);
+  const after = await stateIdentity(run);
+  if (!record?.state || !Object.hasOwn(record, "value") ||
+      Object.entries(after).some(([key, value]) => before[key as keyof typeof before] !== value || record.state[key as keyof typeof after] !== value))
+    throw new Error("索引与当前状态文件不一致");
+  return record.value;
+}
+
 async function runDirectories(directory: string) {
   try {
     return (await readdir(directory, { withFileTypes: true }))
@@ -31,15 +41,9 @@ export async function readRunOverviews<T>(directory: string): Promise<({ runId: 
   for (const run of await runDirectories(directory)) {
     const runId = path.basename(run);
     try {
-      let current: Awaited<ReturnType<typeof stateIdentity>>;
-      try { current = await stateIdentity(run); }
+      try { await stateIdentity(run); }
       catch (error) { if ((error as NodeJS.ErrnoException).code === "ENOENT") continue; throw error; }
-      const record = await readJson<{ state: typeof current; value: T }>(locateRun(run).overviewFile);
-      current = await stateIdentity(run);
-      if (!record?.state || !Object.hasOwn(record, "value") ||
-          Object.entries(current).some(([key, value]) => record.state[key as keyof typeof current] !== value))
-        throw new Error("索引与当前状态文件不一致");
-      result.push({ runId, value: record.value });
+      result.push({ runId, value: await readRunOverview<T>(run) });
     } catch {
       result.push({ runId, error: `运行统计索引缺失、损坏或过期：${runId}。等待当前保存完成后重试；若仍失败，停止该运行后执行 node scripts/rebuild-run-overviews.mjs <运行根目录>。` });
     }
@@ -48,14 +52,14 @@ export async function readRunOverviews<T>(directory: string): Promise<({ runId: 
 }
 
 /** Explicit maintenance, not a read-time fallback. Never overwrite an active writer's projection. */
-export async function rebuildRunOverviews<T>(directory: string, project: (checkpoint: T) => unknown): Promise<string[]> {
+export async function rebuildRunOverviews<T>(directory: string, project: (checkpoint: T, run: string) => unknown | Promise<unknown>): Promise<string[]> {
   const updated = [];
   for (const run of await runDirectories(directory)) {
     try { await stateIdentity(run); }
     catch (error) { if ((error as NodeJS.ErrnoException).code === "ENOENT") continue; throw error; }
     const release = await runLock(run, { createDirectory: false });
     try {
-      const value = project(await readJson<T>(locateRun(run).stateFile));
+      const value = await project(await readJson<T>(locateRun(run).stateFile), run);
       await writeRunOverview(run, value);
       updated.push(path.basename(run));
     } finally { await release(); }

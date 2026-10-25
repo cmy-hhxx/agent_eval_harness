@@ -6,15 +6,15 @@ import fs from "node:fs/promises";
 import { syncBuiltinESMExports } from "node:module";
 import { rm } from "node:fs/promises";
 import { emptyUsage, object, type JsonObject, type RunState, type SubmissionReceipt, type TaskPlan } from "@eval/contracts";
-import { readJson, writeJson, writeJsonl, writeRunOverview } from "@eval/data";
-import { analysisRunOverview, buildPlan, comparisonRepository, createResultWriter, type Checkpoint, type EvalConfig, type TaskData } from "@eval/workflows/comparison";
+import { readJson, runLock, writeJson, writeJsonl, writeRunOverview } from "@eval/data";
+import { analysisRunOverview, readAnalysisComparisonRecords, buildPlan, comparisonRepository, createResultWriter, type Checkpoint, type EvalConfig, type TaskData } from "@eval/workflows/comparison";
 import { LocalAnalysisData } from "../../../apps/host/src/assistant-data.js";
 import { createEris } from "@eval/assistant";
 import { attributionResult, comparisonResult, criteriaResult, emptyAudit, fakeEvaluatorVersion, fakeIdentity, fakeJudge, fixtureConfig, raw } from "../../fixtures/comparison.js";
 
 async function saveCheckpoint(file: string, saved: Checkpoint) {
   await writeJson(file, saved);
-  await writeRunOverview(path.dirname(file), analysisRunOverview(saved));
+  await writeRunOverview(path.dirname(file), analysisRunOverview(saved, await comparisonRepository.readRun(path.dirname(file))));
 }
 
 async function register(config: EvalConfig, accepted?: (state: RunState, plan: TaskPlan) => Promise<void>) {
@@ -71,7 +71,6 @@ test("an unavailable historical index cannot block valid runs or an explicit run
     const explicit = await source.list({ collectionId: "0_wencai/0_daily_eval", runId: "broken" });
     assert.equal(explicit.kind, "inputs", "an explicit query reads the checkpoint, not its optional directory index");
     await fs.writeFile(path.join(fixture.config.output.path, "broken/state.json"), "{");
-    await writeRunOverview(path.join(fixture.config.output.path, "broken"), analysisRunOverview({ ...saved, runId: "broken" }));
     const partial = await source.list({ view: "statistics" });
     assert(partial.kind === "statistics");
     assert.deepEqual(partial.currentRuns.map(run => run.runId), ["source"]);
@@ -95,6 +94,53 @@ async function registerAccepted(config: EvalConfig, compare = (data: TaskData) =
   });
   return { source, accepted };
 }
+
+test("live statistics are saved with results and repeated overviews never reopen checkpoints or formal rows", async t => {
+  const fixture = await fixtureConfig();
+  t.after(() => rm(fixture.directory, { recursive: true, force: true }));
+  const { source } = await registerAccepted(fixture.config);
+  const stored = await readJson<{ value: { summary: JsonObject } }>(path.join(fixture.config.output.path, "source/overview.json"));
+  assert.equal(stored.value.summary.attributionCompletionRate, 50, "unreviewed inputs remain in the completion denominator");
+  assert.equal(stored.value.summary.battleCompletionRate, 100);
+  assert.equal(JSON.stringify(stored).includes('"records"'), false);
+  const original = fs.readFile;
+  const probe = t.mock.method(fs, "readFile", (...args: Parameters<typeof fs.readFile>) => {
+    assert(!String(args[0]).endsWith("/state.json") && !String(args[0]).includes("/results/"), "summary reads use only the persisted projection");
+    return original(...args);
+  });
+  syncBuiltinESMExports();
+  try {
+    for (let index = 0; index < 2; index++) {
+      const result = await source.list({ view: "statistics" });
+      assert(result.kind === "statistics");
+      assert.deepEqual(result.currentRuns[0].summary, stored.value.summary);
+      assert(result.currentRuns[0].summary.formalComparisonStats.tiers.every(tier => tier.models.every(model => model.winRate === 0 && model.meetsCoreRate === 100)));
+    }
+  } finally { probe.mock.restore(); syncBuiltinESMExports(); }
+});
+
+test("a normal run save between checkpoint and statistics reads is retried inside the data tool", async t => {
+  const fixture = await fixtureConfig();
+  t.after(() => rm(fixture.directory, { recursive: true, force: true }));
+  const { source } = await registerAccepted(fixture.config), run = path.join(fixture.config.output.path, "source");
+  const next = await comparisonRepository.readRun(run);
+  next.manifest.status = "finished";
+  next.manifest.finishedAt = 1000;
+  const release = await runLock(run), original = fs.readFile;
+  let overviewReads = 0;
+  const probe = t.mock.method(fs, "readFile", async (...args: Parameters<typeof fs.readFile>) => {
+    if (String(args[0]).endsWith("/overview.json") && ++overviewReads === 1) await comparisonRepository.writeRun(run, next);
+    return original(...args);
+  });
+  syncBuiltinESMExports();
+  try {
+    const result = await source.list({ runId: "source" });
+    assert(result.kind === "inputs");
+    assert.equal(result.summary.status, "finished");
+    assert.equal(result.summary.statisticsError, null);
+    assert.equal(overviewReads, 2);
+  } finally { probe.mock.restore(); syncBuiltinESMExports(); await release(); }
+});
 
 test("random case selection samples distinct questions and exhausts them across tiers", async () => {
   const fixture = await fixtureConfig(Array.from({ length: 4 }, () => [raw("one"), raw("two"), raw("three")]));
@@ -132,15 +178,12 @@ test("Eris samples a comparison without a preliminary run lookup and returns the
     const eris = createEris({ data: source, search: { search: unexpected }, web: { read: unexpected } });
     const result = await eris.tools.find(tool => tool.name === "list_data")!.execute(
       { view: "comparisons", sample: true, limit: 1, includeAnalysis: true },
-      { scope: { userId: "test", sessionId: "test" }, callId: "sample", signal: new AbortController().signal, progress() {}, async complete(request) {
-        assert.deepEqual(request.draft, { questions: [{ index: 0, question }] });
-        return { text: JSON.stringify({ decisions: [{ index: 0, eligible: true, reason: "需分辨成本传导和市场预期的因果差异" }] }), elapsedMs: 5, usage: {} };
-      } });
+      { scope: { userId: "test", sessionId: "test" }, callId: "sample", signal: new AbortController().signal, progress() {}, complete: unexpected });
     const sample = JSON.parse(result.content[0].text!);
     assert.equal(sample.kind, "comparisons");
     assert.equal(sample.runId, "source");
     assert.equal(sample.selectionReason, "running_with_inputs");
-    assert.equal(sample.selection.mode, "quality_random");
+    assert.equal(sample.selection.mode, "random");
     assert.equal(sample.items.length, 1);
     assert.equal(sample.items[0].reference.runId, sample.runId);
     assert(sample.items[0].question.length > 0);
@@ -172,12 +215,12 @@ test("comparison summaries filter exact tiers and outcomes without loading raw a
     const batch = await source.list({ collectionId: "0_wencai/0_daily_eval", runId: "source", view: "comparisons", comparisonTier: "Fast", outcome: "both_bad", includeAnalysis: true, limit: 20 });
     assert(batch.kind === "comparisons");
     assert.equal(batch.total, 1);
-    const item = batch.items[0]!, record = batch.summary.formalComparisonStats!.records.find(record => record.reference.taskId === item.reference.taskId)!;
+    const item = batch.items[0]!, record = (await source.read(item.reference)).comparisonScope as { assessments: unknown; tradeoff: string; comparisons: { reason: string }[] };
     assert("question" in item, "batch analysis includes the full question");
-    assert.equal(item.question, record.question);
-    assert.deepEqual(item.assessments, record.scope.assessments);
-    assert.equal(item.tradeoff, record.scope.tradeoff);
-    assert.equal(item.outcomes[0]!.reason, record.scope.comparisons[0]!.reason);
+    assert(item.question.length > 0);
+    assert.deepEqual(item.assessments, record.assessments);
+    assert.equal(item.tradeoff, record.tradeoff);
+    assert.equal(item.outcomes[0]!.reason, record.comparisons[0]!.reason);
     assert.deepEqual(batch.summary, defaults.summary);
     assert.equal(batch.summary.formalComparisonStats!.comparisonCount, 6);
     const good = await source.list({ collectionId: "0_wencai/0_daily_eval", runId: "source", view: "comparisons", outcome: "both_good" });
@@ -588,7 +631,8 @@ test("Eris exposes whole-run formal standings and read scopes from recorded resu
       assert.match(error.message, /"comparisonTier":"Fast"/);
       return true;
     });
-    for (const record of stats.records) {
+    const records = await readAnalysisComparisonRecords(path.join(fixture.config.output.path, "source"), Object.keys(saved.tasks).filter(id => saved.tasks[id].receipt?.exported?.comparisonId));
+    for (const record of records) {
       assert.equal(record.question, "计算2+2");
       const result = await source.read(record.reference);
       assert.deepEqual(result.comparisonScope, record.scope);
@@ -614,23 +658,27 @@ test("Eris exposes whole-run formal standings and read scopes from recorded resu
     await assert.rejects(source.read({ collectionId: "0_wencai/0_daily_eval", runId: "source", query: "不存在的题目", comparisonTier: "Fast" }), /没有匹配/);
     await assert.rejects(source.read({ collectionId: "0_wencai/0_daily_eval", runId: "source", query: "计算2+2", comparisonTier: "Other" }), /没有匹配/);
     await assert.rejects(source.read({ collectionId: "0_wencai/0_daily_eval", runId: "source", query: " ", comparisonTier: "Fast" }), /不能为空/);
-    const duplicate = structuredClone(saved.tasks[stats.records[0]!.reference.taskId]!);
+    const duplicate = structuredClone(saved.tasks[records[0]!.reference.taskId]!);
     saved.tasks[randomUUID()] = duplicate;
     await saveCheckpoint(checkpointPath, saved);
-    await assert.rejects(source.read({ collectionId: "0_wencai/0_daily_eval", runId: "source", query: "计算2+2", comparisonTier: stats.records[0]!.scope.comparisonTier! }), /匹配到 2 场/);
-    const broken = structuredClone(accepted[stats.records[0]!.reference.taskId]!.exported!.row);
+    await assert.rejects(source.read({ collectionId: "0_wencai/0_daily_eval", runId: "source", query: "计算2+2", comparisonTier: records[0]!.scope.comparisonTier! }), /匹配到 2 场/);
+    const broken = structuredClone(accepted[records[0]!.reference.taskId]!.exported!.row);
     broken.verdicts = {};
     await writeJsonl(path.join(fixture.config.output.path, "source/results/comparison.jsonl"), [broken]);
     const usable = await source.list({ collectionId: "0_wencai/0_daily_eval", runId: "source", limit: 1 });
     assert(usable.kind === "inputs");
     assert.equal(usable.items.length, 1, "comparison corruption cannot make the input directory unreadable");
-    assert.equal(usable.summary.formalComparisonStats, null);
-    assert.equal(usable.summary.statisticsError?.retryable, false);
-    await assert.rejects(source.list({ collectionId: "0_wencai/0_daily_eval", runId: "source", view: "comparisons" }), /comparison_statistics_unavailable/);
+    assert(usable.summary.formalComparisonStats, "stored statistics remain readable without reopening damaged evidence files");
+    await assert.rejects(source.list({ collectionId: "0_wencai/0_daily_eval", runId: "source", view: "comparisons" }), /缺失|缺少|对局/);
+    await rm(path.join(fixture.config.output.path, "source/overview.json"));
+    const missing = await source.list({ collectionId: "0_wencai/0_daily_eval", runId: "source" });
+    assert(missing.kind === "inputs");
+    assert.equal(missing.summary.formalComparisonStats, null);
+    assert.equal(missing.summary.statisticsError?.retryable, false);
     const partial = await source.list({ view: "statistics" });
     assert(partial.kind === "statistics");
-    assert.equal(partial.currentRuns.length, 1);
-    assert.equal(partial.currentRuns[0]!.summary.formalComparisonStats, null);
+    assert.equal(partial.currentRuns.length, 0);
+    assert.equal(partial.runDirectory.complete, false);
   } finally { await rm(fixture.directory, { recursive: true, force: true }); }
 });
 

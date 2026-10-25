@@ -16,6 +16,10 @@ test('existing accepted Attribution keeps its row while Score is added, paginate
     receipts:{[task.id]:{taskId:task.id,attemptId:'attempt',submissionId:'submission',evaluatorVersion:fakeEvaluatorVersion,judge:'fixture',status:'succeeded',acceptedAt:1,
       evaluation:attributionResult(true,'2+2=4',true,c.input_id),audit:emptyAudit(),usage:emptyUsage()}},usage:emptyUsage(),recordedAttempts:1};
   await answerReviewRepository.createResultWriter(run,plan.inputs)(state);await answerReviewRepository.writeRun(run,state);
+  const attributionOnly=await readAnswerReviewAnalysis(run);
+  assert.deepEqual(attributionOnly.summary.activeStages,['attribution']);
+  assert.equal(attributionOnly.summary.stages.score.enabled,false);assert.equal(attributionOnly.summary.stages.score.completionRate,null);
+  assert.equal(attributionOnly.summary.completedInputCount,1);assert.equal(attributionOnly.summary.inputCompletionRate,100);
   const historical=(await answerReviewRunSummaries([{run}])).runs[0];assert.equal(historical.stages.attribution.succeeded,1);assert.equal(historical.stages.score.total,1);assert.equal(historical.stages.score.pending,1);
   assert.equal(historical.questions,1);assert.equal(historical.answers,1);assert.equal(historical.taskTotal,2);assert.equal(historical.taskCompleted,1);
   assert.deepEqual(historical.models[c.version],{answers:1,completed:0,failed:0,pending:1});assert.equal(historical.total,1);assert.equal(historical.succeeded,0);
@@ -65,29 +69,34 @@ test('automatic Score backfill retains the exact task scope and does not reopen 
 
 
 test('one Score task retries without reopening accepted Attribution',async t=>{
-  const f=await fixtureConfig([[{...sessionRaw('phases'),batch_id:'b1'} as any],[],[],[]]);t.after(()=>rm(f.directory,{recursive:true,force:true}));
+  const f=await fixtureConfig([[{...sessionRaw('score-retry'),batch_id:'b1'} as any],[],[],[]]);t.after(()=>rm(f.directory,{recursive:true,force:true}));
   const config:AnswerReviewConfig={...f.config,workflow:'answer-review',inputs:{...f.config.inputs,versions:f.config.inputs.versions.slice(0,1)}};
-  const plan=await planAnswerReview(config),dimensions=plan.tasks.find(task=>task.stage==='score')!,attribution=plan.tasks.find(task=>task.stage==='attribution')!,c=(attribution.data as any).candidate;
-  const final=dimensions;
+  const plan=await planAnswerReview(config),score=plan.tasks.find(task=>task.stage==='score')!,attribution=plan.tasks.find(task=>task.stage==='attribution')!,c=(attribution.data as any).candidate;
+  assert.equal(plan.tasks.filter(task=>task.stage==='score').length,1);assert.equal(score.dependencies.attribution,attribution.id);
   const instruction:PlannedTask={id:'instruction',stage:'instruction-review',inputIds:{case:c.input_id},dependencies:{source:attribution.id},data:{candidate:c}};
   const receipt=(task:PlannedTask,evaluation:unknown):SubmissionReceipt=>({taskId:task.id,attemptId:task.id+'-attempt',submissionId:task.id+'-submission',evaluatorVersion:fakeEvaluatorVersion,judge:'fixture',status:'succeeded',acceptedAt:1,evaluation,audit:emptyAudit(),usage:emptyUsage()});
-  const run=path.join(f.directory,'phases'),state:RunState={manifest:{runId:'phases',format:'evaluation-run',debug:false,status:'interrupted',engine:fakeIdentity,evaluatorVersion:fakeEvaluatorVersion,config,tasks:[...plan.tasks,instruction],states:{
-    [attribution.id]:{status:'succeeded',attempts:1},[dimensions.id]:{status:'failed',attempts:2},instruction:{status:'failed',attempts:1}},inputCatalog:plan.catalog,inputs:{},preflight:plan.summary,startedAt:1},receipts:{
+  const run=path.join(f.directory,'score-retry'),state:RunState={manifest:{runId:'score-retry',format:'evaluation-run',debug:false,status:'interrupted',engine:fakeIdentity,evaluatorVersion:fakeEvaluatorVersion,config,tasks:[...plan.tasks,instruction],states:{
+    [attribution.id]:{status:'succeeded',attempts:1},[score.id]:{status:'failed',attempts:2},instruction:{status:'failed',attempts:1}},inputCatalog:plan.catalog,inputs:{},preflight:plan.summary,startedAt:1},receipts:{
       [attribution.id]:receipt(attribution,attributionResult(true,'2+2=4',true,c.input_id))},usage:emptyUsage(),recordedAttempts:4};
   const save=async()=>{await answerReviewRepository.createResultWriter(run,plan.inputs)(state);await answerReviewRepository.writeRun(run,state);};await save();
+  const progress=await readAnswerReviewAnalysis(run);
+  assert.equal(progress.summary.completedInputCount,0);assert.equal(progress.summary.inputCompletionRate,0);
+  assert.equal(progress.summary.stages.attribution.completionRate,100);assert.equal(progress.summary.stages.score.completionRate,0);
   const accepted=structuredClone(state.receipts);
-  assert.deepEqual((await retryAnswerReviewTasks(run,{taskIds:[dimensions.id]})).retried,[dimensions.id]);
-  const retried=await answerReviewRepository.readRun(run);assert.equal(retried.manifest.states[dimensions.id].attempts,2);assert.deepEqual(retried.receipts,accepted);assert.equal(retried.manifest.states.instruction.status,'failed');
-  state.manifest.states[dimensions.id].status='pending';await save();
+  assert.deepEqual((await retryAnswerReviewTasks(run,{taskIds:[score.id]})).retried,[score.id]);
+  const retried=await answerReviewRepository.readRun(run);assert.equal(retried.manifest.states[score.id].attempts,2);assert.deepEqual(retried.receipts,accepted);assert.equal(retried.manifest.states.instruction.status,'failed');
+  state.manifest.states[score.id].status='pending';await save();
   const pending=(await answerReviewRunSummaries([{run}])).runs[0];assert.equal(pending.stages.score.total,1);assert.equal(pending.stages.score.pending,1);assert.equal(pending.succeeded,0);
   assert.equal((await answerReviewSample(run,c.input_id)).results.score,null);
-  await assert.rejects(readAnswerReviewSources(run,dimensions.id),/正式结果/);
-  state.receipts[final.id]=receipt(final,{case_id:c.input_id,assessment_status:'needs_material',reason:'缺少必要材料。',missing_material:['原始来源'],affected_units:['T1']});state.manifest.states[final.id]={status:'succeeded',attempts:3};await save();
+  await assert.rejects(readAnswerReviewSources(run,score.id),/正式结果/);
+  state.receipts[score.id]=receipt(score,{case_id:c.input_id,assessment_status:'needs_material',reason:'缺少必要材料。',missing_material:['原始来源'],affected_units:['T1']});state.manifest.states[score.id]={status:'succeeded',attempts:3};await save();
   const summary=(await answerReviewRunSummaries([{run}])).runs[0];assert.equal(summary.succeeded,1);assert.equal(summary.taskCompleted,2);assert.equal(summary.taskTotal,2);assert.equal(summary.instructionReview.failed,1);
   assert.equal((await answerReviewProgress(run))[0].status,'succeeded');
   assert.equal(((await answerReviewSample(run,c.input_id)).results.score?.evaluation as any).assessment_status,'needs_material');
-  assert.equal((await readAnswerReviewSources(run,final.id)).sources.A,'2+2=4');
-  assert.equal((await readAnswerReviewAnalysis(run)).summary.stages.score.succeeded,1);
+  assert.equal((await readAnswerReviewSources(run,score.id)).sources.A,'2+2=4');
+  const completed=await readAnswerReviewAnalysis(run);assert.equal(completed.summary.stages.score.succeeded,1);
+  assert.equal(completed.summary.completedInputCount,1);assert.equal(completed.summary.inputCompletionRate,100);
+  assert.equal(completed.summary.stages['instruction-review'].completionRate,0);
   assert.deepEqual((await retryAnswerReviewTasks(run,{taskIds:[instruction.id],stages:['instruction-review']})).retried,[instruction.id]);
   const after=await answerReviewRepository.readRun(run);assert.equal(after.manifest.states.instruction.attempts,1);assert.deepEqual(after.receipts[attribution.id],state.receipts[attribution.id]);assert.equal(after.recordedAttempts,4);
 });

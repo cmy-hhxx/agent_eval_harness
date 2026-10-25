@@ -7,6 +7,16 @@ import { ROOT } from "../../tests/fixtures/services.js";
 
 const { analysisToolModel } = await import(pathToFileURL(path.join(ROOT, "agent/src/client/tool-model.js")).href);
 
+test("asset inspection exposes the original page and saved coordinates", () => {
+  const reference = { collectionId: "1_aime/0_daily_eval", assetId: "cluster/cluster_tree.jsonl" };
+  const model = analysisToolModel("read_asset", { state: "ok", output: JSON.stringify({ name: "cluster_tree.jsonl", reference, text: "真实原文", offset: 8 }) });
+  assert.equal(model.details.items[0].code.text, "真实原文");
+  assert(model.details.items[0].fields.some((field: { label: string; value: string }) => field.label === "资产" && field.value === reference.assetId));
+  const saved = analysisToolModel("read_asset", { state: "ok", output: JSON.stringify({ sourceRead: { tool: "read_asset", args: { reference, offset: 8 } } }) });
+  assert(saved.details.items[0].title.includes(reference.assetId));
+  assert(!JSON.stringify(saved).includes("真实原文"));
+});
+
 test("batched search displays a compact query count while retaining the complete result", () => {
   const output = { queries: [{ query: "PCB", total: 2 }, { query: "铜缆", total: 1 }], total: 3, matches: [] };
   const model = analysisToolModel("search_data", { state: "ok", bodyRaw: JSON.stringify({ query: ["PCB", "铜缆"] }), output: JSON.stringify(output) });
@@ -113,24 +123,6 @@ test("chart summaries distinguish the chart type and execution state without exp
   assert.deepEqual(analysisToolModel("show_chart", { state: "error", bodyRaw: JSON.stringify({ type: "pie", references: [{ collectionId: "0_wencai/0_daily_eval", runId: "run-private" }] }), output: "invalid values" }),
     { summary: "显示环形组成图 · 未完成" });
   assert.deepEqual(analysisToolModel("show_chart", { state: "running", bodyRaw: '{"type":' }), { summary: "显示图表 · 进行中" });
-});
-
-test("comparison checks show actionable revision feedback instead of a raw drawing error", () => {
-  const reason = "本轮已生成K线资源，但最终引用异常，尚未取得可核验图表；应补充这一反证。";
-  const result = analysisToolModel("show_comparison", { state: "error", output: JSON.stringify({
-    kind: "comparison-check", issues: [{ path: "/draft", reason }],
-  }) });
-  assert.equal(result.summary, "比较图草稿 · 待修订（1项）");
-  assert.equal(result.details.items[0].description, reason);
-  assert.equal(result.details.items[0].fields[0].value, "/draft");
-  assert.equal(result.details.items[0].code, undefined);
-  assert.deepEqual(analysisToolModel("show_comparison", { state: "error", output: "Gateway failed" }),
-    { summary: "显示比较图 · 未完成" });
-  assert.deepEqual(analysisToolModel("show_comparison", { state: "error", output: JSON.stringify({
-    kind: "comparison-check", error: "核对格式无效", issues: [{ path: "/", reason: "Invalid output" }],
-  }) }), { summary: "显示比较图 · 未完成" });
-  assert.deepEqual(analysisToolModel("show_comparison", { state: "ok", output: JSON.stringify({ kind: "comparison-diagram", diagram: {} }) }),
-    { summary: "显示比较图 · 已完成" });
 });
 
 test("comparison pages show the question, outcome and both answer references in tool details", () => {

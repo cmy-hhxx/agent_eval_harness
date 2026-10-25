@@ -16,9 +16,39 @@ export interface PredictionOptions {
 /** Only visible dialogue and accepted visual receipts; never replay tools or private reasoning. */
 export function predictionContext(history: readonly AssistantEvent[]) {
   const textOf = (content: unknown) => assistantContent(content as JsonObject[]).filter(block => block.type === "text").map(block => String(block.text)).join("").trim();
-  const excerpt = (text: string) => {
+  const excerpt = (text: string, limit = 2400) => {
     const chars = [...text];
-    return { text: chars.slice(0, 2400).join(""), truncated: chars.length > 2400 };
+    if (chars.length <= limit) return { text, truncated: false };
+    const gap = "\n[…]\n", head = Math.ceil((limit - gap.length) * 2 / 3), tail = limit - gap.length - head;
+    return { text: chars.slice(0, head).join("") + gap + chars.slice(-tail).join(""), truncated: true };
+  };
+  const visual = (receipt: JsonObject) => {
+    let truncated = false;
+    const text = (value: unknown, limit: number) => {
+      const part = excerpt(typeof value === "string" ? value : "", limit);
+      truncated ||= part.truncated;
+      return part.text;
+    };
+    if (receipt.kind === "comparison-diagram") {
+      const diagram = object(receipt.diagram);
+      return { text: JSON.stringify({ kind: receipt.kind, title: text(diagram.title, 120), verdict: text(diagram.verdict, 120),
+        reason: text(diagram.reason, 240), caveat: text(diagram.caveat, 160),
+        candidates: ((diagram.candidates ?? []) as JsonObject[]).map(candidate => ({ name: text(candidate.name, 80),
+          outcome: candidate.outcome, summary: text(candidate.summary, 160),
+          paths: ((candidate.paths ?? []) as JsonObject[]).map(path => ({ title: text(path.title, 48), assessment: path.assessment,
+            evidence: text(path.evidence, 120), impact: text(path.impact, 80) })),
+        })),
+      }), truncated };
+    }
+    const chart = object(receipt.chart), categories = (chart.categories ?? []) as string[], series = (chart.series ?? []) as JsonObject[];
+    const indices = categories.length <= 12 ? categories.map((_, index) => index)
+      : [...Array.from({ length: 4 }, (_, index) => index), ...Array.from({ length: 8 }, (_, index) => categories.length - 8 + index)];
+    truncated = categories.length > 12 || series.length > 6;
+    return { text: JSON.stringify({ kind: receipt.kind, title: text(chart.title, 120), scope: text(chart.scope, 160),
+      unit: text(chart.unit, 40), caveat: text(chart.caveat, 160), categoryCount: categories.length,
+      categories: indices.map(index => text(categories[index], 80)),
+      series: series.slice(0, 6).map(row => ({ name: text(row.name, 80), values: indices.map(index => (row.values as unknown[])[index]) })),
+    }), truncated };
   };
   const requestText = (event: AssistantEvent | undefined) => excerpt(event ? textOf(event.data.content) : "");
   const initialRequest = requestText(history.find(event => event.type === "user/message"));
@@ -34,7 +64,8 @@ export function predictionContext(history: readonly AssistantEvent[]) {
       try {
         const receipt = object(JSON.parse(text));
         if (!["chart", "comparison-diagram"].includes(String(receipt.kind))) continue;
-        text = JSON.stringify(receipt);
+        messages.push({ role: "assistant", ...visual(receipt) });
+        continue;
       } catch { continue; }
     }
     if (text) messages.push({ role: event.type === "user/message" ? "user" : "assistant", ...excerpt(text) });
@@ -45,7 +76,7 @@ export function predictionContext(history: readonly AssistantEvent[]) {
 export function predictionText(text: string, previous: readonly string[]): string | null {
   const value = text.trim();
   if (!value || [...value].length > 40 || /[\r\n`<>]|^[/#\[{"“]|^(?:[-*•]|\d+[.)])\s/u.test(value)) return null;
-  if (/^(?:none|null|无建议|暂无建议|没有建议|保持沉默)$/i.test(value)) return null;
+  if (/^(?:none|null|无建议|暂无建议|没有建议|保持沉默|空文本|空字符串)$/i.test(value)) return null;
   const identity = (input: string) => input.replace(/[\s\p{P}]/gu, "").toLocaleLowerCase();
   if (previous.some(item => identity(item) === identity(value))) return null;
   return value;
@@ -53,7 +84,7 @@ export function predictionText(text: string, previous: readonly string[]): strin
 
 export async function createPiPrediction(options: PredictionOptions): Promise<string | null> {
   options.signal.throwIfAborted();
-  const config = { ...options.model, thinking: "off" as const, maxOutputTokens: 256 };
+  const config = { ...options.model, thinking: options.model.thinking === "off" ? "off" as const : "low" as const, maxOutputTokens: 1024 };
   const secret = process.env[config.apiKeyEnv];
   if (!secret) throw new Error(`Missing ${config.apiKeyEnv}`);
   const agentDir = path.join(options.workdir, ".agent");
@@ -64,16 +95,15 @@ export async function createPiPrediction(options: PredictionOptions): Promise<st
   if (!model) throw new Error("Configured prediction model unavailable");
   options.signal.throwIfAborted();
   const context = predictionContext(options.history);
-  // End on the prediction task so completed dialogue is not mistaken for a live user request.
   const response = await runtime.completeSimple(model, {
+    systemPrompt: options.instructions,
     messages: [
       { role: "user", content: JSON.stringify({ ...context, recentSuggestions: options.recentSuggestions }), timestamp: Date.now() },
-      { role: "user", content: options.instructions, timestamp: Date.now() },
     ] }, {
-    signal: options.signal, maxTokens: config.maxOutputTokens,
+    signal: options.signal, maxTokens: config.maxOutputTokens, reasoning: config.thinking === "off" ? undefined : config.thinking,
     onPayload: value => {
       const payload = object(transformPayload(value, config));
-      if (config.api === "openai-responses") payload.reasoning = { effort: "none" };
+      if (config.api === "openai-responses") payload.reasoning = { effort: config.thinking === "off" ? "none" : config.thinking };
       return payload;
     },
   });

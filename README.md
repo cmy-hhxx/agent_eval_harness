@@ -17,7 +17,7 @@ TypeScript Host 编排评测任务，Pi / Prime Worker 执行模型与工具调�
 - 页面：`/` 单页工作台，一级入口为评测、数据、结果、更多；默认进入评测，问财和 AIME 同时可见、分别控制，可同时运行。
 - 每个来源默认进入总览，用 Tabler 与 ECharts 展示全量数据分布、业务日期趋势和当前评测覆盖；包名、清洗报告及分页明细位于次级页签。
 - 数据入口保留按日期并列 Fast／Expert 的表格、完整完成 ✅ 和原始问答分页；完成口径使用当前全量配对或两阶段正式收据。
-- 问财收包：`0_wencai/1_7z_data/A_AA_comparision_data`；AIME 收包：`1_aime/1_7z_data/online_data`。点击来源「评测」后自动发现、清洗并持续评测全部有效未评数据。问财执行标准、归因、比较和改写并交付 MongoDB；AIME 执行独立 Score 与 Attribution，正式结果落盘供页面查看。
+- 问财收包：`0_wencai/1_7z_data/A_AA_comparision_data`；AIME 收包：`1_aime/1_7z_data/online_data`。点击来源「评测」后自动发现、清洗并持续评测全部有效未评数据。问财执行标准、归因、比较和改写并交付 MongoDB；AIME 每条回答归因通过后立即评分，不同回答共享并发，正式结果落盘供页面查看。
 - 支持暂停收尾、立即停止、同 run 继续、失败重试与独立并发。关闭浏览器不影响运行，服务重启后等待手动继续。来源配置和阶段有效值可在工作台修改，统计日志上报默认关闭。专项、手动范围、聚类和问题库位于「更多」。操作见[工作台契约](docs/workbench.md)。
 
 代码通过 Git 分发：本地提交并推送 `main`，`eval_agent_server` 从集群内的 `http://interactive-n01laf763gwn:8080/chenmingyang2/agent_eval_harness.git` 拉取。服务器使用独立的仓库只读凭据；不上传本地 checkout 或 Git bundle。
@@ -97,7 +97,7 @@ npm run automations -- run --once
 | 输入、阶段结果、判决与证据 | [数据契约](docs/contract.md) · [Schema](schemas/README.md) · [字段用途](docs/schema-fields.md) |
 | 模块、生命周期与扩展 | [架构](docs/architecture.md) · [模块地图](docs/modules/README.md) |
 | 修改、测试与文档维护 | [开发指南](docs/development.md) |
-| 独立Score、归因与AIME单模型评测 | [独立回答评测](docs/answer-review.md) |
+| 单回答评分、归因与AIME评测 | [独立回答评测](docs/answer-review.md) |
 | AIME 新包清洗、增量评分与归因、启动和停止 | [AIME 增量归因](docs/aime-incremental.md) |
 | 人工复核与评测实验 | [评测质量](docs/quality.md) |
 | 提示词与工具描述 | [Prompts](packages/prompts/README.md) |

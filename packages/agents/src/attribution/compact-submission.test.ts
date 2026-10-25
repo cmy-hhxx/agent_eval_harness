@@ -25,7 +25,7 @@ test("attribution submits structured choices and shares investigation facts inst
     assert(!cause.properties[field], field);
 });
 
-test("shared chain facts preserve each problem's fields and cannot be swapped across scopes", () => {
+test("shared chain facts preserve each problem's fields and reject fields borrowed from another boundary", () => {
   const f=businessChainFixture(),registry=new AgentRegistry([attributionAgent]);
   const first=structuredClone(f.result.findings[0]),second=structuredClone(first);
   first.problem!.component[0].field_names=["etf code"];
@@ -37,7 +37,9 @@ test("shared chain facts preserve each problem's fields and cannot be swapped ac
   const accepted=registry.resolve(f.binding,draft,f.audit) as AttributionResult;
   assert.deepEqual(accepted.findings.map(row=>row.problem!.component[0].field_names),[["etf code"],["Closing Price[20261022]"]]);
   assert(accepted.findings.every(row=>row.problem!.investigation[0].steps.length===8));
-  draft.problems[1].investigation_fact_indices=[draft.investigation_facts.findIndex(fact=>fact.step_index===1)+1];
+  const questionFact=draft.investigation_facts.findIndex(fact=>fact.step_index===1);
+  draft.investigation_facts[questionFact].field_names=["Closing Price[20261022]"];
+  draft.problems[1].investigation_fact_indices=[questionFact+1];
   assert.throws(()=>registry.resolve(f.binding,draft,f.audit),error=>error instanceof ValidationError&&
-    error.issues!.some(issue=>issue.code==="investigation_fact_scope"));
+    error.issues!.some(issue=>issue.code==="investigation_fact_fields"));
 });

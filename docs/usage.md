@@ -358,7 +358,7 @@ npm run eval -- rewrite-comparisons --run /mnt/fin_bench/eval_data/0_wencai/eval
 | 文件 | 用途 |
 |---|---|
 | state.json | 任务、来源索引、收据引用、草稿与累计用量 |
-| overview.json | 运行目录的轻量索引 |
+| overview.json | 运行目录与预计算统计：正式战绩、比例和结果引用，不保存正文 |
 | results/criteria.jsonl | 共同标准 |
 | results/attribution.jsonl | 单回答归因与证据 |
 | results/comparison.jsonl | 已决的正式两两对比 |

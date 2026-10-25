@@ -1,11 +1,11 @@
 import { createElement as h, memo, useEffect, useMemo, useRef, useState } from 'react';
 import { init, use } from 'echarts/core';
-import { ScatterChart, HeatmapChart, CustomChart, LineChart, BoxplotChart, SunburstChart, TreemapChart, SankeyChart } from 'echarts/charts';
+import { BarChart, ScatterChart, HeatmapChart, CustomChart, LineChart, BoxplotChart, SunburstChart, TreemapChart, SankeyChart } from 'echarts/charts';
 import { GridComponent, TooltipComponent, VisualMapComponent, MarkPointComponent, AriaComponent, MarkLineComponent, MarkAreaComponent, GraphicComponent } from 'echarts/components';
 import { SVGRenderer } from 'echarts/renderers';
 import { LabelLayout } from 'echarts/features';
 import { battleTotals, histogramBins, waterfallSteps, researchColors, chartReading, pairedDifferences, differenceUnit, quantile, compactNumber, signedNumber, researchDrawing } from './chart-data.js';
-use([SunburstChart, TreemapChart, SankeyChart, LineChart, BoxplotChart, ScatterChart, HeatmapChart, CustomChart, GridComponent, TooltipComponent, VisualMapComponent, MarkPointComponent, AriaComponent, MarkLineComponent, MarkAreaComponent, GraphicComponent, LabelLayout, SVGRenderer]);
+use([BarChart, SunburstChart, TreemapChart, SankeyChart, LineChart, BoxplotChart, ScatterChart, HeatmapChart, CustomChart, GridComponent, TooltipComponent, VisualMapComponent, MarkPointComponent, AriaComponent, MarkLineComponent, MarkAreaComponent, GraphicComponent, LabelLayout, SVGRenderer]);
 
 import { chartTheme, heatColor, heatColors, heatTextColor } from './chart-theme.js';
 import { differenceLabel, researchLayout } from './chart-layout.js';
@@ -31,7 +31,23 @@ function drawingOption(chart, width) {
     xAxis: { ...axis, type: 'value', nameLocation: 'middle', nameGap: 34 },
     yAxis: { ...axis, type: 'category', data: chart.categories, inverse: true, splitLine: { show: false }, axisLabel: { ...axis.axisLabel, width: layout.labelWidth } }, series: [],
   };
-  if (chart.type === 'heatmap') {
+  if (chart.type === 'bar') {
+    option.grid = { left: layout.labelWidth + 20, right: layout.endSpace, top: 12, bottom: 36, outerBoundsMode: 'none' };
+    option.xAxis = { ...axis, type: 'value', min: range => range.min < 0 ? range.min * 1.2 : 0,
+      max: chart.unit === '%' && chart.series.every(series => series.values.every(value => value === null || value >= 0 && value <= 100)) ? 100
+        : range => range.max > 0 ? range.max * 1.2 : range.max === 0 ? 1 : 0, axisLabel: { ...axis.axisLabel, fontSize: 14 } };
+    option.yAxis.axisLabel = { ...axis.axisLabel, fontSize: 14, margin: 12 };
+    option.series = chart.series.map((series, si) => ({ type: 'bar', name: series.name, barWidth: 18, barGap: '35%',
+      itemStyle: { color: palette[si] }, label: { show: true, color: ink, fontSize: 14, formatter: item => item.value === null ? '—' : display(item.value) },
+      data: series.values.map((value, ci) => ({ ...point(chart, si, ci, value), label: { position: value < 0 ? 'left' : 'right' } })),
+    }));
+    chart.series.forEach((series, si) => {
+      const missing = series.values.flatMap((value, ci) => value === null ? [[0, ci]] : []);
+      if (missing.length) option.series.push({ type: 'scatter', silent: true, symbolSize: 0, data: missing,
+        symbolOffset: [8, (si - (chart.series.length - 1) / 2) * 24.3],
+        label: { show: true, formatter: '—', position: 'right', color: muted, fontSize: 14 } });
+    });
+  } else if (chart.type === 'heatmap') {
     const battles = battleTotals(chart);
     const values = chart.series.flatMap(s => s.values).filter(v => v !== null), hasNegative = values.some(v => v < 0), extent = Math.max(...values.map(Math.abs));
     const min = hasNegative ? -extent : 0, max = hasNegative ? extent : Math.max(...values);
@@ -121,6 +137,7 @@ function drawingOption(chart, width) {
     if (chart.type === 'waterfall') { seriesIndex = 0; coord = [a.categoryIndex, waterfallSteps(chart)[a.categoryIndex].end]; }
     if (chart.type === 'histogram') { seriesIndex = 0; const bins = histogramBins(chart.series[0].values); coord = [value, bins.find(b => value >= b.low && (value < b.high || b.last)).count]; }
     if (chart.type === 'slope') coord = [a.categoryIndex, value];
+    if (chart.type === 'bar') coord = [value, a.categoryIndex];
     if (chart.type === 'interval') { seriesIndex = 0; coord = [value, a.categoryIndex * chart.series.length + a.seriesIndex]; }
     if (['boxplot', 'violin'].includes(chart.type)) { seriesIndex = a.seriesIndex + (chart.type === 'violin' ? 2 : 1); coord = [a.seriesIndex, value]; }
     const series = option.series[seriesIndex];

@@ -192,7 +192,7 @@ test("explicit responsibility requires selected own evidence independently of no
   value.submitted.findings = Array.from({ length: 9 }, () => structuredClone(problem));
   const result = resolve(value);
   assert.equal(result.findings.length, 9); assert.equal(result.findings[8]!.finding_id, "f8");
-  assert.deepEqual(result.findings[8]!.problem!.component.map(c=>c.component), ["最终回答组织", "Calc"]);
+  assert.deepEqual(result.findings[8]!.problem!.component.map(c=>c.component), ["本题事实关系推导与结果使用", "Calc"]);
   assert.deepEqual(result.findings[8]!.evidence.map(item => item.quote), ["2+2=4", "2+2=4"]);
   problem.evidence = [value.ref(3)]; value.submitted.findings = [problem];
   assert.throws(() => resolve(value), issue("responsibility_evidence"));

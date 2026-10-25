@@ -42,7 +42,7 @@
         "type": "integer",
         "minimum": 1,
         "maximum": 100,
-        "description": "inputs 默认30、最多100；comparisons 默认5、最多20。随机找高质量问句用 view:comparisons, sample:true, limit:1；合格题不足时不补低质量题。"
+        "description": "inputs 默认30、最多100；comparisons 默认5、最多20。sample:true 随机抽取不同题，并附完整原问和评测摘要。"
       },
       "view": {
         "type": "string",
@@ -55,13 +55,13 @@
       },
       "sample": {
         "type": "boolean",
-        "description": "comparisons 在随机候选中筛选高质量问句，自动附完整原问及评测摘要；用于自主选例和换题。excludeCases 可排除已展示或已拒绝题目。"
+        "description": "comparisons 随机抽取不同题，由你根据用户需求选择案例；不调用额外模型。"
       },
       "excludeCases": {
         "type": "array",
         "maxItems": 100,
         "uniqueItems": true,
-        "description": "comparisons 排除案例的 case 坐标，所有档位一起排除。合并已展示的 items[].case 或 read_case.case 与 selection.rejectedCases。",
+        "description": "排除已看题目的 case 坐标，同题所有档位一起排除。",
         "items": {
           "type": "object",
           "additionalProperties": false,
@@ -89,6 +89,15 @@
       "includeTests": {
         "type": "boolean",
         "description": "显式为 true 时纳入 test_eval；默认仅正式运行。"
+      },
+      "breakdown": {
+        "type": "string",
+        "enum": [
+          "date",
+          "task",
+          "difficulty"
+        ],
+        "description": "statistics 按日期、任务类型或难度读取已发布快照的预计算统计，使用 offset/limit 分页，不加载案例正文。"
       }
     },
     "required": [],
@@ -138,16 +147,6 @@
               },
               {
                 "required": [
-                  "offset"
-                ]
-              },
-              {
-                "required": [
-                  "limit"
-                ]
-              },
-              {
-                "required": [
                   "sample"
                 ]
               },
@@ -157,7 +156,30 @@
                 ]
               }
             ]
-          }
+          },
+          "allOf": [
+            {
+              "if": {
+                "anyOf": [
+                  {
+                    "required": [
+                      "offset"
+                    ]
+                  },
+                  {
+                    "required": [
+                      "limit"
+                    ]
+                  }
+                ]
+              },
+              "then": {
+                "required": [
+                  "breakdown"
+                ]
+              }
+            }
+          ]
         }
       },
       {
@@ -230,6 +252,23 @@
           "required": [
             "collectionId"
           ]
+        }
+      },
+      {
+        "if": {
+          "required": [
+            "breakdown"
+          ]
+        },
+        "then": {
+          "required": [
+            "view"
+          ],
+          "properties": {
+            "view": {
+              "const": "statistics"
+            }
+          }
         }
       }
     ]
@@ -1211,6 +1250,7 @@
     "properties": {
       "type": {
         "enum": [
+          "bar",
           "line",
           "pie",
           "heatmap",
@@ -1272,7 +1312,7 @@
         "items": {
           "type": "string",
           "minLength": 1,
-          "maxLength": 120,
+          "maxLength": 144,
           "pattern": "\\S"
         }
       },
@@ -1450,6 +1490,24 @@
               "type": "string",
               "minLength": 1,
               "description": "沿用目录返回的来源/类别/任务业务坐标。"
+            },
+            "asset": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "collectionId": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "assetId": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              },
+              "required": [
+                "collectionId",
+                "assetId"
+              ]
             }
           },
           "oneOf": [
@@ -1467,6 +1525,11 @@
                   {
                     "required": [
                       "statistics"
+                    ]
+                  },
+                  {
+                    "required": [
+                      "asset"
                     ]
                   }
                 ]
@@ -1487,6 +1550,11 @@
                     "required": [
                       "statistics"
                     ]
+                  },
+                  {
+                    "required": [
+                      "asset"
+                    ]
                   }
                 ]
               }
@@ -1505,6 +1573,35 @@
                   {
                     "required": [
                       "reference"
+                    ]
+                  },
+                  {
+                    "required": [
+                      "asset"
+                    ]
+                  }
+                ]
+              }
+            },
+            {
+              "required": [
+                "asset"
+              ],
+              "not": {
+                "anyOf": [
+                  {
+                    "required": [
+                      "runId"
+                    ]
+                  },
+                  {
+                    "required": [
+                      "reference"
+                    ]
+                  },
+                  {
+                    "required": [
+                      "statistics"
                     ]
                   }
                 ]
@@ -1627,6 +1724,19 @@
             "type": "string",
             "minLength": 1,
             "description": "沿用目录返回的来源/类别/任务业务坐标。"
+          },
+          "metric": {
+            "type": "string",
+            "enum": [
+              "outcomes",
+              "outcomeRates",
+              "winRate",
+              "lossRate",
+              "bothGoodRate",
+              "bothBadRate",
+              "meetsCoreRate"
+            ],
+            "description": "直接读取预计算指标；默认 outcomes 为四类场数，其余为百分比，不让模型抄写或计算。"
           }
         },
         "required": [
@@ -1652,7 +1762,8 @@
             "type": {
               "enum": [
                 "heatmap",
-                "bubble_matrix"
+                "bubble_matrix",
+                "bar"
               ]
             }
           },
@@ -2558,6 +2669,71 @@
           }
         }
       }
+    ]
+  },
+  "list_assets": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {
+      "collectionId": {
+        "type": "string",
+        "minLength": 1,
+        "description": "可选来源/类别坐标，例如 1_aime/0_daily_eval。"
+      },
+      "query": {
+        "type": "string",
+        "minLength": 1,
+        "description": "按资产名称和业务坐标作字面筛选，例如 stats、attribution、cluster。"
+      },
+      "includeTests": {
+        "type": "boolean"
+      },
+      "offset": {
+        "type": "integer",
+        "minimum": 0
+      },
+      "limit": {
+        "type": "integer",
+        "minimum": 1,
+        "maximum": 100
+      }
+    },
+    "required": []
+  },
+  "read_asset": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {
+      "reference": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "collectionId": {
+            "type": "string",
+            "minLength": 1
+          },
+          "assetId": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "required": [
+          "collectionId",
+          "assetId"
+        ]
+      },
+      "offset": {
+        "type": "integer",
+        "minimum": 0
+      },
+      "limit": {
+        "type": "integer",
+        "minimum": 1,
+        "maximum": 16000
+      }
+    },
+    "required": [
+      "reference"
     ]
   }
 }

@@ -17,7 +17,7 @@ try {
   await page.locator('[data-template]').last().locator('svg').waitFor();
   await page.evaluate(() => document.fonts.ready);
   const failures = [];
-  const expectedLabels = Object.fromEntries(chartTemplates.map(({id, chart}) => [id, ['heatmap','bubble_matrix','slope','waterfall','interval','radial_heatmap'].includes(chart.type) ? chart.categories : ['boxplot','violin','ridgeline'].includes(chart.type) ? chart.series.map(s => s.name) : []]));
+  const expectedLabels = Object.fromEntries(chartTemplates.map(({id, chart}) => [id, ['bar','heatmap','bubble_matrix','slope','waterfall','interval','radial_heatmap'].includes(chart.type) ? chart.categories : ['boxplot','violin','ridgeline'].includes(chart.type) ? chart.series.map(s => s.name) : []]));
   for (const width of [1440, 1024, 768, 375, 320]) {
     await page.setViewportSize({ width, height: 1000 });
     await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(() => requestAnimationFrame(resolve)))));

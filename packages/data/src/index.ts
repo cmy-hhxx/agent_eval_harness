@@ -15,3 +15,4 @@ export * from "./run-deletion.js";
 export * from "./run-artifacts.js";
 export * from "./assistant-auth.js";
 export * from "./assistant-runs.js";
+export * from "./analysis-assets.js";

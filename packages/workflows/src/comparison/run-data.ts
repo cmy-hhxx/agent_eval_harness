@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { analysisComparisonRecords } from "./analysis-comparison.js";
 import { loadRunInputs } from "../inputs/load.js";
 import { type RunState, type TaskPlan } from "@eval/contracts";
 import { createRunRepository } from "@eval/data";
@@ -193,4 +194,12 @@ export async function reconcileRun(_run: string, state: RunState, current: unkno
   plan.tasks = state.manifest.tasks;
   plan.summary = state.manifest.preflight;
   return plan;
+}
+
+/** Read only the selected run's already accepted formal rows through the existing result repository. */
+export async function readAnalysisComparisonRecords(run: string, taskIds: readonly string[]) {
+  const ids = [...new Set(taskIds)];
+  if (ids.length !== taskIds.length) throw new Error("正式比较任务引用重复");
+  if (!ids.length) return [];
+  return analysisComparisonRecords(await readRunTasks(run, ids), ids);
 }

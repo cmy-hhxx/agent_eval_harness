@@ -451,15 +451,22 @@ export async function retryAnswerReviewTasks(run:string,raw:unknown){
 }
 
 /** Current answer-review checkpoints have no overview file. Reading metadata never opens result JSONL. */
-export async function readAnswerReviewAnalysis(run: string, taskIds: string[] = []) {
-  const state = await answerReviewRepository.readTasks(run, taskIds);
+export async function readAnswerReviewAnalysis(run: string) {
+  const saved = await readJson<Checkpoint>(path.join(run, 'state.json'));
+  const state = codec.decode(saved, () => { throw Error('分析概要不得读取结果正文'); }, new Set());
   const candidates = state.manifest.inputCatalog as Candidate[];
-  const rows=await answerReviewProgress(run);
-  const counts=Object.fromEntries(reviewStages.map(stage=>[stage,stageCounts(rows,stage)]));
-  return { state, candidates, summary: {
+  const rows = samples(saved), activeStages = (state.manifest.config as AnswerReviewConfig).reviewStages ?? stages;
+  const percentage = (count: number, total: number) => total ? Number((count / total * 100).toFixed(2)) : null;
+  const counts = Object.fromEntries(reviewStages.map(stage => {
+    const count = stageCounts(rows, stage), enabled = stage === 'instruction-review' ? count.total > 0 : activeStages.includes(stage);
+    return [stage, { ...count, enabled, completionRate: enabled ? percentage(count.succeeded, count.total) : null }];
+  }));
+  const completedInputCount = rows.filter(row => activeStages.every(stage => row.stages[stage].status === 'succeeded')).length;
+  return { state, candidates, rows, summary: {
     workflow: "answer-review", status: state.manifest.status, startedAt: state.manifest.startedAt,
     ...(state.manifest.finishedAt === undefined ? {} : { finishedAt: state.manifest.finishedAt }),
     inputCount: candidates.length, caseCount: new Set(candidates.map(candidate => JSON.stringify([candidate.batch_id, candidate.case_id]))).size,
+    activeStages, completedInputCount, inputCompletionRate: percentage(completedInputCount, candidates.length),
     stages:counts, formalComparisonStats: null,
   } };
 }
@@ -485,7 +492,7 @@ export function answerReviewAnswer(raw: RawInput, candidate: Candidate, referenc
 
 /** Resolve accepted sources with each stage's current evidence model; intermediate Score receipts are not public results. */
 export async function readAnswerReviewSources(run:string,taskId:string){
-  const {state,candidates}=await readAnswerReviewAnalysis(run,[taskId]);
+  const state=await answerReviewRepository.readTasks(run,[taskId]),candidates=state.manifest.inputCatalog as Candidate[];
   const task=state.manifest.tasks.find(task=>task.id===taskId),receipt=state.receipts[taskId];
   if(!task||!receipt?.exported||!reviewStages.some(stage=>stage===task.stage))throw Error('没有该任务的正式结果');
   const candidate=candidates.find(candidate=>candidate.input_id===answerReviewTaskInput(task));

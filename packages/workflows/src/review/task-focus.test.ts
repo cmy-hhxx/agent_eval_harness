@@ -190,14 +190,16 @@ test("public judgment bindings keep global indices and separate blind originals 
     assert(!JSON.stringify(focus).includes(analysis.requirements[1]!.text));
     const label = stage === "attribution" ? "answer" : "A";
     assert.equal(focus.answers[label]!.question_timestamp, "2026-09-24T22:07:25.270Z");
-    assert.equal(focus.answers[label]!.final_answer, "A 完整最终回答。");
+    const finalAnswer=stage==='attribution'?(shown.answer as {final_answer:string}).final_answer:focus.answers[label]!.final_answer;
+    assert.equal(finalAnswer, "A 完整最终回答。");
+    if(stage==='attribution')assert(!Object.hasOwn(focus.answers[label]!,'final_answer'),"Attribution presents the complete answer once in its material");
     const profile = agentPrompt(stage, [], { fileSubmission: false });
     const prompt = profile.renderPrompt(shown);
     assert(profile.systemPrompt.includes(profile.instructions), "fixed stage instructions belong to the system prompt");
     assert(prompt.indexOf(JSON.stringify(focus.question)) >= 0);
     assert(!prompt.includes(profile.instructions), "stage instructions are not repeated in task material");
-    assert(prompt.indexOf(JSON.stringify(focus.question)) < prompt.indexOf(JSON.stringify(focus.answers[label]!.final_answer)),
-      "the focus question precedes the duplicated complete answer");
+    assert(prompt.indexOf(JSON.stringify(focus.question)) < prompt.indexOf(JSON.stringify(finalAnswer)),
+      "the focus question precedes the complete answer");
     assert(prompt.includes(analysis.requirements[1]!.text));
     assert(!prompt.includes('"task_focus"'));
     const prepared = agents.prepare(binding);

@@ -171,6 +171,8 @@ unset ERIS_ADMIN_PASSWORD
 
 `eris` tmux 会话内前台运行 `bash agent/run.sh --config <runtime/config/eris.json>`；内部 `0.0.0.0:5004`，外部既有映射为 `http://117.50.195.94:3928`。启动使用实例锁，端口冲突直接报错。部署不自动关闭旧 `eris` 会话，更新前应只停止该会话中的 Eris。
 
+Comparison 的预计算统计由评测写入端保存到 `overview.json`。评测工作台也需使用包含该写入逻辑的代码；仅更新 `eris-code` 不会改变工作台产物。既有当前契约运行停止后，可用 `node scripts/rebuild-run-overviews.mjs <运行根目录>` 重建索引。归档报告与独立问题树通过公开资产工具直接读取，不转换归档状态。
+
 验证 `/health`、未登录拒绝、管理员登录、账户停用/重置、流式回复与重连，并读取 Wencai Comparison 和无 overview 的 AIME Answer-review。真实模型验证仅在服务器执行。回退只切换 Eris checkout 并重启该服务，保留账号、聊天和所有评测数据。
 
 账号管理、只读能力和恢复见 [Eris](../agent/README.md)。当前 HTTP 入口不提供传输加密。

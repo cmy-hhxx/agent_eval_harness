@@ -1,6 +1,8 @@
 import {canonical} from '@eval/contracts';
 type Row = Record<string, unknown>;
 const row = (value: unknown): Row => value && typeof value === "object" && !Array.isArray(value) ? value as Row : {};
+const isReturn = (message: Row) => ["tool_result", "function_call_output"].includes(String(message.type)) || message.role === "tool" ||
+  message.type === "span" && String(message.name).startsWith("tool-");
 export interface TraceExchange {
   request_index: number;
   return_indices: number[];
@@ -37,11 +39,19 @@ export function traceExchanges(messages: unknown[]): TraceExchange[] {
     return ["tool_call", "function_call"].includes(String(m.type)) ? [{ index, m }] : [];
   });
   const found = new Map<number, TraceExchange>();
+  const returnEvents = new Map<string, number>();
+  for(const value of messages){
+    const message=row(value);
+    if(isReturn(message)&&typeof message.name==='string'&&typeof message.end==='string'&&message.end.trim()){
+      const key=canonical([message.name,message.end]);returnEvents.set(key,(returnEvents.get(key)??0)+1);
+    }
+  }
   messages.forEach((value, index) => {
     const m = row(value);
-    if (!["tool_result", "function_call_output"].includes(String(m.type)) && m.role !== "tool" &&
-      !(m.type === "span" && String(m.name).startsWith("tool-"))) return;
+    if (!isReturn(m)) return;
     const id = m.call_id ?? m.tool_call_id, returned = row(m.output ?? m.result);
+    if(typeof id!=='string'&&typeof returned.query!=='string'&&
+      (typeof m.end!=='string'||!m.end.trim()||typeof m.name!=='string'||returnEvents.get(canonical([m.name,m.end]))!==1))return;
     const matches = calls.filter(call => call.index < index && (!m.name || call.m.name === m.name) &&
       (typeof id === "string" ? [call.m.call_id, call.m.id].includes(id)
         : typeof returned.query === "string" ? row(call.m.input ?? call.m.arguments).query === returned.query

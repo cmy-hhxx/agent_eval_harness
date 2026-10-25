@@ -63,3 +63,21 @@ test("an unchanged checkpoint remains readable after its volume device number ch
     syncBuiltinESMExports();
   }
 });
+
+test("a checkpoint and overview replaced during a read cannot be combined into one snapshot", async t => {
+  const { directory, run } = await fixture(t);
+  const originalRead = fs.readFile;
+  let replaced = false;
+  const probe = t.mock.method(fs, "readFile", async (...args: Parameters<typeof fs.readFile>) => {
+    if (!replaced && String(args[0]).endsWith("/overview.json")) {
+      replaced = true;
+      await writeJson(path.join(run, "state.json"), { count: 2 });
+      await writeRunOverview(run, { count: 2 });
+    }
+    return originalRead(...args);
+  });
+  syncBuiltinESMExports();
+  try { assert.match((await readRunOverviews(directory))[0].error!, /过期/); }
+  finally { probe.mock.restore(); syncBuiltinESMExports(); }
+  assert.deepEqual(await readRunOverviews(directory), [{ runId: "run", value: { count: 2 } }]);
+});

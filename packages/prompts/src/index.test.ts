@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { readFileSync, readdirSync } from "node:fs";
 import { DEFAULT_POLICY } from "@eval/contracts";
 import { builtinTools } from "@eval/tools";
-import { agentPrompt, erisComparisonCheck, erisQuestionSelection, erisPrompt, sharedPromptResources, type PromptStage } from "./index.js";
+import { agentPrompt, erisPrompt, sharedPromptResources, type PromptStage } from "./index.js";
 
 const submissionToolNames = ["submit_evaluation", "submit_evaluation_file"];
 
@@ -83,8 +83,6 @@ test("Eris assembles its compact policy and every tool from the resource tree", 
     assert.equal(prompt[key as keyof typeof prompt], readFileSync(new URL(file + ".md", resources), "utf8").trim());
   for (const name of names)
     assert.equal(prompt.toolDescriptions[name], readFileSync(new URL("tools/" + name + ".md", resources), "utf8").trim());
-  assert.equal(erisComparisonCheck, readFileSync(new URL("comparison-check.md", resources), "utf8").trim());
-  assert.equal(erisQuestionSelection, readFileSync(new URL("question-selection.md", resources), "utf8").trim());
   assert.throws(() => erisPrompt(["list_data", "list_data"]), /Duplicate prompt tool/);
   assert.throws(() => erisPrompt(["../system"]), /Invalid Eris tool name/);
 });

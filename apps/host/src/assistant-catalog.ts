@@ -1,5 +1,5 @@
 import path from "node:path";
-import { assistantRunLocations, readRunOverviews, type AssistantRunLocation } from "@eval/data";
+import { assistantRunLocations, readRunOverview, type AssistantRunLocation } from "@eval/data";
 import { readAnswerReviewAnalysis } from "@eval/workflows/answer-review";
 import type { AnalysisRunOverview } from "@eval/workflows/comparison";
 import type { AnalysisDataSource, AnalysisQuery, AnalysisReference, AnalysisCaseLookup, AnalysisReadOptions, JsonObject } from "@eval/contracts";
@@ -42,9 +42,9 @@ export class CatalogAnalysisData implements AnalysisDataSource {
           if (view.state.manifest.runId !== location.runId) throw new Error("运行目录与状态身份不一致");
           summary = view.summary; evaluatorVersion = view.state.manifest.evaluatorVersion;
         } else {
-          const entry = (await readRunOverviews<AnalysisRunOverview>(path.dirname(location.directory))).find(row => row.runId === location.runId);
-          if (!entry?.value || entry.error || entry.value.runId !== location.runId) throw new Error(entry?.error ?? "运行索引无效");
-          summary = entry.value.summary; evaluatorVersion = entry.value.evaluatorVersion;
+          const overview = await readRunOverview<AnalysisRunOverview>(location.directory);
+          if (overview.runId !== location.runId || !overview.summary?.formalComparisonStats) throw new Error("运行统计索引无效；停止运行后重建 overview");
+          summary = overview.summary; evaluatorVersion = overview.evaluatorVersion;
         }
         if (typeof summary.status !== "string" || !["running", "finished", "interrupted"].includes(summary.status) || typeof evaluatorVersion !== "string" || !evaluatorVersion) throw new Error("运行概要状态无效");
         for (const field of ["startedAt", "inputCount", "caseCount"]) {
@@ -59,14 +59,19 @@ export class CatalogAnalysisData implements AnalysisDataSource {
     }
     items.sort((a, b) => b.startedAt - a.startedAt || a.collectionId.localeCompare(b.collectionId) || a.runId.localeCompare(b.runId));
     const available = items.filter(item => item.inputCount > 0), selected = available.find(item => item.status === "running") ?? available[0];
-    const runDirectory = { complete: inventory.errors.length === 0, errors: inventory.errors };
+    const errors = inventory.errors.filter(error => !query.collectionId || error.collectionId === query.collectionId);
+    const runDirectory = { complete: errors.length === 0, errors };
     if (query.view === "statistics") {
       const { readPublishedStatistics } = await import("./assistant-statistics.js");
       let history: unknown;
-      try { if (!this.publication) throw new Error("累计统计发布来源未配置"); history = await readPublishedStatistics(this.publication); }
+      try {
+        if (query.collectionId) throw new Error("发布累计统计没有可验证的目录范围，不能用于指定 collectionId；请读取该目录内运行或公开统计资产。");
+        if (!this.publication) throw new Error("累计统计发布来源未配置");
+        history = await readPublishedStatistics(this.publication, query);
+      }
       catch (error) { history = { status: "unavailable", error: error instanceof Error ? error.message : "统计读取失败", retryable: false }; }
-      const currentRuns = await Promise.all(items.filter(item => item.status === "running").map(async item => ({ ...item,
-        ...(await this.list({ collectionId: item.collectionId, runId: item.runId, view: "inputs", limit: 1 })) })));
+      const currentRuns = items.filter(item => item.status === "running").map(item => ({ ...item,
+        summary: summaries.get(JSON.stringify([item.collectionId, item.runId])) }));
       return { kind: "statistics", history, currentRuns, runDirectory, additive: false };
     }
     if (query.view === "inputs" || query.view === "comparisons") {

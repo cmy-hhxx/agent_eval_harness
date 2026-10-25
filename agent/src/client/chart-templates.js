@@ -9,6 +9,8 @@ const dates = ['2026-09-01', '2026-09-08', '2026-09-15', '2026-09-22'];
 
 /** Reusable tool payloads. Examples are deterministic and never treated as formal data. */
 export const chartTemplates = [
+  template('bar-models', '模型柱状对比', '比较', { type:'bar', title:'两组优势分布不同', unit:'%', categories:['Fast','Expert'], series:[{name:'A组',values:[42.5,61.2]},{name:'B组',values:[37.5,28.8]}] }),
+  template('bar-missing', '正负与缺失对比', '比较', { type:'bar', title:'零值、未知和下降分开', unit:'百分点', categories:['事实准确','工具调用','范围覆盖'], series:[{name:'本期变化',values:[4.2,0,-2.1]},{name:'上期变化',values:[null,1.5,-3]}] }),
   template('rose-issues', '玫瑰图', '环形', { type:'rose', title:'问题集中在两个类别', categories:issues, series:[profiles[0]] }),
   template('rings-two', '双层环形图', '环形', { type:'concentric', title:'第二组通过比例更高', scope:'两组各100条', unit:'条', categories:['通过','待核','失败'], series:[{name:'A组Fast',values:[68,20,12]},{name:'B组Fast',values:[79,14,7]}] }),
   template('progress-rings', '多环进度图', '环形', { type:'radial_progress', title:'复核进度落后于覆盖', unit:'%', maxValue:100, categories:['完成','覆盖','复核'], series:[{name:'当前进度',values:[82,91,64]}] }),

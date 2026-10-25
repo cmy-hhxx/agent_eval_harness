@@ -35,6 +35,10 @@ max_output_tokens = 4096
 test('Eris requires an explicit independent channel and uses its capacity',()=>{
   const settings=configuration();
   const configured=assistantModelConfiguration(settings);
+  assert.equal(configured.model.supportsDeveloperRole,false,'Eris instructions use system by default');
+  assert.equal(settings.channels.openai.supportsDeveloperRole,undefined,'evaluation channel capabilities are unchanged');
+  settings.channels.openai.supportsDeveloperRole=true;
+  assert.equal(assistantModelConfiguration(settings).model.supportsDeveloperRole,true,'explicit channel capability takes precedence');
   assert.equal(configured.model.provider,'openai');
   assert.equal(configured.model.model,'gpt-6-luna');
   assert.equal(configured.model.apiKeyEnv,'EVAL_CHANNEL_KEY_openai');
