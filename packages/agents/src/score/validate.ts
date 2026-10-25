@@ -58,7 +58,13 @@ function validateScoreBody(request:AgentRequest,value:ScoreResult|ScoreException
     else if(!Number.isInteger(row.score)||row.score!<0||row.score!>limit||row.status==='unverified'||row.status==='met'&&row.score!==limit||row.status==='violated'&&row.score===limit||row.grade!==(final?directory.final_grades:directory.core_grades)[String(row.score)])bad(path,'状态、整数分数和档位须符合原skill契约；程序不代选分数。');
   };
   const app=(row:Judgment&{applicability:Applicability},path:string,always:boolean)=>{
-    if((row.status==='met'||row.status==='violated'||always)&&!known.has(row.applicability)||row.status==='not_applicable'&&row.applicability!=='not_triggered'||row.status==='unverified'&&row.applicability==='not_triggered'||row.applicability==='undetermined'&&row.status!=='unverified')bad(path+'/applicability','适用依据与状态不符；必要义务不能因漏做被记不适用。');
+    if((row.status==='met'||row.status==='violated'||always)&&!known.has(row.applicability)||row.status==='not_applicable'&&row.applicability!=='not_triggered'||row.status==='unverified'&&row.applicability==='not_triggered'||row.applicability==='undetermined'&&row.status!=='unverified')issues.push({
+      category:'decision',code:'score_contract',path:path+'/applicability',
+      message:always?'本项始终是验收义务，适用依据选 task_requirement、observed_behavior 或 both；缺证仍可保留 unverified 与区间，不必改判满足或违反。':'适用依据须与状态对应：满足或违反用已触发依据，未触发用 not_applicable，触发未明用 unverified。',
+      actual:{status:row.status,applicability:row.applicability},
+      expected:{applicability:always||['met','violated'].includes(row.status)?[...known]:row.status==='not_applicable'?['not_triggered']:[...known,'undetermined'],
+        ...(always?{status:['met','violated','unverified']}:{} )},
+    });
   };
   const items=new Map(value.evaluations.map(row=>[row.item_id,row])),diagnostics=new Map(value.diagnostics.map(d=>[d.diagnostic_id,d]));
   if(items.size!==expectedUnits.length||value.evaluations.length!==expectedUnits.length||expectedUnits.some(id=>!items.has(id)))bad('/evaluations','本阶段固定核心单元必须各出现一次。');

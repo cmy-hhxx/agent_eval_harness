@@ -52,3 +52,16 @@ test('an incomplete exception only receives errors from the exception branch',()
   return true;
  });
 });
+test('required-unit applicability repair preserves an unknown judgment and its score range',()=>{
+ const value=structuredClone(exampleOutput) as any,index=value.evaluations.findIndex((row:any)=>row.item_id==='D1'),row=value.evaluations[index];
+ Object.assign(row,{status:'unverified',score:null,score_range:[2,4],grade:'待核',applicability:'undetermined',reason:'目标是否完全落实尚待核验，保留区间。'});
+ assert.throws(()=>scoreProfile.validate!(request,value,structuredClone(audit)),error=>{
+  assert(error instanceof ValidationError);const issue=error.issues!.find(issue=>issue.path===`/evaluations/${index}/applicability`)!;
+  assert.deepEqual(issue.actual,{status:'unverified',applicability:'undetermined'});
+  assert.deepEqual((issue.expected as any).applicability,['task_requirement','observed_behavior','both']);
+  assert((issue.expected as any).status.includes('unverified'));return true;
+ });
+ row.applicability='task_requirement';
+ scoreProfile.validate!(request,value,structuredClone(audit));
+ assert.equal(row.status,'unverified');assert.deepEqual(row.score_range,[2,4]);
+});

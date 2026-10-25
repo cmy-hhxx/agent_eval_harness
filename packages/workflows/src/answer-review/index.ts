@@ -11,6 +11,7 @@ import attributionOutputSchema from '../../../../schemas/workflow/answer-review-
 import rewrittenSchema from '../../../../schemas/workflow/rewritten.schema.json' with {type:'json'};
 import type {ScoreResult} from "@eval/agents/score";
 import {answerReviewMaterial} from "./material.js";
+import {reviewExecutionOrder} from './ordering.js';
 import {scoreTask,bindScore,advanceScore,scoreBlockedReason,isFormalScore,scoreExportState,type ReviewTaskData} from './score.js';
 export {answerReviewMaterial} from "./material.js";
 export * from './incremental.js';
@@ -30,7 +31,7 @@ export function attributionTextSlots(value:AttributionResult){return [{id:'summa
 export async function planAnswerReview(config:AnswerReviewConfig){
   const indexed=await collectInputs(config,undefined,{materializeInputs:false});
   const catalog=indexed.catalog,stages=config.reviewStages??['score','attribution'],tasks:PlannedTask[]=[];
-  for(const candidate of catalog)for(const stage of stages){const task:PlannedTask=stage==='score'?scoreTask(candidate):{id:randomUUID(),stage,inputIds:{answer:candidate.input_id},dependencies:{},data:{candidate} satisfies TaskData};tasks.push(task);
+  for(const candidate of reviewExecutionOrder(catalog,config.execution.concurrency,stages.length))for(const stage of stages){const task:PlannedTask=stage==='score'?scoreTask(candidate):{id:randomUUID(),stage,inputIds:{answer:candidate.input_id},dependencies:{},data:{candidate} satisfies TaskData};tasks.push(task);
     if(stage==='attribution'&&config.rewrite.attribution)tasks.push({id:randomUUID(),stage:'rewrite',inputIds:{},dependencies:{source:task.id},data:{candidate,rewriteOf:task.id} satisfies TaskData});}
   const manifest={config,tasks,inputCatalog:catalog} as RunManifest,inputs=prepareInputs(await loadReviewInputs(manifest),catalog);
   const summary={workflow:'answer-review',cases:catalog.length,valid_inputs:catalog.length,score_tasks:tasks.filter(t=>t.stage==='score').length,attribution_tasks:tasks.filter(t=>t.stage==='attribution').length,rewrite_tasks:tasks.filter(t=>t.stage==='rewrite').length,criteria_tasks:0,comparison_tasks:0,issues:indexed.issues};
