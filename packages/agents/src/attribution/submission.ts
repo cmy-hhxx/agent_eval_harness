@@ -5,7 +5,7 @@ import { resolveJudgment } from "./resolve.js";
 import { validateJudgment, validateEvaluation } from "./validate.js";
 import { attributionFindingBasis } from "./finding-basis.js";
 import { responsibilityFunctions, responsibilityIdentities,responsibilityComponentName } from "./responsibility.js";
-import { investigationIssues } from "./investigation.js";
+import { investigationValidator, type InvestigationValidator } from "./investigation.js";
 import type { ProblemProposal, Evidence } from "./types.js";
 import { resolveAttributionEvidence } from "./source-evidence.js";
 import { resolveDerivations, type ResolvedDerivation, type DerivationSubmission } from "./derivations.js";
@@ -17,7 +17,7 @@ const validateShape = new Ajv2020({allErrors:true,strict:false}).compile(schema)
 const validateCalculationShape = new Ajv2020({allErrors:true,strict:false}).compile(schema.properties.problems.items.properties.calculations);
 
 /** Bind the shallow model choices once. All evidence and judgment checks use the bound representation. */
-function bindSubmission(request: AgentRequest, submitted: unknown, audit: ToolAudit) {
+function bindSubmission(request: AgentRequest, submitted: unknown, audit: ToolAudit, investigate: InvestigationValidator) {
   const value = object(submitted), bank = audit.evidenceBank ?? [], issues: ValidationIssue[] = [];
   const standard=(request.input.ground_truth as {available:boolean}).available;
   if (value.standard_conflict === true && request.input.allow_standard_conflict !== true)
@@ -138,7 +138,7 @@ function bindSubmission(request: AgentRequest, submitted: unknown, audit: ToolAu
       }
       const problem={component,diagnosis:row.diagnosis,investigation:checks,calculations,label:row.label,definition:row.reason};
       if(type === "problem" && Array.isArray(row.checks) && Array.isArray(row.causes))
-        issues.push(...investigationIssues(request,problem as ProblemProposal,selectedEvidence,audit,path).map(issue=>({...issue,
+        issues.push(...investigate(problem as ProblemProposal,selectedEvidence,audit,path).map(issue=>({...issue,
           path:issue.path.replace(/\/investigation(?=\/|$)/u,"/checks").replace(/\/component(?=\/|$)/u,"/causes")
             .replace(/\/before_evidence_ids(?=\/|$)/u,"/before_evidence_indices").replace(/\/after_evidence_ids(?=\/|$)/u,"/after_evidence_indices")})));
       return { type, dimension: row.dimension, stage: row.stage, importance: row.importance, text: row.text, reason: row.reason, evidence,
@@ -238,17 +238,19 @@ function compactIssues(mapped:ValidationIssue[]):ValidationIssue[]{
 }
 
 export function validateModelSubmission(request: AgentRequest, value: unknown, audit: ToolAudit): ValidationIssue[] {
-  const bound = bindSubmission(request,value,audit);
+  const investigate = investigationValidator(request);
+  const bound = bindSubmission(request,value,audit,investigate);
   return compactIssues([...bound.issues, ...modelIssues(validateJudgment(request,bound.judgment,audit),bound)]);
 }
 
 export function resolveModelSubmission(request: AgentRequest, value: unknown, audit: ToolAudit): unknown {
   if (!validateShape(value)) throw new ValidationError([...schemaIssues(validateShape.errors,value),...validateModelSubmission(request,value,audit)]);
-  const bound = bindSubmission(request,value,audit);
+  const investigate = investigationValidator(request);
+  const bound = bindSubmission(request,value,audit,investigate);
   if (bound.issues.length) throw new ValidationError(compactIssues(bound.issues));
   try {
-    const result=resolveJudgment(request,bound.judgment,audit);
-    validateEvaluation(request,result,audit);
+    const result=resolveJudgment(request,bound.judgment,audit,investigate);
+    validateEvaluation(request,result,audit,investigate);
     return result;
   }
   catch (error) { if (!(error instanceof ValidationError)) throw error; throw new ValidationError(modelIssues(error.issues!,bound)); }

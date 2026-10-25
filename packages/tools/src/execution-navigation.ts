@@ -1,9 +1,10 @@
-import { object, parseEvidenceCoordinates, type ToolDefinition } from "@eval/contracts";
+import { object, parseEvidenceCoordinates, resolveEvidenceSelection, type ToolDefinition } from "@eval/contracts";
+import { evidenceOverlaps } from "./evidence-coverage.js";
 
 type View = "nodes" | "boundaries" | "before" | "after" | "predecessors" | "successors" | "table_checks";
 interface NavigationArgs {
   candidate: string; view: View; execution_node_index?: number; transition_index?: number;
-  message_index?: number; query?: string; kind?: string; path?: string; offset?: number; limit?: number; max_chars?: number;
+  message_index?: number; evidence_index?: number; query?: string; kind?: string; path?: string; offset?: number; limit?: number; max_chars?: number;
 }
 const rows = (value: unknown): Record<string, unknown>[] => Array.isArray(value) ? value.map(object) : [];
 const indexes = (value: unknown): number[] => Array.isArray(value) ? value as number[] : [];
@@ -27,7 +28,7 @@ export const readExecutionTool: Omit<ToolDefinition, "description"> = {
     properties: {
       candidate: { type: "string", minLength: 1 },
       view: { enum: ["nodes", "boundaries", "before", "after", "predecessors", "successors", "table_checks"] },
-      execution_node_index: positive, transition_index: positive, message_index: nonnegative,
+      execution_node_index: positive, transition_index: positive, message_index: nonnegative, evidence_index: positive,
       kind: { enum: ["request_formation", "execution", "transfer", "generation", "delivery"] },
       path: { type: "string" },
       query: { type: "string", minLength: 1, maxLength: 200 }, offset: nonnegative,
@@ -64,12 +65,35 @@ export const readExecutionTool: Omit<ToolDefinition, "description"> = {
       throw new Error("kind 仅筛选 boundaries / predecessors / successors");
     if (args.path !== undefined && !["before", "after"].includes(args.view))
       throw new Error("path 仅筛选 before / after 的精确证据路径");
+    if (args.evidence_index !== undefined && args.view !== "boundaries")
+      throw new Error("evidence_index 仅筛选 boundaries 的真实关联证据");
     if (["nodes", "table_checks"].includes(args.view) && args.transition_index !== undefined)
       throw new Error("此 view 不接受 transition_index");
+    const selectedEvidence = args.evidence_index === undefined ? undefined : resolveEvidenceSelection(ctx.audit.evidenceBank ?? [],
+      { evidence_index: args.evidence_index }, "/evidence_index").evidence_id;
+    const point = selectedEvidence === undefined ? undefined : parseEvidenceCoordinates(selectedEvidence)!;
+    if (point && point.input_id !== inputId) throw new Error("evidence_index 不属于当前 candidate");
+    const overlapCache = new Map<string, boolean>();
+    const matchesEvidence = (item: Record<string, unknown>) => {
+      if (!point || !selectedEvidence || typeof item.evidence_id !== "string") return false;
+      const cached = overlapCache.get(item.evidence_id);
+      if (cached !== undefined) return cached;
+      const other = parseEvidenceCoordinates(item.evidence_id);
+      const sameSource = other && other.input_id === inputId && other.message_index === point.message_index;
+      const matches = !!sameSource && (point.kind === "image" || other.kind === "image"
+        ? point.kind === other.kind
+        : (point.kind !== other.kind || point.path === other.path) &&
+          evidenceOverlaps(ctx.inputs.get(args.candidate) as { messages: unknown[] }, inputId, selectedEvidence, item.evidence_id));
+      overlapCache.set(item.evidence_id, matches);
+      return matches;
+    };
+    const matchedSides = (boundary: Record<string, unknown>) => (["before", "after"] as const)
+      .filter(side => rows(boundary[side]).some(matchesEvidence));
     const summary = (boundary: Record<string, unknown>) => ({
       transition_index: boundary.transition_index, kind: boundary.kind, actor_index: boundary.actor_index,
       execution_node_index: boundary.execution_node_index, source_node_index: boundary.source_node_index,
       target_node_index: boundary.target_node_index, input_path: boundary.input_path, relation: boundary.relation,
+      ...(selectedEvidence === undefined ? {} : { matched_sides: matchedSides(boundary) }),
       before_count: rows(boundary.before).length, after_count: rows(boundary.after).length,
       predecessor_count: indexes(boundary.predecessors).length,
       successor_count: boundaries.filter(other => indexes(other.predecessors).includes(boundary.transition_index as number)).length,
@@ -102,6 +126,7 @@ export const readExecutionTool: Omit<ToolDefinition, "description"> = {
         });
     } else if (args.view === "boundaries") {
       items = boundaries.filter(boundary => (!selected || boundary === selected) &&
+        (selectedEvidence === undefined || matchedSides(boundary).length > 0) &&
         (args.kind === undefined || boundary.kind === args.kind) &&
         (args.execution_node_index === undefined || related(boundary, args.execution_node_index)) &&
         (args.message_index === undefined || nodeIds.some(node => related(boundary, node)) ||

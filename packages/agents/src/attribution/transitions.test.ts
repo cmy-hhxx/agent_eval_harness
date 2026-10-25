@@ -29,6 +29,31 @@ function build(raw: Raw, chains: BusinessChain[]) {
   return { actors, transitions: buildAttributionTransitions({ raw, inputId, finalIndex, actors, chains }) };
 }
 
+test("captured tool_call_id links a truncated actual input without content matching or invented actors", () => {
+  const args = { command: "fetch SPY and RSP" }, call = { id: "captured-call", type: "function", function: { name: "shell", arguments: JSON.stringify(args) } };
+  const capturedInput = { role: "tool", name: "shell", tool_call_id: "captured-call", content: '{"stdout":"SPY=-0.183256;RSP=-0.582027\n…[earlier tool output truncated to save context]' };
+  const raw = { messages: [
+    { type: "llm_turn", parent_span: "planner", input_messages: [{ role: "user", content: "Review breadth" }], output: [{ role: "assistant", content: null, tool_calls: [call] }] },
+    { type: "tool_call", name: "shell", parent_span: "planner", input: args },
+    { type: "tool_result", name: "shell", output: { stdout: "SPY=-0.183256;RSP=-0.582027;full remaining data" } },
+    { type: "llm_turn", input_messages: [capturedInput], output: [{ role: "assistant", content: "Gap is three tenths." }] },
+    { type: "final_answer", content: "Gap is three tenths." },
+  ] };
+  const chains = [chain(raw, 1, 1, 2, [])];
+  const { transitions } = build(raw, chains);
+  const transfer = transitions.find(item => item.kind === "transfer")!;
+  assert(transfer);
+  assert.equal(transfer.input_path, "/input_messages/0");
+  assert.equal(transfer.actor_index, null, "call identity proves a source link, not the missing truncation actor");
+  assert.equal(transfer.relation, "unresolved");
+  assert.equal(originalText(raw, transfer.after[0]), capturedInput.content);
+  const execution = transitions.find(item => item.kind === "execution")!;
+  assert.deepEqual(transfer.predecessors, [execution.transition_index]);
+  assert(transitions.find(item => item.kind === "generation")!.predecessors.includes(transfer.transition_index));
+  capturedInput.tool_call_id = "unobserved-call";
+  assert(!build(raw, chains).transitions.some(item => item.kind === "transfer"), "similar text cannot replace missing call identity");
+});
+
 test("BE quarterly mislabelling belongs to captured code formation before correct shell execution", () => {
   const data = { action_id: "quarter", stdout: "Q3 NetIncome=248976000; Q2 NetIncome=198856000" };
   const command = "print('q3_ni', 198856000)", generated = { role: "assistant", content: null,

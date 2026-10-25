@@ -1,6 +1,6 @@
 import { canonical, type AgentRequest, type ToolAudit, type TraceRead, type ValidationIssue } from "@eval/contracts";
 import { attributionTaxonomy } from "@eval/prompts";
-import { cite, evidenceSources,isGeneratedCallEvidence, isComponentLocator, parseEvidenceCoordinates, selectEvidenceSource, traceCallOrigins, traceExchanges, traceReadCoverage } from "@eval/tools";
+import { cite, evidenceCovers, evidenceSources,isGeneratedCallEvidence, isComponentLocator, parseEvidenceCoordinates, selectEvidenceSource, traceCallOrigins, traceExchanges, traceReadCoverage } from "@eval/tools";
 import type { BusinessChain, Evidence, ProblemProposal } from "./types.js";
 import { buildAttributionTransitions, buildAttributionExecutionNodes, type AttributionTransition, type TransitionBoundary } from "./transitions.js";
 import { validateDerivations } from "./derivations.js";
@@ -76,16 +76,30 @@ export function businessChainDirectoryIssues(request: AgentRequest): ValidationI
   return issues;
 }
 
-/** Evidence belongs to one observed transition; the program never chooses the causal judgment. */
-export function investigationIssues(request: AgentRequest, problem: ProblemProposal, selected: readonly Evidence[], audit: ToolAudit, path: string): ValidationIssue[] {
-  const issues = businessChainDirectoryIssues(request);
+export type InvestigationValidator = (problem: ProblemProposal, selected: readonly Evidence[], audit: ToolAudit, path: string) => ValidationIssue[];
+
+/** One synchronous validation pass shares a verified directory; nothing survives the pass. */
+export function investigationValidator(request: AgentRequest): InvestigationValidator {
+  let validate: InvestigationValidator | undefined;
+  return (...args) => {
+    validate ??= prepareInvestigation(request);
+    return validate(...args);
+  };
+}
+
+function prepareInvestigation(request: AgentRequest): InvestigationValidator {
+  const directoryIssues = businessChainDirectoryIssues(request);
   const raw = request.sources.answer.value as { messages: unknown[] };
   const answer = request.input.answer as { transitions: AttributionTransition[]; execution_nodes: import('./transitions.js').AttributionExecutionNode[]; component_catalog: import('@eval/tools').TraceComponentIdentity[]; final_message_index: number };
   const transitions = answer.transitions;
   const expected = buildAttributionTransitions({ raw, inputId: request.sources.answer.id, finalIndex: answer.final_message_index,
     actors: answer.component_catalog, chains: businessChainDirectory(request) });
-  if (canonical(transitions) !== canonical(expected) || canonical(answer.execution_nodes) !== canonical(buildAttributionExecutionNodes(raw, answer.component_catalog))) return [...issues, {category: 'evidence', code: 'transition_directory',
-    path: '/answer/transitions', message: '执行转换须由真实请求、返回与实际输入重新构建，不能改写主体或传递关系。'}];
+  if (canonical(transitions) !== canonical(expected) || canonical(answer.execution_nodes) !== canonical(buildAttributionExecutionNodes(raw, answer.component_catalog)))
+    directoryIssues.push({category: 'evidence', code: 'transition_directory',
+      path: '/answer/transitions', message: '执行转换须由真实请求、返回与实际输入重新构建，不能改写主体或传递关系。'});
+  if (directoryIssues.length) return () => [...directoryIssues];
+  return (problem, selected, audit, path) => {
+  const issues: ValidationIssue[] = [];
   const add = (code: string, location: string, message: string, expected?: unknown) =>
     issues.push({ category: 'evidence', code, path: location, message, ...(expected === undefined ? {} : { expected }) });
   const boundaryText = (boundary: TransitionBoundary) => {
@@ -103,6 +117,17 @@ export function investigationIssues(request: AgentRequest, problem: ProblemPropo
     before: {count: transition.before.length, read_execution: executionRead(transition.transition_index, 'before')},
     after: {count: transition.after.length, read_execution: executionRead(transition.transition_index, 'after')}});
   const matches = (item: Evidence, boundaries: TransitionBoundary[]) => !item.source && boundaries.some(boundary => overlaps(item, boundary, raw));
+  const evidenceNavigation = (proof: Evidence, transition: AttributionTransition) => {
+    const candidates = transitions.flatMap(item => {
+      const matched_sides = (['before', 'after'] as const).filter(side => matches(proof, item[side]));
+      return matched_sides.length ? [{ transition_index: item.transition_index, kind: item.kind, matched_sides,
+        read_execution: { candidate: 'answer', view: 'boundaries', transition_index: item.transition_index } }] : [];
+    });
+    const position = audit.evidenceBank?.indexOf(proof.evidence_id) ?? -1;
+    return { ...navigation(transition), mismatched_reference: { evidence_id: proof.evidence_id },
+      matching_boundaries: { total: candidates.length, candidates: candidates.slice(0, 4), has_more: candidates.length > 4,
+        ...(position < 0 ? {} : { read_execution: { candidate: 'answer', view: 'boundaries', evidence_index: position + 1, offset: 0 } }) } };
+  };
   for (const [index, check] of problem.investigation.entries()) {
     const location = `${path}/investigation/${index}`, transition = byId.get(check.transition_index);
     if (!transition || check.kind !== transition.kind) {
@@ -119,7 +144,8 @@ export function investigationIssues(request: AgentRequest, problem: ProblemPropo
       for (const id of ids) {
         const proof = proofById.get(id);
         if (!proof || !matches(proof, boundaries)) {
-          add('investigation_boundary_evidence', location, '引用必须属于本问题及所选转换的这一侧，最终交付不能替代实际生成或实际输入。', navigation(transition)); continue;
+          add('investigation_boundary_evidence', location, '引用必须属于本问题及所选转换的这一侧；按该证据实际关联的候选边界核查，候选关联不代表责任判定。',
+            proof ? evidenceNavigation(proof, transition) : navigation(transition)); continue;
         }
         const point = parseEvidenceCoordinates(proof.evidence_id);
         if (point?.kind === 'image' && !audit.viewedImages.includes(`answer:${point.message_index}`))
@@ -131,15 +157,11 @@ export function investigationIssues(request: AgentRequest, problem: ProblemPropo
       }
     }
   }
-  const ancestors = (indices: number[]) => {
-    const visited = new Set<number>(), queue = [...indices];
-    while (queue.length) {
-      const index = queue.pop()!;
-      if (visited.has(index)) continue;
-      visited.add(index);
-      queue.push(...(byId.get(index)?.predecessors ?? []));
-    }
-    return visited;
+  const coverage = new Map<string, boolean>();
+  const contains = (boundary: TransitionBoundary, proof: Evidence) => {
+    const key = `${boundary.evidence_id}:${proof.evidence_id}`;
+    if (!coverage.has(key)) coverage.set(key, evidenceCovers(raw, request.sources.answer.id, boundary.evidence_id, proof.evidence_id));
+    return coverage.get(key)!;
   };
   for (const [index, cause] of problem.component.entries()) {
     const location = `${path}/component/${index}`, transition = byId.get(cause.transition_index);
@@ -171,18 +193,40 @@ export function investigationIssues(request: AgentRequest, problem: ProblemPropo
     if (cause.role !== 'primary' || transition.kind !== 'generation') continue;
     if (!check.before_evidence_ids.length || !check.after_evidence_ids.length || !['input_deviation','independent_addition'].includes(cause.basis))
       add('responsibility_generation_boundary', location, '生成主责须引用实际输入和实际生成输出，证明输入后首次偏离或生成独立新增无据事实。');
-    // Relevant upstream paths are selected by actual quoted source/input coordinates, not by a component quota.
-    const reachable = ancestors(transition.predecessors);
-    const related = transitions.filter(item => item.transition_index !== transition.transition_index &&
-      ['request_formation','execution','transfer'].includes(item.kind) &&
-      selected.some(proof => matches(proof, item.after) || item.kind !== 'request_formation' && matches(proof, item.before)));
-    const roots = related.filter(item => reachable.has(item.transition_index)).map(item => item.transition_index);
-    const required = ancestors(roots);
-    // Close both halves of a cited path: source ancestry and its observed transmission to this generation.
-    for (const id of reachable) if ([...ancestors([id])].some(parent => roots.includes(parent))) required.add(id);
+    // Follow the claim's paired boundary evidence. A model's whole input history is
+    // not a dependency declaration for every fact it later emits.
+    const relevantPredecessors = (current: AttributionTransition, evidence: Evidence[]) => {
+      const candidates = current.predecessors.map(id => byId.get(id)!);
+      const related = new Set<number>();
+      for (const proof of evidence) {
+        const overlapping = candidates.filter(item => matches(proof, item.after));
+        const exact = overlapping.filter(item => item.after.some(boundary => contains(boundary, proof)));
+        if (overlapping.length && !exact.length) add('responsibility_evidence_scope', location,
+          '所引整块材料跨过来源边界；请按当前问题的对象、字段、单位、期间或执行状态收窄原文引用，再关联实际传递。不能用整段历史触发全部前驱核查。',
+          { transition_index: current.transition_index, read_execution: executionRead(current.transition_index, 'before') });
+        for (const item of exact) related.add(item.transition_index);
+      }
+      return [...related];
+    };
+    const beforeProof = (row: ProblemProposal['investigation'][number] | undefined) =>
+      row?.before_evidence_ids.flatMap(id => proofById.has(id) ? [proofById.get(id)!] : []) ?? [];
+    const inputProof = beforeProof(check);
+    const roots = relevantPredecessors(transition, inputProof);
+    const required = new Set<number>(), queue = [...roots];
+    while (queue.length) {
+      const id = queue.pop()!;
+      if (required.has(id)) continue;
+      required.add(id);
+      const upstream = byId.get(id)!, upstreamCheck = checks.get(id);
+      // A tool return is audited against its real request. Earlier model inputs
+      // are followed only when the corresponding check identifies their evidence.
+      const previous = upstream.kind === 'execution' || upstream.kind === 'transfer' && !upstreamCheck ? upstream.predecessors
+        : upstreamCheck ? relevantPredecessors(upstream, beforeProof(upstreamCheck)) : [];
+      queue.push(...previous);
+    }
     // A captured upstream path cannot be bypassed by citing only an unrelated user sentence and the output.
-    if (reachable.size && !roots.length)
-      add('responsibility_upstream_required', location, '生成调用有已关联上游记录，但本问题尚未定位相关来源或排除它们；先定向核查再归生成主责。',
+    if (transition.predecessors.length && !roots.length)
+      add('responsibility_upstream_required', location, '本问题所引实际输入尚未关联可核查的上游来源；核对该段的来源与传递，缺失关联须保留真实断点，不能用其他无关前驱凑核查或直接归生成主责。',
         {transition_index:transition.transition_index, upstream_choices:{count:transition.predecessors.length,
           read_execution:executionRead(transition.transition_index, 'predecessors')}});
     for (const id of required) {
@@ -190,7 +234,6 @@ export function investigationIssues(request: AgentRequest, problem: ProblemPropo
       if (!checks.has(id)) add('responsibility_upstream_required', location,
         '所引事实的上游转换尚未核查。检查对象、字段、单位、期间和执行状态，分别说明保持、偏离、恢复或真实断点；不能从最后错误位置直接归责。', navigation(upstream));
     }
-    const inputProof = check.before_evidence_ids.flatMap(id => proofById.has(id) ? [proofById.get(id)!] : []);
     for (const id of transition.predecessors.filter(id => required.has(id))) {
       const incoming = byId.get(id)!;
       if (!inputProof.some(item => matches(item, incoming.after))) add('responsibility_generation_boundary', location,
@@ -219,4 +262,10 @@ export function investigationIssues(request: AgentRequest, problem: ProblemPropo
       add('source_absence_contradicted', path, '所引来源已有可读原文，不能判为来源不存在；继续核对支持程度与实际输入。');
   }
   return issues;
+  };
+}
+
+/** Standalone checks also verify their directory against original source records. */
+export function investigationIssues(request: AgentRequest, problem: ProblemProposal, selected: readonly Evidence[], audit: ToolAudit, path: string): ValidationIssue[] {
+  return investigationValidator(request)(problem, selected, audit, path);
 }

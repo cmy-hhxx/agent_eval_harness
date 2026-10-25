@@ -57,6 +57,11 @@ test("attribution submits local transition checks and causes without identity or
 
 test("each local problem binds its own checks to program-owned actors", () => {
   const f=businessChainFixture(),registry=new AgentRegistry([attributionAgent]);
+  // This test selects the actual price source, not its surrounding private metadata.
+  const generatedCheck=f.problem.investigation.find(check=>check.transition_index===f.generated.transition_index)!;
+  generatedCheck.before_evidence_ids=f.transitions.filter(edge=>f.generated.predecessors.includes(edge.transition_index))
+    .flatMap(edge=>edge.after.map(item=>item.evidence_id));
+  f.cause.evidence_ids=[...new Set([...generatedCheck.before_evidence_ids,...generatedCheck.after_evidence_ids])];
   const second=structuredClone(f.result.findings[0]);
   second.text="价格字段的资产口径被错误使用。";second.problem!.label="价格字段错配";
   f.result.findings.push(second);

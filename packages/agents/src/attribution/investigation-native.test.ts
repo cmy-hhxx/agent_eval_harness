@@ -3,7 +3,7 @@ import { randomUUID } from "node:crypto";
 import test from "node:test";
 import { Ajv2020 } from "ajv/dist/2020.js";
 import { parseEvidenceCoordinates, type ToolAudit } from "@eval/contracts";
-import { evidenceSources } from "@eval/tools";
+import { cite, evidenceSources, selectEvidenceSource } from "@eval/tools";
 import { bindAttributionMaterial } from "@eval/workflows/review";
 import type { Candidate, RawInput } from "@eval/workflows/inputs";
 import type { AttributionTransition } from "./transitions.js";
@@ -107,6 +107,26 @@ test("native gate rejects final-delivery evidence substituted for actual generat
   assert(inspect(f, problem([cause(generation, row)], checks)).some(item => item.code === "investigation_boundary_evidence"));
 });
 
+test("a wrong delivery selection points back to the argument evidence's actual formation boundary", () => {
+  const f = nativeFixture(), formation = f.transitions.find(item => item.kind === "request_formation")!;
+  const delivery = f.transitions.find(item => item.kind === "delivery")!;
+  const proof = f.evidence.find(item => item.evidence_id === formation.after[0].evidence_id)!;
+  f.audit.evidenceBank = [proof.evidence_id];
+  const row = check(delivery, "changed");
+  row.before_evidence_ids = [proof.evidence_id];
+  const issues = inspect(f, problem([], [row]));
+  const issue = issues.find(item => item.code === "investigation_boundary_evidence")!;
+  const expected = issue.expected as { mismatched_reference: { evidence_id: string }; matching_boundaries: {
+    total: number; candidates: { transition_index: number; kind: string; matched_sides: string[]; read_execution: unknown }[]; read_execution: unknown } };
+  assert.equal(expected.mismatched_reference.evidence_id, proof.evidence_id);
+  assert(expected.matching_boundaries.candidates.some(item => item.transition_index === formation.transition_index &&
+    item.kind === "request_formation" && item.matched_sides.includes("after")));
+  assert(expected.matching_boundaries.candidates.length <= 4);
+  assert.deepEqual(expected.matching_boundaries.read_execution, { candidate: "answer", view: "boundaries", evidence_index: 1, offset: 0 });
+  assert(!expected.matching_boundaries.candidates.some(item => item.transition_index === delivery.transition_index));
+  assert.equal(row.transition_index, delivery.transition_index, "feedback never silently changes the submitted responsibility");
+});
+
 test("native gate never turns a captured chart-parameter creator into an unknown actor", () => {
   const question = "绘制P/E与回撤对照图。", args = { title: "P/E vs drawdown", series: [{ name: "P/E", data: [12, 13] }] };
   const f = material([{ type: "user_question", role: "user", content: question },
@@ -137,6 +157,41 @@ test("native gate cannot discharge relevant XOM upstream checks using unrelated 
   const selectedIds = new Set(checks.flatMap(item => [...item.before_evidence_ids, ...item.after_evidence_ids]));
   const issues = inspect(f, problem([cause(generation, row)], checks), f.evidence.filter(item => selectedIds.has(item.evidence_id)));
   assert(issues.some(item => item.code === "responsibility_upstream_required"), "unrelated weather cannot satisfy XOM upstream review");
+});
+
+test("a claim follows its paired input and source without traversing unrelated carried history", () => {
+  const original = nativeFixture(false, true), raw = original.binding.request.sources.answer.value as RawInput;
+  const weather = { role: "tool", tool_call_id: "weather-call", content: JSON.stringify(raw.messages[3].output) };
+  (raw.messages[4].input_messages as unknown[]).push(weather);
+  (raw.messages[7].input_messages as unknown[]).push(weather);
+  const f = material(raw.messages, "核对XOM的MA50支撑，并给出结论。"), generation = f.transitions.find(item => item.kind === "generation")!;
+  const transfer = f.transitions.find(item => item.kind === "transfer" && item.chain_index === 2)!;
+  const upstream = f.transitions.filter(item => item.chain_index === 2 && ["request_formation", "execution", "transfer"].includes(item.kind));
+  const checks = upstream.map(item => {
+    const value = check(item);
+    if (item.kind === "request_formation") value.before_evidence_ids = item.before.filter(boundary =>
+      f.evidence.some(proof => proof.evidence_id === boundary.evidence_id && proof.quote === "核对XOM的MA50支撑，并给出结论。")).map(item => item.evidence_id);
+    return value;
+  });
+  const generated = check(generation, "changed");
+  generated.before_evidence_ids = transfer.after.map(item => item.evidence_id);
+  checks.push(generated);
+  const value = problem([cause(generation, generated)], checks);
+  // Extra evidence selected for the finding is not a declaration that all history caused it.
+  assert.deepEqual(inspect(f, value), []);
+  const incomplete = inspect(f, { ...value, investigation: [generated] });
+  const required = incomplete.filter(issue => issue.code === "responsibility_upstream_required")
+    .map(issue => (issue.expected as { transition_index: number }).transition_index);
+  assert.deepEqual(new Set(required), new Set(upstream.map(item => item.transition_index)), "the known source/request segment is requested together");
+
+  const selected = selectEvidenceSource(evidenceSources(raw.messages[7]), "/input_messages")!;
+  const broad = cite(f.binding.request.sources.answer.id, 7, selected.source, selected.start, selected.end);
+  generated.before_evidence_ids = [broad.evidence_id];
+  value.component = [cause(generation, generated)];
+  const wide = inspect(f, value, [...f.evidence, broad]);
+  assert(wide.some(issue => issue.code === "responsibility_evidence_scope"), "a whole history block must be narrowed, not audited as every source");
+  assert(!wide.some(issue => issue.code === "responsibility_upstream_required" &&
+    f.transitions.some(item => item.chain_index === 1 && item.transition_index === (issue.expected as { transition_index: number })?.transition_index)));
 });
 
 test("native gate distinguishes a recovered upstream unit error from later generation deviation", () => {

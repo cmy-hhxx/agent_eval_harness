@@ -31,7 +31,6 @@ export interface AttributionTransition {
 type Row = Record<string, unknown>;
 const row = (value: unknown): Row => value && typeof value === "object" && !Array.isArray(value) ? value as Row : {};
 const unique = <T extends TransitionBoundary>(items: T[]) => [...new Map(items.map(item => [item.evidence_id, item])).values()];
-const assistantKey = (value: Row) => canonical({ content: value.content ?? null, tool_calls: value.tool_calls ?? [] });
 
 /** Count only captured invocations; returns and copies in model history are not executions. */
 export function buildAttributionExecutionNodes(raw: { messages: unknown[] }, actors: TraceComponentIdentity[]): AttributionExecutionNode[] {
@@ -58,6 +57,15 @@ export function buildAttributionTransitions({ raw, inputId, finalIndex, actors, 
   const node = (index: number) => nodes.get(index) ?? null;
   const execution = (index: number) => ({ execution_node_index: node(index), source_node_index: node(index), target_node_index: node(index), input_path: null });
   const sourceCache = new Map<number, ReturnType<typeof evidenceSources>>();
+  const assistantKeys = new WeakMap<Row, string>();
+  const assistantKey = (value: Row) => {
+    let key = assistantKeys.get(value);
+    if (key === undefined) {
+      key = canonical({ content: value.content ?? null, tool_calls: value.tool_calls ?? [] });
+      assistantKeys.set(value, key);
+    }
+    return key;
+  };
   const selectionCache: EvidenceSelectionCache = new WeakMap();
   const sources = (index: number) => {
     if (!sourceCache.has(index)) sourceCache.set(index, evidenceSources(raw.messages[index]));
@@ -169,6 +177,29 @@ export function buildAttributionTransitions({ raw, inputId, finalIndex, actors, 
         input_path: entry?.path ?? null, chain_indices: [chain.chain_index],
         chain_index: chain.chain_index, before, after: [evidence], previous, relation: "unresolved" });
     }
+  }
+  // A truncated tool message still retains the captured call identity. Link that
+  // observed input even when content matching cannot recover a complete return.
+  const returnedCalls = chains.flatMap(chain => {
+    const origin = origins.find(item => item.request_index === chain.request_index);
+    const call = row(raw.messages[chain.request_index]);
+    const generated = origin ? at(origin.planner_index, origin.arguments_path.replace(/\/function\/arguments$/u, "/id"))[0]?.quote : undefined;
+    const id = call.call_id ?? call.id ?? generated;
+    return typeof id === "string" && id ? [{ id, chain }] : [];
+  });
+  for (const model of models) for (const entry of model.entries) {
+    if (entry.value.role !== "tool" || typeof entry.value.tool_call_id !== "string") continue;
+    const matches = returnedCalls.filter(item => item.id === entry.value.tool_call_id &&
+      item.chain.return_indices.every(index => index < model.index));
+    if (matches.length !== 1) continue;
+    const chain = matches[0].chain, key = `transfer:${model.index}:return:${chain.request_index}:${entry.path}`;
+    if (transfers.has(key)) continue;
+    const after = at(model.index, entry.path + "/content");
+    if (!after.length || !chain.checkpoints[3].evidence.length) continue;
+    transfers.set(key, { key, target: model.index, order: 0, kind: "transfer", actor_index: null,
+      execution_node_index: null, source_node_index: node(chain.request_index), target_node_index: node(model.index),
+      input_path: entry.path, chain_indices: [chain.chain_index], chain_index: chain.chain_index,
+      before: chain.checkpoints[3].evidence, after, previous: [`execution:${chain.chain_index}`], relation: "unresolved" });
   }
   for (const event of transfers.values()) add(event);
   for (const event of pending) {

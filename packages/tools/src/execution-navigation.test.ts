@@ -120,3 +120,36 @@ test("evidence paging registers only visible items and table/image navigation do
     assert((await f.call({ view: "after", transition_index: 1 })).isError);
   } finally { await f.close(); }
 });
+
+test("known evidence locates intersecting physical boundaries without matching equal history text", async () => {
+  const f = await setup();
+  try {
+    const read = await f.runtime.execute("read_trace", { candidate: "answer", message_index: 1, path: "/content", offset: 2, max_chars: 2 }, new AbortController().signal);
+    assert(!read.isError);
+    const index = (read.details as { evidence: { reference: { evidence_index: number } }[] }).evidence[0].reference.evidence_index;
+    const bank = [...f.ctx.audit.evidenceBank!], reads = structuredClone(f.ctx.audit.traceReads);
+    const related = page(await f.call({ view: "boundaries", evidence_index: index }));
+    assert.deepEqual(related.items.map((item: any) => [item.transition_index, item.matched_sides]), [[1, ["after"]], [2, ["before"]]]);
+    assert(!related.items.some((item: any) => item.transition_index === 3), "identical content at another message is not this physical occurrence");
+    assert.equal(page(await f.call({ view: "boundaries", evidence_index: index, kind: "request_formation" })).items[0].transition_index, 1);
+    assert.deepEqual(f.ctx.audit.evidenceBank, bank); assert.deepEqual(f.ctx.audit.traceReads, reads);
+    assert((await f.call({ view: "nodes", evidence_index: index })).isError);
+    assert((await f.call({ view: "boundaries", evidence_index: 999 })).isError);
+    f.ctx.audit.evidenceBank!.push(evidenceId("22222222-2222-4222-8222-222222222222", 1, "text", "/content", 0, 2));
+    assert((await f.call({ view: "boundaries", evidence_index: f.ctx.audit.evidenceBank!.length })).isError);
+  } finally { await f.close(); }
+});
+
+test("evidence-associated candidates retain whole-item pagination and exact next requests", async () => {
+  const f = await setup();
+  try {
+    f.boundaries.forEach(boundary => { boundary.before = [proof(0)]; });
+    page(await f.call({ view: "before", transition_index: 1 }));
+    const first = page(await f.call({ view: "boundaries", evidence_index: 1, limit: 4 }));
+    assert.equal(first.total, 24); assert.equal(first.items.length, 4); assert(first.has_more);
+    assert.equal(first.next_request.arguments.evidence_index, 1);
+    assert.equal(first.next_request.arguments.offset, 4);
+    assert.deepEqual(page(await f.call(first.next_request.arguments)).items.map((item: any) => item.transition_index), [5, 6, 7, 8]);
+    assert.equal(f.ctx.audit.evidenceBank!.length, 1); assert.deepEqual(f.ctx.audit.traceReads, []);
+  } finally { await f.close(); }
+});

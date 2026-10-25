@@ -9,7 +9,7 @@ import {
 } from "@eval/contracts";
 import { resolveAttributionEvidence } from "./source-evidence.js";
 import type { Evidence, ProblemProposal } from "./types.js";
-import { investigationIssues } from "./investigation.js";
+import { investigationValidator, type InvestigationValidator } from "./investigation.js";
 import { resolveProblemSubmission } from "./responsibility.js";
 import schema from "../../../../schemas/attribution/judgment.schema.json" with { type: "json" };
 import { parseTraceTables } from "@eval/tools";
@@ -29,7 +29,7 @@ type DraftFinding = {
 type DraftCriterionAssessment = { criterion_id: string; evidence: EvidenceRef[]; [key: string]: unknown };
 
 const validate = new Ajv2020({ allErrors: true, strict: false }).compile<unknown>(schema);
-export function resolveJudgment(request: AgentRequest, draft: unknown, audit: ToolAudit): unknown {
+export function resolveJudgment(request: AgentRequest, draft: unknown, audit: ToolAudit, investigate: InvestigationValidator = investigationValidator(request)): unknown {
   const valid=validate(draft),issues=valid?[]:schemaIssues(validate.errors,draft);
   issues.push(...validateJudgment(request,draft,audit));
   if(issues.length)throw new ValidationError(issues);
@@ -73,7 +73,7 @@ export function resolveJudgment(request: AgentRequest, draft: unknown, audit: To
     const problem = finding.type === "problem"
       ? resolveProblemSubmission(request, finding.problem, selected, `${path}/problem`) : null;
     if (problem) {
-      const issues = investigationIssues(request, problem, selected.filter((item): item is Evidence => !!item), audit, `${path}/problem`);
+      const issues = investigate(problem, selected.filter((item): item is Evidence => !!item), audit, `${path}/problem`);
       if (issues.length) throw new ValidationError(issues);
     }
     const ruleBound=Object.hasOwn(finding,"norm_index");
