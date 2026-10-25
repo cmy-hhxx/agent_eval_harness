@@ -65,6 +65,7 @@ export async function loadWorkbenchConfig(file: string): Promise<WorkbenchConfig
     "hostConfigs", "logDirectory", "logLockDirectory", "instanceLockDirectory"], "workbench.runtime");
   const restart = record(raw.restart, "workbench.restart");
   exactKeys(restart, ["limit", "windowMs", "baseDelayMs", "maxDelayMs"], "workbench.restart");
+  if (!Number.isSafeInteger(restart.limit) || Number(restart.limit) < 0) throw new Error("workbench.restart.limit must be a non-negative integer");
   if (!Array.isArray(runtime.hostConfigs) || !runtime.hostConfigs.length || runtime.hostConfigs.some(item => typeof item !== "string" || !item.trim()))
     throw new Error("workbench.runtime.hostConfigs must contain file paths");
   const publicOrigin = text(raw.publicOrigin, "workbench.publicOrigin").replace(/\/$/, "");
@@ -90,7 +91,7 @@ export async function loadWorkbenchConfig(file: string): Promise<WorkbenchConfig
       logDirectory: resolve(runtime.logDirectory, "workbench.runtime.logDirectory"),
       logLockDirectory: resolve(runtime.logLockDirectory, "workbench.runtime.logLockDirectory"),
       instanceLockDirectory: resolve(runtime.instanceLockDirectory, "workbench.runtime.instanceLockDirectory") },
-    restart: { limit: positive(restart.limit, "workbench.restart.limit"), windowMs: positive(restart.windowMs, "workbench.restart.windowMs"),
+    restart: { limit: Number(restart.limit), windowMs: positive(restart.windowMs, "workbench.restart.windowMs"),
       baseDelayMs: positive(restart.baseDelayMs, "workbench.restart.baseDelayMs"), maxDelayMs: positive(restart.maxDelayMs, "workbench.restart.maxDelayMs") },
     shutdownTimeoutMs: positive(raw.shutdownTimeoutMs, "workbench.shutdownTimeoutMs"),
   };

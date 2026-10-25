@@ -55,11 +55,27 @@ git config http.http://interactive-n01laf763gwn:8080/.proxy ''
 ```bash
 ssh <eval_agent_server>
 cd /mnt/aigc_team/user_workspace/chenmingyang/eval_harness/code
-tmux new -s workbench
-bash workbench.sh
+bash workbench.sh start
 ```
 
-网关监听 `0.0.0.0:5001`，由已有 NAT 映射到外部 `3309`。数据服务只监听 `127.0.0.1:8081`，自动化看板只监听 `127.0.0.1:4174`，运行实例看板只监听 `127.0.0.1:4173`。不使用 systemd、Docker、Kubernetes 或自建 daemon；tmux 会话结束后进程停止。
+启动命令始终前台运行，省略命令时默认 `start`。直接在 SSH 中运行时，断线或关闭前台输入流后整套退出；如需断线后继续，先自行进入 `tmux new -s workbench`，再执行脚本，tmux 会话结束后进程停止。部署、更新、构建不会启动工作台，不注册 systemd、Docker、Kubernetes、开机自启或自建 daemon；整套退出后等待操作者手动再启。
+
+网关监听 `0.0.0.0:5001`，由已有 NAT 映射到外部 `3309`。数据服务只监听 `127.0.0.1:8081`，自动化看板只监听 `127.0.0.1:4174`，运行实例看板只监听 `127.0.0.1:4173`。
+
+脚本可从任意目录调用，`--config FILE` 与 `WORKBENCH_CONFIG` 选择配置（显式参数优先，相对路径以调用目录为准），默认仍读取 `WORKBENCH_RUNTIME_ROOT/config/workbench.json`。`npm run workbench -- <命令>` 转到同一入口。
+
+```bash
+bash workbench.sh --help
+bash workbench.sh check --config /path/to/runtime/config/workbench.json
+bash workbench.sh status
+bash workbench.sh logs --log runtime --lines 100
+bash workbench.sh logs --log evaluation --follow
+bash workbench.sh stop
+```
+
+`check` 校验固定工具链、启动配置、数据权限、模型凭据、Python 数据服务依赖和端口，不安装、不构建、不启动子服务。端口检查会短暂绑定后立即释放，运行中的实例会报端口占用，查看存活状态应使用 `status`。`status / stop / logs` 不要求 Python/uv，也不会触发 bootstrap 或 build；缺少构建产物时明确报错。未知命令和参数直接拒绝，`--help` 无需配置或工具链。
+
+`status` 输出当前实例 PID、配置、启动/就绪/停止阶段和子服务健康状态，未运行时为 `stopped`。`stop` 通过 `runtime/state/workbench/control.sock` 请求当前实例停止并等待退出；目录权限 `700`、socket 权限 `600`，不开放公网停止接口，不按 PID、进程名或端口查杀。活跃锁存在但控制通道不可用时明确报错，要求检查服务器终端，不猜测或抢占进程。`logs` 默认读取现有 `runtime.log` 最后 100 行，`--log evaluation` 读取 `evaluation.log`，`--follow` 持续跟随，不新增日志。
 
 浏览器入口：
 
@@ -75,7 +91,7 @@ bash workbench.sh
 
 ```bash
 git pull --ff-only
-bash workbench.sh
+bash workbench.sh start
 ```
 
 只有依赖、vendor 或工具链发生变更时，启动前执行：
@@ -94,8 +110,9 @@ npm run build
 - 启动前校验固定工具链、配置、持久目录、密钥权限、运行账号权限和全部端口。
 - 端口被其他进程占用时拒绝启动，不自动换端口。
 - 数据服务、自动化看板服务和运行实例看板异常退出后按 `1s, 2s, 4s, 8s, 16s` 退避重启；同一服务在五分钟内超过五次重启、返回配置错误或端口冲突时停止整套服务。
+- 本次手动启动期间的子服务恢复由 `workbench.json` 的 `restart` 控制，`limit: 0` 关闭自动重启；修改后下次手动启动生效。子服务重启后重新检查健康状态，失败会停止整套服务，整套退出后不自动再启。
 - 启动与重启只恢复服务，不自动恢复来源流水线。评测页按来源点击「评测」后持续执行；暂停等待在途收尾，立即停止中断在途，之后手动继续。
-- Ctrl+C 或 SIGTERM 先停止公网接入，再依次停止自动化、运行实例看板和数据服务；自动化进程完成 Host 进度保存后退出。
+- 启动阶段和运行阶段均处理 Ctrl+C、SIGTERM 与 SSH 断开的 SIGHUP；先停止公网接入，再依次停止自动化、运行实例看板和数据服务。自动化进程完成 Host 进度保存后退出，已接受结果保留；整个停止流程共用 `shutdownTimeoutMs`，超时终止当前实例拥有的子进程组，取消待重启任务，不遗留后台服务。
 - supervisor 输出留在 tmux；应用日志只写现有 `runtime.log`、`evaluation.log` 和统计 JSONL，不创建轮转或私有日志。
 
 ## 统计 relay
