@@ -23,12 +23,11 @@ async function rows(file: string): Promise<JsonObject[]> {
 /** Attribution result carrying a problem proposal so clustering has observations to classify. */
 function problemAttribution(answer: string, inputId: string): AttributionResult {
   const result = attributionResult(false, answer, true, inputId);
-  result.correctness_reason = "最终结果5与标准结果4不符。";
-  result.findings[0] = {
-    ...result.findings[0]!,
-    type: "problem",
+  result.correct_reason = "最终结果5与标准结果4不符。";
+  result.Problem[0] = {
+    ...result.Problem[0]!,
     reason: "原文给出5，正确结果应为4。",
-    problem: { ...result.findings[0]!.problem!, label: "算术错误", definition: "计算与事实不符。" },
+    text: "算术错误",
   };
   return result;
 }
@@ -74,11 +73,11 @@ test("a batch may create every component its own observations use", async () => 
     const plan = await buildPlan(config);
     const task = plan.tasks.find((entry) => entry.stage === "clustering")!;
     const inputId = Object.keys(task.dependencies)[0]!;
-    const finding = attributionResult(false).findings[0]!;
+    const finding = attributionResult(false).Problem[0]!;
     const evaluation = {
       ...attributionResult(false),
-      findings: [
-        { ...finding, finding_id: "f0", problem: { diagnosis: "other" as const, investigation: [], calculations: [], component: [responsibilityFixture("Search", {evidence_ids: []}), responsibilityFixture("最终回答组织", {evidence_ids: [], role: "contributing"})], label: "检索不足", definition: "检索结果不完整，模型仍给出确定结论。" } },
+      Problem: [
+        { ...finding, problem_id: "p1", causes: [responsibilityFixture("Search", {evidence_ids: []}), responsibilityFixture("最终回答组织", {evidence_ids: [], role: "contributing"})], text: "检索不足", reason: "检索结果不完整，模型仍给出确定结论。" },
       ],
     };
     const dependencies = { [inputId]: { evaluation } } as unknown as Record<string, SubmissionReceipt | undefined>;
@@ -119,7 +118,7 @@ test("clustering bind preserves each shard's reserved component headroom", async
       const inputId = Object.keys(task.dependencies)[0]!;
       const evaluation = attributionResult(false);
       const component = index === 0 ? "Search" : "最终回答组织";
-      evaluation.findings[0]!.problem = { diagnosis: "other" as const, investigation: [], calculations: [], component: [responsibilityFixture(component, {evidence_ids: []})], label: "算术错误", definition: "计算不符。" };
+      evaluation.Problem[0] = { ...evaluation.Problem[0], causes: [responsibilityFixture(component, {evidence_ids: []})], text: "算术错误", reason: "计算不符。" };
       const dependencies = { [inputId]: { evaluation } } as unknown as Record<string, SubmissionReceipt>;
       const request = comparisonWorkflow.bind(task, {}, dependencies, { tasks: plan.tasks }).request;
       return { request, component: (request.input.items as {component:string}[])[0].component };
@@ -408,8 +407,7 @@ test("explicit deferred reclassification preserves original receipts and uses on
       if (options.spec.evaluation.id === "attribution") {
         const material = parsedMaterial(options.spec) as { answer: { final_answer: string } };
         const value = problemAttribution(material.answer.final_answer, options.spec.inputs.find(input => input.name === "answer")!.id);
-        value.findings.push({ ...structuredClone(value.findings[0]!), finding_id: "f-second", importance: "low",
-          problem: { ...structuredClone(value.findings[0]!.problem!), label: "第二现象", definition: "与计算错误具有不同边界的第二现象。" } });
+        value.Problem.push({ ...structuredClone(value.Problem[0]!), problem_id: "f-second", text: "第二现象", reason: "与计算错误具有不同边界的第二现象。" });
         result = value;
       }
       if (options.spec.evaluation.id === "clustering") {
@@ -493,7 +491,7 @@ test("library statistics count a jointly attributed finding once", async () => {
   try {
     const plan = await buildPlan(config), task = plan.tasks.find(task => task.stage === "clustering")!;
     const evaluation = problemAttribution("5", "7c4e3ba8-8f7c-46cc-b8fb-3016e10ea2dd");
-    evaluation.findings[0]!.problem!.component.push(responsibilityFixture("Search",{role:"contributing"}));
+    evaluation.Problem[0]!.causes.push(responsibilityFixture("Search",{role:"contributing"}));
     const receipts = Object.fromEntries(Object.values(task.dependencies).map(id => [id, attributedReceipt(id, evaluation)]));
     const { taskObservations } = await import("@eval/workflows/comparison");
     const observations = taskObservations(task, id => receipts[id]);

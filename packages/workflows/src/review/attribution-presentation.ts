@@ -4,12 +4,7 @@ import type { RawInput } from "../inputs/types.js";
 
 type Evidence = ResolvedEvidence & { source?: string; source_input_id?: string };
 interface EvidenceEntry { evidence: Evidence[]; context_evidence?: Evidence[] }
-interface AttributionEvidenceView {
-  findings: EvidenceEntry[];
-  criterion_assessments: EvidenceEntry[];
-  correctness_evidence?: Evidence[];
-  table_resolutions?: EvidenceEntry[];
-}
+interface AttributionEvidenceView { Problem: EvidenceEntry[] }
 
 /** Preview a long accepted quote only when its exact source location is unambiguous. */
 function evidencePresentation(evidence: Evidence, candidate: string, raw: RawInput, inputId: string,
@@ -41,13 +36,7 @@ export function attributionPresentation<T extends AttributionEvidenceView>(resul
   const evidence = (entries: Evidence[]) => entries.map(entry => evidencePresentation(entry, candidate, raw, inputId, sources, sourceIds));
   const entries = <U extends EvidenceEntry>(items: U[]) => items.map(item => ({ ...item, evidence: evidence(item.evidence),
     ...(item.context_evidence ? { context_evidence: evidence(item.context_evidence) } : {}) }));
-  return { ...result,
-    ...(result.correctness_evidence ? { correctness_evidence: evidence(result.correctness_evidence) } : {}),
-    criterion_assessments: entries<T["criterion_assessments"][number]>(result.criterion_assessments),
-    findings: entries<T["findings"][number]>(result.findings),
-    ...(result.table_resolutions ? { table_resolutions: result.table_resolutions.map(item =>
-      ({ ...item, evidence: evidence(item.evidence) })) } : {}),
-  };
+  return { ...result, Problem: entries<T["Problem"][number]>(result.Problem) };
 }
 
 /** Display fixed table ordinals only in generated check envelopes; canonical checks and raw messages stay intact. */

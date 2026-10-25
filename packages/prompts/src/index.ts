@@ -21,6 +21,7 @@ const taskFocus = resource("shared/task-focus.md");
 const budget = resource("shared/budget.md");
 const recovery = resource("shared/recovery.md");
 const nudge = resource("shared/nudge.md");
+export const attributionCompletionReview = resource("attribution/completion-review.md");
 export const standardConflictReviewInstructions = resource("attribution/standard-review.md");
 export const standardConflictInstructions = resource("attribution/standard-challenge.md");
 export function workflowText(name: "attribution-material" | "core-rewrite" | "criteria-review" | "prediction-evaluation"): string {

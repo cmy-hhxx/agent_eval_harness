@@ -40,6 +40,8 @@ export interface EvaluationSpec {
   outputSchema: JsonSchema;
   /** Optional structured material inspection, sharing the final submission content budget. */
   inspectionSchema?: JsonSchema;
+  /** A same-session semantic review of the latest validated candidate before acceptance. */
+  completionReview?: string;
   toolNames: string[];
   /** Whether this profile explicitly submits existing workspace JSON files instead of JSON values. */
   fileSubmission: boolean;
@@ -62,8 +64,8 @@ export interface InputRef {
   id: string;
   name: string;
 }
-export function submissionToolNames(fileSubmission: boolean): string[] {
-  return fileSubmission ? ["submit_evaluation_file"] : ["submit_evaluation"];
+export function submissionToolNames(fileSubmission: boolean, completionReview = false): string[] {
+  return [...(fileSubmission ? ["submit_evaluation_file"] : ["submit_evaluation"]), ...(completionReview ? ["confirm_evaluation"] : [])];
 }
 /** Native arguments for both a JSON file submission and a file-backed material inspection. */
 export const SUBMISSION_FILE_SCHEMA: JsonSchema = {
@@ -140,7 +142,16 @@ export interface ToolAudit {
   inspection?: InspectionCheckpoint;
 }
 export type { ReviewCase, ReviewQuote, ReviewAudit } from "./review.js";
+export interface CompletionCandidate {
+  id: string;
+  superseded?: boolean;
+  attemptId: string;
+  evaluation: unknown;
+  /** Earlier validated judgments remain visible for any explicit withdrawal explanation. */
+  previous?: unknown;
+}
 export interface Submission {
+  completionReview?: { candidateId: string; reason: string };
   submissionId: string;
   attemptId: string;
   taskId: string;
@@ -251,7 +262,6 @@ export interface ProblemObservationRef {
   case_id: string;
   components: string[];
   evidence_status: "established" | "uncertain";
-  importance: "high" | "medium" | "low";
   summary: string;
 }
 export type ProblemEventType = "class_created" | "class_merged" | "occurrence_moved" | "class_updated" | "occurrence_rejected" | "pending_observations_replaced" | "assignments_replaced";
@@ -446,6 +456,8 @@ export interface AgentProfile {
   };
   /** Schema for the accepted result after optional submission resolution. */
   resultSchema?: JsonSchema;
+  /** Prompt-owned instructions for a short same-session review; not a semantic correctness proof. */
+  completionReview?: string;
   systemPrompt: string;
   instructions: string;
   submissionNudge: string;
@@ -614,6 +626,8 @@ export interface FailureContext {
   /** Keep prior choices stable even when the last draft or inspection failed. */
   evidenceBank?: import("./evidence-selection.js").EvidenceBank;
   draft?: unknown;
+  /** Host-owned provisional judgment; never a successful result. */
+  completionCandidate?: CompletionCandidate;
   inspection?: InspectionCheckpoint;
   errors: ValidationIssue[];
   contentSubmissions: number;

@@ -56,16 +56,11 @@ function check(transition: AttributionTransition, outcome: TransitionCheck["outc
     observation: "核对所引两侧字段、对象、单位与期间，按实际记录保留已知边界。",
     before_evidence_ids: transition.before.map(item => item.evidence_id), after_evidence_ids: transition.after.map(item => item.evidence_id) };
 }
-function cause(transition: AttributionTransition, row: TransitionCheck, fields: Partial<Responsibility> = {}): Responsibility {
-  return { transition_index: transition.transition_index, actor_index: transition.actor_index, chain_index: transition.chain_index,
-    role: "primary", basis: "input_deviation", technical_domain: "生成模型", functional_component: "回答生成", component: "XOM技术位分析",
-    business_component: "XOM技术位字段对照与价位表述", chain_step: "模型实际输入", failure_stage: "数据解释与计算", field_names: [],
-    mechanism_source: "boundary_comparison", certainty: "inferred", mechanism: "所引输入与输出存在价位差异；中间处理机制未记录，保留记忆补写等替代解释。",
-    reason: "相关差异影响技术位结论。", evidence_ids: [...new Set([...row.before_evidence_ids, ...row.after_evidence_ids])],
-    evidence_gap: "没有隐藏推理动作记录。", alternatives: ["可能存在记忆补写。"], ...fields };
+function cause(transition:AttributionTransition,row:TransitionCheck,fields:Partial<Responsibility>={}):Responsibility{
+ return {transition_index:transition.transition_index,actor_index:transition.actor_index,kind:transition.kind,role:'primary',basis:'input_deviation',component:'XOM技术位分析',mechanism_source:'boundary_comparison',certainty:'inferred',reason:'相关输入输出的价位存在差异，中间处理未知。',evidence_ids:[...new Set([...row.before_evidence_ids,...row.after_evidence_ids])],uncertainty:{evidence_gap:'隐藏推理动作未记录。',alternatives:['可能记忆补写。']},...fields};
 }
-function problem(component: Responsibility[], investigation: TransitionCheck[]): ProblemProposal {
-  return { component, investigation, calculations: [], diagnosis: "context_loss", label: "MA50缺失及无据支撑位", definition: "MA50字段与支撑位表述不一致。" };
+function problem(causes:Responsibility[],checks:TransitionCheck[]):ProblemProposal{
+ return {text:'MA50缺失及无据支撑位',reason:'MA50字段与支撑位不一致。',evidence_status:'established',causes,checks};
 }
 const inspect = (f: ReturnType<typeof material>, value: ProblemProposal, evidence: Evidence[] = f.evidence) =>
   investigationIssues(f.binding.request, value, evidence, f.audit, "/problem");
@@ -80,10 +75,10 @@ test("native gate separates lost fields from independent generation and leaves c
   assert.deepEqual(inspect(f, value), []);
   const execution = f.transitions.find(item => item.kind === "execution")!;
   const incorrectlyBlamed = cause(execution, byId.get(execution.transition_index)!, { role: "contributing" });
-  assert(inspect(f, { ...value, component: [...value.component, incorrectlyBlamed] }).some(item => item.code === "responsibility_formation"));
+  assert(inspect(f, { ...value, causes: [...value.causes, incorrectlyBlamed] }).some(item => item.code === "responsibility_formation"));
   const generationPrimary = problem([cause(generation, byId.get(generation.transition_index)!, { basis: "independent_addition" })], checks);
   assert.deepEqual(inspect(f, generationPrimary), []);
-  generationPrimary.component[0].basis = "input_deviation";
+  generationPrimary.causes[0].basis = "input_deviation";
   assert(inspect(f, generationPrimary).some(item => item.code === "responsibility_generation_formation"));
 });
 
@@ -92,10 +87,10 @@ test("native gate requires actual checks and keeps boundary certainty inferred",
   const checks = f.transitions.filter(item => item.kind !== "delivery").map(item => check(item, item === generation ? "changed" : "preserved"));
   const value = problem([cause(generation, checks.find(item => item.transition_index === generation.transition_index)!)], checks);
   assert.deepEqual(inspect(f, value), []);
-  assert(inspect(f, { ...value, investigation: [] }).some(item => item.code === "responsibility_check_required"));
+  assert(inspect(f, { ...value, checks: [] }).some(item => item.code === "responsibility_check_required"));
   assert(investigationIssues(f.binding.request, value, f.evidence, { ...f.audit, traceReads: [] }, "/problem")
     .some(item => item.code === "investigation_read_required"));
-  value.component[0].certainty = "confirmed";
+  value.causes[0].certainty = "confirmed";
   assert(inspect(f, value).some(item => item.code === "responsibility_mechanism_inferred"));
 });
 
@@ -139,7 +134,7 @@ test("native gate never turns a captured chart-parameter creator into an unknown
   assert.notEqual(creator.actor_index, null);
   const value = problem([cause(creator, row, { basis: "independent_addition", mechanism_source: "explicit_process", certainty: "confirmed" })], [row]);
   assert.deepEqual(inspect(f, value), []);
-  Object.assign(value.component[0], { actor_index: null, basis: "unknown_transition" });
+  Object.assign(value.causes[0], { actor_index: null, basis: "unknown_transition" });
   const codes = inspect(f, value).map(item => item.code);
   assert(codes.includes("responsibility_transition_actor"));
   assert(codes.includes("responsibility_basis"));
@@ -179,7 +174,7 @@ test("a claim follows its paired input and source without traversing unrelated c
   const value = problem([cause(generation, generated)], checks);
   // Extra evidence selected for the finding is not a declaration that all history caused it.
   assert.deepEqual(inspect(f, value), []);
-  const incomplete = inspect(f, { ...value, investigation: [generated] });
+  const incomplete = inspect(f, { ...value, checks: [generated] });
   const required = incomplete.filter(issue => issue.code === "responsibility_upstream_required")
     .map(issue => (issue.expected as { transition_index: number }).transition_index);
   assert.deepEqual(new Set(required), new Set(upstream.map(item => item.transition_index)), "the known source/request segment is requested together");
@@ -187,7 +182,7 @@ test("a claim follows its paired input and source without traversing unrelated c
   const selected = selectEvidenceSource(evidenceSources(raw.messages[7]), "/input_messages")!;
   const broad = cite(f.binding.request.sources.answer.id, 7, selected.source, selected.start, selected.end);
   generated.before_evidence_ids = [broad.evidence_id];
-  value.component = [cause(generation, generated)];
+  value.causes = [cause(generation, generated)];
   const wide = inspect(f, value, [...f.evidence, broad]);
   assert(wide.some(issue => issue.code === "responsibility_evidence_scope"), "a whole history block must be narrowed, not audited as every source");
   assert(!wide.some(issue => issue.code === "responsibility_upstream_required" &&
@@ -279,7 +274,7 @@ test("repair feedback pages transition boundaries and predecessors while protect
 test("transition submission IDs retain the exact contiguous legal range without an expanded enum", () => {
   const f = nativeFixture(), schema = attributionSubmissionSchema(f.binding.request);
   for (const key of ["checks", "causes"] as const) {
-    const field: { type: string; minimum: number; maximum?: number } = schema.properties.problems.items.properties[key].items.properties.transition_index;
+    const field: { type: string; minimum: number; maximum?: number } = schema.properties.Problem.items.properties[key].items.properties.transition_index;
     assert(!Object.hasOwn(field, "enum"));
     const validate = new Ajv2020({ strict: false }).compile(field);
     assert.equal(field.minimum, 1);

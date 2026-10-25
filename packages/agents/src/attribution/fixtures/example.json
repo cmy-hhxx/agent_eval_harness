@@ -124,118 +124,13 @@
     }
   },
   "result": {
-    "has_standard_answer": true,
-    "is_correct": true,
-    "correctness_reason": "结果为4，与标准答案一致。",
-    "correctness_evidence": [
-      {
-        "message_index": 1,
-        "quote": "2+2=4",
-        "evidence_id": "ev_11111111-1111-4111-8111-111111111111_1_text_0_5_/content"
-      }
-    ],
-    "task_analysis": {
-      "task_type": "整数加法",
-      "goal": "计算2+2",
-      "requirements": [
-        {
-          "id": "r1",
-          "text": "给出正确的加法结果",
-          "applies_to": [],
-          "acceptance_rule": "给出正确的加法结果\n\n最终回答给出2与2相加的结果4。"
-        }
-      ],
-      "scoring_points": [
-        {
-          "id": "s1",
-          "text": "使用指定操作数",
-          "applies_to": [],
-          "acceptance_rule": "使用指定操作数\n\n计算对象为用户指定的2和2。"
-        }
-      ],
-      "red_flags": [
-        {
-          "id": "f1",
-          "text": "擅自替换操作数",
-          "applies_to": [],
-          "acceptance_rule": "擅自替换操作数\n\n未将任一操作数替换成其他值。"
-        }
-      ]
+    "meta": {
+      "input_id": "11111111-1111-4111-8111-111111111111"
     },
     "summary": "直接给出正确结果。",
-    "findings": [
-      {
-        "finding_id": "f0",
-        "type": "strength",
-        "dimension": "correctness",
-        "stage": "final_answer",
-        "importance": "high",
-        "text": "加法结果正确",
-        "reason": "与题目要求一致。",
-        "evidence": [
-          {
-            "message_index": 1,
-            "quote": "2+2=4",
-            "evidence_id": "ev_11111111-1111-4111-8111-111111111111_1_text_0_5_/content"
-          }
-        ],
-        "assessment": {
-          "requirement_index": 0,
-          "observation": "2+2=4",
-          "evidence_status": "established",
-          "impact": "完成加法要求。"
-        },
-        "problem": null
-      }
-    ],
-    "numeric_checks": [],
-    "criterion_assessments": [
-      {
-        "criterion_id": "r1",
-        "status": "met",
-        "evidence_status": "established",
-        "summary": "使用指定操作数给出正确结果。",
-        "evidence": [
-          {
-            "message_index": 1,
-            "quote": "2+2=4",
-            "evidence_id": "ev_11111111-1111-4111-8111-111111111111_1_text_0_5_/content"
-          }
-        ]
-      },
-      {
-        "criterion_id": "s1",
-        "status": "met",
-        "evidence_status": "established",
-        "summary": "使用指定操作数给出正确结果。",
-        "evidence": [
-          {
-            "message_index": 1,
-            "quote": "2+2=4",
-            "evidence_id": "ev_11111111-1111-4111-8111-111111111111_1_text_0_5_/content"
-          }
-        ]
-      },
-      {
-        "criterion_id": "f1",
-        "status": "met",
-        "evidence_status": "established",
-        "summary": "使用指定操作数给出正确结果。",
-        "evidence": [
-          {
-            "message_index": 1,
-            "quote": "2+2=4",
-            "evidence_id": "ev_11111111-1111-4111-8111-111111111111_1_text_0_5_/content"
-          }
-        ]
-      }
-    ],
-    "core_assessment": {
-      "meets_core": true,
-      "reason": "唯一所求的加法结果正确，可直接使用。",
-      "criterion_ids": [
-        "r1"
-      ]
-    }
+    "Problem": [],
+    "has_standard_answer": true,
+    "is_correct": true,
+    "correct_reason": "结果为4，与标准答案一致。"
   }
 }

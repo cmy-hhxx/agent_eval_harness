@@ -1,5 +1,4 @@
 import type { JsonObject, PlannedTask } from "@eval/contracts";
-import { workflowText } from "@eval/prompts";
 import type { ClusteringResult } from "@eval/agents/clustering";
 import type { RewriteItem, Rewrites } from "@eval/agents/rewrite";
 import type { AttributionResult, ComparisonResult, TaskData } from "./types.js";
@@ -13,42 +12,20 @@ export interface CommentaryLookup {
 export function verdictSlotId(first: string, second: string): string {
   return `verdict.${[first, second].sort().join("__vs__")}.reason`;
 }
-export function attributionSlots(result: AttributionResult): RewriteItem[] {
-  const items: RewriteItem[] = [{ id: "summary", label: "回答结论", text: result.summary }];
-  if (result.core_assessment.reason.trim())
-    items.push({ id: "core_assessment.reason", label: "回答对用户请求的满足情况", text: result.core_assessment.reason,
-      context: workflowText("core-rewrite") });
-  if (result.correctness_reason.trim())
-    items.push({
-      id: "correctness_reason",
-      label: result.is_correct === false ? "判错理由" : "判对理由",
-      text: result.correctness_reason,
-    });
-  result.criterion_assessments.forEach((item, index) => {
-    if (item.summary.trim()) items.push({ id: `criterion_assessments.${index}.summary`, label: `检查项 ${index + 1} · 点评`, text: item.summary });
-  });
-  result.findings.forEach((finding, index) => {
-    for (const field of ["text", "reason"] as const)
-      items.push({ id: `findings.${index}.${field}`, label: `发现 ${index + 1} · ${field === "text" ? "点评" : "理由"}`, text: finding[field] });
-    for (const field of ["observation", "impact"] as const)
-      if (finding.assessment[field].trim()) items.push({ id: `findings.${index}.assessment.${field}`,
-        label: `发现 ${index + 1} · ${field === "observation" ? "实际情况" : "实际影响"}`, text: finding.assessment[field] });
-    if (finding.problem) for (const field of ["label", "definition"] as const)
-      if (finding.problem[field].trim()) items.push({ id: `findings.${index}.problem.${field}`,
-        label: `发现 ${index + 1} · ${field === "label" ? "问题名称" : "问题描述"}`, text: finding.problem[field] });
-  });
-  result.table_resolutions?.forEach((item, index) => {
-    if (item.reason.trim()) items.push({ id: `table_resolutions.${index}.reason`, label: `表格核查 ${index + 1} · 理由`, text: item.reason });
-  });
-  return items;
+export function attributionSlots(result:AttributionResult):RewriteItem[]{
+ return [{id:'summary',label:'回答结论',text:result.summary},
+  ...(result.correct_reason?[{id:'correct_reason',label:'标准答案核对理由',text:result.correct_reason}]:[]),
+  ...result.Problem.flatMap((item,index)=>(['text','reason'] as const).map(field=>({
+   id:`Problem.${index}.${field}`,label:`问题 ${index+1} · ${field==='text'?'描述':'理由'}`,text:item[field],
+  })))];
 }
 /** Keep each semantic unit together; unrelated findings never share a positional chain. */
 export function attributionRewriteGroups(result: AttributionResult, slotIds?: readonly string[]): string[][] {
   const selected = slotIds && new Set(slotIds), groups = new Map<string, string[]>();
   for (const item of attributionSlots(result)) {
     if (selected && !selected.has(item.id)) continue;
-    const key = /^findings\.\d+\./u.exec(item.id)?.[0] ??
-      (item.id.startsWith("criterion_assessments.") ? "criteria" : item.id.startsWith("table_resolutions.") ? "tables" : "overview");
+    const key = /^Problem\.\d+\./u.exec(item.id)?.[0] ??
+      "overview";
     const group = groups.get(key) ?? [];
     group.push(item.id); groups.set(key, group);
   }
@@ -118,27 +95,13 @@ export function clusteringSlots(result: ClusteringResult): RewriteItem[] {
   ];
 }
 /** Replace display prose only; source judgments, responsibility and evidence remain unchanged. */
-export function polishAttribution(result: AttributionResult, rewrites: Rewrites): AttributionResult {
-  const view = structuredClone(result);
-  if (rewrites.summary) view.summary = rewrites.summary;
-  if (rewrites.correctness_reason) view.correctness_reason = rewrites.correctness_reason;
-  if (rewrites["core_assessment.reason"] && view.core_assessment)
-    view.core_assessment.reason = rewrites["core_assessment.reason"];
-  view.criterion_assessments?.forEach((item, index) => {
-    if (rewrites[`criterion_assessments.${index}.summary`]) item.summary = rewrites[`criterion_assessments.${index}.summary`];
-  });
-  view.findings?.forEach((finding, index) => {
-    for (const field of ["text", "reason"] as const)
-      if (rewrites[`findings.${index}.${field}`]) finding[field] = rewrites[`findings.${index}.${field}`];
-    for (const field of ["observation", "impact"] as const)
-      if (rewrites[`findings.${index}.assessment.${field}`]) finding.assessment[field] = rewrites[`findings.${index}.assessment.${field}`];
-    if (finding.problem) for (const field of ["label", "definition"] as const)
-      if (rewrites[`findings.${index}.problem.${field}`]) finding.problem[field] = rewrites[`findings.${index}.problem.${field}`];
-  });
-  view.table_resolutions?.forEach((item, index) => {
-    if (rewrites[`table_resolutions.${index}.reason`]) item.reason = rewrites[`table_resolutions.${index}.reason`];
-  });
-  return view;
+export function polishAttribution(result:AttributionResult,rewrites:Rewrites):AttributionResult{
+ const view=structuredClone(result);
+ if(rewrites.summary)view.summary=rewrites.summary;
+ if(view.correct_reason!==null&&rewrites.correct_reason)view.correct_reason=rewrites.correct_reason;
+ view.Problem?.forEach((item,index)=>{for(const field of ['text','reason'] as const)
+  if(rewrites[`Problem.${index}.${field}`])item[field]=rewrites[`Problem.${index}.${field}`];});
+ return view;
 }
 export function sourceSlots(stage: "attribution" | "comparison" | "clustering", result: unknown, scope: "verdicts" | "items" | "all" = "verdicts"): RewriteItem[] {
   if (stage === "clustering") return clusteringSlots(result as ClusteringResult);

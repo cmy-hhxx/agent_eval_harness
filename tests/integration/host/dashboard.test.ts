@@ -84,7 +84,7 @@ async function setup(rewrite = false, clustering = false, rows?: Parameters<type
     const secondInput = (plan.catalog as Candidate[]).find((candidate) => candidate.version === "a_fast" && candidate.case_id === "q2")!;
     const secondTask = plan.tasks.find((item) => item.stage === "attribution" && item.inputIds.answer === secondInput.input_id)!;
     const secondEvaluation = attributionResult(false, "2+2=5", true, secondInput.input_id);
-    secondEvaluation.findings[0]!.assessment.evidence_status = "uncertain";
+    secondEvaluation.Problem[0]!.evidence_status = "uncertain";
     const secondReceipt: SubmissionReceipt = { ...receipt, taskId: secondTask.id, attemptId: "attempt-2",
       submissionId: "submission-2", evaluation: secondEvaluation };
     secondReceipt.exported = { id: secondTask.id, file: "attribution.jsonl", row: attributionRow(secondTask, secondReceipt) };
@@ -358,14 +358,12 @@ test("dashboard accepted task reads align formal traces by model and finding ID 
     accept(criteria.id, analysis);
     for (const [label, candidate] of Object.entries(data.candidates)) {
       const evaluation = attributionResult(true, "2+2=4", true, candidate.input_id);
-      evaluation.task_analysis = analysis;
-      evaluation.correctness_evidence = [{ evidence_id: evidenceId(candidate.input_id, 5, "text", "/content", 0, 5),
-        message_index: 5, quote: "2+2=4" }];
-      evaluation.criterion_assessments[0]!.evidence = [...evaluation.correctness_evidence,
-        { evidence_id: evidenceId(candidate.input_id, 0, "text", "/content", 0, 5), message_index: 0, quote: "计算2+2" }];
-      const original = evaluation.findings[0]!;
-      evaluation.findings = ["第一条资料：4", "第二条资料：4"].map((quote, index) => ({
-        ...structuredClone(original), finding_id: `f${index}`, text: `${candidate.version}正式归因正文${index}`,
+
+
+
+      const original = attributionResult(false, "2+2=4", true, candidate.input_id).Problem[0]!;
+      evaluation.Problem = ["第一条资料：4", "第二条资料：4"].map((quote, index) => ({
+        ...structuredClone(original), problem_id: `f${index}`, text: `${candidate.version}正式归因正文${index}`,
         evidence: [{ evidence_id: evidenceId(candidate.input_id, 2 + index * 2, "text", "/output", 0, quote.length),
           message_index: 2 + index * 2, quote }],
       }));
@@ -378,21 +376,21 @@ test("dashboard accepted task reads align formal traces by model and finding ID 
     for (const rewrite of state.manifest.tasks.filter((item) => item.stage === "rewrite" && (item.data as TaskData).rewriteOf!.stage === "attribution")) {
       const owner = state.manifest.tasks.find((item) => item.id === rewrite.dependencies.source)!;
       const version = (owner.data as TaskData).candidates.A!.version;
-      accept(rewrite.id, { rewrites: [{ id: "findings.0.text", text: `${version}已接受改写` }] });
+      accept(rewrite.id, { rewrites: [{ id: "Problem.0.text", text: `${version}已接受改写` }] });
     }
     await writer(state);
     state.recordedAttempts = Object.keys(state.receipts).length;
     await writeRunState(fixture.run, state);
 
-    type FindingView = { finding_id: string; text: string; stage_trace?: JsonObject };
-    type EvaluationView = { findings: FindingView[]; rewritten?: { rewrites: { id: string; text: string }[] } };
+    type FindingView = { problem_id: string; text: string; stage_trace?: JsonObject };
+    type EvaluationView = { Problem: FindingView[]; meta: {rewritten?: { rewrites: { id: string; text: string }[] }} };
     const formal = structuredClone(state.receipts[task.id]!.exported!.row);
     const snapshotEvaluations = formal.evaluations as Record<string, EvaluationView>;
     const traces: Record<string, Record<string, JsonObject>> = Object.fromEntries(Object.entries(snapshotEvaluations).map(([version, evaluation]) =>
-      [version, Object.fromEntries(evaluation.findings.map((finding) => [finding.finding_id, structuredClone(finding.stage_trace!)]))]));
+      [version, Object.fromEntries(evaluation.Problem.map((finding) => [finding.problem_id, structuredClone(finding.stage_trace!)]))]));
     for (const [version, evaluation] of Object.entries(snapshotEvaluations)) {
-      evaluation.findings.reverse();
-      evaluation.findings.forEach((finding) => { finding.text = `${version}导出时的旧正文`; });
+      evaluation.Problem.reverse();
+      evaluation.Problem.forEach((finding) => { finding.text = `${version}导出时的旧正文`; });
     }
     const file = path.join(fixture.run, "results", "comparison.jsonl");
     await writeJsonl(file, [formal]);
@@ -400,14 +398,14 @@ test("dashboard accepted task reads align formal traces by model and finding ID 
     const projected = (await readTaskResult(fixture.run, task.id))!.result!;
     const evaluations = projected.evaluations as Record<string, EvaluationView>;
     for (const version of ["a_fast", "b_fast"]) {
-      assert.deepEqual(evaluations[version]!.findings.map((finding) => finding.finding_id), ["f0", "f1"]);
-      for (const [index, finding] of evaluations[version]!.findings.entries()) {
-        assert.deepEqual(finding.stage_trace, traces[version]![finding.finding_id],
+      assert.deepEqual(evaluations[version]!.Problem.map((finding) => finding.problem_id), ["f0", "f1"]);
+      for (const [index, finding] of evaluations[version]!.Problem.entries()) {
+        assert.deepEqual(finding.stage_trace, traces[version]![finding.problem_id],
           "formal annotations follow the same model and finding ID after index changes");
         assert.deepEqual(finding.stage_trace!.tools, [`${version}_${index ? "second" : "first"}`]);
         assert.equal(finding.text, `${version}正式归因正文${index}`, "the source attribution owns the current accepted body");
       }
-      assert(evaluations[version]!.rewritten!.rewrites.some((item) => item.id === "findings.0.text" && item.text === `${version}已接受改写`));
+      assert(evaluations[version]!.meta.rewritten!.rewrites.some((item) => item.id === "findings.0.text" && item.text === `${version}已接受改写`));
     }
     assert.equal(await readFile(file, "utf8"), originalFile, "the dashboard keeps accepted files read-only");
   } finally {
@@ -499,17 +497,17 @@ test("dashboard case results include comparison evaluations and preserve attribu
   })!;
   const expectedComparison = attributionResult();
   assert.deepEqual(comparison.evaluations, { a_fast: expectedComparison });
-  assert.ok(attributionResult().findings[0]!.evidence[0]!.evidence_id, "display projection preserves the stored program coordinate");
+  assert.ok(attributionResult().Problem[0]!.evidence[0]!.evidence_id, "display projection preserves the stored program coordinate");
   assert.equal(Object.hasOwn(comparison, "evaluator_version"), false);
   assert.deepEqual(Object.keys(comparison).sort(), [
     "assessments", "decision_basis", "evaluations", "ground_truth", "models", "ranking", "review_requests", "status", "task_analysis", "verdicts",
   ]);
   const source = attributionResult();
-  source.findings[0]!.evidence[0]!.quote = "q".repeat(5000);
-  source.findings[0]!.evidence[0]!.source = "原始材料来源";
+  source.Problem[0]!.evidence[0]!.quote = "q".repeat(5000);
+  source.Problem[0]!.evidence[0]!.source = "原始材料来源";
   const attribution = caseResultView("attribution", { evaluation: source })!;
   const expected = structuredClone(source);
-  expected.findings[0]!.evidence[0]!.quote = `${"q".repeat(4000)}…`;
+  expected.Problem[0]!.evidence[0]!.quote = `${"q".repeat(4000)}…`;
   assert.deepEqual(attribution, { evaluation: expected }, "every current Schema field reaches the view, including assessment, problem, dimension and importance");
   assert.equal(caseResultView("attribution", undefined), null);
 });

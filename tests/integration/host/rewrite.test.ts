@@ -3,7 +3,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { readFile, rm, readdir } from "node:fs/promises";
 import path from "node:path";
-import type { AgentBackend, JsonObject, EvaluationLog } from "@eval/contracts";
+import { object, type AgentBackend, type JsonObject, type EvaluationLog } from "@eval/contracts";
 import { readJsonl, writeJsonl } from "@eval/data";
 import { startWorker } from "@eval/runtime/worker";
 import { runEvaluation } from "@eval/host";
@@ -47,22 +47,23 @@ for (const clustering of [false, true]) test(`rewrite embeds named text in stage
             const material = parsedMaterial(options.spec) as { answer: { final_message_index: number; final_answer: string } };
             const evidence = [canonicalEvidence(options.spec.inputs.find(input => input.name === "answer")!.id, material.answer.final_message_index, material.answer.final_answer)];
             attribution.is_correct = false;
-            attribution.correctness_reason = "最终结果5与标准结果4不符。";
-            attribution.correctness_evidence = evidence;
-            attribution.criterion_assessments.forEach((item) => { item.status = "unmet"; item.summary = "关键计算结果错误。"; });
-            attribution.core_assessment.meets_core = false;
-            attribution.core_assessment.reason = "唯一所求计算结果错误，不能直接使用。";
+            attribution.correct_reason = "最终结果5与标准结果4不符。";
+
+
+
+
             attribution.summary = "最终加法结果错误。";
-            const finding = attribution.findings[0]!;
-            finding.type = "problem";
+            attribution.Problem = attributionResult(false, material.answer.final_answer, true, options.spec.inputs.find(input => input.name === "answer")!.id).Problem;
+            const finding = attribution.Problem[0]!;
+
             finding.evidence = evidence;
             finding.text = "加法结果错误";
             finding.reason = "原文给出5，正确结果应为4。";
-            finding.assessment.observation = material.answer.final_answer;
-            finding.assessment.impact = "唯一所求结果错误，未完成计算要求。";
-            finding.problem = { ...attributionResult(false, material.answer.final_answer, true,
-              options.spec.inputs.find(input => input.name === "answer")!.id).findings[0]!.problem!,
-              label: "计算错误", definition: "计算与事实不符。" };
+
+            finding.reason = "唯一所求结果错误，未完成计算要求。";
+            Object.assign(finding, { ...attributionResult(false, material.answer.final_answer, true,
+              options.spec.inputs.find(input => input.name === "answer")!.id).Problem[0]!,
+              text: "计算错误", reason: "计算与事实不符。" });
           }
           const result = await submitFor(options, draftFor(options.spec, evaluation));
           assert.equal(result.isError, undefined, JSON.stringify(result));
@@ -120,21 +121,19 @@ for (const clustering of [false, true]) test(`rewrite embeds named text in stage
     const dashboard = (await readTaskResult(run, comparisonTask.id))!.result!;
     const evaluations = dashboard.evaluations as Record<string, JsonObject>;
     for (const attribution of attributions) {
-      const version = String(attribution.version);
-      const source = attribution.evaluation as JsonObject;
-      assert.deepEqual(evaluations[version].task_analysis, source.task_analysis);
-      const formalEvidence = source.correctness_evidence as { evidence_id: string; message_index: number; quote: string }[];
-      assert(formalEvidence.every(item => item.evidence_id.startsWith("ev_")), "formal evidence keeps the program's canonical coordinate");
-      assert.deepEqual(evaluations[version].correctness_evidence, formalEvidence,
-        "the dashboard preserves canonical coordinates alongside source quotes");
-      const rewritten = evaluations[version].rewritten as { rewrites: { path: string; text: string }[] };
-      assert(rewritten.rewrites.some((item) => item.path === "findings.0.text" && item.text.startsWith("精简：")));
+      const version = String(object(attribution.meta).version);
+      const source = attribution as JsonObject;
+      const formalEvidence = (source.Problem as AttributionResult['Problem']).flatMap(problem=>problem.evidence);
+      assert(formalEvidence.every(item=>item.evidence_id.startsWith('ev_')));
+      assert.deepEqual((evaluations[version].Problem as AttributionResult['Problem']).flatMap(problem=>problem.evidence),formalEvidence);
+      const rewritten = object(evaluations[version].meta).rewritten as {rewrites:{path:string;text:string}[]};
+      assert(rewritten.rewrites.some(item=>item.path==='summary'&&item.text.startsWith('精简：')));
     }
     const detail = (await readCaseDetail(run, "b1", "q1"))!;
     assert.equal(detail.tasks.find((task) => task.id === comparisonTask.id)!.rewrite_submission_ids.length, 7,
       "comparison includes its own rewrite and all three accepted rewrite groups from each attribution");
     for (const row of [...comparisons, ...attributions]) {
-      const rewritten = stageResult(row.evaluation_type === "attribution" ? "attribution" : "comparison", row).rewritten as { rewrites: { id: string; text: string }[] };
+      const rewritten = object(stageResult(Object.hasOwn(row,"Problem") ? "attribution" : "comparison", row).meta).rewritten as { rewrites: { id: string; text: string }[] };
       assert(rewritten, "source result must contain rewritten");
       assert(rewritten.rewrites.every((item) => item.id.startsWith("verdict.") ? /^(?:(?:双方都好|双方都差)(?:；相对更倾向[^：]+)?|.+更好)：/.test(item.text) : item.text.startsWith("精简：")));
       assert(!rewritten.rewrites.some((item) => /候选[A-Z]|(?<![A-Za-z])[AB](?![A-Za-z]|组)/u.test(item.text)));

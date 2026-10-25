@@ -75,27 +75,27 @@ export async function loadClusteringJobInputs(config: ClusteringJobConfig, readS
   const recalled = new Set((config.clusteringJob.recall ?? []).map(problemSampleKey));
   for (const ref of config.clusteringJob.recall ?? []) {
     const finding = (states.get(ref.attribution.run)!.receipts[ref.attribution.task_id].evaluation as AttributionResult)
-      .findings.find(item => item.finding_id === ref.finding_id);
-    if (finding?.type !== "problem" || canonical(finding.problem ? responsibilityLabels(finding.problem) : []) !== canonical(ref.components) ||
-        finding.assessment.evidence_status !== ref.evidence_status)
+      .Problem.find(item => item.problem_id === ref.finding_id);
+    if (!finding || canonical(responsibilityLabels(finding)) !== canonical(ref.components) ||
+        finding.evidence_status !== ref.evidence_status)
       throw new Error("待观察引用的原发现已缺失或改变：" + ref.input_id + "/" + ref.finding_id);
   }
   for (const model of [...new Set(config.clusteringJob.sources.map(source => source.model))].sort()) {
     const pending: ProblemObservationRef[] = [];
     const observations = groupObservations(sources.filter(source => source.model === model).map(source => {
-      const findings = (states.get(source.run)!.receipts[source.task_id].evaluation as AttributionResult).findings
-        .filter(finding => primary.has(source.input_id) || recalled.has(problemSampleKey({ input_id: source.input_id, finding_id: finding.finding_id })));
-      for (const finding of findings) if (finding.type === "problem") pending.push({ version: model,
-        input_id: source.input_id, finding_id: finding.finding_id, batch_id: source.batch_id, case_id: source.case_id,
+      const findings = (states.get(source.run)!.receipts[source.task_id].evaluation as AttributionResult).Problem
+        .filter(finding => primary.has(source.input_id) || recalled.has(problemSampleKey({ input_id: source.input_id, finding_id: finding.problem_id })));
+      for (const finding of findings) pending.push({ version: model,
+        input_id: source.input_id, finding_id: finding.problem_id, batch_id: source.batch_id, case_id: source.case_id,
         source: source.source, attribution: { run: source.run, run_id: source.run_id, task_id: source.task_id,
           submission_id: source.submission_id, evaluator_version: source.evaluator_version },
-        components: finding.problem ? responsibilityLabels(finding.problem) : [], evidence_status: finding.assessment.evidence_status,
-        importance: finding.importance, summary: finding.text });
+        components: responsibilityLabels(finding), evidence_status: finding.evidence_status,
+        summary: finding.text });
       return {
       input_id: source.input_id, case_id: source.case_id, batch_id: source.batch_id, source: source.source,
       attribution: { run: source.run, run_id: source.run_id, task_id: source.task_id,
         submission_id: source.submission_id, evaluator_version: source.evaluator_version },
-      findings,
+      Problem:findings,
     }; }));
     const library = await readProblemLibrary(problemLibraryFile(config.problemLibrary, model)) ?? emptyLibrary(model);
     if (library.model !== model) throw new Error("问题库模型身份不一致：" + model);

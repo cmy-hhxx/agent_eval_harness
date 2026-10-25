@@ -9,53 +9,19 @@ export interface Evidence extends ResolvedEvidence {
   source_input_id?: string;
 }
 export interface Finding {
-  type: "strength" | "problem";
-  dimension:
-    | "correctness"
-    | "completeness"
-    | "instruction_following"
-    | "evidence_quality"
-    | "reasoning"
-    | "format"
-    | "relevance"
-    | "efficiency";
-  stage: "context_recall" | "reasoning" | "execution" | "final_answer";
-  importance: "high" | "medium" | "low";
+  problem_id: string;
   text: string;
   reason: string;
-  evidence: Evidence[];
-  context_evidence?: Evidence[];
-  assessment: {
-    requirement_index: number | null;
-    observation: string;
-    evidence_status: "established" | "uncertain";
-    impact: string;
-  };
-}
-export interface CriterionAssessment {
-  criterion_id: string;
-  status: CriterionStatus;
   evidence_status: EvidenceStatus;
-  summary: string;
   evidence: Evidence[];
-  context_evidence?: Evidence[];
 }
-/** The comparison-owned view of an accepted attribution, projected by the workflow. */
+/** Accepted problems are immutable; Comparison judges common requirements independently. */
 export interface ComparisonAttribution {
   has_standard_answer: boolean;
   is_correct: boolean | null;
-  correctness_reason: string;
-  correctness_evidence: Evidence[];
-  numeric_checks: { label: string; expected: string; actual: string | null; scale: string;
-    mode: "rounded" | "exact"; matches: boolean; evidence_index: number }[];
-  standard_conflict?: boolean;
+  correct_reason: string | null;
   summary: string;
-  task_analysis: TaskAnalysis;
-  findings: (Finding & { finding_index?: number })[];
-  criterion_assessments: CriterionAssessment[];
-  core_assessment: { meets_core: boolean | null; reason: string; criterion_ids: string[] };
-  table_resolutions?: { table_id: string; row_index: number; outcome: "supported" | "conflict";
-    reason: string; evidence: Evidence[] }[];
+  Problem: Finding[];
 }
 export interface SourceReviewItem {
   kind: "unverified" | "unresolved_conflict" | "invalid_material";
@@ -158,18 +124,15 @@ export interface SubmittedComparison {
   /** Only commentary rows accept a model direction; resource direction is derived. */
   better_candidate?: string | null;
 }
-/** The model judges fixed rows; source associations, states, status and ranking are program-owned. */
+/** The model judges fixed requirements and core completion; evidence selections reference accepted problems. */
 export interface ComparisonSubmission {
-  a_summary: string;
-  b_summary: string;
-  /** Same common requirement assessed under incompatible scopes; source associations remain program-owned. */
+  assessments: Record<string, ComparisonAssessment>;
   scope_conflicts?: { slot_index: number; reason: string }[];
-  /** A decisive source finding or assessment conflicts with original material; do not rewrite it here. */
   source_reviews?: ComparisonVerificationSubmission["source_reviews"];
-  comparisons: (SubmittedComparison | null)[];
+  comparisons: (SubmittedComparison & { assessments?: Record<string, {
+    status: CriterionStatus; evidence_status: EvidenceStatus; summary: string; finding_indices: number[];
+  }> } | null)[];
   preference?: string | null;
-  /** Ties normally retain an inclination; null is reserved for equivalent confirmed facts. */
   relative_preference: "A" | "B" | null;
-  /** Explain the decisive difference and relevant counterevidence together. */
   tradeoff: string;
 }

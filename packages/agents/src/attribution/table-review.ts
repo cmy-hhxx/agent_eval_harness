@@ -1,5 +1,5 @@
 import { canonical, type AgentRequest, type ValidationIssue } from "@eval/contracts";
-import { compareTraceTableRows, evidenceCovers, evidenceSources, maskCitationMarkup, parseTraceTables, type TableCheckRequest, type TableCheckResult, type TableRowCheck, type TraceTable } from "@eval/tools";
+import { compareTraceTableRows, evidenceCovers, maskCitationMarkup, parseTraceTables, type TableCheckRequest, type TableCheckResult, type TableRowCheck, type TraceTable } from "@eval/tools";
 import type { AttributionResult, Evidence } from "./types.js";
 import { ownEvidence } from "./source-evidence.js";
 
@@ -19,43 +19,6 @@ function sameCode(left: string, right: string): boolean {
   const a = pattern.exec(left), b = pattern.exec(right);
   return !!a && !!b && a[1] === b[1] && (!a[2] || !b[2] || a[2].toUpperCase() === b[2].toUpperCase());
 }
-function record(value: unknown): Record<string, unknown> | undefined {
-  return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : undefined;
-}
-function codeInput(value: unknown): boolean {
-  if (typeof value === "string") {
-    try { value = JSON.parse(value); } catch { return false; }
-  }
-  const input = record(value);
-  return !!input && ["code", "script", "command", "cmd"].some(key => typeof input[key] === "string");
-}
-function executionCall(value: unknown): boolean {
-  const call = record(value);
-  if (!call) return false;
-  const fn = record(call.function) ?? call;
-  return /(?:^|[./:])(?:execute_code|run_code|code_interpreter|python3?|bash|shell)$/iu.test(String(fn.name ?? "")) ||
-    codeInput(fn.arguments) || codeInput(fn.input);
-}
-/** Restrict independent support to returned text, with observable execution provenance excluded. */
-function independentReturnText(messages: unknown[], index: number): string[] {
-  const message = record(messages[index]);
-  if (!message || !(message.role === "tool" || ["function_call_output", "tool_result"].includes(String(message.type))) ||
-    executionCall(message) || Object.hasOwn(message, "stdout") || Object.hasOwn(message, "stderr")) return [];
-  const ids = [message.call_id, message.tool_call_id].filter(value => typeof value === "string");
-  if (ids.length && messages.slice(0, index).some(value => {
-    const earlier = record(value);
-    return [earlier, ...(Array.isArray(earlier?.tool_calls) ? earlier.tool_calls : [])].some(value => {
-      const call = record(value);
-      return !!call && ids.some(id => id === call.call_id || id === call.id) && executionCall(call);
-    });
-  })) return [];
-  const material = Object.fromEntries(Object.entries(message).filter(([key]) => ["content", "output", "result"].includes(key)));
-  const leaves = evidenceSources(material).filter(source => source.kind === "text");
-  if (leaves.some(source => /\/(?:stdout|stderr)(?:\/|$)/iu.test(source.path))) return [];
-  return leaves.filter(source => !/\/(?:input|input_messages|arguments|metadata)(?:\/|$)/iu.test(source.path))
-    .map(source => source.text);
-}
-
 /** Only explicit code/name tables with comparable earlier tool tables require this bounded check. */
 export function attributionTablePlan(raw: { messages: unknown[] }, inputId: string, finalIndex: number): TableCheckRequest[] {
   return tablePlans(raw, parseTraceTables(raw, inputId), finalIndex);
@@ -152,57 +115,12 @@ export function attributionTableReview(request: AgentRequest, result: Attributio
       path: "/answer/table_check_results", message: "请求中的表格对应核验材料必须完整且与原始材料重算结果一致。",
       expected: material, actual: provided });
   }
-  const resolutions = new Map<string, NonNullable<AttributionResult["table_resolutions"]>[number]>();
-  const hasEvidence = (evidence: Evidence[], target: { message_index: number; quote: string }) => evidence.some(item =>
-    ownEvidence(item) && item.message_index === target.message_index && item.quote.includes(target.quote));
-  for (const [index, resolution] of (result.table_resolutions ?? []).entries()) {
-    const key = `${resolution.table_id}:${resolution.row_index}`;
-    const plan = plans.find(plan => plan.answer_table_id === resolution.table_id);
-    const checked = fullChecks.find(check => check.answer_table_id === resolution.table_id);
-    const row = checked?.rows.find(row => row.row_index === resolution.row_index);
-    if (!resolution.reason.trim() || resolutions.has(key) ||
-      !row || (plan ? rowStatus(row, plan) : row.status) === "matched") {
-      errors.push({ category: "evidence", code: "table_resolution_invalid", path: `/table_resolutions/${index}`,
-        message: "只能提交已有疑点行的核验结论，每行一次，须解释并引用原始证据。",
-        actual: { row_index: resolution.row_index }, expected: {
-          row_indices: (material.find(check => check.answer_table_id === resolution.table_id)?.rows ?? []).map(row => row.row_index),
-          repair_action: "只选本表列出的疑点行；没有可选行时删除该项，不对已匹配行重复提交核验结论。",
-        } });
-      continue;
-    }
-    resolutions.set(key, resolution);
-  }
   for (const checked of fullChecks) {
     const plan = plans.find(plan => plan.answer_table_id === checked.answer_table_id);
     for (const row of checked.rows) {
       const status = plan ? rowStatus(row, plan) : row.status;
       if (status === "matched") continue;
       const location = `消息${row.answer.evidence.message_index}表格第${row.row_index + 1}行`;
-      const resolution = resolutions.get(`${checked.answer_table_id}:${row.row_index}`);
-      let resolved = false;
-      if (resolution) {
-        // Keep every compared row; do not decide aliases or source meaning with a text pattern.
-        const originalSupport = resolution.evidence.some(item => {
-          const peer = item.source === undefined ? undefined : record((request.input.reference_materials as Record<string, unknown> | undefined)?.[item.source]);
-          const source = item.source === undefined ? undefined : request.sources[item.source];
-          const chosen = ownEvidence(item) ? { raw, finalIndex } : peer?.grader_only === true && source &&
-            item.source_input_id === source.id && peer.source_input_id === source.id && record(source.value) &&
-            Array.isArray(record(source.value)!.messages) && typeof peer.final_message_index === "number"
-            ? { raw: source.value as { messages: unknown[] }, finalIndex: peer.final_message_index } : undefined;
-          return !!chosen && item.message_index < chosen.finalIndex && independentReturnText(chosen.raw.messages, item.message_index).some(text =>
-            text.trim() === item.quote.trim() || row.sources.some(source => hasEvidence([item], source.evidence) && text.includes(item.quote)));
-        });
-        const completeEvidence = hasEvidence(resolution.evidence, row.answer.evidence) &&
-          row.sources.every(source => hasEvidence(resolution.evidence, source.evidence));
-        const supportedProblem = !!plan && result.findings.some(finding => finding.type === "problem" &&
-          finding.assessment.evidence_status === "established" && supports(finding.evidence, row, plan, raw, inputId));
-        resolved = completeEvidence && !!resolution.reason.trim() &&
-          (resolution.outcome === "supported" ? originalSupport : supportedProblem);
-        if (!resolved) errors.push({ category: "evidence", code: "table_resolution_unsupported", path: "/table_resolutions",
-          message: `${location}的独立结论缺少最终行、全部已知反证或对应原始来源；不能仅以解释文字解除疑点。`,
-          expected: { row_index: row.row_index, repair_action: "引用完整最终行及全部既有来源行，并引用独立原始返回；执行代码的 stdout 不能自证。没有独立证明时删除该 resolution，保留尚未核实的判断。" } });
-        if (resolved && resolution.outcome === "supported") continue;
-      }
       if (!plan) continue;
       if (status === "unverified") {
         // A textual placeholder does not assert an identifier. Whether an unknown
@@ -214,8 +132,8 @@ export function attributionTableReview(request: AgentRequest, result: Attributio
           reason: `${location}缺少可匹配的来源行；这不证明答案错误，需要核对来源截断、对象与范围。` });
         continue;
       }
-      const findings = result.findings.filter(finding => finding.type === "problem" && supports(finding.evidence, row, plan, raw, inputId));
-      if (!resolved && (status === "ambiguous" || !findings.some(finding => finding.assessment.evidence_status === "established")))
+      const findings = result.Problem.filter(finding => supports(finding.evidence, row, plan, raw, inputId));
+      if (status === "ambiguous" || !findings.some(finding => finding.evidence_status === "established"))
         concerns.push({ kind: "unresolved_conflict", table_id: plan.answer_table_id, row_index: row.row_index,
           reason: `${location}仍有未解决的来源对应冲突，须独立核对对象、别名、时间范围和加工过程。` });
     }

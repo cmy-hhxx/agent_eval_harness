@@ -19,7 +19,7 @@ interface FormalComparison {
   attribution_task_ids: Record<string, string>;
   ground_truth: { available: boolean; value: unknown };
   assessments: Record<string, { meets_core: boolean | null }>;
-  evaluations: Record<string, Pick<AttributionResult, "findings">>;
+  evaluations: Record<string, Pick<AttributionResult, "Problem">>;
   ranking: string[][];
 }
 const formalRows = async (run: string): Promise<FormalComparison[]> =>
@@ -47,10 +47,10 @@ async function resumeExperiment(change: "none" | "rubric" | "reference" | "sourc
           if (stage === "attribution" && material.answer?.final_answer === "2+2=5") {
             const incorrect = attributionResult(false, material.answer.final_answer, true,
               options.spec.inputs.find(input => input.name === "answer")!.id);
-            incorrect.task_analysis = material.task_analysis;
-            incorrect.correctness_reason = "最终回答给出5，标准答案为4。";
-            incorrect.findings[0].reason = "把2+2的结果写成5，与标准答案4不符。";
-            incorrect.findings[0].assessment.impact = "错误数值导致加法要求未完成。";
+
+            incorrect.correct_reason = "最终回答给出5，标准答案为4。";
+            incorrect.Problem[0].reason = "把2+2的结果写成5，与标准答案4不符。";
+            incorrect.Problem[0].reason = "错误数值导致加法要求未完成。";
             result = incorrect;
           }
           if (stage === "criteria" && expanded && change === "rubric") {
@@ -219,7 +219,7 @@ for (const change of ["rubric", "reference"] as const)
         assert.equal(data.reviewOf!.round, 1);
         assert.equal(review.inputIds.answer, original.manifest.tasks.find((task) => task.id === data.reviewOf!.taskId)!.inputIds.answer);
         assert.equal(review.dependencies.criteria, newCriteria.id);
-        assert.deepEqual((expanded.receipts[review.id].evaluation as AttributionResult).task_analysis, criteria);
+
         const material = experiment.entered.find((item) => item.taskId === review.id)!.material as Record<string, unknown>;
         assert.deepEqual(material.review_context, { kind: "unverified_concerns", reasons: data.reviewOf!.reasons });
         assert.equal(material.attributions, undefined, "independent review receives the source material and new criteria");
@@ -278,14 +278,14 @@ test("same-run source changes independently reassess stale evidence for new pair
       original.receipts[originalRows[0].criteria_task_id].evaluation, "criteria and reference are unchanged");
     const reassessed = expanded.receipts[review.id].evaluation as AttributionResult;
     assert.equal(reassessed.is_correct, false);
-    assert.equal(reassessed.core_assessment.meets_core, false);
-    assert.equal(reassessed.findings[0].evidence[0].quote, "2+2=5");
-    assert.equal((expanded.receipts[oldA].evaluation as AttributionResult).findings[0].evidence[0].quote, "2+2=4");
+
+    assert.equal(reassessed.Problem[0].evidence[0].quote, "2+2=5");
+    assert.equal((expanded.receipts[oldA].evaluation as AttributionResult).Problem[0].evidence[0].quote, "2+2=4");
     const ac = rows.find((row) => row.attribution_task_ids.a_fast && row.attribution_task_ids.c_fast)!;
     const bc = rows.find((row) => row.attribution_task_ids.b_fast && row.attribution_task_ids.c_fast)!;
     assert.equal(ac.attribution_task_ids.a_fast, review.id);
     assert.equal(bc.attribution_task_ids.b_fast, oldB);
-    assert.equal(ac.evaluations.a_fast.findings[0].evidence[0].quote, "2+2=5");
+    assert.equal(ac.evaluations.a_fast.Problem[0].evidence[0].quote, "2+2=5");
     assert.equal(ac.assessments.a_fast.meets_core, false);
     assert.equal(ac.assessments.c_fast.meets_core, true);
     assert.deepEqual(ac.ranking, [["c_fast"], ["a_fast"]]);

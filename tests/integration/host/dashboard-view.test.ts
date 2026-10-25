@@ -77,16 +77,16 @@ test("criteria tasks show readable requirements, candidate scope and visible acc
   } finally { dom.window.close(); }
 });
 
-test("attribution and comparison retain shared criteria groups, private scope and complete text", () => {
+test("comparison retains shared criteria groups, private scope and complete text", () => {
   const criteria = criteriaResult();
   const candidateIds = ["7c4e3ba8-8f7c-46cc-b8fb-3016e10ea2dd", "114529b8-de39-4da7-9c4f-d6a1ca4971c3"];
   const rule = criteria.requirements[0]!.acceptance_rule;
   criteria.requirements.push({ id: "r2", text: `保留条件与例外。\n${"长段原文 <img src=x>。".repeat(40)}`, applies_to: [candidateIds[0]!], acceptance_rule: rule });
   criteria.scoring_points.push({ id: "s1", text: "可选项\n保持原文", applies_to: [candidateIds[1]!], acceptance_rule: rule });
   criteria.red_flags.push({ id: "f1", text: "禁止项\n保留否定范围", applies_to: [], acceptance_rule: rule });
-  const evaluation = { ...attributionResult(), task_analysis: criteria };
-  for (const stage of ["attribution", "comparison"] as const) {
-    const row = stage === "attribution" ? { evaluation } : {
+  const evaluation = attributionResult();
+  for (const stage of ["comparison"] as const) {
+    const row = {
       ...comparisonResult(["a_fast", "b_fast"], criteria),
       models: { a_fast: { version: "A组Fast" }, b_fast: { version: "B组Fast" } },
       evaluations: { a_fast: evaluation, b_fast: evaluation },
@@ -100,7 +100,7 @@ test("attribution and comparison retain shared criteria groups, private scope an
       }));
       views.renderDetail();
       const analyses = [...document.querySelectorAll(".task-analysis")];
-      assert.equal(analyses.length, stage === "comparison" ? 3 : 1, "comparison includes its own and both attribution analyses");
+      assert.equal(analyses.length, 1, "comparison shows common rules once without adding an attribution scorecard");
       for (const analysis of analyses)
         for (const kind of ["requirements", "scoring_points", "red_flags"] as const) {
           const entries = [...analysis.querySelectorAll(`[data-criterion-kind="${kind}"]`)];
@@ -151,7 +151,7 @@ test("review projections resolve blind candidates and show uncertain cells witho
 });
 
 test("case header shows a standard answer row below the question, including zero and structured values, and hides absent answers", () => {
-  const { dom, document, views, state } = render("attribution", caseResultView("attribution", { evaluation: attributionResult() })!);
+  const { dom, document, views, state } = render("attribution", caseResultView("attribution", attributionResult() as unknown as JsonObject)!);
   try {
     assert.equal(document.querySelector(".standard-answer"), null);
     for (const value of ["21.6256", 0, false, { answer: ["A", "B"] }, '<img src=x onerror="alert(1)">']) {
@@ -171,7 +171,7 @@ test("case header shows a standard answer row below the question, including zero
 });
 
 test("case inputs keep A and B side by side with independent version selection and additional models", () => {
-  const { dom, document, views, state } = render("attribution", caseResultView("attribution", { evaluation: attributionResult() })!);
+  const { dom, document, views, state } = render("attribution", caseResultView("attribution", attributionResult() as unknown as JsonObject)!);
   try {
     state.caseDetail.candidates = [
       { input_id: "be", version: "b_expert", name: "B组Expert" },
@@ -206,7 +206,7 @@ test("case inputs keep A and B side by side with independent version selection a
 });
 
 test("attribution tasks follow their model columns in Fast and Expert order while comparison stays across the case", () => {
-  const { dom, document, views, state } = render("attribution", caseResultView("attribution", { evaluation: attributionResult() })!);
+  const { dom, document, views, state } = render("attribution", caseResultView("attribution", attributionResult() as unknown as JsonObject)!);
   try {
     const versions = ["b_expert", "a_expert", "kimi", "b_fast", "a_fast"];
     state.caseDetail.candidates = versions.map((version) => ({
@@ -229,7 +229,7 @@ test("attribution tasks follow their model columns in Fast and Expert order whil
 });
 
 test("dashboard distinguishes initial receipts from queued reviews and shows pending comparison decisions", () => {
-  const { dom, document, views, state } = render("attribution", caseResultView("attribution", { evaluation: attributionResult() })!);
+  const { dom, document, views, state } = render("attribution", caseResultView("attribution", attributionResult() as unknown as JsonObject)!);
   try {
     state.caseDetail.candidates = ["a_fast", "b_fast"].map((version) => ({
       input_id: version, version, name: version === "a_fast" ? "A组Fast" : "B组Fast",
@@ -274,57 +274,22 @@ test("dashboard distinguishes initial receipts from queued reviews and shows pen
   } finally { dom.window.close(); }
 });
 
-test("dashboard pairs attribution rewrites by slot and indexes strengths and problems without renumbering", () => {
-  const evaluation = attributionResult();
-  const finding = evaluation.findings[0]!;
-  evaluation.findings = [
-    { ...finding, type: "problem", text: "缺点原文", problem: { diagnosis: "other" as const, investigation: [], calculations: [], component: [], label: "问题原名", definition: "问题定义原文" } },
-    { ...finding, type: "strength", text: "优点原文" },
-  ];
-  evaluation.table_resolutions = [{ table_id: "table", row_index: 0, outcome: "supported", reason: "表格核查原文", evidence: finding.evidence }];
-  const row = { evaluation: { ...evaluation, rewritten: { evaluator_version: "fixture", rewrites: [
-    { id: "findings.1.text", text: "优点改写" },
-    { id: "summary", text: "总结改写" },
-    { id: "findings.0.assessment.impact", text: "影响改写" },
-    { id: "core_assessment.reason", text: "主要任务已完成。" },
-    { id: "criterion_assessments.0.summary", text: "检查项通俗点评。" },
-    { id: "findings.0.assessment.observation", text: "观察通俗点评。" },
-    { id: "findings.0.problem.label", text: "通俗问题名称" },
-    { id: "findings.0.problem.definition", text: "通俗问题描述。" },
-    { id: "table_resolutions.0.reason", text: "通俗表格核查理由。" },
-  ] } } };
-  const original = structuredClone(row);
-  const result = caseResultView("attribution", row)!;
-  const { dom, document, views, state } = render("attribution", result, "task/<one>");
+test("dashboard pairs minimal attribution rewrites and evidence without changing accepted output", () => {
+  const evaluation=attributionResult(false);
+  evaluation.Problem[0].text="缺点原文";
+  evaluation.meta.rewritten={evaluator_version:"fixture",rewrites:[{id:"Problem.0.text",text:"问题改写"},{id:"summary",text:"总结改写"},{id:"Problem.0.reason",text:"依据改写"}]};
+  const before=structuredClone(evaluation),result=caseResultView("attribution",evaluation as unknown as JsonObject)!;
+  const {dom,document,views,state}=render("attribution",result,"task/<one>");
   try {
-    assert.deepEqual(row, original, "presentation must not mutate accepted results");
-    const groups = document.querySelectorAll(".findings-nav-group");
-    assert.match(groups[0].textContent, /优点\s+1/);
-    assert.match(groups[1].textContent, /缺点\s+1/);
-    assert.equal(groups[0].querySelector(".finding-index").textContent, "1");
-    assert.equal(groups[1].querySelector(".finding-index").textContent, "0");
-    const link = groups[0].querySelector("a");
-    const target = document.getElementById(decodeURIComponent(link.hash.slice(1)));
-    assert.equal(target.tagName, "SECTION");
-    assert.equal(target.tagName, "SECTION");
-    assert.equal(link.dataset.findingTarget, target.id);
-    assert.equal(target.querySelector(".rewrite-original .text-content").textContent, "优点原文");
-    assert.equal(target.querySelector(".rewrite-polished .text-content").textContent, "优点改写");
-    assert.equal(document.querySelectorAll(".rewrite-pair").length, 9);
-    const polished = [...document.querySelectorAll(".rewrite-polished .text-content")].map(item => item.textContent);
-    assert(polished.includes("主要任务已完成。"));
-    assert(polished.includes("检查项通俗点评。"));
-    assert(polished.includes("观察通俗点评。"));
-    assert(polished.includes("通俗问题名称"));
-    assert(polished.includes("通俗问题描述。"));
-    assert(polished.includes("通俗表格核查理由。"));
-    assert.equal(document.querySelectorAll(".finding .evidence-list").length, 2);
-    const back = target.querySelector(".findings-return");
-    assert.equal(document.getElementById(decodeURIComponent(back.hash.slice(1))).getAttribute("aria-label"), "发现目录");
-    state.openFindings.add(target.dataset.finding);
-    views.renderDetail();
-    assert.equal(document.getElementById(target.id).tagName, "SECTION");
-  } finally { dom.window.close(); }
+    assert.deepEqual(evaluation,before);
+    assert.equal(document.querySelectorAll(".findings-nav a").length,1);
+    assert.equal(document.querySelectorAll(".rewrite-pair").length,3);
+    const link=document.querySelector(".findings-nav a"),target=document.getElementById(link.dataset.findingTarget);
+    assert(target);assert.match(target.textContent,/问题改写/);assert(target.querySelector(".evidence-list"));
+    const back=target.querySelector(".findings-return");
+    assert.equal(document.getElementById(decodeURIComponent(back.hash.slice(1))).getAttribute("aria-label"),"问题目录");
+    state.openFindings.add(target.dataset.finding);views.renderDetail();assert.equal(document.getElementById(target.id).tagName,"SECTION");
+  } finally {dom.window.close();}
 });
 
 test("checklist rewrite paths follow saved blind identities without changing the raw comparison", () => {
@@ -342,13 +307,13 @@ test("checklist rewrite paths follow saved blind identities without changing the
 });
 
 test("comparison shows each model's attribution with its own rewrites, directory and isolated finding IDs", () => {
-  const evaluation = attributionResult();
+  const evaluation = attributionResult(false);
   const result = caseResultView("comparison", {
     ...comparisonResult(["left", "right"]),
     models: { left: { version: "左模型" }, right: { version: "右模型" } },
     evaluations: {
-      left: { ...evaluation, rewritten: { evaluator_version: "fixture", rewrites: [{ id: "findings.0.text", text: "左模型改写" }] } },
-      right: { ...evaluation, rewritten: { evaluator_version: "fixture", rewrites: [{ id: "findings.0.text", text: "右模型改写" }] } },
+      left: { ...evaluation, meta:{...evaluation.meta, rewritten: { evaluator_version: "fixture", rewrites: [{ id: "Problem.0.text", text: "左模型改写" }] }} },
+      right: { ...evaluation, meta:{...evaluation.meta, rewritten: { evaluator_version: "fixture", rewrites: [{ id: "Problem.0.text", text: "右模型改写" }] }} },
     },
   })!;
   const { dom, document } = render("comparison", result);
@@ -374,8 +339,9 @@ test("pairwise comparison orders A before B and preserves attribution finding li
   const row = {
     ...comparisonResult(versions),
     models: Object.fromEntries(versions.map((version) => [version, { version: names[version as keyof typeof names] }])),
-    evaluations: Object.fromEntries(versions.map((version) => [version, attributionResult()])),
+    evaluations: Object.fromEntries(versions.map((version) => [version, attributionResult(false)])),
   };
+  for (const assessment of Object.values(row.decision_basis.comparisons[0]!.assessments)) assessment.finding_indices = [0];
   const { dom, document } = render("comparison", caseResultView("comparison", row)!);
   try {
     assert.deepEqual([...document.querySelectorAll(".comparison-table thead th")].map((node: any) => node.textContent), ["比较点", "A组Fast", "B组Fast"]);
@@ -425,7 +391,7 @@ test("dashboard aligns models by version, prioritizes impact, and keeps accepted
     ...comparisonResult(["left", "right"]),
     models: { left: { version: "A组Fast" }, right: { version: "B组Fast" } },
     verdicts: { left__vs__right: { result: "win", winner_name: "A组Fast", winner_version: "left", reason: "完成核心要求" } },
-    evaluations: { left: attributionResult(), right: attributionResult() },
+    evaluations: { left: attributionResult(false), right: attributionResult(false) },
     decision_basis: { tradeoff: "A组Fast更好，方案比较更具体。", decisive_findings: [], comparisons: [
       { aspect: "脚注", criterion_ids: ["r1"], importance: "low", better_candidates: ["right"], assessments: {
         left: { summary: "脚注编号错位。", finding_indices: [], status: "partial", evidence_status: "established" },
@@ -449,194 +415,33 @@ test("dashboard aligns models by version, prioritizes impact, and keeps accepted
     assert.equal(right.querySelector("img"), null);
     assert.equal(left.querySelector(".comparison-original"), null);
     const target = document.getElementById(left.querySelector("a").dataset.findingTarget);
-    assert.match(target.id, /evaluations.left.findings.0$/);
+    assert.match(target.id, /evaluations.left.Problem.0$/);
     assert.equal(document.querySelector(".comparison-attributions").tagName, "SECTION");
     assert.match(document.querySelector(".comparison-decision").textContent, /A组Fast更好/);
     assert.equal(document.querySelectorAll(".comparison-decision .findings-nav").length, 0);
   } finally { dom.window.close(); }
 });
 
-test("comparison cells preserve complete states, confirmed advantages and directly readable source findings", () => {
-  const versions = ["b_fast", "kimi", "a_fast"];
-  const names: Record<string, string> = { a_fast: "A组Fast", b_fast: "B组Fast", kimi: "Kimi" };
-  const inputIds: Record<string, string> = {
-    a_fast: "7c4e3ba8-8f7c-46cc-b8fb-3016e10ea2dd",
-    b_fast: "114529b8-de39-4da7-9c4f-d6a1ca4971c3",
-    kimi: "6098dfb7-3356-450b-a5ee-73286944861c",
-  };
-  const criteria = criteriaResult();
-  criteria.requirements.push({ id: "r_private", text: "仅A组的原始约束。", applies_to: [inputIds.a_fast!],
-    acceptance_rule: criteria.requirements[0]!.acceptance_rule });
-  const evaluations: Record<string, ReturnType<typeof attributionResult>> = Object.fromEntries(versions.map((version, index) => {
-    const evaluation = attributionResult(true, "2+2=4", true, inputIds[version]!);
-    evaluation.task_analysis = criteria;
-    evaluation.criterion_assessments.push({ criterion_id: "r_private", status: version === "a_fast" ? "unknown" : "not_applicable",
-      evidence_status: version === "a_fast" ? "uncertain" : "established",
-      summary: version === "a_fast" ? "单方约束证据待核。" : "此项只约束A组。", evidence: [] });
-    const strength = evaluation.findings[0]!;
-    strength.text = `${names[version]}优点原文 <img src=x>。`;
-    strength.dimension = "reasoning";
-    strength.stage = "execution";
-    strength.importance = "high";
-    strength.reason = `${names[version]}优点依据。`;
-    strength.assessment.observation = `${names[version]}优点观察。`;
-    strength.assessment.impact = `${names[version]}优点影响。`;
-    const problem = attributionResult(false, "2+2=5 <img src=x>", true, inputIds[version]!).findings[0]!;
-    problem.finding_id = "f1";
-    problem.dimension = "evidence_quality";
-    problem.stage = "context_recall";
-    problem.importance = "medium";
-    problem.text = `${names[version]}缺点原文。`;
-    problem.reason = `${names[version]}缺点依据 <script>内容</script>。`;
-    problem.assessment = { requirement_index: null, observation: `${names[version]}缺点观察。`,
-      evidence_status: "uncertain", impact: `${names[version]}缺点影响。` };
-    const peerInput = inputIds[versions[(index + 1) % versions.length]!]!;
-    problem.evidence.push({ ...attributionResult(true, "2+2=4", true, peerInput).findings[0]!.evidence[0]!,
-      source: "独立工具来源 <img src=x>", source_input_id: peerInput });
-    evaluation.findings = [strength, problem];
-    const rewritten = { evaluator_version: "fixture", rewrites: [
-      { id: "findings.0.text", text: `${names[version]}优点改写 <img src=x>。` },
-      { id: "findings.1.reason", text: `${names[version]}缺点依据改写。` },
-      { id: "findings.1.assessment.impact", text: `${names[version]}缺点影响改写。` },
-    ] };
-    return [version, { ...evaluation, rewritten }];
-  }));
-  const comparison = comparisonResult(versions, criteria);
-  comparison.status = "needs_review";
-  comparison.ranking = [];
-  comparison.review_requests = [{ candidate: "a_fast", criterion_ids: ["r_private"], finding_indices: [1], reason: "私有约束待核。" }];
-  comparison.assessments.a_fast!.meets_core = null;
-  comparison.decision_basis.comparisons = [
-    { aspect: "引用缺陷", criterion_ids: [], importance: "low", better_candidates: ["b_fast"], assessments: {
-      a_fast: { summary: "已确认该缺陷存在。", finding_indices: [1], status: "met", evidence_status: "established" },
-      b_fast: { summary: "有缺陷，但本项影响更小。", finding_indices: [1], status: "met", evidence_status: "established" },
-      kimi: { summary: "已确认该缺陷存在。", finding_indices: [1], status: "met", evidence_status: "established" },
-    } },
-    { aspect: "主要交付", criterion_ids: ["r1"], importance: "high", better_candidates: ["a_fast", "kimi"], assessments: {
-      a_fast: { summary: "A交付原文。", finding_indices: [0, 1], status: "partial", evidence_status: "established" },
-      b_fast: { summary: "B未完成主要交付。", finding_indices: [1], status: "unmet", evidence_status: "established" },
-      kimi: { summary: "Kimi完成主要交付。", finding_indices: [0], status: "met", evidence_status: "established" },
-    } },
-    { aspect: "单方约束", criterion_ids: ["r_private"], importance: "medium", better_candidates: [], assessments: {
-      a_fast: { summary: "尚不能确定此项是否不适用。", finding_indices: [1], status: "unknown", evidence_status: "uncertain" },
-      b_fast: { summary: "此项只约束A组。", finding_indices: [], status: "not_applicable", evidence_status: "established" },
-      kimi: { summary: "此项只约束A组。", finding_indices: [], status: "not_applicable", evidence_status: "established" },
-    } },
-  ];
-  const row = { ...comparison,
-    models: Object.fromEntries(versions.map((version) => [version, { version: names[version]! }])),
-    evaluations: Object.fromEntries(Object.entries(evaluations).map(([version, evaluation]) => [version, { ...evaluation,
-      findings: evaluation.findings.map((finding) => ({ ...finding, stage_trace: {
-        tools: ["web_search"], candidate_tools: ["web_search"], confidence: "high", source: "evidence_message",
-        locations: [{ message_index: 1, tool_name: "web_search", source_input_id: inputIds[version]! }],
-      } })),
-    }])), verdicts: {},
-  };
-  const original = structuredClone(row);
-  const projected = caseResultView("comparison", row, { A: "kimi", B: "a_fast", C: "b_fast" })!;
-  const projectedOriginal = structuredClone(projected);
-  const { dom, document, views } = render("comparison", projected);
-  const field = (container: any, key: string) => {
-    const entry = [...container.querySelectorAll(".schema-field")].find((node: any) =>
-      node.querySelector(":scope > dt > code")?.textContent === key);
-    assert(entry, `source field ${key} remains readable in the comparison cell`);
-    return entry.querySelector(":scope > dd");
-  };
+test("comparison cells retain problem evidence, source identities and escaped prose", () => {
+  const evaluations={left:attributionResult(false),right:attributionResult(false)};
+  evaluations.left.Problem[0].text="错误数据 <img src=x>";
+  evaluations.left.Problem[0].reason="证据支持具体缺陷 <script>内容</script>";
+  const comparison=comparisonResult(["left","right"]);
+  comparison.decision_basis.comparisons=[{aspect:"引用缺陷",criterion_ids:[],importance:"medium",better_candidates:["right"],assessments:{
+    left:{summary:"已确认本方问题。",finding_indices:[0],status:"met",evidence_status:"established"},
+    right:{summary:"问题影响更小。",finding_indices:[0],status:"met",evidence_status:"established"}}}];
+  const row={...comparison,evaluations,models:{left:{version:"左模型"},right:{version:"右模型"}},verdicts:{}};
+  const before=structuredClone(row),projected=caseResultView("comparison",row)!;
+  const {dom,document,views}=render("comparison",projected);
   try {
-    const table = document.querySelector(".comparison-table");
-    assert.deepEqual([...table.querySelectorAll("thead th")].map((node: any) => node.textContent),
-      ["比较点", "A组Fast", "B组Fast", "Kimi"]);
-    const rows = [...table.querySelectorAll("tbody tr")];
-    assert.deepEqual(rows.map((node: any) => node.dataset.comparisonIndex), ["1", "2", "0"]);
-    const stateLabels = { met: "满足", partial: "部分满足", unmet: "不满足", unknown: "未确认", not_applicable: "不适用" };
-    for (const [index, item] of comparison.decision_basis.comparisons.entries()) {
-      const displayed = table.querySelector(`[data-comparison-index="${index}"]`);
-      assert.equal(displayed.querySelector(".comparison-index").textContent, `comparisons[${index}]`);
-      assert(displayed.querySelector("th").textContent.includes(item.aspect));
-      assert(displayed.querySelector("th").textContent.includes(`重要性 · ${item.importance === "high" ? "高" : item.importance === "medium" ? "中" : "低"}`));
-      for (const criterionId of item.criterion_ids) assert(displayed.querySelector("th").textContent.includes(criterionId));
-      const advantages = displayed.querySelector(".comparison-better-candidates").textContent;
-      assert.equal(advantages, item.better_candidates.length
-        ? `更优 · ${item.better_candidates.map((version) => names[version]).join(" / ")}` : "未区分优劣");
-      assert.deepEqual([...displayed.querySelectorAll("td")].map((cell: any) => cell.dataset.candidate), ["a_fast", "b_fast", "kimi"]);
-      for (const [version, assessment] of Object.entries(item.assessments)) {
-        const cell = displayed.querySelector(`[data-candidate="${version}"]`);
-        const status = cell.querySelector(".comparison-status");
-        const evidence = cell.querySelector(".comparison-evidence-status");
-        assert.equal(status.dataset.status, assessment.status);
-        const explicitObservation = !item.criterion_ids.length && assessment.finding_indices.length &&
-          assessment.finding_indices.every(i => evaluations[version]!.findings[i]!.assessment.requirement_index === null);
-        if(assessment.status === "met" && explicitObservation) assert(status.textContent.includes("已确认"));
-        else if(assessment.status === "unknown") assert(/证据不足|未核查此项/.test(status.textContent));
-        else assert(status.textContent.includes(stateLabels[assessment.status]));
-        assert.equal(evidence.dataset.evidenceStatus, assessment.evidence_status);
-        assert(evidence.textContent.includes(assessment.evidence_status === "established" ? "已建立" : "不确定"));
-        assert.equal(Boolean(cell.querySelector(".comparison-advantage")), item.better_candidates.includes(version));
-        if (item.better_candidates.includes(version)) assert.equal(cell.querySelector(".comparison-advantage").textContent, "更优");
-        const findings = [...cell.querySelectorAll("section.comparison-finding")];
-        assert.deepEqual(findings.map((finding: any) => Number(finding.dataset.findingIndex)), assessment.finding_indices);
-        for (const [offset, findingNode] of findings.entries()) {
-          const findingIndex = assessment.finding_indices[offset]!;
-          const finding = evaluations[version]!.findings[findingIndex]!;
-          assert.equal(findingNode.tagName, "SECTION");
-          assert.equal(findingNode.querySelector("header .finding-type"), null,
-            "source finding types do not label relative comparisons");
-          assert.equal(field(findingNode, "type").textContent.trim(), finding.type === "strength" ? "优点" : "缺点");
-          assert(findingNode.querySelector("header").textContent.includes(`归因 #${findingIndex}`));
-          assert(findingNode.querySelector("header").textContent.includes(finding.finding_id));
-          assert(findingNode.textContent.includes(finding.type === "strength" ? "推理" : "证据质量"));
-          assert(findingNode.textContent.includes(finding.stage === "execution" ? "执行" : "上下文"));
-          assert(findingNode.querySelector("header").textContent.includes(`重要性 · ${finding.importance === "high" ? "高" : "中"}`));
-          assert(field(findingNode, "text").textContent.includes(finding.text));
-          assert(field(findingNode, "reason").textContent.includes(finding.reason));
-          const assessmentNode = field(findingNode, "assessment");
-          assert.equal(field(assessmentNode, "requirement_index").textContent.trim(), finding.assessment.requirement_index === null ? "无" : "0");
-          assert.equal(field(assessmentNode, "observation").textContent.trim(), finding.assessment.observation);
-          assert(field(assessmentNode, "impact").textContent.includes(finding.assessment.impact));
-          assert(field(assessmentNode, "evidence_status").textContent.includes(finding.assessment.evidence_status === "established" ? "已建立" : "不确定"));
-          const evidenceNode = field(findingNode, "evidence");
-          for (const source of finding.evidence) {
-            assert(evidenceNode.textContent.includes(source.evidence_id));
-            assert(evidenceNode.textContent.includes(source.quote));
-            assert(evidenceNode.textContent.includes(String(source.message_index)));
-            if (source.source_input_id) {
-              assert(evidenceNode.textContent.includes(source.source_input_id));
-              assert(evidenceNode.textContent.includes(source.source!));
-            }
-          }
-          const trace = field(findingNode, "stage_trace");
-          assert(findingNode.textContent.includes("阶段回溯"));
-          assert.equal(field(trace, "confidence").textContent.trim(), "高");
-          assert.equal(field(trace, "source").textContent.trim(), "证据消息");
-          assert(field(trace, "tools").textContent.includes("web_search"));
-          assert(field(trace, "candidate_tools").textContent.includes("web_search"));
-          assert(field(trace, "locations").textContent.includes(inputIds[version]!));
-          const link = cell.querySelector(`[data-finding-target="finding-task-one.evaluations.${version}.findings.${findingIndex}"]`);
-          assert(link && document.getElementById(link.dataset.findingTarget), "the original model finding remains a valid navigation target");
-        }
-      }
-    }
-    const lowProblem = table.querySelector('[data-comparison-index="0"] [data-candidate="b_fast"]');
-    assert.equal(lowProblem.querySelector(".comparison-status").dataset.status, "met");
-    assert(lowProblem.querySelector(".comparison-status").textContent.includes("已确认问题"));
-    assert.equal(lowProblem.querySelector(".comparison-advantage").textContent, "更优",
-      "a source defect can belong to the confirmed relative advantage candidate");
-    assert.equal(table.querySelector(".finding-type"), null, "the comparison table has no absolute strength or problem badges");
-    const mixed = table.querySelector('[data-comparison-index="1"] [data-candidate="a_fast"]');
-    assert.equal(mixed.querySelector(".comparison-copy > .expandable-text").textContent.trim(), "A交付原文。");
-    assert.equal(mixed.querySelector(".comparison-copy .comparison-original"), null);
-    const inlineStrength = mixed.querySelector('[data-finding-index="0"]');
-    assert(field(inlineStrength, "text").querySelector(".rewrite-original").textContent.includes(evaluations.a_fast!.findings[0]!.text));
-    assert(field(inlineStrength, "text").querySelector(".rewrite-polished").textContent.includes("A组Fast优点改写 <img src=x>。"));
-    assert(!/都好|都差|相同/.test(table.querySelector('[data-comparison-index="2"] .comparison-better-candidates').textContent));
-    assert.equal(table.querySelector('[data-comparison-index="2"] [data-candidate="a_fast"] .comparison-status').dataset.status, "unknown");
-    assert.equal(table.querySelector("img, script"), null);
-    const ids = [...document.querySelectorAll("[id]")].map((node: any) => node.id);
-    assert.equal(new Set(ids).size, ids.length, "repeated inline references have unique display IDs and preserve original targets");
-    views.renderDetail();
-    assert.deepEqual(row, original, "presentation preserves the accepted comparison and attribution results");
-    assert.deepEqual(projected, projectedOriginal, "rerendering leaves projected source states and rewrites intact");
-  } finally { dom.window.close(); }
+    const table=document.querySelector(".comparison-table"),cells=table.querySelectorAll("td");assert.equal(cells.length,2);
+    for(const cell of cells){const problem=evaluations[cell.dataset.candidate as keyof typeof evaluations].Problem[0];
+      const shown=cell.querySelector(".comparison-finding");assert(shown);assert(shown.textContent.includes(problem.text));
+      assert(shown.textContent.includes(problem.reason));for(const evidence of problem.evidence)assert(shown.textContent.includes(evidence.quote));
+      const link=cell.querySelector("[data-finding-target]");assert(document.getElementById(link.dataset.findingTarget));}
+    assert.equal(table.querySelector("img,script"),null);assert.equal(table.querySelectorAll(".comparison-advantage").length,1);
+    views.renderDetail();assert.deepEqual(row,before);
+  } finally {dom.window.close();}
 });
 
 test("dashboard pairs clustering rewrites inside arrays and escapes text", () => {
@@ -657,11 +462,11 @@ test("dashboard pairs clustering rewrites inside arrays and escapes text", () =>
 
 test("dashboard shows empty finding groups and no rewrite columns when no rewrites exist", () => {
   const evaluation = attributionResult();
-  evaluation.findings = [];
-  const { dom, document } = render("attribution", caseResultView("attribution", { evaluation })!);
+  evaluation.Problem = [];
+  const { dom, document } = render("attribution", caseResultView("attribution", evaluation as unknown as JsonObject)!);
   try {
     assert.equal(document.querySelectorAll(".rewrite-pair").length, 0);
-    assert.equal(document.querySelectorAll(".findings-nav-group .muted").length, 2);
+    assert.equal(document.querySelectorAll(".findings-nav-group").length, 1);
     assert.equal(document.querySelectorAll(".findings-nav a").length, 0);
   } finally { dom.window.close(); }
 });

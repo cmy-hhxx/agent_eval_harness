@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { businessChainFixture } from "../../../../tests/fixtures/business-chain.js";
-import { investigationValidator } from "./investigation.js";
+import { businessChainDirectoryIssues, investigationValidator } from "./investigation.js";
 import type { AttributionExecutionNode, AttributionTransition } from "./transitions.js";
 
 test("one validation pass verifies its source directory once across problem checks", () => {
@@ -26,4 +26,24 @@ test("a new validation pass rechecks modified source directories and rejects for
   assert(!check().some(issue => issue.code === "transition_directory"));
   f.generated.actor_index = 999999;
   assert(check().some(issue => issue.code === "transition_directory"), "no acceptance is cached between passes or runs");
+});
+
+test("directory validation renders each source message once despite repeated checkpoint references", () => {
+  const f = businessChainFixture();
+  const raw = f.binding.request.sources.answer.value as { messages: unknown[] };
+  const point = f.chain.checkpoints.find(point => point.evidence.length)!;
+  const evidence = point.evidence[0]!;
+  const message = raw.messages[evidence.message_index];
+  let reads = 0;
+  Object.defineProperty(raw.messages, evidence.message_index, { configurable: true, get() { reads++; return message; } });
+  assert.deepEqual(businessChainDirectoryIssues(f.binding.request), []);
+  const firstReads = reads;
+  assert(firstReads > 0);
+  point.evidence.push(...Array.from({ length: 40 }, () => structuredClone(evidence)));
+  reads = 0;
+  assert.deepEqual(businessChainDirectoryIssues(f.binding.request), []);
+  assert.equal(reads, firstReads, "extra references must not rerender the same message");
+  point.evidence.at(-1)!.quote = "伪造原文";
+  assert(businessChainDirectoryIssues(f.binding.request).some(issue => issue.code === "business_chain_directory"),
+    "each new validation rechecks all quotes against real source content");
 });

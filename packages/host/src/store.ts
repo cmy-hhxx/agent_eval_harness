@@ -14,6 +14,7 @@ import type {
   TraceRead,
   ToolAudit,
   MaterialInspection,
+  JsonObject,
 } from "@eval/contracts";
 
 import { AgentRegistry } from "./agents.js";
@@ -307,7 +308,8 @@ export class RunStore {
       if (!spec) throw new HttpError(409, "Unknown attempt");
       this.validateBank(spec, failure.evidenceBank, state.failure?.evidenceBank ?? spec.evidenceBank);
       state.failure = { ...failure, evidenceBank: [...failure.evidenceBank], contentSubmissions: Math.max(failure.contentSubmissions, state.failure?.contentSubmissions ?? 0),
-        ...(state.failure?.inspection ? { inspection: state.failure.inspection } : {}) };
+        ...(state.failure?.inspection ? { inspection: state.failure.inspection } : {}),
+        ...(state.failure?.completionCandidate ? { completionCandidate: state.failure.completionCandidate } : { completionCandidate: undefined }) };
       await this.save();
     });
   }
@@ -324,7 +326,9 @@ export class RunStore {
         throw new HttpError(400, "Invalid shared content submission count");
       this.validateAudit(spec, value.audit);
       const binding = this.services.taskSource.bind(task, this.inputs, await this.dependencies(task), { tasks: this.manifest.tasks });
-      const canonicalValue = this.services.agents.resolveInspection(binding, value.value, value.audit);
+      let canonicalValue: JsonObject;
+      try { canonicalValue = this.services.agents.resolveInspection(binding, value.value, value.audit); }
+      catch (error) { this.registerValidationReads(spec, error); throw error; }
       const checkpoint = { id: value.inspectionId, value: canonicalValue,
         proof: { traceReads: structuredClone(value.audit.traceReads), viewedImages: [...value.audit.viewedImages] } };
       const previous = state.failure?.inspection;
@@ -344,6 +348,15 @@ export class RunStore {
       }
       return { inspection: checkpoint, material, evidenceBank };
     });
+  }
+  private registerValidationReads(spec: AttemptSpec, error: unknown): void {
+    if (!(error instanceof ValidationError)) return;
+    const reads = validationRequiredReads(error.issues ?? []);
+    if (!reads.length) return;
+    const updated = { ...spec, evaluation: { ...spec.evaluation, requiredReads: reads } };
+    const sources = this.evidenceSources.get(spec.attemptId)!;
+    const ranges = extendRequiredReadRanges(requiredReadRanges(spec, sources), requiredReadRanges(updated, sources));
+    spec.evaluation = { ...spec.evaluation, requiredReads: ranges.map(range => range.target) };
   }
   private validateAudit(spec: AttemptSpec, audit: ToolAudit): void {
     this.validateBank(spec, audit?.evidenceBank);
@@ -412,23 +425,39 @@ export class RunStore {
       value.submissionStats!.contentSubmissions <= (state.failure?.contentSubmissions ?? 0) ||
       value.submissionStats!.contentSubmissions > (spec.recovery?.contentSubmissions ?? 0) + 1 + spec.policy.repairAttempts))
       throw new HttpError(422, "材料核查与最终提交必须共用本次剩余内容预算，最终提交仍计一稿");
+    const previousCandidate = state.failure?.completionCandidate;
+    if (spec.evaluation.completionReview && value.completionReview) {
+      const review = value.completionReview;
+      if (!previousCandidate || previousCandidate.superseded || previousCandidate.attemptId !== value.attemptId || review.candidateId !== previousCandidate.id ||
+        canonical(previousCandidate.evaluation) !== canonical(value.evaluation) || typeof review.reason !== 'string' || !review.reason.trim())
+        throw new ValidationError([{ category: 'decision', code: 'completion_review_stale', path: '/',
+          message: 'Completion review must explain and confirm the current candidate in this attempt.' }]);
+    }
+    if (spec.evaluation.completionReview && !value.completionReview && state.failure?.completionCandidate) {
+      state.failure.completionCandidate.superseded = true;
+      await this.save();
+    }
     let evaluation: unknown;
     try {
       const binding = this.services.taskSource.bind(task, this.inputs, await this.dependencies(task), { tasks: this.manifest.tasks });
       evaluation = this.services.agents.resolve(binding, value.evaluation, value.audit);
       this.services.agents.validate(binding, evaluation, value.audit);
     } catch (error) {
-      if (error instanceof ValidationError) {
-        const reads = validationRequiredReads(error.issues ?? []);
-        if (reads.length) {
-          const updated = { ...spec, evaluation: { ...spec.evaluation, requiredReads: reads } };
-          const sources = this.evidenceSources.get(spec.attemptId)!;
-          const ranges = extendRequiredReadRanges(requiredReadRanges(spec, sources), requiredReadRanges(updated, sources));
-          spec.evaluation = { ...spec.evaluation, requiredReads: ranges.map(range => range.target) };
-        }
-      }
+      this.registerValidationReads(spec, error);
       if (error instanceof HttpError) throw error;
       throw new HttpError(422, error instanceof Error ? error.message : String(error));
+    }
+    if (spec.evaluation.completionReview && !value.completionReview) {
+      const candidate = { id: value.submissionId, attemptId: value.attemptId, evaluation: structuredClone(value.evaluation),
+        ...(previousCandidate ? { previous: structuredClone(previousCandidate.evaluation) } : {}) };
+      const errors = [{ category: 'decision' as const, code: 'completion_review_required', path: '/',
+        message: spec.evaluation.completionReview, expected: { candidate_id: candidate.id, next_tool: 'confirm_evaluation',
+          ...(candidate.previous ? { previous_candidate: candidate.previous } : {}) } }];
+      state.failure = { ...state.failure, draft: structuredClone(value.evaluation), completionCandidate: candidate, errors,
+        evidenceBank: [...value.audit.evidenceBank ?? []], contentSubmissions: value.submissionStats?.contentSubmissions ?? 1,
+        fileErrors: value.submissionStats?.fileErrors ?? 0, repeatedErrors: 0, stopped: false, attemptId: value.attemptId };
+      await this.save();
+      throw new ValidationError(errors);
     }
     const receipt: SubmissionReceipt = {
       ...value,

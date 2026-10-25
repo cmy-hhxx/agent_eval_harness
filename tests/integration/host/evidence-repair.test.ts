@@ -7,14 +7,14 @@ import type { AgentBackend, AttemptSpec, ToolResult, ValidationIssue } from "@ev
 import { runEvaluation } from "@eval/host";
 import { startWorker } from "@eval/runtime/worker";
 import { buildPlan, readRunState, type AttributionResult } from "@eval/workflows/comparison";
-import { submitFor, inspectFor, draftFor, fakeEvaluatorVersion, fakeIdentity, fixtureConfig, parsedMaterial, raw, taskResult } from "../../fixtures/comparison.js";
+import { submitFor, inspectFor, draftFor, fakeEvaluatorVersion, fakeIdentity, fixtureConfig, parsedMaterial, raw, taskResult, attributionResult } from "../../fixtures/comparison.js";
 import { services, validateRun } from "../../fixtures/services.js";
 
 function structuredToolInput(caseId: string) {
   const input = raw(caseId, null);
   input.messages.splice(1, 0, {
     type: "function_call_output", role: "tool", name: "calculate",
-    content: { rows: [{ value: 4, explanation: "计算2+2=4。" }] },
+    content: { rows: [{ value: 5, explanation: "计算2+2=5。" }] },
   });
   return input;
 }
@@ -23,14 +23,17 @@ function taskDraft(spec: AttemptSpec) {
   const result = taskResult(spec);
   if (spec.evaluation.id === "attribution") {
     const material = parsedMaterial(spec) as { answer: { final_message_index: number; final_answer: string } };
-    const finding = (result as AttributionResult).findings[0];
+    const owner = result as AttributionResult;
+    owner.Problem = attributionResult(false, material.answer.final_answer, false, spec.inputs.find(input=>input.name==="answer")!.id).Problem;
+    const finding = owner.Problem[0];
+    finding.checks = [];
     finding.evidence = [canonicalEvidence(spec.inputs.find(input => input.name === "answer")!.id, material.answer.final_message_index, material.answer.final_answer)];
-    finding.stage = "execution";
-    finding.text = "计算工具正确返回4。";
-    finding.reason = "原始工具返回的计算结果与最终回答一致。";
-    finding.assessment.observation = "计算2+2=4。";
+
+    finding.text = "计算过程曾返回错误数值5。";
+    finding.reason = "工具记录将2+2算为5，最终回答已恢复为4，保留已发生的过程缺陷。";
+
   }
-  return draftFor(spec, result) as { strengths?: { evidence_indices: number[] }[] };
+  return draftFor(spec, result) as { Problem?: { evidence_indices: number[] }[] };
 }
 
 const payload = (result: ToolResult) => JSON.parse(result.content.find((item) => item.type === "text")!.text!);
@@ -57,13 +60,13 @@ for (const scenario of [
           assert.equal((await submitFor(options, draft)).isError, undefined);
           return;
         }
-        draft.strengths![0].evidence_indices = [scenario.invalidIndex];
+        draft.Problem![0].evidence_indices = [scenario.invalidIndex];
         submittedCounts.set(options.spec.taskId, 1);
         const rejected = await submitFor(options, draft);
         assert.equal(rejected.isError, true, "an invalid selection is never interpreted as another coordinate");
         const feedback = payload(rejected) as { accepted: boolean; errors: ValidationIssue[] };
         assert.equal(feedback.accepted, false);
-        const issue = feedback.errors.find((item) => item.path === "/strengths/0/evidence_indices/0" && item.code === "evidence_selection_invalid")!;
+        const issue = feedback.errors.find((item) => item.path === "/Problem/0/evidence_indices/0" && item.code === "evidence_selection_invalid")!;
         assert.equal(issue.category, "evidence");
         assert.deepEqual(issue.actual, { evidence_index: scenario.invalidIndex });
         const expected = issue.expected as RepairExpected;
@@ -73,9 +76,9 @@ for (const scenario of [
         const read = await options.execute("read_trace", { candidate: "answer", message_index: 1, path: scenario.path });
         assert.equal(read.isError, undefined, JSON.stringify(read));
         const selected = (payload(read) as { evidence: { reference: { evidence_index: number }; quote: string }[] }).evidence
-          .find(item => item.quote.includes("4"));
+          .find(item => item.quote.includes("5"));
         assert(selected, "the model selects evidence only after checking that its original quote supports the finding");
-        draft.strengths![0].evidence_indices = [selected.reference.evidence_index];
+        draft.Problem![0].evidence_indices = [selected.reference.evidence_index];
         submittedCounts.set(options.spec.taskId, 2);
         const accepted = await submitFor(options, draft);
         assert.equal(accepted.isError, undefined, JSON.stringify(accepted));
@@ -98,8 +101,8 @@ for (const scenario of [
         assert.equal(saved.manifest.states[task.id].attempts, 1);
         assert.equal(saved.receipts[task.id].submissionStats!.contentSubmissions, 2);
         const accepted = saved.receipts[task.id].evaluation as AttributionResult;
-        assert.equal(accepted.findings[0].evidence[0].message_index, 1);
-        assert(accepted.findings[0].evidence[0].quote.includes("4"));
+        assert.equal(accepted.Problem[0].evidence[0].message_index, 1);
+        assert(accepted.Problem[0].evidence[0].quote.includes("4"));
       }
       assert.equal((await validateRun(run)).valid, true, "accepted source coordinates survive persistence and offline validation");
     } finally { await worker.close(); await rm(directory, { recursive: true, force: true }); }
@@ -127,7 +130,7 @@ test("Host retains remaining repairs for identical invalid evidence without exce
         assert.equal((await submitFor(options, draft)).isError, undefined);
         return;
       }
-      draft.strengths![0].evidence_indices = [invalidIndex];
+      draft.Problem![0].evidence_indices = [invalidIndex];
       for (let index = 0; index < Math.min(2, 1 + options.spec.policy.repairAttempts); index++) {
         submissions++;
         const rejected = await submitFor(options, draft);

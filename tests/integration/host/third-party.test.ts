@@ -73,23 +73,19 @@ test("answer-only and short third-party traces survive independent pairs, formal
           const input = plan.inputs[candidate.input_id] as RawInput;
           const final = String(input.messages[candidate.final_index].content);
           const evaluation = result as AttributionResult;
-          evaluation.standard_conflict = false;
+
           const evidence = canonicalEvidence(candidate.input_id, candidate.final_index, final);
-          evaluation.correctness_evidence = [evidence];
-          evaluation.numeric_checks = [{ label: "加法结果", expected: "4", actual: candidate.version === "baseline_fast" ? "5" : "4",
-            scale: "1", mode: "exact", matches: candidate.version !== "baseline_fast", evidence_index: 0 }];
-          evaluation.findings[0].evidence = [evidence];
+
+
+          if(evaluation.Problem.length)evaluation.Problem[0].evidence = [evidence];
           if (candidate.version === "baseline_fast") {
             evaluation.is_correct = false;
-            evaluation.correctness_reason = "最终回答给出5，与标准答案4不一致；缺少生成链路，无法定位责任。";
-            evaluation.core_assessment = { meets_core: false, reason: "核心计算结果错误。", criterion_ids: ["r1"] };
-            evaluation.criterion_assessments[0] = { ...evaluation.criterion_assessments[0], status: "unmet",
-              summary: "计算结果为5，未完成求和要求。", evidence: [evidence] };
+            evaluation.correct_reason = "最终回答给出5，与标准答案4不一致；缺少生成链路，无法定位责任。";
+
+
             evaluation.summary = "最终计算结果错误，责任依据现有材料推断。";
-            Object.assign(evaluation.findings[0], { type: "problem", text: "加法结果错误", reason: "2+2应为4，最终回答写成5。",
-              problem: { ...attributionResult(false, final, true, candidate.input_id).findings[0]!.problem!,
-                label: "算术错误", definition: "最终交付的加法结果错误；现有材料不足以定位链路责任。" } });
-            evaluation.findings[0].assessment.observation = final;
+            evaluation.Problem = attributionResult(false, final, true, candidate.input_id).Problem;
+
           }
         } else if (task.stage === "comparison") {
           for (const identity of identities)
@@ -150,23 +146,23 @@ test("answer-only and short third-party traces survive independent pairs, formal
       const verdict = Object.values(object(row.verdicts))[0] as JsonObject;
       for (const version of versions) {
         const evaluation = object(object(row.evaluations)[version]);
-        assert.equal(evaluation.standard_conflict, false);
+
         const source = state.receipts[String(object(row.attribution_task_ids)[version])].evaluation as AttributionResult;
-        assert.equal(source.numeric_checks.length, 1, "a real accepted numeric check reaches each formal evaluation");
-        assert.deepEqual(evaluation.numeric_checks, source.numeric_checks);
-        assert.deepEqual(evaluation.numeric_checks, [{ label: "加法结果", expected: "4", actual: version === "baseline_fast" ? "5" : "4",
-          scale: "1", mode: "exact", matches: version !== "baseline_fast", evidence_index: 0 }]);
-        assert.deepEqual(evaluation.table_resolutions, source.table_resolutions);
-        assert.deepEqual((evaluation.findings as AttributionResult["findings"])[0].context_evidence, source.findings[0].context_evidence);
+        assert.deepEqual(evaluation.correct_reason, source.correct_reason);
+
+
+
+
+
       }
       if (versions.includes("baseline_fast")) {
         assert.deepEqual(object(object(row.models).baseline_fast), { version: "Baseline Fast", llm: null, trace_id: null });
         const baseline = object(object(row.evaluations).baseline_fast);
         assert.equal(baseline.is_correct, false);
-        assert.equal(object(baseline.core_assessment).meets_core, false);
-        assert.equal((baseline.findings as AttributionResult["findings"])[0].problem!.component[0].certainty, "inferred");
-        assert.equal((baseline.findings as AttributionResult["findings"])[0].problem!.component[0].actor_index, null);
-        assert.deepEqual(object((baseline.findings as JsonObject[])[0]).stage_trace,
+
+        assert.deepEqual((baseline.Problem as AttributionResult["Problem"])[0].causes, []);
+        assert((baseline.Problem as AttributionResult["Problem"])[0].uncertainty?.evidence_gap);
+        assert.deepEqual(object((baseline.Problem as JsonObject[])[0]).stage_trace,
           { tools: [], confidence: "none", source: "none", locations: [{ message_index: 1, tool_name: null }] });
         assert.equal(verdict.result, "win");
         assert.equal(verdict.winner_version, versions.find(version => version !== "baseline_fast"));
@@ -186,55 +182,30 @@ test("answer-only and short third-party traces survive independent pairs, formal
     assert.equal(baselineQuality.answer_cases, 2);
     assert.equal(baselineQuality.core.failed, 2);
     assert.equal(baselineQuality.standard_agreement.incorrect, 2);
-    await t.test("comparisonRow independently projects nonempty canonical context and table evidence without executing table verification", () => {
+    await t.test("comparisonRow preserves problem evidence across stable pairs", () => {
       const projectedReceipts = new Map(Object.entries(structuredClone(state.receipts)));
       const projectedInputs = { ...plan.inputs };
-      let tableResolution: NonNullable<AttributionResult["table_resolutions"]> | undefined;
-      let contextEvidence: NonNullable<AttributionResult["findings"][number]["context_evidence"]> | undefined;
       for (const task of state.manifest.tasks.filter(task => task.stage === "attribution")) {
-        const evaluation = projectedReceipts.get(task.id)!.evaluation as AttributionResult;
         const candidate = (task.data as TaskData).candidates.A;
-        if (candidate.version === "baseline_fast") {
-          evaluation.standard_conflict = true;
-          if (candidate.case_id === "q1") {
-            const input = structuredClone(plan.inputs[candidate.input_id]) as RawInput;
-            input.messages[0].content = "计算2+2\n\n已登记来源：\n| 项目 | 数值 |\n| --- | --- |\n| 2+2 | 4 |";
-            input.messages[candidate.final_index].content = String(input.messages[candidate.final_index].content) +
-              "\n\n| 项目 | 数值 |\n| --- | --- |\n| 2+2 | 5 |";
-            projectedInputs[candidate.input_id] = input;
-            const tables = parseTraceTables(input, candidate.input_id);
-            const table = tables.find(table => table.message_index === candidate.final_index)!;
-            const source = tables.find(table => table.message_index === 0)!;
-            assert(table?.rows.length, "projection fixture contains an actual table row");
-            assert(source?.rows.length, "projection fixture contains an independently located source row");
-            contextEvidence = [canonicalEvidence(candidate.input_id, 0, "计算2+2")];
-            evaluation.findings[0].context_evidence = contextEvidence;
-            evaluation.criterion_assessments[0].context_evidence = contextEvidence;
-            tableResolution = [{ table_id: table.table_id, row_index: table.rows[0].row_index, outcome: "conflict",
-              reason: "表格实际给出5，与已登记来源和标准4不一致。", evidence: [table.rows[0].evidence, source.rows[0].evidence] }];
-            evaluation.table_resolutions = tableResolution;
-          }
-        } else if (candidate.version === "b_fast") delete evaluation.standard_conflict;
+        const evaluation = projectedReceipts.get(task.id)!.evaluation as AttributionResult;
+        if (candidate.version !== "baseline_fast" || !evaluation.Problem.length) continue;
+        const input = structuredClone(plan.inputs[candidate.input_id]) as RawInput;
+        input.messages[candidate.final_index].content += "\n\n| 项目 | 数值 |\n| --- | --- |\n| 2+2 | 5 |";
+        projectedInputs[candidate.input_id] = input;
+        const table = parseTraceTables(input,candidate.input_id).find(table=>table.message_index===candidate.final_index)!;
+        evaluation.Problem[0].evidence.push(table.rows[0].evidence);
       }
-      const names = Object.fromEntries(config.inputs.versions.map(version => [version.id, version.display_name || version.name]));
-      const threePairs = rows.filter(row => object(row.case).case_id === "q1" && !Object.hasOwn(object(row.models), "short_fast"));
-      assert.equal(threePairs.length, 3);
-      for (const row of threePairs) {
-        const task = state.manifest.tasks.find(task => (task.data as TaskData).comparisonId === row.comparison_id)!;
-        const projected = comparisonRow(projectedInputs, task, state.receipts[task.id].evaluation as ComparisonResult,
-          projectedReceipts, names, fakeEvaluatorVersion);
-        assert(validateOutput(projected), JSON.stringify(validateOutput.errors));
-        for (const [version, evaluation] of Object.entries(object(projected.evaluations)))
-          assert.equal(object(evaluation).standard_conflict, version === "baseline_fast" ? true : version === "a_fast" ? false : undefined);
-        if (Object.hasOwn(object(projected.evaluations), "baseline_fast")) {
-          const baseline = object(object(projected.evaluations).baseline_fast);
-          assert.equal(tableResolution!.length, 1);
-          assert.equal(contextEvidence!.length, 1);
-          assert.deepEqual(baseline.table_resolutions, tableResolution);
-          assert.deepEqual((baseline.findings as AttributionResult["findings"])[0].context_evidence, contextEvidence);
-          assert.deepEqual((baseline.criterion_assessments as AttributionResult["criterion_assessments"])[0].context_evidence, contextEvidence);
+      const names = Object.fromEntries(config.inputs.versions.map(version=>[version.id,version.display_name||version.name]));
+      for (const row of rows) {
+        const task=state.manifest.tasks.find(task=>(task.data as TaskData).comparisonId===row.comparison_id)!;
+        const projected=comparisonRow(projectedInputs,task,state.receipts[task.id].evaluation as ComparisonResult,projectedReceipts,names,fakeEvaluatorVersion);
+        assert(validateOutput(projected),JSON.stringify(validateOutput.errors));
+        for (const [label,candidate] of Object.entries((task.data as TaskData).candidates)) {
+          const source=projectedReceipts.get(task.dependencies[label])!.evaluation as AttributionResult;
+          const result=object(object(projected.evaluations)[candidate.version]);
+          assert.deepEqual((result.Problem as AttributionResult['Problem']).map(problem=>problem.evidence),source.Problem.map(problem=>problem.evidence));
         }
-        assert.deepEqual(projected.verdicts, row.verdicts, "source fields pass through all three stable model pairs without rewriting verdicts");
+        assert.deepEqual(projected.verdicts,row.verdicts);
       }
     });
     assert.equal((await validateRun(run)).valid, true);

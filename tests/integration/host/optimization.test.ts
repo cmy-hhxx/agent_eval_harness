@@ -9,7 +9,7 @@ import { buildPlan, comparisonWorkflow } from "@eval/workflows/comparison";
 import { createResultWriter } from "@eval/workflows/comparison";
 import { services } from "../../fixtures/services.js";
 import { readRunState, reconcileRun, writeRunState } from "@eval/workflows/comparison";
-import { evidenceSources, messageContentSources, cite, resolveEvidence } from "@eval/tools";
+import { messageContentSources, cite, resolveEvidence } from "@eval/tools";
 import { waitForTestState } from "../../fixtures/wait.js";
 import { canonicalEvidence } from "../../fixtures/evidence.js";
 import type { EvalConfig, TaskData } from "@eval/workflows/comparison";
@@ -43,14 +43,14 @@ async function stateFor(config: EvalConfig, plan: TaskPlan, acceptVerifications 
     const input = plan.inputs[inputId] as RawInput;
     const finalIndex = (task.data as TaskData).candidates.A.final_index;
     const final = messageContentSources(input.messages[finalIndex]).find(source => source.text.length)!;
-    const userIndex = input.messages.findIndex(message => message.role === "user");
-    const question = evidenceSources(input.messages[userIndex]).find(source => source.kind === "text" && source.path === "/content")!;
+
+
     const result = attributionResult(true, final.text, (task.data as TaskData).reference !== null, inputId);
     const actual = canonicalEvidence(inputId, finalIndex, final.text, final.path);
-    const norm = canonicalEvidence(inputId, userIndex, question.text, question.path);
-    result.correctness_evidence = result.has_standard_answer ? [actual] : [];
-    result.criterion_assessments.forEach(item => { item.evidence = [actual, norm]; });
-    result.findings[0]!.evidence = [actual];
+
+
+
+    if (result.Problem.length) result.Problem[0].evidence = [actual];
     return result;
   };
   const state: RunState = {

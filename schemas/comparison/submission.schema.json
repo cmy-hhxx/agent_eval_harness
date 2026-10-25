@@ -3,11 +3,10 @@
   "type": "object",
   "additionalProperties": false,
   "required": [
-    "a_summary",
-    "b_summary",
     "comparisons",
     "relative_preference",
-    "tradeoff"
+    "tradeoff",
+    "assessments"
   ],
   "properties": {
     "source_reviews": {
@@ -15,11 +14,27 @@
       "items": {
         "type": "object",
         "additionalProperties": false,
-        "required": ["slot_index", "candidate", "reason"],
+        "required": [
+          "slot_index",
+          "candidate",
+          "reason"
+        ],
         "properties": {
-          "slot_index": { "type": "integer", "minimum": 0 },
-          "candidate": { "enum": ["A", "B"] },
-          "reason": { "type": "string", "minLength": 1, "pattern": "\\S" }
+          "slot_index": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "candidate": {
+            "enum": [
+              "A",
+              "B"
+            ]
+          },
+          "reason": {
+            "type": "string",
+            "minLength": 1,
+            "pattern": "\\S"
+          }
         }
       }
     },
@@ -28,10 +43,20 @@
       "items": {
         "type": "object",
         "additionalProperties": false,
-        "required": ["slot_index", "reason"],
+        "required": [
+          "slot_index",
+          "reason"
+        ],
         "properties": {
-          "slot_index": { "type": "integer", "minimum": 0 },
-          "reason": { "type": "string", "minLength": 1, "pattern": "\\S" }
+          "slot_index": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "reason": {
+            "type": "string",
+            "minLength": 1,
+            "pattern": "\\S"
+          }
         }
       }
     },
@@ -67,13 +92,38 @@
         null
       ]
     },
-    "a_summary": {
-      "type": "string",
-      "minLength": 1
-    },
-    "b_summary": {
-      "type": "string",
-      "minLength": 1
+    "assessments": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "meets_core",
+          "summary",
+          "core_failure_refs"
+        ],
+        "properties": {
+          "meets_core": {
+            "type": [
+              "boolean",
+              "null"
+            ],
+            "description": "照录来源core_assessment；证据不足时仅needs_review可为null。核心失败明确引用已确认的requirements。"
+          },
+          "summary": {
+            "type": "string",
+            "minLength": 1
+          },
+          "core_failure_refs": {
+            "type": "array",
+            "uniqueItems": true,
+            "items": {
+              "type": "string",
+              "minLength": 1
+            }
+          }
+        }
+      }
     }
   },
   "$defs": {
@@ -84,7 +134,8 @@
       ],
       "additionalProperties": false,
       "required": [
-        "importance"
+        "importance",
+        "assessments"
       ],
       "properties": {
         "importance": {
@@ -100,6 +151,48 @@
             "B",
             null
           ]
+        },
+        "assessments": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "summary",
+              "finding_indices",
+              "status",
+              "evidence_status"
+            ],
+            "properties": {
+              "summary": {
+                "type": "string",
+                "minLength": 1
+              },
+              "finding_indices": {
+                "type": "array",
+                "uniqueItems": true,
+                "items": {
+                  "type": "integer",
+                  "minimum": 0
+                }
+              },
+              "status": {
+                "enum": [
+                  "met",
+                  "partial",
+                  "unmet",
+                  "unknown",
+                  "not_applicable"
+                ]
+              },
+              "evidence_status": {
+                "enum": [
+                  "established",
+                  "uncertain"
+                ]
+              }
+            }
+          }
         }
       }
     },

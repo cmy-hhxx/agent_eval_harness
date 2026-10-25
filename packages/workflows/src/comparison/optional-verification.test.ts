@@ -34,7 +34,6 @@ async function setup() {
   state.receipts[criteria.id] = receiptFor(criteria, analysis);
   for (const task of plan.tasks.filter(task => task.stage === "attribution")) {
     const result = attributionResult(true, "2+2=4", true, (task.data as TaskData).candidates.A.input_id);
-    result.task_analysis = analysis;
     state.receipts[task.id] = receiptFor(task, result);
   }
   const result = comparisonResult(); result.task_analysis = analysis;

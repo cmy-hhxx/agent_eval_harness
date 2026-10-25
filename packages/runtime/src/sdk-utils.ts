@@ -184,9 +184,11 @@ export function activeToolNames(result: ToolResult, names: string[], nextTool: s
     exploration?: { remaining?: number }; required_reads?: { covered?: boolean };
     draft_writes?: { remaining: number; tools: string[] };
   } } | undefined)?.budget;
-  const current = names.filter(name => !["inspect_material", "submit_evaluation", "submit_evaluation_file"].includes(name) || name === nextTool);
+  const current = names.filter(name => !["inspect_material", "submit_evaluation", "submit_evaluation_file", "confirm_evaluation"].includes(name) || name === nextTool ||
+    nextTool === "confirm_evaluation" && ["submit_evaluation", "submit_evaluation_file"].includes(name));
   if (budget?.exploration?.remaining !== 0) return current;
   return current.filter((name) => name === nextTool ||
+    nextTool === "confirm_evaluation" && ["submit_evaluation", "submit_evaluation_file"].includes(name) ||
     (name === "read_trace" && budget.required_reads?.covered === false) ||
     (budget.draft_writes !== undefined && budget.draft_writes.remaining > 0 && budget.draft_writes.tools.includes(name)));
 }

@@ -1,11 +1,11 @@
 import {scoreDirectory} from '@eval/prompts';
 
 /** A fixed grader for pipeline tests; actual source findings and uncertainty remain unchanged. */
-export function scoreSubmission(input:any){
+export function scoreSubmission(input:any,finalAffected=true){
   const ids=(input.evidence_catalog as {evidence_id:string}[]).map(row=>row.evidence_id),proof=ids.slice(0,2);
-  const problems=input.accepted_attribution.problems as {attribution:string;required_final_impact:boolean;evidence_ids:string[]}[];
+  const problems=input.accepted_attribution.problems as {attribution:string;evidence_ids:string[]}[];
   const known=problems.some(problem=>problem.attribution==='established'),uncertain=problems.length>0&&!known;
-  const final=problems.some(problem=>problem.required_final_impact)||input.accepted_attribution.core_assessment.meets_core===false;
+  const final=problems.length>0&&finalAffected;
   const judgment=(bad=false)=>({status:bad?(uncertain?'unverified':'violated'):'met',applicability:'both',
     reason:bad?'按已接受归因记录的缺陷或待核选档。':'按已接受归因确认的交付选档。',evidence_ids:proof});
   return {evaluations:Object.keys(scoreDirectory.units).map((_id,index)=>({...judgment(index===0&&problems.length>0),

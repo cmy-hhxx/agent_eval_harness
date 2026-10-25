@@ -8,7 +8,6 @@ import { analysisTraceMap, attributionTrace, validateOriginalAttributionEvidence
 import { collectInputs, contentText, locateRecordStream, loadRunInputs, normalizeInput, type Candidate, type RawInput, type EvaluationConfig } from "@eval/workflows/inputs";
 import {attributionProfile,type AttributionResult} from "@eval/agents/attribution";
 import attributionOutputSchema from '../../../../schemas/workflow/answer-review-attribution.schema.json' with {type:'json'};
-import rewrittenSchema from '../../../../schemas/workflow/rewritten.schema.json' with {type:'json'};
 import type {ScoreResult} from "@eval/agents/score";
 import {answerReviewMaterial} from "./material.js";
 import {reviewExecutionOrder} from './ordering.js';
@@ -24,9 +23,8 @@ function loadReviewInputs(manifest:RunManifest,records?:Map<string,Candidate>){r
   const record=source as Record<string,unknown>;
   return {raw:normalizeInput(source),origin:record._source,metadata:Object.hasOwn(record,'meta')?{meta:record.meta}:{}};
 });}
-export function attributionTextSlots(value:AttributionResult){return [{id:'summary',text:value.summary,label:'归因总结'},...value.findings.flatMap((f,i)=>[
-  {id:`findings.${i}.text`,text:f.text,label:'实际表现'}, {id:`findings.${i}.reason`,text:f.reason,label:'证据与影响'},
-  ...(f.problem?[{id:`findings.${i}.problem.label`,text:f.problem.label,label:'问题名称'},{id:`findings.${i}.problem.definition`,text:f.problem.definition,label:'问题定义'}]:[]),
+export function attributionTextSlots(value:AttributionResult){return [{id:'summary',text:value.summary,label:'归因总结'},...value.Problem.flatMap((problem,i)=>[
+  {id:`Problem.${i}.text`,text:problem.text,label:'问题'}, {id:`Problem.${i}.reason`,text:problem.reason,label:'证据与影响'},
 ])];}
 export async function planAnswerReview(config:AnswerReviewConfig){
   const indexed=await collectInputs(config,undefined,{materializeInputs:false});
@@ -139,11 +137,11 @@ export const answerReviewWorkflow:WorkflowDefinition={
 const resultFile=(stage:string)=>stage==='score'?'score.jsonl':stage==='instruction-review'?'instruction_review.jsonl':'attribution.jsonl';
 const validateAttributionOutput=new Ajv2020({allErrors:true,strict:false})
   .addSchema(attributionProfile.resultSchema!,'/attribution/result.schema.json')
-  .addSchema(rewrittenSchema,'/workflow/rewritten.schema.json')
   .addSchema(attributionOutputSchema,'/workflow/answer-review-attribution.schema.json')
   .getSchema('/workflow/answer-review-attribution.schema.json')!;
 function attributionEvaluation(row:JsonObject){
   const properties=(attributionProfile.resultSchema as {properties:Record<string,unknown>}).properties;
+  if(!validateAttributionOutput(row))throw Error('归因正式结果契约无效：'+JSON.stringify(validateAttributionOutput.errors));
   return Object.fromEntries(Object.keys(properties).filter(key=>Object.hasOwn(row,key)).map(key=>[key,row[key]]));
 }
 const resultEncoder=(task:PlannedTask,state:RunState,inputs:Record<string,unknown>)=>{
@@ -154,18 +152,23 @@ const resultEncoder=(task:PlannedTask,state:RunState,inputs:Record<string,unknow
   const missingMeta=(row:JsonObject)=>!Object.hasOwn(row,'meta')&&Object.hasOwn(metadata,'meta')?{meta:metadata.meta}:{};
   if(task.stage==='rewrite'){
     const source=state.receipts[data.rewriteOf!]!,row=source.exported!.row;
-    const updated={...row,...missingMeta(row),rewritten:{evaluator_version:receipt.evaluatorVersion,...receipt.evaluation as object}} as JsonObject;
+    const updated={...row,meta:{...row.meta as JsonObject,rewritten:{evaluator_version:receipt.evaluatorVersion,...receipt.evaluation as object}}} as JsonObject;
     if(!validateAttributionOutput(updated))throw Error('归因改写导出契约无效：'+JSON.stringify(validateAttributionOutput.errors));
     return {id:data.rewriteOf!,file:'attribution.jsonl',auxiliary:true,row:updated};
   }
-  if(receipt.exported){const row={...receipt.exported.row,...missingMeta(receipt.exported.row)};
+  if(receipt.exported){const row=task.stage==='attribution'?receipt.exported.row:{...receipt.exported.row,...missingMeta(receipt.exported.row)};
     if(task.stage==='attribution'&&!validateAttributionOutput(row))throw Error('归因续跑导出契约无效：'+JSON.stringify(validateAttributionOutput.errors));
     return {...receipt.exported,row};}
   const candidate=data.candidate;
-  const row={evaluation_type:task.stage,evaluator_version:receipt.evaluatorVersion,task_id:task.id,submission_id:receipt.submissionId,
+  const identity={evaluation_type:task.stage,evaluator_version:receipt.evaluatorVersion,task_id:task.id,submission_id:receipt.submissionId,
+    run_id:state.manifest.runId,input_id:candidate.input_id,batch_id:candidate.batch_id,case_id:candidate.case_id,version:candidate.version,judge:receipt.judge};
+  const {meta:originalMeta,...source}=metadata;
+  const row=(task.stage==='attribution'?{...receipt.evaluation as AttributionResult,meta:{
+    ...(receipt.evaluation as AttributionResult).meta,...identity,...source,...(Object.hasOwn(metadata,'meta')?{source_meta:originalMeta}:{}),
+    ...(receipt.audit.review?{verification:receipt.audit.review}:{})}}:{evaluation_type:task.stage,evaluator_version:receipt.evaluatorVersion,task_id:task.id,submission_id:receipt.submissionId,
     input_id:candidate.input_id,batch_id:candidate.batch_id,case_id:candidate.case_id,version:candidate.version,...metadata,
-    ...(task.stage==='attribution'?receipt.evaluation as object:{evaluation:receipt.evaluation}),
-    ...(receipt.audit.review?{verification:receipt.audit.review}:{}),judge:receipt.judge} as JsonObject;
+    evaluation:receipt.evaluation,
+    ...(receipt.audit.review?{verification:receipt.audit.review}:{}),judge:receipt.judge}) as JsonObject;
   if(task.stage==='attribution'&&!validateAttributionOutput(row))throw Error('归因导出契约无效：'+JSON.stringify(validateAttributionOutput.errors));
   return {id:task.id,file:resultFile(task.stage),row};
 };
@@ -179,12 +182,12 @@ const codec:RunCodec<Checkpoint>={
         saved={...rest,audit:exported||completed?audit:rest.audit,...(exported?{exported:{id:exported.id,file:exported.file}}:{evaluation:completed?{completed_by:completed}:evaluation})};}
       return [id,{task:definition,data:{...Object.fromEntries(Object.entries(info).filter(([key])=>key!=='candidate')),input_id:info.candidate.input_id},state:states[id],...(saved?{receipt:saved}:{})}];}))};},
   references(checkpoint,ids){if(checkpoint.workflow!=='answer-review')throw Error('该run不属于独立Score/Attribution流程');return Object.entries(checkpoint.tasks).flatMap(([id,row])=>!ids||ids.has(id)?row.receipt?.exported?[row.receipt.exported]:[]:[]);},
-  resultId:row=>String(row.task_id),
+  resultId:row=>String(Object.hasOwn(row,'Problem')?(row.meta as JsonObject).task_id:row.task_id),
   decode(checkpoint,read,ids){if(checkpoint.workflow!=='answer-review')throw Error('该run不属于独立Score/Attribution流程');
     const tasks:PlannedTask[]=[],receipts:RunState['receipts']={},states:RunManifest['states']={};
     for(const[id,row]of Object.entries(checkpoint.tasks)){tasks.push({id,...row.task,data:{...Object.fromEntries(Object.entries(row.data).filter(([key])=>key!=='input_id')),candidate:checkpoint.inputs[row.data.input_id]}});states[id]=row.state;
       if(row.receipt&&(!ids||ids.has(id))){const saved=row.receipt,exported=saved.exported?{...saved.exported,row:read(saved.exported)}:undefined;
-        receipts[id]={...saved,evaluation:saved.evaluation??(row.task.stage==='rewrite'?{rewrites:(exported?.row.rewritten as any)?.rewrites}:row.task.stage==='attribution'?attributionEvaluation(exported!.row):row.task.stage==='instruction-review'?exported?.row.instruction_review:exported?.row.evaluation),audit:{...saved.audit,...(exported?.row.verification?{review:exported.row.verification}:{})},...(exported?{exported}:{})};}}
+        receipts[id]={...saved,evaluation:saved.evaluation??(row.task.stage==='rewrite'?{rewrites:((exported?.row.meta as JsonObject)?.rewritten as any)?.rewrites}:row.task.stage==='attribution'?attributionEvaluation(exported!.row):row.task.stage==='instruction-review'?exported?.row.instruction_review:exported?.row.evaluation),audit:{...saved.audit,...(exported?.row.verification?{review:exported.row.verification}:{})},...(exported?{exported}:{})};}}
     return {manifest:{...checkpoint.manifest,tasks,states,inputs:Object.fromEntries(Object.keys(checkpoint.inputs).map(id=>[id,{id,name:id}])),inputCatalog:Object.values(checkpoint.inputs)},receipts,usage:checkpoint.usage,recordedAttempts:checkpoint.recordedAttempts};
   },
 };
@@ -289,15 +292,19 @@ export async function reportAnswerReview(run:string,state?:RunState){
   }else{
     lines.push('| 题目 | 模型 | 问题数 | 中文归因 |','|---|---|---|---|');
     for(const task of state.manifest.tasks.filter(t=>t.stage==='attribution')){const receipt=state.receipts[task.id];if(!receipt)continue;const c=(task.data as TaskData).candidate,value=receipt.evaluation as AttributionResult;
-      lines.push(`| ${c.case_id} | ${c.version} | ${value.findings.filter(f=>f.type==='problem').length} | ${value.summary.replaceAll('|','\\|').replaceAll('\n',' ')} |`);}
+      lines.push(`| ${c.case_id} | ${c.version} | ${value.Problem.length} | ${value.summary.replaceAll('|','\\|').replaceAll('\n',' ')} |`);}
   }
   lines.push('');await atomicWrite(path.join(run,'report.md'),lines.join('\n'));return summary;
 }
 export function validateAnswerReview(state:RunState){
   for(const task of state.manifest.tasks){const r=state.receipts[task.id];if(!r)continue;if(r.taskId!==task.id)throw Error('任务收据身份不一致');if(task.stage==='score'&&!isFormalScore(task,r))continue;if(!r.exported||r.exported.id!==((task.data as TaskData).rewriteOf??task.id))throw Error('正式结果引用与任务不一致');
     const row=r.exported.row,value=task.stage==='attribution'?attributionEvaluation(row):task.stage==='instruction-review'?row.instruction_review:row.evaluation;
-    if(task.stage==='attribution'&&!validateAttributionOutput(row))throw Error('归因导出元信息契约无效');
-    if(task.stage!=='rewrite'&&canonical(value)!==canonical(r.evaluation))throw Error('正式结果正文与已接受收据不一致');}
+    if(task.stage==='attribution'){
+      if(!validateAttributionOutput(row))throw Error('归因导出元信息契约无效');
+      const meta=row.meta as JsonObject,candidate=(task.data as TaskData).candidate;
+      if(meta.task_id!==task.id||meta.submission_id!==r.submissionId||meta.run_id!==state.manifest.runId||meta.evaluator_version!==r.evaluatorVersion||meta.input_id!==candidate.input_id||meta.case_id!==candidate.case_id||meta.batch_id!==candidate.batch_id||meta.version!==candidate.version)throw Error('归因正式结果身份与收据不一致');
+    }
+    if(task.stage!=='rewrite'&&canonical(task.stage==='attribution'?{...value as object,meta:{}}:value)!==canonical(task.stage==='attribution'?{...r.evaluation as object,meta:{}}:r.evaluation))throw Error('正式结果正文与已接受收据不一致');}
   return {valid:true,receipts:Object.keys(state.receipts).length};
 }
 

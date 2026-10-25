@@ -1,5 +1,5 @@
 export {checkAttributionLanguage,type AttributionLanguageField,type AttributionLanguageStatus} from './language.js';
-import { agentPrompt, attributionConditionalRules, standardConflictInstructions } from "@eval/prompts";
+import { agentPrompt, attributionConditionalRules, attributionCompletionReview } from "@eval/prompts";
 import { type AgentDefinition, type AgentProfile } from "@eval/contracts";
 import requestSchema from "../../../../schemas/attribution/request.schema.json" with { type: "json" };
 import submissionSchema from "../../../../schemas/attribution/submission.schema.json" with { type: "json" };
@@ -11,13 +11,12 @@ import { findingIssueContext } from "./finding-feedback.js";
 import { attributionSubmissionSchema } from "./submission-schema.js";
 import { attributionFindingBasis } from "./finding-basis.js";
 import { investigationMaterial } from "./investigation-material.js";
-import { responsibilityFunctions } from "./responsibility.js";
 export { attributionFindingBasis } from "./finding-basis.js";
 export { buildAttributionExecutionNodes, buildAttributionTransitions, type AttributionExecutionNode, type AttributionTransition, type TransitionKind, type TransitionBoundary } from "./transitions.js";
 export { attributionNormDirectory, type AttributionNorm } from "./norm-directory.js";
 export { numericReferenceDirectory } from "./units.js";
 export * from "./types.js";
-export { responsibilityLabels, responsibilityFunctions,responsibilityComponentName } from "./responsibility.js";
+export { responsibilityLabels,responsibilityComponentName } from "./responsibility.js";
 export { attributionTableChecks, attributionTableReview } from "./table-review.js";
 export type { TableReviewConcern } from "./table-review.js";
 // Attribution resolves evidence IDs into source locations before the result is accepted.
@@ -28,6 +27,7 @@ const toolNames = [
 const prompt = agentPrompt("attribution", toolNames, { fileSubmission:false });
 export const attributionProfile: AgentProfile = {
   id: "default",
+  completionReview: attributionCompletionReview,
 
   requestSchema,
   submissionSchema,
@@ -41,12 +41,8 @@ export const attributionProfile: AgentProfile = {
     const { norm_directory: _norms, component_catalog: _actors, business_chains: _chains, ...answerMaterial } = answer;
     const requirements: Record<string, unknown>[] = analysis.requirements.map((item,index) => ({ ...item,
       requirement_index: Number(item.requirement_index ?? index) + 1 }));
-    const { allow_standard_conflict, ...material } = input;
+    const { allow_standard_conflict: _standardReview, ...material } = input;
     const shown = { ...material, task_analysis: { ...analysis, requirements },
-      responsibility_functions: responsibilityFunctions.map((row, index) => ({ function_index: index + 1, ...row })),
-      ...(allow_standard_conflict === true ? { standard_answer_review: standardConflictInstructions } : {}),
-      criterion_check_count: requirements.length+analysis.scoring_points.length+analysis.red_flags.length,
-      criterion_checks: [...requirements,...analysis.scoring_points,...analysis.red_flags].map(item => ({ text:item.text })),
       answer: answerMaterial,
       finding_basis: attributionFindingBasis(input).map(({requirement_index:_requirement,norm_index:_norm,...choice})=>choice),
     };

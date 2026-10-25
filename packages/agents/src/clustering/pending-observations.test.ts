@@ -10,7 +10,7 @@ function ref(input = randomUUID(), finding = "f0", version = "a_fast"): ProblemO
   return { version, input_id: input, finding_id: finding,
     attribution: { run: options.run, run_id: "pilot", task_id: randomUUID(), submission_id: randomUUID(), evaluator_version: "r210" },
     source: { file: "/inputs/original.jsonl", line: 3 }, batch_id: "2026-10-14", case_id: input,
-    components: ["模型自身推理"], evidence_status: "established", importance: "high", summary: "判断方向与已有数据相反。" };
+    components: ["模型自身推理"], evidence_status: "established", summary: "判断方向与已有数据相反。" };
 }
 
 test("pending references preserve formal classes, occurrences and original responsibility arrays", () => {

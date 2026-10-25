@@ -23,7 +23,7 @@ export function comparisonVerificationSubmission(selections: Partial<ComparisonV
 /** Fixtures use the current thin submission; the canonical result remains a separate contract. */
 export function comparisonSubmission(result: ComparisonResult, slots: ComparisonSlot[]): ComparisonSubmission {
  const rows = result.decision_basis?.comparisons ?? [];
- return { a_summary: result.assessments.A.summary, b_summary: result.assessments.B.summary,
+ return { assessments:structuredClone(result.assessments),
   comparisons: slots.map(slot => {
    const row = [...rows].sort((a,b) => {
     const score = (row:ComparisonResult["decision_basis"]["comparisons"][number]) => Object.entries(slot.finding_indices).reduce((sum,[label,indices]) => sum+indices.filter(index => row.assessments[label]?.finding_indices.includes(index)).length,0);
@@ -33,16 +33,14 @@ export function comparisonSubmission(result: ComparisonResult, slots: Comparison
      indices.some(index => row.assessments[label]?.finding_indices.includes(index))));
    if (!row && slot.optional) return null;
    if (slot.kind === 'resource') return { importance: row?.importance ?? 'medium' };
-   return { importance: row?.importance ?? 'medium', better_candidate: row?.better_candidates[0] ?? null };
+   return { importance: row?.importance ?? 'medium', better_candidate: row?.better_candidates[0] ?? null,assessments:row?.assessments??Object.fromEntries(Object.keys(result.assessments).map(label=>[label,{status:'met',evidence_status:'established',summary:'受控检查已完成。',finding_indices:[]}])) };
   }), preference: result.ranking?.length > 1 ? result.ranking[0][0] : null,
   relative_preference: result.ranking?.[0]?.[0] === 'B' ? 'B' : 'A',
   tradeoff: result.decision_basis.tradeoff };
 }
 export function requestComparisonSubmission(request: AgentRequest, result: ComparisonResult) {
  const draft = comparisonSubmission(result, comparisonSlots(request));
- const attributions = (request.input as unknown as import('@eval/agents/comparison').ComparisonInput).attributions;
- const passed = Object.keys(attributions).filter(label => attributions[label].core_assessment.meets_core === true);
- if (passed.length === 1 && Object.values(attributions).some(item => item.core_assessment.meets_core === false))
-  draft.relative_preference = passed[0] as 'A' | 'B';
+ const passed=Object.keys(result.assessments).filter(label=>result.assessments[label].meets_core===true);
+ if(passed.length===1&&Object.values(result.assessments).some(item=>item.meets_core===false))draft.relative_preference=passed[0] as 'A'|'B';
  return draft;
 }

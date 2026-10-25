@@ -50,14 +50,13 @@ export function analysisComparisonScope(row: JsonObject, config: EvalConfig): An
   const evaluations = row.evaluations as Record<string, AttributionResult>;
   return { comparisonTier, case: { batchId: identity.batch_id, caseId: identity.case_id }, models, comparisons,
     assessments: models.map((model) => {
-      const findings = evaluations?.[model.model]?.findings;
+      const findings = evaluations?.[model.model]?.Problem;
       if (!Array.isArray(findings)) throw new Error("正式比较缺少模型归因：" + model.model);
       const dimensions = new Map<string, ProblemDimension>();
       for (const finding of findings) {
-        if (finding.type !== "problem") continue;
-        const value = dimensions.get(finding.dimension) ?? { dimension: finding.dimension, established: false, uncertain: false };
-        value[finding.assessment.evidence_status] = true;
-        dimensions.set(finding.dimension, value);
+        const value = dimensions.get(finding.text) ?? { dimension: finding.text, established: false, uncertain: false };
+        value[finding.evidence_status] = true;
+        dimensions.set(finding.text, value);
       }
       return { model: model.model, modelName: model.modelName, meetsCore: assessments[model.model]!.meets_core,
         summary: assessments[model.model]!.summary, problemDimensions: [...dimensions.values()] };

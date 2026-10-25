@@ -4,6 +4,8 @@ TypeScript Host 编排评测任务，Pi / Prime Worker 执行模型与工具调�
 
 开发先读 [AGENTS.md](AGENTS.md)。当前行为以源码、配置和 Schema 为准。
 
+归因正式结果仅含 meta、summary、Problem、has_standard_answer、is_correct、correct_reason；模型填写问题与证据责任判断，程序组装身份和来源。归因专跑使用 `run --stage attribution`，不启动评分或聚类。
+
 ## 远程工作台
 
 工作台入口为 `workbench.sh`，统一控制问财日常四路与 AIME 日常两阶段评测。服务器代码与运行数据分离：

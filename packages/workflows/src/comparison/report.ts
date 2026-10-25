@@ -69,7 +69,6 @@ export function summarizeResults(
     core_case_count: number; core_decidable_count: number; core_undetermined: number; core_conflicted_count: number;
   }> = {};
   const diagnostics: JsonObject[] = [];
-  const standardConflicts: JsonObject[] = [];
   const coreCases = new Map<string, { batch_id: string; case_id: string; version: string; rows: { comparison_id: unknown; value: boolean | null }[] }>();
   const answerKey = (batch: unknown, caseId: unknown, version: string) => canonical([batch, caseId, version]);
   const standing = (version: string) =>
@@ -207,11 +206,6 @@ export function summarizeResults(
       diagnostics.push({ metric: "correctness", code: "conflicting_attribution_conclusions", batch_id: value.batch_id,
         case_id: value.case_id, version: value.version, task_ids: selected.map((row) => row.task_id), values: [...conclusions] });
     }
-    for (const row of selected.filter((item) => item.standard_conflict === true)) {
-      standardConflicts.push({ batch_id: value.batch_id, case_id: value.case_id, version: value.version, task_id: row.task_id });
-      diagnostics.push({ metric: "standard", code: "standard_conflict", batch_id: value.batch_id,
-        case_id: value.case_id, version: value.version, task_ids: [row.task_id] });
-    }
     const result = conclusions.values().next().value;
     stats[incomplete || ambiguous || conflicted || result === null || result === undefined ? "undetermined" : result ? "correct" : "incorrect"]++;
   }
@@ -246,7 +240,6 @@ export function summarizeResults(
       incomplete: Math.max(0, tasks.filter((task) => task.stage === "comparison" && !(task.data as TaskData).verificationAudit).length -
         comparisons.length - pending.length),
     },
-    ...(standardConflicts.length ? { standard_conflicts: standardConflicts } : {}),
     task_statuses: statuses,
     completed_comparisons: comparisons.length,
     head_to_head: headToHead,
@@ -354,7 +347,7 @@ export async function reportRun(run: string, options: { details?: boolean } = {}
     const analysis = view.task_analysis as ComparisonResult["task_analysis"];
     const reviews = view.evaluations as Record<
       string,
-      { summary: string; findings: (Finding & { stage_trace?: JsonObject })[]; is_correct: boolean | null; correctness_reason: string }
+      { summary: string; Problem: (Finding & { stage_trace?: JsonObject })[]; is_correct: boolean | null; correct_reason: string | null }
     >;
     const verdicts = view.verdicts as Record<string, JsonObject>;
     const candidates = Object.fromEntries(
@@ -365,8 +358,7 @@ export async function reportRun(run: string, options: { details?: boolean } = {}
           assessment: (view.assessments as JsonObject)[id],
           is_correct: review.is_correct,
           summary: review.summary,
-          strengths: review.findings.filter((f) => f.type === "strength"),
-          weaknesses: review.findings.filter((f) => f.type === "problem"),
+          Problem: review.Problem,
         },
       ]),
     );
@@ -437,11 +429,9 @@ export async function reportRun(run: string, options: { details?: boolean } = {}
         assessment.summary,
         "",
       );
-      for (const finding of review.findings) {
+      for (const finding of review.Problem) {
         markdown.push(
-          `- **${finding.type === "strength" ? "优势" : "不足"}｜${finding.text}**：${finding.reason}`,
-          "",
-          `影响：${finding.assessment.impact}`,
+          `- **问题｜${finding.text}**：${finding.reason}`,
           "",
         );
         const trace = finding.stage_trace as { tools: string[]; confidence: string } | undefined;
@@ -668,14 +658,12 @@ export async function writeOverview(
       links.push(`[${label}](_internal/diagnostics/${name}.jsonl)`);
   const summaryVersions = (summary.evaluator_versions as string[]).join("、") || "无已接受结果";
   const coverage = summary.coverage as { planned: number; decided: number; pending: number; incomplete: number } | undefined;
-  const standardConflicts = (summary.standard_conflicts as JsonObject[] | undefined) ?? [];
   await atomicWrite(
     locateRun(run).report,
     `# 评测运行 ${summary.run_id}\n\n状态：${summary.status}；评测器：${summaryVersions}；完成比较：${summary.completed_comparisons}。\n\n` +
       `执行失败：${failures}；依赖阻塞：${statuses.blocked || 0}；已取消：${statuses.cancelled || 0}；输入跳过对比组：${skipped}。\n\n` +
       (coverage
-        ? `比较覆盖：已决 ${coverage.decided}；待核 ${coverage.pending}；未完成 ${coverage.incomplete}（计划 ${coverage.planned}）。` +
-          (standardConflicts.length ? `标准冲突待核：${standardConflicts.length} 例（见 stats.json）。` : "") + "\n\n"
+        ? `比较覆盖：已决 ${coverage.decided}；待核 ${coverage.pending}；未完成 ${coverage.incomplete}（计划 ${coverage.planned}）。\n\n`
         : "") +
       `离线校验：${validation ? (validation.valid ? "通过" : `未通过（${validation.errors.length} 项错误）`) : "尚未校验"}。` +
       (validation

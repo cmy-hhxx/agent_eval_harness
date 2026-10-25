@@ -68,7 +68,6 @@ export function modelBehavior(tasks: readonly PlannedTask[], receipts: Readonly<
   const attributions = candidates.filter(task => !superseded.has(task.id));
   const planned = new Set(attributions.map(task => task.inputIds.answer));
   const rows = new Map<string, ModelBehaviorRow>();
-  const strengths = new Map<string, SourceReference[]>();
   for (const task of attributions) {
     const receipt = receipts[task.id];
     if (!receipt) continue;
@@ -78,19 +77,14 @@ export function modelBehavior(tasks: readonly PlannedTask[], receipts: Readonly<
     if (!row) rows.set(candidate.input_id, row = { input_id: candidate.input_id, batch_id: candidate.batch_id,
       case_id: candidate.case_id, version: candidate.version, sources: [], findings: [] });
     row.sources.push(source);
-    for (const finding of (receipt.evaluation as AttributionResult).findings) {
-      if (finding.type === "strength") {
-        const key = canonical([candidate.input_id, finding.finding_id]);
-        strengths.set(key, [...(strengths.get(key) ?? []), source]);
-      }
-      if (finding.type !== "problem" || !finding.problem) continue;
-      const components = technicalResponsibilityLabels(finding.problem).sort();
-      const responsibility: ResponsibilityGroup = finding.assessment.evidence_status !== "established" ? "unconfirmed"
-        : !components.length ? "unknown" : finding.problem.component.some(cause=>cause.technical_domain==='模型推断与生成')
-          ? finding.problem.component.every(cause=>cause.technical_domain==='模型推断与生成') ? "model" : "mixed" : "other";
-      const observation = { finding_id: finding.finding_id, responsibility, components, text: finding.text,
-        impact: finding.assessment.impact, source_conflict: false };
-      const existing = row.findings.find(item => item.finding_id === finding.finding_id);
+    for (const finding of (receipt.evaluation as AttributionResult).Problem) {
+      const components = technicalResponsibilityLabels(finding).sort();
+      const responsibility: ResponsibilityGroup = finding.evidence_status !== "established" ? "unconfirmed"
+        : !components.length ? "unknown" : finding.causes.some(cause=>cause.kind==='generation'||cause.kind==='request_formation')
+          ? finding.causes.every(cause=>cause.kind==='generation'||cause.kind==='request_formation') ? "model" : "mixed" : "other";
+      const observation = { finding_id: finding.problem_id, responsibility, components, text: finding.text,
+        impact: finding.reason, source_conflict: false };
+      const existing = row.findings.find(item => item.finding_id === finding.problem_id);
       if (!existing) row.findings.push({ ...observation, sources: [source] });
       else {
         const { sources: _sources, ...previous } = existing;
@@ -101,13 +95,6 @@ export function modelBehavior(tasks: readonly PlannedTask[], receipts: Readonly<
         if (!existing.sources.some(item => item.submission_id === source.submission_id)) existing.sources.push(source);
       }
     }
-  }
-  for (const row of rows.values()) for (const finding of row.findings) {
-    const counterSources = strengths.get(canonical([row.input_id, finding.finding_id]));
-    if (!counterSources) continue;
-    flagSourceConflict(finding);
-    for (const source of counterSources)
-      if (!finding.sources.some(item => item.submission_id === source.submission_id)) finding.sources.push(source);
   }
   const byVersion: Record<string, { planned_answers: number; accepted_answers: number; problems: Record<ResponsibilityGroup, number> }> = {};
   for (const task of attributions) {

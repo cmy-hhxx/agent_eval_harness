@@ -532,16 +532,14 @@ test("image observations require an actual image tool audit", async () => {
       task = plan.tasks.find((item) => item.stage === "attribution")!,
       result = attributionResult(false, "2+2=4", false, task.inputIds.answer!),
       audit = emptyAudit();
-    result.criterion_assessments.forEach(row => {
-      row.evidence![0] = canonicalEvidence(task.inputIds.answer!, 1, "2+2=4", "/content/0/text");
-    });
-    result.findings[0].evidence[0] = { evidence_id: evidenceId(task.inputIds.answer!, 1, "image"), message_index: 1, quote: "[图像观察]图片呈现结果" };
-    result.findings[0].evidence.push(canonicalEvidence(task.inputIds.answer!, 0, "计算2+2"));
+
+    result.Problem[0].evidence[0] = { evidence_id: evidenceId(task.inputIds.answer!, 1, "image"), message_index: 1, quote: "[图像观察]图片呈现结果" };
+    result.Problem[0].evidence.push(canonicalEvidence(task.inputIds.answer!, 0, "计算2+2"));
     const delivered=canonicalEvidence(task.inputIds.answer!,1,"2+2=4","/content/0/text");
-    result.findings[0].evidence.push(delivered);
+    result.Problem[0].evidence.push(delivered);
     const candidate=Object.values((task.data as TaskData).candidates).find(candidate=>candidate.input_id===task.inputIds.answer)!;
-    const binding=bindAttributionMaterial(candidate,input,result.task_analysis);
-    Object.assign(result.findings[0].problem!,unknownFormationFixture(binding.request,[delivered]));
+    const binding=bindAttributionMaterial(candidate,input);
+    Object.assign(result.Problem[0],unknownFormationFixture(binding.request,[delivered]));
     assert.throws(() => validateEvaluation(task, plan.inputs, result, audit, {}), /未查看/);
     const runtime = new ToolRuntime(
       {
@@ -778,11 +776,11 @@ test("subjective inputs still run attribution and direct evidence needs no force
     const prepared = prepare(task, plan.inputs, {});
     assert(!prepared.evaluation.toolNames.includes("set_task_contract"));
     const result = attributionResult(true, "2+2=4", false, task.inputIds.answer!), audit = emptyAudit();
-    result.findings[0].evidence.push(canonicalEvidence(task.inputIds.answer!, 0, "计算2+2"));
+    result.Problem[0].evidence.push(canonicalEvidence(task.inputIds.answer!, 0, "计算2+2"));
     validateEvaluation(task, plan.inputs, result, audit, {});
     assert.equal(audit.calls, 0);
     const bad = structuredClone(result);
-    bad.findings[0].evidence[0].quote = "fabricated";
+    bad.Problem[0].evidence[0].quote = "fabricated";
     assert.throws(() => validateEvaluation(task, plan.inputs, bad, emptyAudit(), {}), /原文|证据/);
     const subjective = attributionResult(true, "2+2=4", true, task.inputIds.answer!);
     assert.throws(
@@ -790,15 +788,8 @@ test("subjective inputs still run attribution and direct evidence needs no force
       /has_standard_answer/,
     );
     const forged = structuredClone(result);
-    forged.findings[0] = {
-      ...forged.findings[0],
-      type: "problem",
-      problem: { diagnosis: "other" as const, ...unknownFormationFixture(bindAttributionMaterial(
-        Object.values((task.data as TaskData).candidates).find(candidate=>candidate.input_id===task.inputIds.answer)!,
-        plan.inputs[task.inputIds.answer] as RawInput,forged.task_analysis).request,forged.findings[0].evidence),
-        label: "问题", definition: "描述" },
-    } as (typeof forged.findings)[number];
-    forged.findings[0].problem!.component[0].actor_index=99999;
+
+    forged.Problem[0].causes[0].actor_index=99999;
     assert.throws(
       () => validateEvaluation(task, plan.inputs, forged, emptyAudit(), {}),
       (error: unknown) => error instanceof ValidationError && error.issues!.some(issue => issue.code === "responsibility_actor"),

@@ -215,7 +215,8 @@ export async function startWorker(
       }
       if (failure.draft !== undefined) await writeJson(draftPath, failure.draft);
       const errorSet = (errors: ValidationIssue[]) => canonical(errors.map((error) => canonical(error)).sort());
-      const nextContentTool = () => contentToolName(spec.evaluation, Boolean(audit.inspection));
+      let completionCandidate: Submission | undefined;
+      const nextContentTool = () => completionCandidate ? "confirm_evaluation" : contentToolName(spec.evaluation, Boolean(audit.inspection));
       const reserveFileDraft = () => {
         if (spec.evaluation.fileSubmission && submissions < 1 + spec.policy.repairAttempts)
           runtime.reserveDraftWrite();
@@ -328,13 +329,26 @@ export async function startWorker(
         });
         return { ...feedback, content: [...feedback.content, ...content] };
       };
+      // Inspection and final submission use the same protected, progress-checked repair path.
+      const supplyRejectedMaterial = async (errors: ValidationIssue[], draft: unknown, contentCharged = true) => {
+        const reads = investigationReads(errors);
+        if (!errors.length || !errors.every(issue => issue.code === "investigation_read_required") || !reads.length) return undefined;
+        if (contentCharged) submissions--;
+        await rejected(errors, draft, false, false);
+        const material = await supplyRequiredMaterial(reads);
+        if (material) return material;
+        const message = "调查补读后同一缺口无进展：原文已被实际读取，但校验仍要求相同坐标，停止循环重提。";
+        const feedback = await rejected([{ category: "evidence", code: "investigation_read_no_progress", path: "/", message,
+          expected: { read_requests: reads } }], draft, false, false);
+        controller.abort(new Error(message)); void attempt.session?.abort(); return feedback;
+      };
       const rejectedLoad = async (errors: ValidationIssue[]) => {
         fileErrors++;
         const feedback = await rejected(errors, failure.draft, false, false, true);
         if (!failure.stopped) reserveFileDraft();
         return feedback;
       };
-      const submitExclusive = async (load: () => Promise<unknown>, jsonText = false) => {
+      const submitExclusive = async (load: () => Promise<unknown>, jsonText = false, completionReview?: Submission["completionReview"]) => {
         if (accepted)
           return {
             ...textResult({
@@ -346,7 +360,7 @@ export async function startWorker(
         controller.signal.throwIfAborted();
         const material = await supplyRequiredMaterial(investigationReads(failure.errors));
         if (material) return material;
-        if (submissions >= 1 + spec.policy.repairAttempts) throw new Error("提交修正次数已耗尽");
+        if (!completionReview && submissions >= 1 + spec.policy.repairAttempts) throw new Error("提交修正次数已耗尽");
         let result: unknown;
         try {
           result = await load();
@@ -357,9 +371,9 @@ export async function startWorker(
           }
           return rejectedFile(error);
         }
-        submissions++;
+        if (!completionReview) { submissions++; completionCandidate = undefined; }
         runtime.clearDraftWrite();
-        const emitLoaded = () => emit(attempt, "submission", { accepted: false, content_loaded: true, evaluation: result,
+        const emitLoaded = () => emit(attempt, "submission", { accepted: false, content_loaded: !completionReview, evaluation: result,
           contentSubmissions: (spec.recovery?.contentSubmissions || 0) + submissions,
           ...(jsonRepairs ? { jsonRepairs } : {}) });
         await writeJson(draftPath, result);
@@ -368,6 +382,7 @@ export async function startWorker(
           attemptId: spec.attemptId,
           taskId: spec.taskId,
           evaluation: result,
+          ...(completionReview ? { completionReview } : {}),
           audit: structuredClone(audit),
           usage: { ...usage },
           submissionStats: {
@@ -400,17 +415,22 @@ export async function startWorker(
                     message: error.message,
                   },
                 ];
-              const reads=investigationReads(errors);
-              if(errors.length&&errors.every(issue=>issue.code==='investigation_read_required')&&reads.length){
-                // Host has rejected definitively; this is material delivery, not a new verdict.
-                submissions--;
-                await rejected(errors,result,false,false);
-                const material=await supplyRequiredMaterial(reads);
-                if(material)return material;
-                const message='调查补读后同一缺口无进展：原文已被实际读取，但校验仍要求相同坐标，停止循环重提。';
-                const feedback=await rejected([{category:'evidence',code:'investigation_read_no_progress',path:'/',message,expected:{read_requests:reads}}],result,false,false);
-                controller.abort(new Error(message));void attempt.session?.abort();return feedback;
+              if (spec.evaluation.completionReview && errors.length === 1 && errors[0].code === 'completion_review_required') {
+                completionCandidate = submission;
+                failure = { evidenceBank: [...audit.evidenceBank!], draft: structuredClone(result), errors,
+                  contentSubmissions: submission.submissionStats!.contentSubmissions, fileErrors: submission.submissionStats!.fileErrors,
+                  repeatedErrors: 0, stopped: false, attemptId: spec.attemptId,
+                  ...(failure.inspection ? { inspection: failure.inspection } : {}) };
+                record.failure = failure;
+                await saveRecord();
+                emitLoaded();
+                return textResult({ accepted: false, review_pending: true, candidate_id: submission.submissionId,
+                  next_tool: 'confirm_evaluation', instructions: spec.evaluation.completionReview, errors,
+                  budget: { content_remaining: Math.max(0, 1 + spec.policy.repairAttempts - submissions) } });
               }
+              const material = await supplyRejectedMaterial(errors, result, !completionReview);
+              if (material) return material;
+              completionCandidate = undefined;
               emitLoaded();
               return rejected(errors,result);
             }
@@ -467,9 +487,9 @@ export async function startWorker(
       runtime.context.inspectMaterial = (args, signal) => enqueueContent(async () => {
         signal.throwIfAborted();
         if (!spec.evaluation.inspectionSchema) throw new Error("当前任务未配置材料核查");
-        if (submissions >= 1 + spec.policy.repairAttempts) throw new Error("提交修正次数已耗尽");
-        const material = await supplyRequiredMaterial();
+        const material = await supplyRequiredMaterial(investigationReads(failure.errors));
         if (material) return material;
+        if (submissions >= 1 + spec.policy.repairAttempts) throw new Error("提交修正次数已耗尽");
         let value: unknown = args;
         if (spec.evaluation.fileSubmission) {
           try { value = await loadFileContent(args); }
@@ -502,8 +522,12 @@ export async function startWorker(
             return textResult({ accepted: true, material: result.material, budget: {
               content_remaining: Math.max(0, 1 + spec.policy.repairAttempts - submissions) } });
           } catch (error) {
-            if (error instanceof HttpError && error.status < 500)
-              return rejected(error.issues ?? [{ category: "decision", code: "inspection_rejected", path: "/", message: error.message }], value);
+            if (error instanceof HttpError && error.status < 500) {
+              const errors = error.issues ?? [{ category: "decision" as const, code: "inspection_rejected", path: "/", message: error.message }];
+              const material = await supplyRejectedMaterial(errors, value);
+              if (material) return material;
+              return rejected(errors, value);
+            }
             if (signal.aborted || retry === 2) throw error;
             await new Promise(resolve => setTimeout(resolve, 100 * 2 ** retry));
           }
@@ -593,7 +617,21 @@ export async function startWorker(
         execute: (_context, value) =>
           submitResult(() => loadFileContent(value)),
       };
-      const submissionTools = spec.evaluation.fileSubmission ? [submitFile] : [submit];
+      const confirmSchema = { type: 'object', additionalProperties: false, required: ['reason'],
+        properties: { reason: { type: 'string', minLength: 1 } } };
+      const validateConfirmation = ajv.compile(confirmSchema);
+      const confirm: ExecutableTool = { name: 'confirm_evaluation', inputSchema: confirmSchema,
+        execute: (_context, value) => enqueueContent(async () => {
+          if (!validateConfirmation(value) || !(value as { reason: string }).reason.trim())
+            return rejectedLoad([{ category: 'structure', code: 'completion_review_reason_required', path: '/reason',
+              message: 'Explain the review of the current candidate before confirming it.' }]);
+          if (!completionCandidate) throw new Error('No current candidate is available for completion review');
+          const candidate = completionCandidate;
+          return submitExclusive(async () => structuredClone(candidate.evaluation), false,
+            { candidateId: candidate.submissionId, reason: (value as { reason: string }).reason });
+        }) };
+      const submissionTools = [...(spec.evaluation.fileSubmission ? [submitFile] : [submit]),
+        ...(spec.evaluation.completionReview ? [confirm] : [])];
       emit(attempt, "started", {
         engine: backend.identity,
         policy: spec.policy,
@@ -674,7 +712,7 @@ export async function startWorker(
           } finally {
             if (submissionTool) pendingSubmissions--;
           }
-          if (submissionTool && !accepted && submissions >= 1 + spec.policy.repairAttempts) {
+          if (submissionTool && !accepted && !completionCandidate && submissions >= 1 + spec.policy.repairAttempts) {
             controller.abort(new Error("Submission repair budget exhausted"));
             void attempt.session?.abort();
           }
@@ -737,7 +775,7 @@ export async function startWorker(
           emit(attempt, "tool_start", { name: tool.name, malformed_arguments: true, argument_object_available: false });
           if (content) {
             await enqueueContent(async () => {
-              if (submissions >= 1 + spec.policy.repairAttempts) throw new Error("Submission repair budget exhausted");
+              if (!completionCandidate && submissions >= 1 + spec.policy.repairAttempts) throw new Error("Submission repair budget exhausted");
               // Count and persist the failed call without manufacturing an object or a receipt.
               return rejectedLoad(errors);
             });
@@ -771,7 +809,7 @@ export async function startWorker(
       await runModel(spec.prompt);
       if (
         !accepted &&
-        submissions < 1 + spec.policy.repairAttempts &&
+        (Boolean(completionCandidate) || submissions < 1 + spec.policy.repairAttempts) &&
         !failure.stopped && !record.pendingSubmission &&
         !modelError &&
         !controller.signal.aborted &&
@@ -920,7 +958,7 @@ export async function startWorker(
           !Number.isSafeInteger(read.start) || !Number.isSafeInteger(read.end) || read.start < 0 || read.end <= read.start) ||
         (spec.evaluation.requiredReads.length > 0 && !spec.evaluation.toolNames.includes("read_trace"))))
         throw new HttpError(400, "Invalid required material ranges");
-      const names = [...spec.evaluation.toolNames, ...submissionToolNames(spec.evaluation.fileSubmission)];
+      const names = [...spec.evaluation.toolNames, ...submissionToolNames(spec.evaluation.fileSubmission, Boolean(spec.evaluation.completionReview))];
       const descriptions = spec.evaluation.toolDescriptions;
       if (!descriptions || typeof descriptions !== "object" || Array.isArray(descriptions) ||
         new Set(names).size !== names.length || Object.keys(descriptions).length !== names.length ||

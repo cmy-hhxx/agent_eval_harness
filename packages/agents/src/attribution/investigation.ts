@@ -1,6 +1,6 @@
 import { canonical, type AgentRequest, type ToolAudit, type TraceRead, type ValidationIssue } from "@eval/contracts";
 import { attributionTaxonomy } from "@eval/prompts";
-import { cite, evidenceCovers, evidenceSources,isGeneratedCallEvidence, isComponentLocator, parseEvidenceCoordinates, selectEvidenceSource, traceCallOrigins, traceExchanges, traceReadCoverage } from "@eval/tools";
+import { cite, evidenceCovers, evidenceSources,isGeneratedCallEvidence, parseEvidenceCoordinates, selectEvidenceSource, traceCallOrigins, traceExchanges, traceReadCoverage } from "@eval/tools";
 import type { BusinessChain, Evidence, ProblemProposal } from "./types.js";
 import { buildAttributionTransitions, buildAttributionExecutionNodes, type AttributionTransition, type TransitionBoundary } from "./transitions.js";
 import { validateDerivations } from "./derivations.js";
@@ -53,6 +53,12 @@ function explicitModelProcess(request: AgentRequest, actor: { message_indices: n
 export function businessChainDirectoryIssues(request: AgentRequest): ValidationIssue[] {
   const raw = request.sources.answer.value as { messages: unknown[] }, chains = businessChainDirectory(request), issues: ValidationIssue[] = [];
   const exchanges = traceExchanges(raw.messages), origins = traceCallOrigins(raw.messages);
+  const messageSources = new Map<number, ReturnType<typeof evidenceSources>>();
+  const sources = (messageIndex: number) => {
+    let value = messageSources.get(messageIndex);
+    if (!value) { value = evidenceSources(raw.messages[messageIndex]); messageSources.set(messageIndex, value); }
+    return value;
+  };
   if (!Array.isArray(chains) || chains.length !== exchanges.length) return [{ category: "evidence", code: "business_chain_directory",
     path: "/answer/business_chains", message: "业务链路目录必须对应实际关联的请求与返回。" }];
   chains.forEach((chain, index) => {
@@ -64,7 +70,7 @@ export function businessChainDirectoryIssues(request: AgentRequest): ValidationI
     const points = chain.checkpoints.flatMap(point => point.evidence);
     const valid = points.every(item => {
       const point = parseEvidenceCoordinates(item.evidence_id);
-      const source = point && point.kind !== "image" && evidenceSources(raw.messages[item.message_index])
+      const source = point && point.kind !== "image" && sources(item.message_index)
         .find(source => source.kind === point.kind && source.path === point.path);
       return point && source && point.input_id === request.sources.answer.id && point.message_index === item.message_index &&
         source.text.slice(point.start, point.end) === item.quote;
@@ -110,7 +116,7 @@ function prepareInvestigation(request: AgentRequest): InvestigationValidator {
   };
   const byId = new Map(transitions.map(item => [item.transition_index, item]));
   const proofById = new Map(selected.map(item => [item.evidence_id, item]));
-  const checks = new Map<number, ProblemProposal['investigation'][number]>();
+  const checks = new Map<number, ProblemProposal['checks'][number]>();
   const executionRead = (transition_index: number, view: 'before' | 'after' | 'predecessors') =>
     ({ candidate: 'answer', view, transition_index, offset: 0 });
   const navigation = (transition: AttributionTransition) => ({transition_index: transition.transition_index, kind: transition.kind,
@@ -128,8 +134,8 @@ function prepareInvestigation(request: AgentRequest): InvestigationValidator {
       matching_boundaries: { total: candidates.length, candidates: candidates.slice(0, 4), has_more: candidates.length > 4,
         ...(position < 0 ? {} : { read_execution: { candidate: 'answer', view: 'boundaries', evidence_index: position + 1, offset: 0 } }) } };
   };
-  for (const [index, check] of problem.investigation.entries()) {
-    const location = `${path}/investigation/${index}`, transition = byId.get(check.transition_index);
+  for (const [index, check] of problem.checks.entries()) {
+    const location = `${path}/checks/${index}`, transition = byId.get(check.transition_index);
     if (!transition || check.kind !== transition.kind) {
       add('investigation_transition', location, '核查须绑定本方执行转换；类型由目录固定。'); continue;
     }
@@ -163,10 +169,10 @@ function prepareInvestigation(request: AgentRequest): InvestigationValidator {
     if (!coverage.has(key)) coverage.set(key, evidenceCovers(raw, request.sources.answer.id, boundary.evidence_id, proof.evidence_id));
     return coverage.get(key)!;
   };
-  for (const [index, cause] of problem.component.entries()) {
-    const location = `${path}/component/${index}`, transition = byId.get(cause.transition_index);
+  for (const [index, cause] of problem.causes.entries()) {
+    const location = `${path}/causes/${index}`, transition = byId.get(cause.transition_index);
     if (!transition) { add('responsibility_transition', location, '责任须选择本方已登记的真实执行转换。'); continue; }
-    if (cause.actor_index !== transition.actor_index || cause.chain_index !== transition.chain_index)
+    if (cause.actor_index !== transition.actor_index)
       add('responsibility_transition_actor', location, '责任主体和链路由转换固定绑定；不能把已知参数生成者改成未知主体，也不能用最终节点代替未知整理者。');
     const check = checks.get(transition.transition_index);
     if (!check) { add('responsibility_check_required', location, '每项责任必须有本问题中对应的边界核查，先核查再定位。', navigation(transition)); continue; }
@@ -186,8 +192,6 @@ function prepareInvestigation(request: AgentRequest): InvestigationValidator {
       add('responsibility_mechanism_inferred', location, '边界差异可确证缺陷，但不能确证隐藏动作。机制保持推断并给出缺口和替代解释。');
     if (actor?.kind === 'model' && cause.mechanism_source === 'explicit_process' && !explicitModelProcess(request, actor, proof))
       add('responsibility_mechanism_source', location, '该模型的输入输出差异不是直接过程记录；没有实际参数、推理或计算动作记录时使用boundary_comparison + inferred。');
-    if (isComponentLocator(cause.business_component) || Object.values(attributionTaxonomy.domains).flat().includes(cause.business_component))
-      add('responsibility_business_location', location, '业务位置须说明本问题的具体操作，不能只复述调用ID或功能分类。');
     if (transition.kind === 'delivery' && cause.role === 'primary' && transition.before.some(before => transition.after.some(after => boundaryText(before) !== undefined && boundaryText(before) === boundaryText(after))))
       add('responsibility_formation', location, '实际生成与交付内容相同，不能把已存在的错误归为交付时形成。');
     if (cause.role !== 'primary' || transition.kind !== 'generation') continue;
@@ -208,7 +212,7 @@ function prepareInvestigation(request: AgentRequest): InvestigationValidator {
       }
       return [...related];
     };
-    const beforeProof = (row: ProblemProposal['investigation'][number] | undefined) =>
+    const beforeProof = (row: ProblemProposal['checks'][number] | undefined) =>
       row?.before_evidence_ids.flatMap(id => proofById.has(id) ? [proofById.get(id)!] : []) ?? [];
     const inputProof = beforeProof(check);
     const roots = relevantPredecessors(transition, inputProof);
@@ -255,12 +259,7 @@ function prepareInvestigation(request: AgentRequest): InvestigationValidator {
     if (cause.basis === 'input_deviation' && unrecovered())
       add('responsibility_generation_formation', location, '相关上游已存在改变或尚未解决的断点，不能声称完整正确输入后首次偏离。核对因果关系；若生成有独立新增错误，应明确该独立作用和替代解释。');
   }
-  issues.push(...validateDerivations(problem.calculations, id => proofById.get(id), path + '/calculations'));
-  if (problem.diagnosis === 'source_absence') {
-    const inventory = (request.input.answer as { citation_inventory?: {references:{reference:string;status:string;sources:Evidence[]}[]} }).citation_inventory;
-    if (inventory?.references.some(reference => reference.status !== 'unknown' && reference.sources.length && selected.some(item=>item.quote.includes(reference.reference))))
-      add('source_absence_contradicted', path, '所引来源已有可读原文，不能判为来源不存在；继续核对支持程度与实际输入。');
-  }
+  issues.push(...validateDerivations(problem.calculations ?? [], id => proofById.get(id), path + '/calculations'));
   return issues;
   };
 }

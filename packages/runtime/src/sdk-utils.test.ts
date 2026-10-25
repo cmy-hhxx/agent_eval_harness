@@ -18,6 +18,13 @@ test("initial and restored checkpoints select the current content tool without a
   }
 });
 
+test("completion review exposes confirmation and correction only after a candidate is prepared", () => {
+  const names = ['read_trace','submit_evaluation','confirm_evaluation'];
+  assert.deepEqual(activeToolNames({content:[]},names,'submit_evaluation'),['read_trace','submit_evaluation']);
+  assert.deepEqual(activeToolNames({content:[],details:{budget:{exploration:{remaining:0}}}},names,'confirm_evaluation'),
+    ['submit_evaluation','confirm_evaluation']);
+});
+
 test("published tools intersect the current content phase with exploration and reserved budgets", () => {
   const names = ["search_trace", "read_trace", "execute_code", "inspect_material", "submit_evaluation_file"];
   const feedback = (remaining: number, covered = true): ToolResult => ({ content: [], details: { budget: {
@@ -95,14 +102,10 @@ test("tool schema references preserve sibling constraints through conjunction an
 // These payloads exercise the model-facing schema transport; Agent tests own business validation.
 const submissions = {
   attribution: {
-    summary: "回答完成计算。", is_correct: true, correctness_reason: "与标准一致。", correctness_evidence_indices: [1],
-    meets_core: true, core_reason: "给出所求结果。", core_requirements: [1],
-    criterion_assessments: [{ status: "met", evidence_status: "established", summary: "结果正确。", evidence_indices: [1] }],
-    numeric_checks: [{ label: "结果", reference_index: 1, actual: "4", scale: "1", mode: "exact", evidence_index: 1 }],
-    strengths: [], problems: [],
+    summary: "回答完成计算。", is_correct: true, correct_reason: "与标准一致。", Problem: [],
   } satisfies AttributionSubmission,
   comparison: {
-    a_summary: "已完成。", b_summary: "已完成。", preference: null, relative_preference: "A",
+    assessments: { A: {meets_core:true,summary:"已完成。",core_failure_refs:[]}, B:{meets_core:true,summary:"已完成。",core_failure_refs:[]} }, preference: null, relative_preference: "A",
     tradeoff: "双方均完成核心要求。",
     comparisons: [{ importance: "high", better_candidate: null },
       { importance: "low" }],

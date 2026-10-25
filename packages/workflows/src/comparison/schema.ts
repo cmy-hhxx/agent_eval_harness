@@ -2,7 +2,6 @@ import { comparisonProfile } from "@eval/agents/comparison";
 import { attributionProfile } from "@eval/agents/attribution";
 import { object, type JsonSchema } from "@eval/contracts";
 import template from "../../../../schemas/workflow/export.schema.json" with { type: "json" };
-import annotation from "../../../../schemas/workflow/annotation.schema.json" with { type: "json" };
 import clusteringResult from "../../../../schemas/clustering/result.schema.json" with { type: "json" };
 import clusteringTemplate from "../../../../schemas/workflow/clustering.schema.json" with { type: "json" };
 import rewritten from "../../../../schemas/workflow/rewritten.schema.json" with { type: "json" };
@@ -20,9 +19,6 @@ const comparison = object(structuredClone(comparisonProfile.resultSchema!).prope
 const decision = object(object(comparison.decision_basis).properties);
 const aligned = object(object(object(decision.comparisons).items).properties);
 delete object(aligned.aspect).maxLength;
-const attribution = object(structuredClone(attributionProfile.resultSchema!).properties);
-const findings = object(attribution.findings);
-object(object(findings.items).properties).stage_trace = annotation;
 export const outputSchema: JsonSchema = {
   ...template,
   properties: {
@@ -32,20 +28,7 @@ export const outputSchema: JsonSchema = {
   $defs: {
     ...template.$defs,
     criterion: object(comparisonProfile.resultSchema!.$defs).criterion,
-    evaluation: {
-      ...template.$defs.evaluation,
-      properties: {
-        ...template.$defs.evaluation.properties,
-        summary: attribution.summary,
-        standard_conflict: attribution.standard_conflict,
-        numeric_checks: attribution.numeric_checks,
-        table_resolutions: attribution.table_resolutions,
-        correctness_evidence: attribution.correctness_evidence,
-        criterion_assessments: attribution.criterion_assessments,
-        core_assessment: attribution.core_assessment,
-        findings,
-      },
-    },
+    evaluation: structuredClone(attributionProfile.resultSchema!),
     task_analysis: comparison.task_analysis,
     decision_basis: comparison.decision_basis,
   },

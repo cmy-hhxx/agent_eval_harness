@@ -1,8 +1,8 @@
 import { randomUUID } from "node:crypto";
 import { isDeepStrictEqual } from "node:util";
-import { workflowText, standardConflictReviewInstructions } from "@eval/prompts";
+import { workflowText } from "@eval/prompts";
 import { ValidationError, type PlannedTask, type RunState, type WorkflowDefinition } from "@eval/contracts";
-import { attributionProfile, type AttributionResult } from "@eval/agents/attribution";
+import { attributionProfile } from "@eval/agents/attribution";
 import type { EvalConfig, TaskData } from "./types.js";
 import { bindTask } from "./binding.js";
 import { attributionRewritePlaceholder, planAttributionRewriteGroups } from "./attribution-rewrite-planning.js";
@@ -44,62 +44,6 @@ function reviewRewrite(template: PlannedTask, sourceTaskId: string): PlannedTask
   return task;
 }
 
-/** Recheck both sides against the same original evidence before any affected comparison. */
-const advanceStandardConflict: NonNullable<WorkflowDefinition["advance"]> = (task, _receipt, state) => {
-  const available = state.manifest.tasks.filter(item => item.stage === "comparison" &&
-    !(item.data as TaskData).verificationAudit && !state.receipts[item.id] && state.manifest.states[item.id]?.status !== "running");
-  const sources = new Map([[task.id, task]]), comparisons = new Map<string, PlannedTask>();
-  // A source can feed several pairs. Replace their sources together so no touched pair keeps an unreviewed side.
-  for (let changed = true; changed;) {
-    changed = false;
-    for (const comparison of available) {
-      if (comparisons.has(comparison.id) || !Object.keys((comparison.data as TaskData).candidates)
-        .some(label => sources.has(comparison.dependencies[label]))) continue;
-      comparisons.set(comparison.id, comparison); changed = true;
-      for (const label of Object.keys((comparison.data as TaskData).candidates)) {
-        const source = state.manifest.tasks.find(item => item.id === comparison.dependencies[label])!;
-        sources.set(source.id, source);
-      }
-    }
-  }
-  const tasks: PlannedTask[] = [], reviews = new Map<string, PlannedTask>();
-  for (const source of sources.values()) {
-    const data = source.data as TaskData;
-    if (data.standardConflictReview) continue;
-    const existing = state.manifest.tasks.find(item => (item.data as TaskData).standardConflictReview &&
-      (item.data as TaskData).reviewOf?.taskId === source.id);
-    if (existing) { reviews.set(source.id, existing); continue; }
-    const peers = new Map([...comparisons.values()]
-      .filter(comparison => Object.values(comparison.inputIds).includes(source.inputIds.answer))
-      .flatMap(comparison => Object.values((comparison.data as TaskData).candidates)
-        .filter(candidate => candidate.input_id !== source.inputIds.answer)
-        .map(candidate => [candidate.input_id, candidate] as const)));
-    const referenceCandidates = Object.fromEntries([...peers.values()].map((candidate, index) => [`peer_${index + 1}`, candidate]));
-    const review: PlannedTask = { ...source, id: randomUUID(),
-      inputIds: { answer: source.inputIds.answer, ...Object.fromEntries(Object.entries(referenceCandidates).map(([key, candidate]) => [key, candidate.input_id])) },
-      data: { ...data, referenceCandidates, standardConflictReview: true, revision: 1,
-        reviewOf: { taskId: source.id, round: (data.reviewOf?.round ?? 0) + 1,
-          reasons: [standardConflictReviewInstructions] } } satisfies TaskData };
-    reviews.set(source.id, review); tasks.push(review);
-    const polish = state.manifest.tasks.find(item => item.stage === "rewrite" && item.dependencies.source === source.id);
-    if (polish && (state.receipts[polish.id] || state.manifest.states[polish.id]?.status === "running"))
-      tasks.push(reviewRewrite(polish, review.id));
-  }
-  const replace = state.manifest.tasks.flatMap(consumer => {
-    if (consumer.stage === "instruction-review" || state.receipts[consumer.id] || state.manifest.states[consumer.id]?.status === "running" ||
-      (consumer.data as TaskData).verificationAudit ||
-      !Object.values(consumer.dependencies).some(id => reviews.has(id))) return [];
-    const consumerData = consumer.data as TaskData;
-    const rewrite = consumerData.rewriteOf && reviews.get(consumerData.rewriteOf.taskId);
-    return [{ ...consumer,
-      dependencies: Object.fromEntries(Object.entries(consumer.dependencies).map(([key, id]) => [key, reviews.get(id)?.id ?? id])),
-      ...(rewrite ? { data: { ...consumerData,
-        rewriteOf: { ...consumerData.rewriteOf!, taskId: rewrite.id, resultId: rewrite.id } } satisfies TaskData } : {}),
-    }];
-  });
-  return { tasks, replace };
-};
-
 /** Accepted answers are reused when their original standard is exactly the new shared standard. */
 const advanceCriteria: NonNullable<WorkflowDefinition["advance"]> = (task, receipt, state, inputs) => {
   const data = task.data as TaskData, tasks: PlannedTask[] = [], replace = new Map<string, PlannedTask>();
@@ -111,9 +55,8 @@ const advanceCriteria: NonNullable<WorkflowDefinition["advance"]> = (task, recei
       const sourceId = deps[label]!, source = state.receipts[sourceId];
       if (!source) continue;
       const original = state.manifest.tasks.find((item) => item.id === sourceId)!;
-      const evaluation = source.evaluation as { task_analysis?: unknown; core_assessment?: unknown; criterion_assessments?: unknown };
-      if (isDeepStrictEqual(evaluation.task_analysis, receipt.evaluation) && evaluation.core_assessment &&
-        Array.isArray(evaluation.criterion_assessments) && isDeepStrictEqual((original.data as TaskData).reference, data.reference)) {
+      if (isDeepStrictEqual(state.receipts[original.dependencies.criteria]?.evaluation, receipt.evaluation) &&
+        isDeepStrictEqual((original.data as TaskData).reference, data.reference)) {
         const check: PlannedTask = { ...original, inputIds: { answer: candidate.input_id }, dependencies: { criteria: task.id },
           data: { ...(original.data as TaskData), candidates: { A: candidate }, reference: data.reference } satisfies TaskData };
         try {
@@ -152,9 +95,7 @@ export const advanceReview: NonNullable<WorkflowDefinition["advance"]> = (task, 
   if (task.stage === "attribution" && state.manifest.tasks.some(item =>
     (item.data as TaskData).standardConflictReview && (item.data as TaskData).reviewOf?.taskId === task.id)) return { tasks: instructionReviewFollowup(task,state) };
   const advance = task.stage === "criteria" ? advanceCriteria(task, receipt, state, inputs)
-    : task.stage === "attribution" && (state.manifest.config as EvalConfig).standardAnswerReview === true &&
-      (receipt.evaluation as AttributionResult).standard_conflict && !(task.data as TaskData).standardConflictReview
-      ? advanceStandardConflict(task, receipt, state, inputs) : { tasks: [] };
+    : { tasks: [] };
   const retargeted = (advance.replace ?? []).some(replacement => replacement.stage === "rewrite" &&
     state.manifest.tasks.some(previous => previous.id === replacement.id && (previous.data as TaskData).rewriteOf?.taskId === task.id) &&
     (replacement.data as TaskData).rewriteOf?.taskId !== task.id);

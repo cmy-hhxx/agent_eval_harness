@@ -164,11 +164,11 @@ export async function reviewProblemOccurrences(
       !scopeCase || scopeCase.case_id !== occurrence.case_id ||
       canonical(scopeCase.source) !== canonical(occurrence.source))
       fail("问题样本原 Attribution 来源或 owner 不一致：" + item.occurrence_id);
-    const finding = (attribution.evaluation as AttributionResult).findings.find(finding => finding.finding_id === occurrence.finding_id);
+    const finding = (attribution.evaluation as AttributionResult).Problem.find(finding => finding.problem_id === occurrence.finding_id);
     const association = problemAssociation(initial, occurrence);
     const component = initial.components[association.component_id]!;
-    if (!finding || finding.type !== "problem" || !finding.problem ||
-      !responsibilityLabels(finding.problem).some(label => [component.label, ...component.aliases]
+    if (!finding ||
+      !responsibilityLabels(finding).some(label => [component.label, ...component.aliases]
         .some(name => normalizeLabel(name) === normalizeLabel(label))))
       fail("问题样本原 finding 或责任组件不存在：" + item.occurrence_id);
 

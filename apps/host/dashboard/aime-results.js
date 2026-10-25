@@ -1,7 +1,7 @@
 import { renderMarkdown } from '../../../server_dashboard_ths/records-markdown.js';
 import { stageProgress } from './stage-progress.js';
 
-const labels = { succeeded:'已完成', partial:'部分完成', pending:'待处理', running:'运行中', failed:'失败', timed_out:'超时', cancelled:'已中断', blocked:'依赖阻塞', finished:'已结束', interrupted:'已中断', unknown:'未知', attribution:'回答归因', summary:'总结', findings:'发现', evidence:'证据', final_answer_score:'最终回答得分', evaluations:'评估', explicit_probability:'明确概率', probability_evidence_ids:'概率证据', score:'得分', score_range:'得分区间', status:'状态', reason:'依据', text:'表现', component:'责任组件', label:'问题名称', definition:'定义', type:'类型', strength:'优点', problem:'问题', met:'满足', violated:'未满足', unverified:'待核', not_applicable:'不适用', case_id:'Case', evidence_ids:'证据引用', quote:'原文', source:'来源', evidence_id:'证据坐标' };
+const labels = { succeeded:'已完成', partial:'部分完成', pending:'待处理', running:'运行中', failed:'失败', timed_out:'超时', cancelled:'已中断', blocked:'依赖阻塞', finished:'已结束', interrupted:'已中断', unknown:'未知', attribution:'回答归因', summary:'总结', Problem:'问题', evidence:'证据', final_answer_score:'最终回答得分', evaluations:'评估', explicit_probability:'明确概率', probability_evidence_ids:'概率证据', score:'得分', score_range:'得分区间', status:'状态', reason:'依据', text:'表现', component:'责任组件', label:'问题名称', definition:'定义', problem_id:'问题编号', causes:'责任组件', checks:'边界核查', uncertainty:'缺口', has_standard_answer:'有标准答案', is_correct:'标准一致性', correct_reason:'判定依据', met:'满足', violated:'未满足', unverified:'待核', not_applicable:'不适用', case_id:'Case', evidence_ids:'证据引用', quote:'原文', source:'来源', evidence_id:'证据坐标' };
 const stageName = stage => stage === 'score' ? '独立评分' : stage === 'attribution' ? '回答归因' : stage === 'instruction-review' ? '指令检查' : stage === 'rewrite' ? '改写' : stage;
 
 export function mountAimeResults(root, options = {}) {
@@ -26,27 +26,26 @@ export function mountAimeResults(root, options = {}) {
     return node('span',value === null ? '无' : typeof value === 'boolean' ? value ? '是' : '否' : labels[value] || value);
   }
   function attributionView(result) {
-    const content = node('div'), evidence = new Map(), display = { relevance:'相关性',correctness:'正确性',completeness:'完整性',efficiency:'效率',high:'高',medium:'中',low:'低',final_answer:'最终回答',reasoning:'推理',established:'证据充分',unverified:'待核' };
+    const content = node('div'), evidence = new Map(), display = { established:'证据充分',uncertain:'待核' };
     const summary = node('p',result.summary); summary.className = 'aime-review-summary'; content.append(summary);
     const evidenceList = node('div'); evidenceList.className = 'aime-evidence-list';
-    const evidenceRows = [...new Map([...(result.correctness_evidence || []),...result.criterion_assessments.flatMap(row => [...row.evidence,...(row.context_evidence || [])]),...result.findings.flatMap(row => [...row.evidence,...(row.context_evidence || [])])].map(row => [row.evidence_id,row])).values()];
+    const evidenceRows = [...new Map(result.Problem.flatMap(row => row.evidence).map(row => [row.evidence_id,row])).values()];
+    content.append(valueView({has_standard_answer:result.has_standard_answer,is_correct:result.is_correct,correct_reason:result.correct_reason}));
     for (const [index, row] of evidenceRows.entries()) {
       const detail = node('details'), title = node('summary',[row.evidence_id || `证据 ${index+1}`,row.source_id,row.start == null ? '' : `${row.start}–${row.end}`].filter(Boolean).join(' · '));
       detail.className = 'aime-evidence'; detail.tabIndex = -1;
       const quote = node('blockquote',row.quote); detail.append(title,quote); evidenceList.append(detail);
       if (row.evidence_id) evidence.set(row.evidence_id,detail);
     }
-    for (const [type, title] of [['problem','问题'],['strength','优点']]) {
-      const findings = result.findings.filter(row => row.type === type); if (!findings.length) continue;
-      content.append(node('h3',`${title}（${findings.length}）`));
-      findings.forEach(finding => {
+    if (result.Problem.length) {
+      content.append(node('h3',`问题（${result.Problem.length}）`));
+      result.Problem.forEach(finding => {
         const section = node('section'); section.className = 'aime-finding';
-        if (finding.problem) section.append(node('h4',finding.problem.label));
-        const meta = node('p',[display[finding.dimension] || finding.dimension,finding.importance ? `重要性 ${display[finding.importance] || finding.importance}` : '',display[finding.stage] || finding.stage,finding.assessment.evidence_status !== 'established' ? display[finding.assessment.evidence_status] || finding.assessment.evidence_status : ''].filter(Boolean).join(' · ')); meta.className = 'aime-finding-meta';
-        section.append(meta,node('p',finding.text));
-        if (finding.reason) { const reason = node('p'); reason.append(node('strong','依据：'),doc.createTextNode(finding.reason)); section.append(reason); }
-        if (finding.problem) section.append(node('p',`责任组件：${finding.problem.component.map(row => row.component).join('、')}`),valueView(finding.problem.component));
-        if (finding.problem) { const definition = node('details'); definition.append(node('summary','问题定义'),node('p',finding.problem.definition)); section.append(definition); }
+        section.append(node('h4',finding.text),node('p',display[finding.evidence_status] || finding.evidence_status));
+        const reason = node('p'); reason.append(node('strong','依据：'),doc.createTextNode(finding.reason)); section.append(reason);
+        section.append(node('p',`责任组件：${finding.causes.map(row => row.component).join('、')}`),valueView(finding.causes));
+        if (finding.uncertainty) section.append(valueView(finding.uncertainty));
+        if (finding.calculations) section.append(valueView(finding.calculations));
         const references = node('div'); references.className = 'aime-evidence-references';
         for (const id of finding.evidence.map(row => row.evidence_id)) {
           const target = evidence.get(id), reference = target ? button(id,() => { target.open = true; target.scrollIntoView?.({block:'nearest'}); target.focus(); }) : node('code',id);
@@ -56,7 +55,7 @@ export function mountAimeResults(root, options = {}) {
       });
     }
     if (evidenceRows.length) content.append(node('h3',`证据（${evidenceRows.length}）`),evidenceList);
-    if (result.rewritten) { const rewritten = node('details'); rewritten.append(node('summary','改写'),valueView(result.rewritten)); content.append(rewritten); }
+    if (result.meta.rewritten) { const rewritten = node('details'); rewritten.append(node('summary','改写'),valueView(result.meta.rewritten)); content.append(rewritten); }
     const raw = node('details'); raw.className = 'aime-raw-result'; raw.append(node('summary','原始结果'),node('pre',JSON.stringify(result,null,2))); content.append(raw);
     return content;
   }

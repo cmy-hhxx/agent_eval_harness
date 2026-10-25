@@ -38,11 +38,11 @@ async function fixture(caseCount = 2, components?: string[], uniqueProblems = fa
       const evaluation = task.stage === "criteria" ? criteriaResultForTask(task, plan.inputs) : attributionResult(false, "2+2=5", true, candidate.input_id);
       if (task.stage === "attribution") {
         const result = evaluation as ReturnType<typeof attributionResult>;
-        result.task_analysis = criteriaResultForTask(task, plan.inputs);
-        if (uniqueProblems) result.findings[0].problem!.label += " " + candidate.batch_id + " " + candidate.case_id;
-        if (components) result.findings = components.map((component, index) => ({ ...structuredClone(result.findings[0]),
-          finding_id: "f" + index, problem: { ...result.findings[0].problem!, component: [responsibilityFixture(component, {evidence_ids: result.findings[0].evidence.map(item=>item.evidence_id)})] } }));
-        result.findings.forEach(finding => { finding.problem!.definition += candidate.case_id; });
+
+        if (uniqueProblems) result.Problem[0].text += " " + candidate.batch_id + " " + candidate.case_id;
+        if (components) result.Problem = components.map((component, index) => ({ ...structuredClone(result.Problem[0]),
+          problem_id: "f" + index, causes: [responsibilityFixture(component, {evidence_ids: result.Problem[0].evidence.map(item=>item.evidence_id)})] }));
+        result.Problem.forEach(finding => { finding.reason += candidate.case_id; });
       }
       receipts[task.id] = { taskId: task.id, attemptId: randomUUID(), submissionId: randomUUID(),
         evaluation, evaluatorVersion: fakeEvaluatorVersion, judge: "fixture", acceptedAt: days.indexOf(day) + 1,

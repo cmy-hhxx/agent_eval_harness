@@ -13,11 +13,11 @@ const fail = (path: string, message: string, actual?: unknown): ValidationIssue 
 
 /** Capture metadata records our visibility, not a defect in the original candidate's delivery. */
 export function captureMarkerProblemIssues(request: AgentRequest, value: unknown): ValidationIssue[] {
-  const findings = object(value)?.findings;
+  const findings = object(value)?.Problem;
   if (!Array.isArray(findings)) return [];
   return findings.flatMap((entry, index) => {
     const finding = object(entry), evidence = finding?.evidence;
-    if (finding?.type !== "problem" || object(finding.assessment)?.evidence_status !== "established" ||
+    if (finding?.evidence_status !== "established" ||
       !Array.isArray(evidence) || !evidence.length) return [];
     const onlyCapture = evidence.every(item => {
       const id = object(item)?.evidence_id;
@@ -29,7 +29,7 @@ export function captureMarkerProblemIssues(request: AgentRequest, value: unknown
       return visualCaptureMarkers(messages[point.message_index]).some(marker => marker.kind === point.kind &&
         marker.path === point.path && point.start >= 0 && point.end > point.start && point.end <= marker.text.length);
     });
-    return onlyCapture ? [{ category: "evidence", code: "capture_marker_not_candidate_evidence", path: `/findings/${index}/evidence`,
+    return onlyCapture ? [{ category: "evidence", code: "capture_marker_not_candidate_evidence", path: `/Problem/${index}/evidence`,
       message: "所选证据全部是独立的可视材料采集占位符，只能证明本次采集未呈现内容，不能确认候选交付有缺陷。请补充真实正文、已查看图像或执行证据；无法确认时保留 uncertain 或删除该问题，不推导用户损害。" } as ValidationIssue] : [];
   });
 }
@@ -149,38 +149,6 @@ export function validateAttributionEvidence(request: AgentRequest, entries: { it
   return issues;
 }
 
-/** A judgment needs actual delivery; auxiliary facts do not become numeric actuals. */
-export function correctnessEvidenceScopeIssues(request: AgentRequest, evidence: (Evidence | undefined)[], numericChecks: unknown): ValidationIssue[] {
-  if (object(request.input.ground_truth)?.available !== true) return [];
-  const finalIndex = object(request.input.answer)?.final_message_index;
-  if (!Number.isSafeInteger(finalIndex) || (finalIndex as number) < 0) return [];
-  const actual = (item: Evidence | undefined) => !!item && ownEvidence(item) && item.message_index === finalIndex;
-  const issues: ValidationIssue[] = [];
-  if (evidence.length && evidence.every(item => item !== undefined) && !evidence.some(actual)) issues.push({
-    category: "evidence", code: "evidence_final_required", path: "/correctness_evidence", candidate: "answer",
-    message: `对错证据束须至少引用本方最终消息 ${finalIndex} 的实际交付；工具、规范和已登记的 peer 原始事实只能作为辅助依据。`,
-    expected: finalIndex,
-  });
-  if (Array.isArray(numericChecks)) numericChecks.forEach((entry, index) => {
-    const slot = object(entry)?.evidence_index;
-    if (!Number.isSafeInteger(slot) || (slot as number) < 0) return;
-    const location = `/numeric_checks/${index}/evidence_index`;
-    if ((slot as number) >= evidence.length) issues.push({
-      category: "evidence", code: "numeric_answer_missing", path: location, candidate: "answer",
-      message: "numeric_checks.evidence_index 必须选择 correctness_evidence 中本方最终回答的零起始槽位。", actual: slot,
-    });
-    else {
-      const item = evidence[slot as number];
-      if (item && !actual(item)) issues.push({
-        category: "evidence", code: "evidence_final_required", path: location, candidate: "answer",
-        message: `numeric_checks.actual 必须引用本方最终消息 ${finalIndex}，不能由工具、规范或 peer 事实替代。`,
-        expected: finalIndex, actual: item.message_index,
-      });
-    }
-  });
-  return issues;
-}
-
 /** Foreign facts explain the judgment but do not establish what this candidate actually delivered. */
 export function foreignActualIssues(request: AgentRequest, result: import("./types.js").AttributionResult): ValidationIssue[] {
   const raw = request.sources.answer.value as { messages: unknown[] };
@@ -203,12 +171,6 @@ export function foreignActualIssues(request: AgentRequest, result: import("./typ
         : "peer 仅提供裁判事实，必须同时引用本方回答或真实执行证据；peer、用户提问和规范不能冒充本方 actual。",
       expected: { candidate: "answer", final_message_index: finalIndex } });
   };
-  result.findings.forEach((finding, index) => {
-    if (finding.assessment.evidence_status === "established") check(finding.evidence, `/findings/${index}/evidence`, finding.stage === "final_answer");
-  });
-  result.criterion_assessments.forEach((assessment, index) => {
-    if (assessment.evidence_status === "established" && assessment.status !== "not_applicable")
-      check(assessment.evidence, `/criterion_assessments/${index}/evidence`, false);
-  });
+  result.Problem.forEach((problem,index)=>{if(problem.evidence_status==='established')check(problem.evidence,`/Problem/${index}/evidence`,false);});
   return issues;
 }

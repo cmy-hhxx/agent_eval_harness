@@ -4,10 +4,10 @@ import { canonicalEvidence } from "../../../../tests/fixtures/evidence.js";
 import test from "node:test";
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
-import { selectEvidence, emptyUsage, ValidationError, type CriteriaInput, type PlannedTask, type SubmissionReceipt, type TaskAnalysis } from "@eval/contracts";
+import { emptyUsage, type CriteriaInput, type PlannedTask, type SubmissionReceipt, type TaskAnalysis } from "@eval/contracts";
 import { criteriaProfile, criteriaSources } from "@eval/agents/criteria";
-import { attributionProfile, attributionFindingBasis, type AttributionNorm, type AttributionResult, type AttributionSubmission } from "@eval/agents/attribution";
-import { resolveEvidence } from "@eval/tools";
+import { type AttributionNorm } from "@eval/agents/attribution";
+import { parseEvidenceCoordinates, resolveEvidence } from "@eval/tools";
 import { bindTask } from "../comparison/binding.js";
 import type { Candidate, RawInput } from "../inputs/types.js";
 import type { TaskData } from "../comparison/types.js";
@@ -105,40 +105,8 @@ for (const normFirst of [true, false]) test(`accepted merged Criteria retains no
   const shown = binding.modelInput!.answer as { final_evidence: { reference: { evidence_id: string } }[];
     criterion_instruction_sources: Record<string, { reference: { evidence_id: string } }[]> };
   const finalRef = shown.final_evidence[0]!.reference;
-  const reads=emptyAudit(),choose=(ref:{evidence_id:string})=>selectEvidence(reads.evidenceBank!,ref).evidence_index;
-  const draft:AttributionSubmission = { numeric_checks: [],
-    criterion_assessments: rubric.requirements.map(() => ({ status: "met", evidence_status: "established", summary: "按共同要求以JSON给出4。", evidence_indices: [choose(finalRef)] })),
-    meets_core: true, core_reason: "给出可用结果。", core_requirements: [1], summary: "完成计算。", strengths: [], problems: [] };
-  const result = registry.resolve(binding,draft,reads) as AttributionResult;
-  assert.deepEqual(result.criterion_assessments[0]!.evidence, [canonicalEvidence(candidates.A.input_id, 2, final)]);
-  assert.deepEqual(result.criterion_assessments[0]!.context_evidence, [canonicalEvidence(candidates.A.input_id, 0, norm), canonicalEvidence(candidates.A.input_id, 1, question)]);
-  attributionProfile.validate!(binding.request, result, emptyAudit());
-  const onlyNorm = structuredClone(draft);
-  onlyNorm.criterion_assessments[0]!.evidence_indices = [choose(shown.criterion_instruction_sources.r1![0]!.reference)];
-  assert.throws(() => attributionProfile.validate!(binding.request,
-    registry.resolve(binding,onlyNorm,reads), emptyAudit()), (error: unknown) => {
-    assert(error instanceof ValidationError);
-    assert(error.issues!.some(issue => issue.code === "instruction_answer_evidence_required"));
-    return true;
-  });
-  const findingDraft = { ...draft, strengths: [{ dimension: "instruction_following",
-    stage: "final_answer", importance: "medium", text: "按共同规范使用JSON。", reason: "交付格式满足真实要求。",
-    basis_index: attributionFindingBasis(binding.request.input).find(item=>item.norm_index===answer.norm_directory[0]!.norm_index)!.basis_index, evidence_indices: [choose(finalRef)],
-    evidence_status: "established" }] };
-  const findingResult = registry.resolve(binding,findingDraft,reads) as AttributionResult;
-  assert.equal(findingResult.findings[0]!.assessment.requirement_index, 0);
-  assert.deepEqual(findingResult.findings[0]!.evidence, [canonicalEvidence(candidates.A.input_id, 2, final)]);
-  assert.deepEqual(findingResult.findings[0]!.context_evidence, [canonicalEvidence(candidates.A.input_id, 0, norm), canonicalEvidence(candidates.A.input_id, 1, question)]);
-  attributionProfile.validate!(binding.request, findingResult, emptyAudit());
-  for (const missingNorm of [0, 1]) {
-    const incomplete = structuredClone(findingResult);
-    incomplete.findings[0]!.context_evidence = incomplete.findings[0]!.context_evidence!.filter(item => item.message_index !== missingNorm);
-    assert.throws(() => attributionProfile.validate!(binding.request, incomplete, emptyAudit()), (error: unknown) => {
-      assert(error instanceof ValidationError);
-      assert(error.issues!.some(issue => issue.code === "instruction_evidence_required" && issue.path === "/findings/0/evidence"));
-      return true;
-    });
-  }
+  assert.equal(resolveEvidence(inputs[candidates.A.input_id],finalRef,"answer",emptyAudit(),"/evidence",candidates.A.input_id).quote,final);
+  assert.deepEqual(Object.keys(registry.prepare(binding).evaluation.outputSchema.properties ?? {}).sort(),["Problem","summary"].sort());
 });
 
 test("01868 public USER leaf closes attribution without absorbing its private joined condition", () => {
@@ -198,31 +166,9 @@ test("01868 public USER leaf closes attribution without absorbing its private jo
     criterion_instruction_sources: Record<string, { quote: string; reference: { evidence_id: string } }[]> };
   for (const id of ["r1", "r2"]) for (const entry of shown.criterion_instruction_sources[id]!)
     assert.equal(resolveEvidence(trace, entry.reference, "answer", emptyAudit(), "/evidence", candidates.A!.input_id).quote, entry.quote);
-  const finalRef = shown.final_evidence.find(entry => entry.path === "/content/0/text")!.reference;
+  const finalRef = shown.final_evidence.find(entry => {const point=parseEvidenceCoordinates(entry.reference.evidence_id);return point?.kind!=="image"&&point?.path==="/content/0/text";})!.reference;
   assert.equal(resolveEvidence(trace, finalRef, "answer", emptyAudit(), "/evidence", candidates.A!.input_id).quote, final);
-  const reads=emptyAudit(),choose=(ref:{evidence_id:string})=>selectEvidence(reads.evidenceBank!,ref).evidence_index;
-  const finalNumber=choose(finalRef);
-  const draft:AttributionSubmission = { is_correct:false,correctness_reason:"回答1.25个百分点与标准-0.6不同。",correctness_evidence_indices:[finalNumber],
-    numeric_checks:[{label:"利率变化百分点",reference_index:1,actual:"1.25",scale:"1",mode:"rounded",evidence_index:finalNumber}],
-    criterion_assessments:rubric.requirements.map(item=>({status:item.id==="r2"?"met":"unmet",evidence_status:"established",summary:"核对真实问题、结果及条件。",evidence_indices:[finalNumber]})),
-    meets_core:false,core_reason:"所求数值与标准不一致。",core_requirements:[1],summary:"所求数值未对齐标准。",strengths:[],problems:[] };
-  {
-    const request = binding.request;
-    const resolved = registry.resolve(binding,draft,reads) as AttributionResult;
-    assert.deepEqual(resolved.criterion_assessments[0]!.evidence, [canonicalEvidence(candidates.A.input_id, 1, final, "/content/0/text")]);
-    assert.deepEqual(resolved.criterion_assessments[0]!.context_evidence, [canonicalEvidence(candidates.A.input_id, 0, question, "/content/0/text")]);
-    assert.deepEqual(resolved.criterion_assessments[1]!.evidence, [canonicalEvidence(candidates.A.input_id, 1, final, "/content/0/text")]);
-    assert.deepEqual(resolved.criterion_assessments[1]!.context_evidence, [canonicalEvidence(candidates.A.input_id, 0, question, "/content/0/text"), canonicalEvidence(candidates.A.input_id, 0, condition, "/content/1/text")]);
-    attributionProfile.validate!(request, resolved, emptyAudit());
-    const normOnly = structuredClone(draft);
-    normOnly.criterion_assessments[0]!.evidence_indices = [choose(shown.criterion_instruction_sources.r1![0]!.reference)];
-    assert.throws(() => attributionProfile.validate!(request,
-      registry.resolve(binding,normOnly,reads), emptyAudit()), (error: unknown) => {
-      assert(error instanceof ValidationError);
-      assert(error.issues!.some(issue => issue.code === "instruction_answer_evidence_required" && issue.path === "/criterion_assessments/0/evidence_indices"));
-      return true;
-    });
-  }
+  assert.equal(resolveEvidence(trace,finalRef,"answer",emptyAudit(),"/Problem/0/evidence",candidates.A.input_id).quote,final);
   const otherTask: PlannedTask = { ...task, id: randomUUID(), inputIds: { answer: candidates.B!.input_id },
     data: { ...(task.data as TaskData), candidates: { A: candidates.B! } } };
   const other = bindTask(otherTask, inputs, { criteria: receipt }, { tasks: [criteriaTask, otherTask] });

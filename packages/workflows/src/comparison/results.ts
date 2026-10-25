@@ -14,7 +14,6 @@ import type { RewriteResult } from "@eval/agents/rewrite";
 import type { ClusteringObservation, ClusteringResult } from "@eval/agents/clustering";
 import type { AttributionResult, ComparisonResult, EvalConfig, Stage, TaskData } from "./types.js";
 import type { RawInput } from "../inputs/types.js";
-import { annotateFindings } from "./annotations.js";
 import { clusteringSchema, rewrittenSchema, outputSchema } from "./schema.js";
 import { decideVerdict, tierOf, verdictReason } from "./verdicts.js";
 import { taskObservations } from "./observations.js";
@@ -90,24 +89,7 @@ export function comparisonRow(
       ? (receipts.get(task.dependencies[label])?.evaluation as AttributionResult)
       : undefined;
     if (!attribution) throw new Error("缺少归因任务收据");
-    const raw = inputs[c.input_id] as RawInput;
-    const findings = structuredClone(attribution.findings) as (AttributionResult["findings"][number] & { stage_trace?: JsonObject })[];
-    const traces = annotateFindings(raw, c.input_id, findings, inputs);
-    findings.forEach((finding, i) => {
-      finding.stage_trace = traces[i];
-    });
-    evaluations[c.version] = {
-      is_correct: attribution.is_correct,
-      ...(attribution.standard_conflict !== undefined ? { standard_conflict: attribution.standard_conflict } : {}),
-      correctness_reason: attribution.correctness_reason,
-      correctness_evidence: attribution.correctness_evidence,
-      numeric_checks: attribution.numeric_checks,
-      ...(attribution.table_resolutions ? { table_resolutions: attribution.table_resolutions } : {}),
-      criterion_assessments: attribution.criterion_assessments,
-      core_assessment: attribution.core_assessment,
-      summary: attribution.summary,
-      findings,
-    };
+    evaluations[c.version] = structuredClone(attribution);
   }
   const first = data.candidates[Object.keys(data.candidates).find((label) => data.candidates[label]!.version === group[0])!]!;
   const raw = inputs[first.input_id] as RawInput;
@@ -159,18 +141,11 @@ export function comparisonRow(
     },
   };
 }
-export function attributionRow(task: PlannedTask, receipt: SubmissionReceipt): JsonObject {
-  const candidate = (task.data as TaskData).candidates.A;
-  return {
-    evaluation_type: "attribution",
-    evaluator_version: receipt.evaluatorVersion,
-    task_id: task.id,
-    submission_id: receipt.submissionId,
-    input_id: task.inputIds.answer,
-    case: { batch_id: candidate.batch_id, case_id: candidate.case_id },
-    version: candidate.version,
-    evaluation: receipt.evaluation,
-  };
+export function attributionRow(task:PlannedTask,receipt:SubmissionReceipt,runId?:string):JsonObject{
+ const candidate=(task.data as TaskData).candidates.A,value=receipt.evaluation as AttributionResult;
+ return {...structuredClone(value),meta:{...value.meta,...(runId?{run_id:runId}:{}),evaluator_version:receipt.evaluatorVersion,
+  task_id:task.id,submission_id:receipt.submissionId,input_id:task.inputIds.answer,batch_id:candidate.batch_id,case_id:candidate.case_id,
+  version:candidate.version,source:{file:candidate.source,line:candidate.line},judge:receipt.judge}};
 }
 /** Result file per stage; the single place that maps stages to JSONL artifacts. */
 export function resultFile(stage: Stage): string {
@@ -185,17 +160,20 @@ export function resultFile(stage: Stage): string {
 export function stageResult(stage: string, row: JsonObject): JsonObject {
   if (stage === "instruction-review") return row.instruction_review as JsonObject;
   return stage === "criteria" || ["comparison_review", "comparison_verification"].includes(String(row.evaluation_type)) ? row.result as JsonObject
-    : stage === "attribution" ? row.evaluation as JsonObject
+    : stage === "attribution" ? row
     : stage === "clustering" ? row.result as JsonObject : row;
 }
 function replaceStageResult(stage: string, row: JsonObject, result: JsonObject): JsonObject {
   if (stage === "instruction-review") return { ...row, instruction_review: result };
-  return stage === "attribution" ? { ...row, evaluation: result }
+  return stage === "attribution" ? result
     : stage === "clustering" || stage === "criteria" || ["comparison_review", "comparison_verification"].includes(String(row.evaluation_type)) ? { ...row, result } : result;
 }
-export function originalResultRow(stage: string, row: JsonObject): JsonObject {
-  const { rewritten: _rewritten, ...result } = stageResult(stage, row);
-  return replaceStageResult(stage, row, result);
+export function stageRewritten(stage:string,row:JsonObject):unknown{
+ return stage==='attribution'?(row.meta as JsonObject).rewritten:stageResult(stage,row).rewritten;
+}
+export function originalResultRow(stage:string,row:JsonObject):JsonObject{
+ if(stage==='attribution'){const {rewritten:_rewritten,...meta}=row.meta as JsonObject;return {...row,meta};}
+ const {rewritten:_rewritten,...result}=stageResult(stage,row);return replaceStageResult(stage,row,result);
 }
 /** Text-only polish embedded in the source result row. */
 export function rewrittenResult(receipt: SubmissionReceipt): JsonObject {
@@ -255,8 +233,8 @@ export function encodeResult(task: PlannedTask, state: RunState, inputs: Record<
     } };
   }
   if (task.stage === "attribution") {
-    const row = attributionRow(task, receipt);
-    if (!validateAttribution(row.evaluation))
+    const row = attributionRow(task, receipt,state.manifest.runId);
+    if (!validateAttribution(row))
       throw new Error("归因结果 schema 无效：" + ajv.errorsText(validateAttribution.errors));
     return { id: task.id, file: "attribution.jsonl", row };
   }
@@ -269,7 +247,7 @@ export function encodeResult(task: PlannedTask, state: RunState, inputs: Record<
       throw new Error("改写结果 schema 无效：" + ajv.errorsText(validateRewritten.errors));
     return {
       ...exported,
-      row: replaceStageResult(source.stage, exported.row, { ...stageResult(source.stage, exported.row), rewritten }),
+      row: source.stage==='attribution'?{...exported.row,meta:{...exported.row.meta as JsonObject,rewritten}}:replaceStageResult(source.stage, exported.row, { ...stageResult(source.stage, exported.row), rewritten }),
       auxiliary: true,
     };
   }

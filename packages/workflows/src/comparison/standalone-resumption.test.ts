@@ -30,7 +30,6 @@ for (const accepted of [false, true]) for (const frozen of [false, true])
         if (task.stage === "criteria") accept(task, analysis);
         else if (task.stage === "attribution") {
           const result = attributionResult(true, "2+2=4", true, task.inputIds.answer);
-          result.task_analysis = analysis;
           accept(task, result);
         }
       }

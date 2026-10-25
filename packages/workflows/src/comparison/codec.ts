@@ -4,7 +4,7 @@ import { canonical, type ResultReference } from "@eval/contracts";
 import type { RunCodec } from "@eval/data";
 import type { Candidate } from "../inputs/types.js";
 import type { ComparisonResult, EvalConfig, Stage, TaskData } from "./types.js";
-import { originalResultRow, stageResult, resultFile, acceptedRewrites } from "./results.js";
+import { originalResultRow, stageRewritten, resultFile, acceptedRewrites } from "./results.js";
 import { analysisRunOverview } from "./analysis-progress.js";
 
 import type { Checkpoint, Patch, SavedReceipt, SavedTask } from "./checkpoint.js";
@@ -178,7 +178,7 @@ function evaluationFromRow(data: TaskData, row: JsonObject): ComparisonResult {
 function resultEvaluation(data: TaskData, row: JsonObject, rewriteIds?: string[]): unknown {
   if (data.stage === "instruction-review") return row.instruction_review;
   if (data.stage === "rewrite") {
-    const rewrites = (stageResult(data.rewriteOf!.stage, row).rewritten as { rewrites: { id: string; text: string }[] }).rewrites;
+    const rewrites = (stageRewritten(data.rewriteOf!.stage,row) as { rewrites: { id: string; text: string }[] }).rewrites;
     return { rewrites: rewriteIds ? rewriteIds.map((id) => {
       const item = rewrites.find((item) => item.id === id);
       if (!item) throw new Error("改写槽位缺失：" + id);
@@ -186,7 +186,7 @@ function resultEvaluation(data: TaskData, row: JsonObject, rewriteIds?: string[]
     }) : rewrites };
   }
   row = originalResultRow(data.stage, row);
-  if (data.stage === "attribution") return row.evaluation;
+  if (data.stage === "attribution") return row;
   if (data.stage === "criteria" || ["comparison_review", "comparison_verification"].includes(String(row.evaluation_type))) return row.result;
   if (data.stage === "clustering") return row.result;
   return evaluationFromRow(data, row);
@@ -203,7 +203,7 @@ function decodeState(
     throw new Error("运行状态缺少评测器版本");
   const resultRow = (receipt: SavedReceipt, ref: ResultReference, rewritten?: { stage: string; evaluatorVersion: string }) => {
     const row = getRow(ref);
-    if ((rewritten ? (stageResult(rewritten.stage, row).rewritten as JsonObject)?.evaluator_version : row.evaluator_version) !== (rewritten?.evaluatorVersion ?? receipt.evaluatorVersion))
+    if ((rewritten ? (stageRewritten(rewritten.stage,row) as JsonObject)?.evaluator_version : (ref.file === "attribution.jsonl"?(row.meta as JsonObject).evaluator_version:row.evaluator_version)) !== (rewritten?.evaluatorVersion ?? receipt.evaluatorVersion))
       throw new Error("结果评测器版本与收据不一致：" + ref.id);
     return row;
   };
@@ -334,10 +334,10 @@ function decodeState(
       const latest = acceptedRewrites(plan, savedReceipts, source.taskId).filter(item => item.receipt.exported).at(-1)!.receipt;
       const row = resultRow(receipt, { id: receipt.exported.taskId, file }, { stage: source.stage, evaluatorVersion: latest.evaluatorVersion });
       if (
-        (row.task_id ?? row.comparison_id) !== source.resultId ||
+        (source.stage==="attribution"?(row.meta as JsonObject).task_id:row.task_id ?? row.comparison_id) !== source.resultId ||
         (data.rewriteScope
           ? row.batch_id !== data.rewriteScope.batch_id
-          : canonical(row.case) !== canonical({ batch_id: data.case!.batch_id, case_id: data.case!.case_id }))
+          : canonical(source.stage==="attribution"?{batch_id:(row.meta as JsonObject).batch_id,case_id:(row.meta as JsonObject).case_id}:row.case) !== canonical({ batch_id: data.case!.batch_id, case_id: data.case!.case_id }))
       )
         throw new Error("改写结果身份不一致：" + task.id);
       const evaluation = restore(resultEvaluation(data, row, rewriteIds), evaluationPatch || []);
@@ -361,16 +361,16 @@ function decodeState(
     const file = receipt.exported.file || resultFile(correctness ? "attribution" : "comparison");
     const row = resultRow(receipt, { file, id: resultId });
     if (
-      canonical(row.case) !==
+      canonical(correctness?{batch_id:(row.meta as JsonObject).batch_id,case_id:(row.meta as JsonObject).case_id}:row.case) !==
         canonical({
           batch_id: data.candidates.A.batch_id,
           case_id: data.candidates.A.case_id,
         }) ||
       (correctness &&
-        (row.evaluation_type !== "attribution" ||
-          row.input_id !== task.inputIds.answer ||
-          row.version !== data.candidates.A.version ||
-          row.submission_id !== receipt.submissionId))
+        ((row.meta as JsonObject).task_id !==task.id ||
+          (row.meta as JsonObject).input_id !== task.inputIds.answer ||
+          (row.meta as JsonObject).version !== data.candidates.A.version ||
+          (row.meta as JsonObject).submission_id !== receipt.submissionId))
     )
       throw new Error("结果文件缺失或身份不一致：" + resultId);
     const evaluation = restore(resultEvaluation(data, row), evaluationPatch || []);
@@ -392,7 +392,7 @@ export const comparisonCodec: RunCodec<Checkpoint> = {
   encode: encodeState,
   overview: analysisRunOverview,
   decode: decodeState,
-  resultId: (row) => String(row.task_id ?? row.comparison_id),
+  resultId: (row) => String(Object.hasOwn(row,"Problem")?(row.meta as JsonObject).task_id:row.task_id ?? row.comparison_id),
   references(checkpoint, taskIds) {
     if (checkpoint.format !== "evaluation-run") throw new Error("不支持此运行格式；只支持 evaluation-run。");
     return Object.entries(checkpoint.tasks).flatMap(([id, task]) => {

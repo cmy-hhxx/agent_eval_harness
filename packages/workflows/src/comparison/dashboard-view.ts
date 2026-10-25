@@ -184,8 +184,8 @@ export function caseResultView(stage: Stage, row: JsonObject | undefined, versio
       verdicts: {},
     };
   }
-  const source = (stage === "attribution" ? row.evaluation : stage === "clustering" || stage === "criteria" ? row.result : row) as JsonObject;
-  const rewritten = source.rewritten as { evaluator_version: string; rewrites: { id: string; text: string }[] } | undefined;
+  const source = (stage === "attribution" ? row : stage === "clustering" || stage === "criteria" ? row.result : row) as JsonObject;
+  const rewritten = (stage === "attribution" ? (source.meta as JsonObject)?.rewritten : source.rewritten) as { evaluator_version: string; rewrites: { id: string; text: string }[] } | undefined;
   const paths = new Map<string, string>();
   if (stage === "comparison" && rewritten) {
     paths.set("tradeoff", "decision_basis.tradeoff");
@@ -210,43 +210,11 @@ export function caseResultView(stage: Stage, row: JsonObject | undefined, versio
     }),
   } } : {};
   if (stage === "attribution") {
-    const value = (row.evaluation ?? {}) as JsonObject;
-    return {
-      evaluation: {
-        has_standard_answer: value.has_standard_answer,
-        is_correct: value.is_correct,
-        task_analysis: value.task_analysis,
-        correctness_reason: clip(value.correctness_reason, 8000),
-        correctness_evidence: clipEvidence(value.correctness_evidence),
-        numeric_checks: value.numeric_checks,
-        ...(value.table_resolutions === undefined ? {} : { table_resolutions: (value.table_resolutions as JsonObject[]).map(item => ({
-          ...item, reason: clip(item.reason, 8000), evidence: clipEvidence(item.evidence),
-        })) }),
-        criterion_assessments: value.criterion_assessments,
-        core_assessment: value.core_assessment,
-        summary: clip(value.summary, 8000),
-        findings: Array.isArray(value.findings)
-          ? value.findings.map((finding) => {
-              const item = (finding ?? {}) as JsonObject;
-              return {
-                finding_id: item.finding_id,
-                type: item.type,
-                dimension: item.dimension,
-                importance: item.importance,
-                stage: item.stage,
-                text: clip(item.text, 4000),
-                reason: clip(item.reason, 4000),
-                evidence: clipEvidence(item.evidence),
-                assessment: item.assessment,
-                problem: item.problem,
-                ...(item.stage_trace !== undefined ? { stage_trace: item.stage_trace } : {}),
-              };
-            })
-          : value.findings,
-      },
-      ...rewriteView,
-    };
+    const value = row;
+    return {...value,meta:{...value.meta as JsonObject,...rewriteView},summary:clip(value.summary,8000),correct_reason:value.correct_reason===null?null:clip(value.correct_reason,8000),
+      Problem:(value.Problem as JsonObject[]??[]).map(item=>({...item,text:clip(item.text,4000),reason:clip(item.reason,4000),evidence:clipEvidence(item.evidence)}))};
   }
+
   if (stage === "clustering" || stage === "criteria") {
     const { rewritten, ...result } = row.result as JsonObject;
     return { result, ...rewriteView };
@@ -262,8 +230,8 @@ export function caseResultView(stage: Stage, row: JsonObject | undefined, versio
       decision_basis: row.decision_basis,
       assessments: row.assessments,
       evaluations: Object.fromEntries(Object.entries((row.evaluations ?? {}) as Record<string, JsonObject>).map(([version, evaluation]) => {
-        const view = caseResultView("attribution", { evaluation })!;
-        return [version, { ...view.evaluation as JsonObject, ...(view.rewritten ? { rewritten: view.rewritten } : {}) }];
+        const view = caseResultView("attribution", evaluation)!;
+        return [version,view];
       })),
       verdicts: row.verdicts,
       ...rewriteView,
@@ -370,14 +338,14 @@ export async function readTaskResult(run: string, taskId: string) {
       const attribution = state.receipts[id]?.exported?.row;
       if (!attribution) throw new Error(`缺少归因任务结果：${id}`);
       const version = saved.inputs[task.inputIds[label]].version;
-      const evaluation = attribution.evaluation as JsonObject;
+      const evaluation = attribution;
       const formal = (row!.evaluations as Record<string, JsonObject> | undefined)?.[version];
       // Attribution owns the accepted text and rewrites; the formal comparison owns trace annotations.
-      const traces = new Map(((formal?.findings as JsonObject[] | undefined) ?? [])
+      const traces = new Map(((formal?.Problem as JsonObject[] | undefined) ?? [])
         .filter((finding) => finding.stage_trace !== undefined)
-        .map((finding) => [finding.finding_id, finding.stage_trace]));
-      return [version, { ...evaluation, findings: (evaluation.findings as JsonObject[]).map((finding) =>
-        traces.has(finding.finding_id) ? { ...finding, stage_trace: traces.get(finding.finding_id) } : finding) }];
+        .map((finding) => [finding.problem_id, finding.stage_trace]));
+      return [version, { ...evaluation, Problem: (evaluation.Problem as JsonObject[]).map((finding) =>
+        traces.has(finding.problem_id) ? { ...finding, stage_trace: traces.get(finding.problem_id) } : finding) }];
     }));
     const models = Object.fromEntries(Object.entries(task.inputIds).map(([, id]) => {
       const candidate = saved.inputs[id]!;
@@ -618,8 +586,8 @@ async function sampleRecalls(config: EvalConfig, occurrences: ProblemOccurrence[
     const { occurrence, saved, directory, candidate, taskId } = item;
     const row = receipts.get(directory!)?.[taskId!]?.exported?.row;
     if (!row) return unavailableRecall("result_missing");
-    const evaluation = row.evaluation as { findings?: { finding_id?: string }[] } | undefined;
-    if (!evaluation?.findings?.some((finding) => finding.finding_id === occurrence.finding_id))
+    const evaluation = row as { Problem?: { problem_id?: string }[] } | undefined;
+    if (!evaluation?.Problem?.some((finding) => finding.problem_id === occurrence.finding_id))
       return unavailableRecall("finding_missing");
     const inputKey = JSON.stringify([directory, occurrence.input_id]);
     if (!inputs.has(inputKey)) inputs.set(inputKey, (async () => {

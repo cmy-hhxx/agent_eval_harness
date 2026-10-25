@@ -15,24 +15,12 @@ export interface ClusteringBudget {
 export interface ClusteringExample {
   finding: string;
   reason: string;
-  dimension: string;
-  importance: string;
-  stage: string;
   evidence_status: "established" | "uncertain";
   responsibilities?: {
-    role: "primary" | "contributing";
-    component: string;
-    business_component: string;
-    chain_index: number | null;
-    chain_step: string;
-    field_names: string[];
-    mechanism_source: "explicit_process" | "boundary_comparison";
-    failure_stage: string;
-    mechanism: string;
-    certainty: "confirmed" | "inferred";
-    reason: string;
-    evidence_gap: string | null;
-    alternatives: string[];
+    role:"primary"|"contributing";component:string;transition_index:number;
+    mechanism_source:"explicit_process"|"boundary_comparison";
+    certainty:"confirmed"|"inferred";reason:string;
+    uncertainty?:{evidence_gap:string;alternatives:string[]};
   }[];
 }
 /** One deduplicated problem observation: identical proposals collapsed before clustering. */

@@ -352,7 +352,7 @@ function findingSharesReturnedFact(request: AgentRequest, finding: Finding, conc
 
 function findingSharesProof(request: AgentRequest, finding: Finding, concern: ComparisonMaterialInspection["concerns"][number],
   blocks: EvidenceReference[][], audit: ToolAudit, path: string) {
-  const own = [...finding.evidence, ...finding.context_evidence ?? []].filter(evidence => evidence.source === undefined && evidence.source_input_id === undefined);
+  const own = finding.evidence.filter(evidence => evidence.source === undefined && evidence.source_input_id === undefined);
   const source = request.sources[concern.candidate]!;
   return blocks.some(block => block.every(norm => own.some(evidence =>
     evidenceCovers(source.value as { messages: unknown[] }, source.id, evidence.evidence_id, norm.evidence_id)))) &&
@@ -368,7 +368,7 @@ function findingSharesUserNorm(request: AgentRequest, finding: Finding, concern:
   if (!primary || primary.id === id || !criterionAppliesToPair(input, primary) || !target ||
     target.applies_to.length && !target.applies_to.includes(material.candidate_id) || selectedNormBlocks(request, concern, id).length ||
     !findingSharesActualAnswer(request, finding, concern, audit, path)) return false;
-  const own = [...finding.evidence, ...finding.context_evidence ?? []].filter(evidence => evidence.source === undefined && evidence.source_input_id === undefined);
+  const own = finding.evidence.filter(evidence => evidence.source === undefined && evidence.source_input_id === undefined);
   return normativeSources(raw, source.id, material.final_message_index).filter(norm => norm.role === "user").some(norm => {
     const blocks = sourceContentBlocks(norm.content, norm.path), targets = blocks.filter(block => hasSourceTextBlock(target.acceptance_rule, block.quote)),
       sources = evidenceSources(raw.messages[norm.message_index]);
@@ -399,14 +399,13 @@ function findingSharesUserNorm(request: AgentRequest, finding: Finding, concern:
 /** One mechanical matcher serves submitted selections and the finite repair choices. */
 function concernFindingCoverage(request: AgentRequest, concern: ComparisonMaterialInspection["concerns"][number],
   findingIndex: number, audit: ToolAudit, path: string) {
-  const input = request.input as unknown as ComparisonVerificationInput, finding = input.attributions[concern.candidate]?.findings[findingIndex];
-  if (!finding || finding.type !== "problem" || finding.assessment.evidence_status !== "established") return { eligible: false, covered: [] as string[] };
-  if (!concern.criterion_ids.length) return { covered: [] as string[], eligible: finding.dimension === "instruction_following" &&
-    finding.assessment.requirement_index === null && findingSharesProof(request, finding, concern,
+  const input = request.input as unknown as ComparisonVerificationInput, finding = input.attributions[concern.candidate]?.Problem[findingIndex];
+  if (!finding || finding.evidence_status !== "established") return { eligible: false, covered: [] as string[] };
+  if (!concern.criterion_ids.length) return { covered: [] as string[], eligible: findingSharesProof(request, finding, concern,
       sourceOnlyNormProof(request, concern, audit, `${path}/source_evidence`).blocks, audit, path) };
   const criterion = findingCriterion(input, concern.candidate, findingIndex), covered = concern.criterion_ids.filter(id =>
-    criterion?.id === id && (findingSharesActualAnswer(request, finding, concern, audit, path) ||
-      !criterion.applies_to.length && !selectedNormBlocks(request, concern, id).length && findingSharesReturnedFact(request, finding, concern, audit, path)) ||
+    (findingSharesActualAnswer(request,finding,concern,audit,path) ||
+      input.task_analysis.requirements.some(item=>item.id===id&&!item.applies_to.length)&&!selectedNormBlocks(request,concern,id).length&&findingSharesReturnedFact(request,finding,concern,audit,path)) ||
     findingSharesProof(request, finding, concern, selectedNormBlocks(request, concern, id), audit, path) ||
     findingSharesUserNorm(request, finding, concern, criterion, id, audit, path));
   return { eligible: covered.length > 0, covered };
@@ -415,7 +414,7 @@ function concernFindingCoverage(request: AgentRequest, concern: ComparisonMateri
 function concernMatchChoices(request: AgentRequest, concern: ComparisonMaterialInspection["concerns"][number],
   concernIndex: number, audit: ToolAudit, path: string) {
   const input = request.input as unknown as ComparisonVerificationInput, requirements = input.task_analysis.requirements;
-  const choices = input.attributions[concern.candidate]!.findings.flatMap((_finding, findingIndex) => {
+  const choices = input.attributions[concern.candidate]!.Problem.flatMap((_finding, findingIndex) => {
     const coverage = concernFindingCoverage(request, concern, findingIndex, audit, path);
     return coverage.eligible ? [{ finding_index: findingIndex, covered_requirement_indices: coverage.covered.map(id => requirements.findIndex(item => item.id === id)) }] : [];
   });
@@ -514,10 +513,10 @@ function unmatchedConcerns(request: AgentRequest, submission: ComparisonVerifica
           ...(!concerns.length ? { concern_matches: [] } : {}) },
         message: concerns.length ? "每个匹配只指向一个真实、未重复的原材料发现。"
           : "不可改写的 concerns 为空，concern_matches 须为 []；checks 或既有 finding 不是原材料发现索引。" }]);
-      const findings = input.attributions[concern.candidate]?.findings;
+      const findings = input.attributions[concern.candidate]?.Problem;
       const ids = new Set(match.finding_indices.flatMap(findingIndex => {
         const finding = findings?.[findingIndex];
-        if (!finding || finding.type !== "problem" || finding.assessment.evidence_status !== "established")
+        if (!finding || finding.evidence_status !== "established")
           throw new ValidationError([{ category: "decision", code: "inspection_match_finding", path,
             expected: concernMatchChoices(request, concern, match.concern_index, audit, path),
             message: "原材料发现只能对应本方既有 established problem；准确对应事实与责任链仍须实际核查。" }]);
@@ -561,15 +560,13 @@ function unverifiedReviews(request: AgentRequest, audit: ToolAudit) {
   const inspection = audit.inspection!.value as unknown as ComparisonMaterialInspection;
   return inspection.checks.filter(check => check.result === "unverified").flatMap(check => {
     const attribution = input.attributions[check.candidate];
-    const met = attribution.criterion_assessments.some(assessment => assessment.criterion_id === check.criterion_id &&
-      assessment.status === "met" && assessment.evidence_status === "established");
-    const strengths = attribution.findings.flatMap((finding, index) => finding.type === "strength" &&
-      finding.assessment.evidence_status === "established" && findingCriterion(input, check.candidate, index)?.id === check.criterion_id ? [index] : []);
+    const met = input.comparison_draft.decision_basis.comparisons.some(row=>row.criterion_ids.includes(check.criterion_id)&&
+      row.assessments[check.candidate]?.status==='met'&&row.assessments[check.candidate]?.evidence_status==='established');
     const decisive = input.comparison_draft.decision_basis.decisive_findings.flatMap(reference => reference.candidate === check.candidate &&
       findingCriterion(input, check.candidate, reference.finding_index)?.id === check.criterion_id &&
-      attribution.findings[reference.finding_index]?.assessment.evidence_status === "established" ? [reference.finding_index] : []);
-    return met || strengths.length || decisive.length ? [{ candidate: check.candidate, criterion_ids: [check.criterion_id],
-      finding_indices: [...new Set([...strengths, ...decisive])], reason: check.observation }] : [];
+      attribution.Problem[reference.finding_index]?.evidence_status === "established" ? [reference.finding_index] : []);
+    return met || decisive.length ? [{ candidate: check.candidate, criterion_ids: [check.criterion_id],
+      finding_indices: [...new Set(decisive)], reason: check.observation }] : [];
   });
 }
 
@@ -579,10 +576,9 @@ function checkConflictReviews(request: AgentRequest, audit: ToolAudit) {
   const inspection = audit.inspection!.value as unknown as ComparisonMaterialInspection;
   return inspection.checks.filter(check => check.result === "supported" || check.result === "not_applicable").flatMap(check => {
     const attribution = input.attributions[check.candidate];
-    const failed = attribution.criterion_assessments.some(assessment => assessment.criterion_id === check.criterion_id &&
-      assessment.evidence_status === "established" && (assessment.status === "unmet" || assessment.status === "partial"));
-    const problems = check.result === "not_applicable" ? attribution.findings.flatMap((finding, index) => finding.type === "problem" &&
-      finding.assessment.evidence_status === "established" && findingCriterion(input, check.candidate, index)?.id === check.criterion_id ? [index] : []) : [];
+    const failed = input.comparison_draft.decision_basis.comparisons.some(row=>row.criterion_ids.includes(check.criterion_id)&&
+      ['unmet','partial'].includes(row.assessments[check.candidate]?.status)&&row.assessments[check.candidate]?.evidence_status==='established');
+    const problems = check.result === "not_applicable" ? attribution.Problem.flatMap((finding, index) => finding.evidence_status === "established" && findingCriterion(input, check.candidate, index)?.id === check.criterion_id ? [index] : []) : [];
     return failed || problems.length ? [{ candidate: check.candidate, criterion_ids: [check.criterion_id],
       finding_indices: problems, reason: check.observation }] : [];
   });

@@ -76,19 +76,19 @@ function validateScoreBody(request:AgentRequest,value:ScoreResult|ScoreException
   const findings=new Map(value.findings.map(row=>[row.finding_id,row])),confirmedItems=new Set<string>(),confirmedDiagnostics=new Set<string>(),unmapped=new Set<string>();
   if(findings.size!==value.findings.length)bad('/findings','问题编号不能重复。');
   for(const [i,f] of value.findings.entries()){
-    const path=`/findings/${i}`,publicRule=f.component==='public_rule',confirmed=f.attribution==='established'&&!publicRule;
+    const path=`/findings/${i}`,confirmed=f.attribution==='established';
     refs(f.evidence_ids,path+'/evidence_ids');if(!f.evidence_ids.length)bad(path,'问题记录需要真实证据。');
     if(!f.description.trim())bad(path,'源归因的问题正文不能为空。');
-    if(!publicRule&&!f.affected_item_ids.length)bad(path,'候选问题需要实际受影响单元。');
-    for(const id of f.affected_item_ids){if(!items.has(id)||!publicRule&&!['violated','unverified'].includes(items.get(id)!.status))bad(path,'问题不能关联满足或不适用单元。');if(confirmed)confirmedItems.add(id);}
+    if(!f.affected_item_ids.length)bad(path,'候选问题需要实际受影响单元。');
+    for(const id of f.affected_item_ids){if(!items.has(id)||!['violated','unverified'].includes(items.get(id)!.status))bad(path,'问题不能关联满足或不适用单元。');if(confirmed)confirmedItems.add(id);}
     if(f.primary_diagnostic_id==='unmapped'){if(!f.unmapped_reason?.trim()||f.diagnostic_ids.length)bad(path,'无法映射需明确原因，不填伪造诊断。');if(confirmed)f.affected_item_ids.forEach(id=>unmapped.add(id));}
     else{if(!f.diagnostic_ids.includes(f.primary_diagnostic_id)||f.unmapped_reason!=null)bad(path,'主诊断应在关联目录中。');
-      for(const id of f.diagnostic_ids){if(!f.affected_item_ids.includes(directory.parents[id])||!diagnostics.has(id)||!publicRule&&!['violated','unverified'].includes(diagnostics.get(id)!.status))bad(path,'问题与诊断及其父单元必须对应。');if(confirmed)confirmedDiagnostics.add(id);}}
+      for(const id of f.diagnostic_ids){if(!f.affected_item_ids.includes(directory.parents[id])||!diagnostics.has(id)||!['violated','unverified'].includes(diagnostics.get(id)!.status))bad(path,'问题与诊断及其父单元必须对应。');if(confirmed)confirmedDiagnostics.add(id);}}
   }
   for(const row of value.evaluations){if(row.status==='violated'&&(!confirmedItems.has(row.item_id)||!unmapped.has(row.item_id)&&!value.diagnostics.some(d=>directory.parents[d.diagnostic_id]===row.item_id&&d.status==='violated')))bad('/evaluations','违反单元需要已确认的非题目问题和受影响诊断。');for(const d of value.diagnostics.filter(d=>directory.parents[d.diagnostic_id]===row.item_id))if(d.status==='violated'&&!confirmedDiagnostics.has(d.diagnostic_id)&&!unmapped.has(row.item_id))bad('/evaluations','违反诊断缺少已确认问题。');}
   const final=value.final_answer_score;rating(final,'/final_answer_score',true);
   if(final.finding_ids.some(id=>!findings.has(id)))bad('/final_answer_score/finding_ids','总分引用不存在的问题。');
-  const defects=final.finding_ids.flatMap(id=>{const f=findings.get(id);return f&&f.attribution==='established'&&f.component!=='public_rule'?[f]:[];});
+  const defects=final.finding_ids.flatMap(id=>{const f=findings.get(id);return f&&f.attribution==='established'?[f]:[];});
   if(final.status==='met'&&final.finding_ids.length||final.status==='violated'&&!defects.length||final.status==='unverified'&&defects.length)bad('/final_answer_score','总分须保留实际交付缺陷；已恢复的过程问题不自动关联总分。');
   refs(value.probability_evidence_ids,'/probability_evidence_ids');
   if(value.explicit_probability===null?value.probability_evidence_ids.length:!value.probability_evidence_ids.length||value.probability_evidence_ids.some(id=>shared.get(id)?.source_id!==material.candidate_output_id))bad('/explicit_probability','概率只引用候选最终回答的明确单点概率；不存在时为null。');

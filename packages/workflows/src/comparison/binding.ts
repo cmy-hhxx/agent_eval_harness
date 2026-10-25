@@ -15,7 +15,7 @@ import { sourceSlots } from "./commentary.js";
 import { taskObservations, requestItems } from "./observations.js";
 import { normalizeLabel } from "@eval/agents/clustering";
 import { blindMaterials } from "./blind.js";
-import { attributionTableChecks, attributionTableReview, type AttributionResult } from "@eval/agents/attribution";
+import { attributionTableChecks, attributionTableReview } from "@eval/agents/attribution";
 import { originalAnswerUsage } from "./experience.js";
 import { traceCatalog } from "../review/catalog.js";
 import { citationInventory } from "../review/citations.js";
@@ -40,10 +40,10 @@ export function bindTask(
 
 /** The accepted analysis is the original Criteria mirror, never a newly submitted judgment. */
 export function bindAcceptedAttribution(task: PlannedTask, receipt: SubmissionReceipt, inputs: Record<string, unknown>,
-  context: { tasks: readonly PlannedTask[] }): AgentBinding {
+  context: { tasks: readonly PlannedTask[] }, analysis:TaskAnalysis): AgentBinding {
   if (task.stage !== "attribution" || receipt.taskId !== task.id || receipt.status !== "succeeded")
     throw new Error("程序来源视图必须绑定同一已接受归因任务。");
-  return bindSourceTask(task, inputs, {}, context, (receipt.evaluation as AttributionResult).task_analysis);
+  return bindSourceTask(task, inputs, {}, context, analysis);
 }
 
 function bindSourceTask(
@@ -308,7 +308,7 @@ function bindSourceTask(
         const sourceTask = context.tasks.find(source => source.id === r!.taskId && source.stage === "attribution");
         let sourceRequest: AgentBinding["request"] = { sources: { answer: sources[label] }, input: {} };
         if (sourceTask) {
-          sourceRequest = bindAcceptedAttribution(sourceTask, r!, inputs, context).request;
+          sourceRequest = bindAcceptedAttribution(sourceTask, r!, inputs, context, task_analysis as TaskAnalysis).request;
         } else if (r!.submitted !== undefined && Array.isArray(r!.audit.evidenceBank)) {
           throw new Error("缺少已接受归因的原任务上下文，不能重建程序证据来源：" + r!.taskId);
         }
@@ -362,7 +362,7 @@ function bindSourceTask(
         comparison_scope: comparisonScope({ input, sources }),
         comparison_slots: comparisonSlotChoices({ input, sources }),
         attributions: Object.fromEntries(Object.entries(attributions).map(([label, result]) => {
-          const { task_analysis: _duplicate, ...shown } = attributionPresentation(result, label, sources[label].value as RawInput, sources[label].id,
+          const shown = attributionPresentation(result, label, sources[label].value as RawInput, sources[label].id,
             Object.fromEntries(Object.entries(sources).map(([key, source]) => [key, source.value as RawInput])),
             Object.fromEntries(Object.entries(sources).map(([key, source]) => [key, source.id])));
           return [label, shown];

@@ -115,16 +115,16 @@ export function createDashboardViews({
   }
 
   const fieldLabels = {
-    has_standard_answer: "有标准答案", is_correct: "正确性", correctness_reason: "判定说明",
-    correctness_evidence: "判定证据", task_analysis: "任务分析", summary: "总结", findings: "发现",
+    has_standard_answer: "有标准答案", is_correct: "正确性", correct_reason: "判定说明",
+     task_analysis: "任务分析", summary: "总结", Problem: "问题",
     task_type: "任务类型", goal: "目标", requirements: "要求", scoring_points: "得分点", red_flags: "红线",
     id: "标识", applies_to: "适用候选", acceptance_rule: "核验方法", criterion_id: "标准标识", criterion_ids: "标准引用",
-    criterion_assessments: "逐条标准评估", core_assessment: "核心要求评估", core_failure_refs: "核心失败标准", status: "状态",
+     core_failure_refs: "核心失败标准", status: "状态",
     review_requests: "复核请求", candidate: "候选", finding_indices: "发现索引",
     text: "内容", reason: "依据", evidence: "证据", assessment: "要求评估", problem: "问题归因",
     requirement_index: "要求索引", observation: "观察", evidence_status: "证据状态", impact: "影响",
     component: "组件", label: "问题名称", definition: "定义", ranking: "排名", models: "候选信息", assessments: "候选评估", evaluations: "归因结果",
-    meets_core: "满足核心要求", decision_basis: "判决依据", tradeoff: "权衡", decisive_findings: "决定性发现",
+     decision_basis: "判决依据", tradeoff: "权衡", decisive_findings: "决定性发现",
     ground_truth: "标准答案", available: "可用", value: "答案", verdicts: "两两判决",
     finding_id: "归因标识", type: "类型", dimension: "维度", stage: "阶段", importance: "重要性",
     evidence_id: "证据坐标", message_index: "消息索引", quote: "引用原文", source: "来源", source_input_id: "来源输入",
@@ -166,10 +166,10 @@ export function createDashboardViews({
       if (!value.length) return `<span class="muted">${key === "component" ? "待定位" : "无"}</span>`;
       if (key === "component")
         return `<span class="finding-tags">${value.map((component) => `<span>${escapeHtml(component)}</span>`).join("")}</span>`;
-      if (key === "evidence" || key === "correctness_evidence")
+      if (key === "evidence")
         return `<ul class="evidence-list">${value.map((item, index) => `<li>${fieldsHtml(item, `${path}.${index}`, rewrites)}</li>`).join("")}</ul>`;
       if (key === "decisive_findings")
-        return `<ul class="schema-list">${value.map((item) => `<li>${escapeHtml(item.candidate)} · findings[${escapeHtml(item.finding_index)}]</li>`).join("")}</ul>`;
+        return `<ul class="schema-list">${value.map((item) => `<li>${escapeHtml(item.candidate)} · Problem[${escapeHtml(item.finding_index)}]</li>`).join("")}</ul>`;
       return `<ol class="schema-list"${key === "requirements" ? ' start="0"' : ""}>${value.map((item, index) => `<li>${Array.isArray(item) ? textHtml(item.join(" · "), `${path}.${index}`) : valueHtml(item, `${path}.${index}`, key, rewrites)}</li>`).join("")}</ol>`;
     }
     if (value && typeof value === "object") return fieldsHtml(value, path, rewrites);
@@ -200,35 +200,23 @@ export function createDashboardViews({
       }).join("")}</section>`).join("")}</div>`;
   }
 
-  function findingsNav(findings, taskId) {
-    return `<nav class="findings-nav" id="${escapeHtml(`findings-${taskId}`)}" tabindex="-1" aria-label="发现目录"><div class="findings-nav-heading">发现目录 <span>${findings.length}</span></div><div class="findings-nav-groups">${["strength", "problem"].map((type) => {
-      const entries = findings.map((finding, index) => ({ finding, index })).filter(({ finding }) => finding.type === type);
-      return `<section class="findings-nav-group"><h6 class="finding-type ${type}">${valueLabels.type[type]} <span>${entries.length}</span></h6>${entries.length
-        ? `<ol>${entries.map(({ finding, index }) => `<li><a data-finding-target="${escapeHtml(`finding-${taskId}.findings.${index}`)}" href="#${encodeURIComponent(`finding-${taskId}.findings.${index}`)}"><span class="finding-index">${index}</span><span class="finding-nav-text">${escapeHtml(finding.text)}</span><span class="finding-importance">${escapeHtml(scalar(finding.importance, "importance"))}</span></a></li>`).join("")}</ol>`
-        : '<p class="muted">无</p>'}</section>`;
-    }).join("")}</div></nav>`;
+  function findingsNav(problems, taskId) {
+    return `<nav class="findings-nav" id="${escapeHtml(`findings-${taskId}`)}" tabindex="-1" aria-label="问题目录"><div class="findings-nav-heading">问题目录 <span>${problems.length}</span></div><div class="findings-nav-groups"><section class="findings-nav-group"><ol>${problems.map((problem,index) => `<li><a data-finding-target="${escapeHtml(`finding-${taskId}.Problem.${index}`)}" href="#${encodeURIComponent(`finding-${taskId}.Problem.${index}`)}"><span class="finding-index">${index}</span><span class="finding-nav-text">${escapeHtml(problem.text)}</span></a></li>`).join("")}</ol></section></div></nav>`;
   }
 
-  function findingMetadataHtml(finding) {
-    return [["dimension", "维度"], ["stage", "阶段"], ["importance", "重要性"]]
-      .filter(([key]) => finding[key] != null)
-      .map(([key, title]) => `<span>${title} · ${escapeHtml(scalar(finding[key], key))}</span>`).join("");
-  }
-
-  function findingHtml(finding, index, path, rewrites, taskId) {
-    const { finding_id, type, dimension, stage, importance, ...fields } = finding;
-    return `<section class="finding" id="${escapeHtml(`finding-${path}`)}" data-finding="${escapeHtml(path)}" ${state.openFindings.has(path) ? "open" : ""}><header><span class="finding-head"><span class="finding-type ${escapeHtml(type)}">${escapeHtml(scalar(type, "type"))}</span><strong>findings[${index}]</strong><code>${escapeHtml(finding_id)}</code></span><span class="finding-preview">${escapeHtml(rewrites.get(`${path}.text`) ?? finding.text)}</span><span class="finding-tags">${findingMetadataHtml(finding)}</span></header>
+  function findingHtml(problem, index, path, rewrites, taskId) {
+    const { problem_id, ...fields } = problem;
+    return `<section class="finding" id="${escapeHtml(`finding-${path}`)}" data-finding="${escapeHtml(path)}" ${state.openFindings.has(path) ? "open" : ""}><header><span class="finding-head"><strong>问题 ${index+1}</strong><code>${escapeHtml(problem_id)}</code></span><span class="finding-preview">${escapeHtml(rewrites.get(`${path}.text`) ?? problem.text)}</span></header>
       <div class="finding-content"><a class="findings-return" href="#${encodeURIComponent(`findings-${taskId}`)}">返回目录</a>${fieldsHtml(fields, path, rewrites)}</div></section>`;
   }
 
-  function attributionHtml(evaluation, path, rewritten) {
-    const rewrites = new Map((rewritten?.rewrites || []).map((item) => [`${path}.${item.path}`, item.text]));
-    const { summary, task_analysis, findings = [], ...correctness } = evaluation;
-    return findingsNav(findings, path)
+  function attributionHtml(evaluation, path) {
+    const rewrites = new Map((evaluation.meta.rewritten?.rewrites || []).map((item) => [`${path}.${item.path}`, item.text]));
+    const { summary, Problem, meta, ...correctness } = evaluation;
+    return findingsNav(Problem, path)
       + sectionHtml("summary", valueHtml(summary, `${path}.summary`, "summary", rewrites))
       + fieldsHtml(correctness, path, rewrites)
-      + (task_analysis ? sectionHtml("task_analysis", taskAnalysisHtml(task_analysis, `${path}.task_analysis`)) : "")
-      + sectionHtml("findings", findings.map((finding, index) => findingHtml(finding, index, `${path}.findings.${index}`, rewrites, path)).join(""));
+      + sectionHtml("Problem", Problem.map((problem, index) => findingHtml(problem, index, `${path}.Problem.${index}`, rewrites, path)).join(""));
   }
 
   function comparisonText(value, path, rewrites) {
@@ -238,15 +226,15 @@ export function createDashboardViews({
   }
 
   function comparisonFindingHtml(evaluation, findingIndex, version, rowIndex, taskId) {
-    const finding = evaluation.findings[findingIndex];
-    const path = `${taskId}.decision_basis.comparisons.${rowIndex}.assessments.${version}.findings.${findingIndex}`;
-    const prefix = `findings.${findingIndex}.`;
-    const rewrites = new Map((evaluation.rewritten?.rewrites || []).filter((item) => item.path.startsWith(prefix))
+    const finding = evaluation.Problem[findingIndex];
+    const path = `${taskId}.decision_basis.comparisons.${rowIndex}.assessments.${version}.Problem.${findingIndex}`;
+    const prefix = `Problem.${findingIndex}.`;
+    const rewrites = new Map((evaluation.meta.rewritten?.rewrites || []).filter((item) => item.path.startsWith(prefix))
       .map((item) => [`${path}.${item.path.slice(prefix.length)}`, item.text]));
-    const { finding_id, type, dimension, stage, importance, ...fields } = finding;
+    const { problem_id, ...fields } = finding;
     return `<section class="comparison-finding" data-comparison-finding="${escapeHtml(path)}" data-finding-index="${findingIndex}" ${state.expandedTexts.has(path) ? "open" : ""}>
-      <header><span class="finding-head"><strong>归因 #${findingIndex}</strong><code>${escapeHtml(finding_id)}</code></span><span class="finding-tags">${findingMetadataHtml(finding)}</span><span class="finding-preview">${escapeHtml(rewrites.get(`${path}.text`) ?? finding.text)}</span></header>
-      <div class="comparison-finding-content">${fieldsHtml({ type, ...fields }, path, rewrites)}</div>
+      <header><span class="finding-head"><strong>归因 #${findingIndex}</strong><code>${escapeHtml(problem_id)}</code></span><span class="finding-preview">${escapeHtml(rewrites.get(`${path}.text`) ?? finding.text)}</span></header>
+      <div class="comparison-finding-content">${fieldsHtml(fields, path, rewrites)}</div>
     </section>`;
   }
 
@@ -262,19 +250,18 @@ export function createDashboardViews({
       <section class="schema-section"><h5>逐项对照</h5><div class="comparison-scroll" tabindex="0" role="region" aria-label="各模型逐项对照"><table class="comparison-table"><thead><tr><th scope="col">比较点</th>${versions.map((version) => `<th scope="col">${escapeHtml(name(version))}</th>`).join("")}</tr></thead><tbody>${rows.map(({ item, index }) => `<tr data-comparison-index="${index}"><th scope="row"><code class="comparison-index">comparisons[${index}]</code><strong>${escapeHtml(item.aspect)}</strong><span class="comparison-importance">重要性 · ${escapeHtml(scalar(item.importance, "importance"))}</span><span class="comparison-importance">直接标准引用 · ${escapeHtml(item.criterion_ids.length ? item.criterion_ids.join(" / ") : "0 项")}</span><span class="comparison-better-candidates">${escapeHtml(item.better_candidates.length ? `更优 · ${item.better_candidates.map(name).join(" / ")}` : "未区分优劣")}</span></th>${versions.map((version) => {
         const assessment = item.assessments[version];
         const evaluation = row.evaluations[version];
-        const observed = assessment.finding_indices.flatMap(i => evaluation?.findings[i] ? [evaluation.findings[i]] : []);
-        const hasRequirement = item.criterion_ids.length || observed.some(finding => finding.assessment?.requirement_index != null);
+        const observed = assessment.finding_indices.flatMap(i => evaluation?.Problem[i] ? [evaluation.Problem[i]] : []);
+        const hasRequirement = item.criterion_ids.length;
         const oneSided = !hasRequirement && !observed.length && Object.values(item.assessments).some(cell => cell.finding_indices.length);
         const stateLabel = assessment.status === "unknown" ? (oneSided ? "未核查此项" : "证据不足")
           : assessment.status === "met" && !hasRequirement ? (assessment.evidence_status !== "established" ? "观察待核" : observed.length
-            ? observed.every(finding => finding.type === "problem") ? "已确认问题"
-              : observed.every(finding => finding.type === "strength") ? "已确认优点" : "已确认观察"
+            ? "已确认问题"
             : "已记录") : scalar(assessment.status, "status");
         const links = assessment.finding_indices.map((findingIndex) => {
-          const target = `finding-${taskId}.evaluations.${version}.findings.${findingIndex}`;
+          const target = `finding-${taskId}.evaluations.${version}.Problem.${findingIndex}`;
           return `<a data-finding-target="${escapeHtml(target)}" href="#${encodeURIComponent(target)}">归因 #${findingIndex}</a>`;
         }).join("");
-        const findings = assessment.finding_indices.filter((findingIndex) => evaluation?.findings[findingIndex])
+        const findings = assessment.finding_indices.filter((findingIndex) => evaluation?.Problem[findingIndex])
           .map((findingIndex) => comparisonFindingHtml(evaluation, findingIndex, version, index, taskId)).join("");
         return `<td data-candidate="${escapeHtml(version)}">${item.better_candidates.includes(version) ? '<strong class="comparison-advantage">更优</strong>' : ""}<div class="comparison-cell-states"><span class="comparison-status" data-status="${escapeHtml(assessment.status)}">状态 · ${escapeHtml(stateLabel)}</span><span class="comparison-evidence-status" data-evidence-status="${escapeHtml(assessment.evidence_status)}">证据 · ${escapeHtml(scalar(assessment.evidence_status, "evidence_status"))}</span></div>${comparisonText(assessment.summary, `${taskId}.decision_basis.comparisons.${index}.assessments.${version}.summary`, rewrites)}<div class="comparison-references">关联归因 · ${assessment.finding_indices.length} 项${links}</div>${findings}</td>`;
       }).join("")}</tr>`).join("")}</tbody></table></div></section>`;
@@ -286,7 +273,7 @@ export function createDashboardViews({
     const rewrites = new Map((row.rewritten?.rewrites || []).map((item) => [`${task.id}.${item.path}`, item.text]));
     let body = "";
     if (task.stage === "attribution") {
-      body = attributionHtml(row.evaluation, task.id, row.rewritten);
+      body = attributionHtml(row, task.id);
     } else if (task.stage === "comparison") {
       body = comparisonHtml(row, task.id, rewrites);
       body += `<section class="comparison-details"><header>裁决明细</header>` + ["status", "review_requests", "models", "task_analysis", "ground_truth", "ranking", "assessments", "verdicts"]
@@ -297,8 +284,8 @@ export function createDashboardViews({
       const evaluationGroups = groupCaseCandidates(Object.keys(row.evaluations).map((version) => ({ version, name: row.models?.[version]?.version || version })));
       body += `<section class="comparison-details comparison-attributions" ${[...state.openFindings].some((path) => path.startsWith(`${task.id}.evaluations.`)) ? "open" : ""}><header>归因明细</header><div class="case-columns">` + evaluationGroups.map((group) =>
         `<section class="case-column" data-version-group="${escapeHtml(group.id)}"><h4 class="case-column-heading">${escapeHtml(group.name)}</h4>${group.candidates.map(({ version, name }) => {
-          const { rewritten, ...evaluation } = row.evaluations[version];
-          return `<section class="model-evaluation"><h6>${escapeHtml(name)}</h6>${attributionHtml(evaluation, `${task.id}.evaluations.${version}`, rewritten)}</section>`;
+          const evaluation = row.evaluations[version];
+          return `<section class="model-evaluation"><h6>${escapeHtml(name)}</h6>${attributionHtml(evaluation, `${task.id}.evaluations.${version}`)}</section>`;
         }).join("")}</section>`).join("") + "</div></section>";
     } else if (task.stage === "criteria") {
       body = taskAnalysisHtml(row.result, task.id, rewrites);

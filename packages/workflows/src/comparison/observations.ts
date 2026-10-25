@@ -17,7 +17,7 @@ export interface ProblemSource {
   input_id: string;
   case_id: string;
   source: { file: string; line: number };
-  findings: AttributionResult["findings"];
+  Problem: AttributionResult["Problem"];
   batch_id?: string;
   attribution?: ClusteringObservationRef["attribution"];
 }
@@ -38,22 +38,21 @@ export function groupObservations(sources: ProblemSource[]): ClusteringObservati
     }
   >();
   for (const source of sources)
-    for (const finding of source.findings) {
-      if (finding.type !== "problem" || !finding.problem) continue;
-      for (const component of responsibilityLabels(finding.problem)) {
-        const key = canonical([normalizeLabel(component), normalizeLabel(finding.problem.label), finding.problem.definition]);
+    for (const finding of source.Problem) {
+      for (const component of responsibilityLabels(finding)) {
+        const key = canonical([normalizeLabel(component), normalizeLabel(finding.text), finding.reason]);
         const group = groups.get(key) ?? {
           component: component,
-          label: finding.problem.label,
+          label: finding.text,
           definition: "",
           entries: [],
         };
-        if (!group.definition && finding.problem.definition.trim())
-          group.definition = finding.problem.definition;
+        if (!group.definition && finding.reason.trim())
+          group.definition = finding.reason;
         // The sample belongs to this answer. Peer facts stay in the full attribution;
         // their physical coordinates must never be stored against the owner's input.
         const evidence = finding.evidence.find(item => item.source === undefined && item.source_input_id === undefined);
-        if (!evidence) throw new Error(`问题样本缺少本方证据：${source.input_id}/${finding.finding_id}`);
+        if (!evidence) throw new Error(`问题样本缺少本方证据：${source.input_id}/${finding.problem_id}`);
         group.entries.push({
           ref: {
             ...(source.batch_id ? { batch_id: source.batch_id } : {}),
@@ -61,21 +60,18 @@ export function groupObservations(sources: ProblemSource[]): ClusteringObservati
             input_id: source.input_id,
             case_id: source.case_id,
             source: source.source,
-            finding_id: finding.finding_id,
-            evidence_status: finding.assessment.evidence_status,
+            finding_id: finding.problem_id,
+            evidence_status: finding.evidence_status,
             message_index: evidence.message_index,
             quote: evidence.quote,
           },
           example: {
             finding: finding.text,
             reason: finding.reason,
-            dimension: finding.dimension,
-            importance: finding.importance,
-            stage: finding.stage,
-            evidence_status: finding.assessment.evidence_status,
-            responsibilities: finding.problem.component.filter(cause =>
-              responsibilityLabels({component:[cause]})[0] === component)
-              .map(({ technical_domain: _domain, functional_component: _function, evidence_ids: _evidence, ...cause }) => cause),
+            evidence_status: finding.evidence_status,
+            responsibilities: finding.causes.filter(cause =>
+              responsibilityLabels({causes:[cause]})[0] === component)
+              .map(({ evidence_ids:_evidence,actor_index:_actor,basis:_basis,kind:_kind,...cause })=>cause),
           },
         });
         groups.set(key, group);
@@ -89,7 +85,7 @@ export function groupObservations(sources: ProblemSource[]): ClusteringObservati
       );
       const examples = representativeSamples(entries, ({ ref, example }) => ({
         answer: ref.input_id, date: ref.batch_id ?? "", certainty: ref.evidence_status,
-        scene: canonical([example.dimension, example.stage, example.importance]),
+        scene: canonical(example.responsibilities?.map(cause=>cause.component)??[]),
         content: canonical(example),
         key: canonical([ref.case_id, ref.finding_id]),
       })).map(entry => entry.example);
@@ -126,7 +122,7 @@ function observationsFor(
         source: entry.source,
         ...(origin ? { attribution: { ...origin, task_id: accepted!.taskId!,
           submission_id: accepted!.submissionId!, evaluator_version: accepted!.evaluatorVersion! } } : {}),
-        findings: ((accepted?.evaluation as AttributionResult | undefined)?.findings) ?? [],
+        Problem: ((accepted?.evaluation as AttributionResult | undefined)?.Problem) ?? [],
       };
     }),
   );

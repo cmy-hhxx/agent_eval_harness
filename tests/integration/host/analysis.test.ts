@@ -34,7 +34,7 @@ async function fixture() {
       const candidate=(task.data as TaskData).candidates.A;
       if(task.stage==='attribution' && candidate.case_id==='two')continue;
       const evaluation=task.stage==='criteria'?criteriaResultForTask(task,plan.inputs):attributionResult(false,'2+2=5',true,candidate.input_id);
-      if(task.stage==='attribution')(evaluation as ReturnType<typeof attributionResult>).task_analysis=criteriaResultForTask(task,plan.inputs);
+      if(task.stage==='attribution')
       receipts[task.id]={taskId:task.id,attemptId:randomUUID(),submissionId:randomUUID(),evaluation,evaluatorVersion:fakeEvaluatorVersion,
         judge:'fixture',acceptedAt:index+1,status:'succeeded',audit:emptyAudit(),usage:emptyUsage()};
     }
@@ -132,7 +132,7 @@ test('analysis freezes selected accepted receipts, shows unfinished/overlap, res
   const pending=updated.manifest.tasks.find(task=>task.stage==='attribution' && (task.data as TaskData).candidates.A.case_id==='two')!;
   const candidate=(pending.data as TaskData).candidates.A;
   const evaluation=attributionResult(false,'2+2=5',true,candidate.input_id);
-  evaluation.task_analysis=updated.receipts[pending.dependencies.criteria].evaluation as typeof evaluation.task_analysis;
+
   updated.receipts[pending.id]={...updated.receipts[selection.sources[0].task_id],taskId:pending.id,submissionId:randomUUID(),acceptedAt:3,evaluation};
   updated.manifest.states[pending.id].status='succeeded';
   await createResultWriter(sourceRun,inputs)(updated);await writeRunState(sourceRun,updated);

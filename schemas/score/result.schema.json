@@ -454,16 +454,7 @@
           "type": "string",
           "minLength": 1
         },
-        "component": {
-          "enum": [
-            "candidate_output",
-            "tool_call",
-            "tool_service",
-            "capture",
-            "public_rule",
-            "unknown"
-          ]
-        },
+        "component": {"type": "string", "minLength": 1},
         "attribution": {
           "enum": [
             "established",

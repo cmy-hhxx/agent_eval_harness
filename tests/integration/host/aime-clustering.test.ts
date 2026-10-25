@@ -87,9 +87,9 @@ test("AIME freezes current accepted attributions, clusters them and exports all 
   await assert.rejects(prepareClusteringJob([run], base, { inputIds: ["missing"], readSource: readClusteringSource }), /缺少已接受归因/);
   const rows = [];
   for await (const row of readJsonl(sourceFiles[1])) rows.push(row);
-  assert.equal(rows.filter(row => (row as {task_id:string}).task_id === sources[0].task_id).length, 1);
-  await writeJsonl(sourceFiles[1], rows.map(row => (row as {task_id:string}).task_id === sources[0].task_id
-    ? { ...row as object, submission_id: randomUUID() } : row));
-  await assert.rejects(readClusteringSource(run, [sources[0].task_id]), /来源收据不一致/);
+  assert.equal(rows.filter(row => (row as {meta:{task_id:string}}).meta.task_id === sources[0].task_id).length, 1);
+  await writeJsonl(sourceFiles[1], rows.map(row => (row as {meta:{task_id:string}}).meta.task_id === sources[0].task_id
+    ? { ...row as object, meta:{...(row as {meta:Record<string,unknown>}).meta,submission_id: randomUUID()} } : row));
+  await assert.rejects(readClusteringSource(run, [sources[0].task_id]), /身份与收据不一致|来源收据不一致/);
   assert.equal((clustered.manifest.config as ClusteringJobConfig).clusteringJob.sources.length, 2);
 });

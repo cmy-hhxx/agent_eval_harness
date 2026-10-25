@@ -10,26 +10,27 @@
 | source / line / trace 引用 | 输入适配器 | 材料读取、复核、续跑 | 原材料只在数据源保存；引用用于重新定位，不是正文副本。 |
 | evaluator_version / judge | Host 收据 | 结果追溯、条件分层 | 保存接受时身份，同 run 可以混合，不能用当前配置倒填。 |
 | Criteria 请求的 question / instruction sources | Workflow | Criteria | 原问与适用规范定义交付义务；已匹配调用与返回的技能保留 tool 来源，普通工具事实不成为规范。此阶段不接收标准答案，避免将参考背景变为额外要求。 |
+| meta / source_meta | Workflow | 正式归因JSONL、恢复、看板 | 程序组装样本、run、评测器及来源标识；source_meta原样保留源记录meta，不送模型重复填写。 |
 | ground_truth / 原始标准引用 | 输入适配器、Workflow | Attribution、Comparison 事实核对及正式导出 | 保留完整标准以核验用户所求事实，不能据此扩展题意；不进入 Criteria 请求。 |
 | requirements / scoring_points / red_flags | Criteria | Attribution、Comparison | 有不同验收含义；统一作用域和来源绑定避免私规外溢。 |
-| criterion_assessments / core_assessment.meets_core / is_correct | Attribution | 判决、报告、统计 | 逐项事实、关键交付和标准一致性互相独立，不能合并为单分数。 |
-| findings / problem / problem.component | Attribution | Comparison、Clustering、责任摘要 | 事实、责任和问题定义分工明确；每条问题恰有一个主责，缺少直接过程证据时保留推断、关键缺口与替代解释。 |
-| transition_index / function_index | Attribution 模型选择、程序绑定 | 归因校验与正式组装 | 转换固定真实主体、前后证据及链路；function_index只选技术功能，不能改身份。 |
+| is_correct / correct_reason | Attribution | 标准一致性核对 | 只判断与给定标准答案是否一致，独立于问题归因；无标准时两者固定 null。 |
+| Problem / text / reason / evidence_status | Attribution | Comparison、Score、Clustering、报告 | 正式问题及依据、实际影响与缺陷确定性；允许充分评审后的空数组，摘要不替代问题。 |
+| transition_index / causes | 模型选择、程序绑定 | 归因校验与正式组装 | 稳定转换固定真实主体、边界和证据；模型负责原因、责任确定性与必要 uncertainty。 |
 | accepted_attribution / problem_assignments | Workflow、Score | 单次评分及程序导出 | 完成情况、已确认或待核的问题和恢复状态来自接受收据；模型仅映射选档，程序保留源问题、责任确定性及证据。 |
-| checks / causes / calculations | Attribution 每问题案卷 | 程序验证并组装 investigation、component、calculations | 核查实际前后边界；责任绑定自身核查；源数字与公式复算，不代写因果判断。 |
+| checks / calculations | Attribution 每问题证据闭环 | 程序核查与复算 | 只核查本问题相关前后边界；计算仅在判断依赖时提供，不要求空数组或重复调查表。 |
 | evidence_id / evidence refs | Agent 与 Host | 引用校验、复核、查看原文 | 可解析坐标，必需；位置合法不证明语义正确。 |
-| numeric checks / table checks | Attribution 与确定性代码 | 数值及实体核查 | 保存口径、换算和对应关系，不能只留下最终布尔值。 |
+| numeric references / table checks | 程序材料导航 | 疑点定位 | 仅作为核查线索，正式判断及必要计算写入对应 Problem。 |
 | comparisons / importance / better_candidate | Comparison | 排名派生、逐项展示 | 共同且可比的差异是判决依据，不能靠问题数替代。 |
 | a_summary / b_summary / tradeoff | Comparison 内部提交 | 正式总评及 decision_basis.tradeoff | 两方摘要描述各自交付；单一 tradeoff 解释整场取舍，避免拼接自相矛盾的两段理由。 |
 | preference / relative_preference | Comparison 内部提交 | 排名与偏好展示 | 正式胜负与并列内的相对倾向不同；完全等价允许后者 null。 |
 | scope_conflicts[].slot_index / reason | Comparison 内部提交 | 来源复核请求派生 | 共同要求的口径冲突不能从 core 布尔推导；只选择现有共同槽，由程序生成双方既有 review_requests 并停止排名，不改源归因。 |
-| assessments.meets_core | Workflow 正式导出 | 看板、统计、恢复 | 可从源归因得到，正式消费者直接读取，保持现有导出位置。 |
+| assessments.meets_core | Comparison | 正式判决 | 由比较阶段按实际交付判断，不从已删除的归因核心字段补造。 |
 | ranking / verdicts | Workflow 确定性派生 | 看板、对战统计、报告 | 模型不重复手写；不同层面供当前消费者直接使用，保持外部契约。 |
 | decisive_findings / assessments.*.core_failure_refs | Comparison 校验与 Workflow | 裁决复核、来源追溯 | 从已接受来源选出与胜负方向一致的依据，保留可定位链。 |
 | has_standard_answer | Workflow | 统计分母、正式结果消费者 | 与 ground_truth.available 有冗余，正式消费者直接读取，保持现有导出字段。 |
 | winner_name | Workflow | 看板、Eris、导出阅读 | 可从 winner_version 与模型表推导，当前外部契约保留。 |
 | task_analysis / evaluations | Workflow | 独立正式行、报告、结果恢复 | 单行消费及恢复依赖完整上下文；正文只保存在正式 JSONL，state 保留引用。 |
-| rewritten / 原判词 | Rewrite 与 Workflow | 展示、逐槽复核 | 原文是权威判断，改写保留溯源；失败继续展示原文。 |
+| meta.rewritten / 原归因判词 | Rewrite 与 Workflow | 展示、逐槽复核 | 归因顶层仍只有六字段；原文权威判断与改写分开，失败保留原文。 |
 | Rewrite items[].preference | Workflow 从正式结果和源提交派生 | Rewrite 前缀校验与展示 | 复用既有文字字段，固定正式结论及非空相对倾向；不用正文推测身份，null 不造偏好。正文语义仍单独审阅。 |
 | Rewrite 整场 items[].text | Workflow 取已接受 tradeoff | Rewrite | 只改这一段既定取舍，不拼接分项重新综合；判决前提放 context。 |
 | 材料投影 capture_gaps | Workflow 解析独立视觉采集占位块 | Attribution、Comparison、独立核验 | 标明采集状态、资源引用与原文路径；用户实际渲染保持未知，不进入正式对外 Schema。 |

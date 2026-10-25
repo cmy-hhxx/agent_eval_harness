@@ -52,16 +52,9 @@ test("a viewed image-only final preserves an unknown formation boundary without 
     assert.equal(delivery.actor_index, null);
     assert.equal(delivery.before.length, 0, "no generation process was collected");
     assert(delivery.after.some(item => item.evidence_id === evidence.evidence_id && !Object.hasOwn(item, "quote")), "the image directory must locate pixels without inventing an observation");
-    const problem: ProblemProposal = { diagnosis: "other", label: "图片宽度未达要求", definition: "实际交付宽度1像素，小于所需2像素。", calculations: [],
-      investigation: [{ transition_index: delivery.transition_index, kind: "delivery", outcome: "unresolved",
-        observation: "图片交付已实际查看；形成者与生成前记录未采集，不能推断是哪次调用生成了此图。",
-        before_evidence_ids: [], after_evidence_ids: [evidence.evidence_id] }],
-      component: [{ transition_index: delivery.transition_index, basis: "unknown_transition", actor_index: null, chain_index: null,
-        role: "primary", technical_domain: "数据处理", functional_component: "图表渲染", component: "未采集的图片形成主体",
-        business_component: "PNG交付图的像素宽度形成", chain_step: "核验与最终交付", failure_stage: "结果组织与交付", field_names: [],
-        mechanism_source: "boundary_comparison", certainty: "inferred", mechanism: "已交付PNG宽度不足，但未记录图片生成或装配过程，无法确定具体形成动作。",
-        reason: "仅已知交付图片尺寸及原问要求。", evidence_ids: [evidence.evidence_id], evidence_gap: "没有图片生成输入、调用或渲染记录。",
-        alternatives: ["生成时尺寸不足。", "交付装配时替换了图片。"] }] };
+    const problem:ProblemProposal={text:'图片宽度未达要求',reason:'实际交付宽度1像素，小于所需2像素。',evidence_status:'established',
+      checks:[{transition_index:delivery.transition_index,kind:'delivery',outcome:'unresolved',observation:'已查看图片，生成过程未采集。',before_evidence_ids:[],after_evidence_ids:[evidence.evidence_id]}],
+      causes:[],uncertainty:{evidence_gap:'没有生成输入、调用或渲染记录。',alternatives:['生成尺寸不足。','交付装配替换了图片。']}};
     assert.deepEqual(investigationIssues(binding.request, problem, [evidence], context.audit, "/problem"), []);
     assert(investigationIssues(binding.request, problem, [evidence], { ...context.audit, viewedImages: [] }, "/problem")
       .some(issue => issue.code === "investigation_image_required"), "replaying an observation without a real view receipt must still fail");

@@ -14,7 +14,7 @@ function fixture() {
   const observations = ["模型自身推理", "Search", "模型自身推理"].map((component, index) => ({
     id: "o" + index, component, label: "现象" + index, definition: "独立现象边界。",
     count: 1, established_count: 0, uncertain_count: 1, established_answer_ids: [],
-    examples: [{ finding: "原主张", reason: "原理由", dimension: "correctness", importance: "low", stage: "final_answer", evidence_status: "uncertain" as const }],
+    examples: [{ finding: "原主张", reason: "原理由", evidence_status: "uncertain" as const }],
     refs: [{ input_id: inputId, case_id: "case", source: { file: "source.jsonl", line: 1 },
       finding_id: "f0", message_index: 1, quote: "原回答", evidence_status: "uncertain" as const }],
   }));

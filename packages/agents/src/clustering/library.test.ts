@@ -25,9 +25,6 @@ const observation = (id: string, component: string, label: string, inputId: stri
     {
       finding: label,
       reason: "r",
-      dimension: "correctness",
-      importance: "high",
-      stage: "final_answer",
       evidence_status: "established",
     },
   ],

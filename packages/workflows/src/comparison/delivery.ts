@@ -29,7 +29,7 @@ function attributionDeliveryCoverage(state: RunState, requirements: DeliveryRequ
     counts.accepted++;
     const expected = config.rewrite.attribution ? attributionSlots(receipt.evaluation as AttributionResult) : [];
     const row = receipt.exported && stageResult("attribution", receipt.exported.row);
-    const rewritten = row?.rewritten as { rewrites: { id: string; text: string }[] } | undefined;
+    const rewritten = (row?.meta as import("@eval/contracts").JsonObject|undefined)?.rewritten as { rewrites: { id: string; text: string }[] } | undefined;
     const filled = new Set(rewritten?.rewrites.filter(item => item.text.trim()).map(item => item.id));
     const missing = expected.filter(item => !filled.has(item.id));
     requiredSlots += expected.length; filledSlots += expected.length - missing.length;

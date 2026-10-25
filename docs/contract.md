@@ -21,7 +21,7 @@
 
 业务链路目录遇到含图片的工具返回时，使用容器下原始文本叶子的坐标登记文本证据，保持原有摘录预算；图片展示占位符不能进入文本证据目录，也不能替代图片读取。
 
-Attribution模型选择`actor_index`，程序从Workflow身份目录回填`component`实际主体名称，不能用技术分类或裸调用ID替代。`answer.component_catalog`在内部记录名称来源、身份缺口和消息坐标；真实名称原样保留；没有名称的已采集节点展示具体业务操作及消息坐标，同名节点由编号及证据坐标区分。未知处理者使用 actor_index=null，并展示“处理者未采集：具体业务位置”，不能借用最终接收节点；仅允许 boundary_comparison + inferred 并保留证据缺口及替代解释。模型选择技术功能与环节编号，公共调查事实集中生成，各问题引用自己的事实；完整导出结构与证据原文由程序组装，字段和边界关联必须校验。
+Attribution 模型选择真实 transition_index，程序解析 actor_index、component、边界种类及证据坐标。模型不填写已知身份、名称或功能分类。未知形成主体保留真实断点与 uncertainty；仅有边界差异时责任机制为 inferred，不能将最终接收者替代未知处理者。
 
 收据保存接受时的评测器标识和实际判官模型 `judge`；正式行的 `evaluator_version` 必须与收据一致。改写另存 `rewritten.evaluator_version`，统计汇总 `evaluator_versions` 与 `judge_models`。同 run 可混合版本：已接受结果不变，未完成任务使用当前配置。
 
@@ -40,7 +40,7 @@ Attribution模型选择`actor_index`，程序从Workflow身份目录回填`compo
 |---|---|
 | Score | 原题、完整最终回答与已接受 Attribution 的紧凑事实；一次会话选12核心项、24诊断及独立总分，不复核归因或读取候选内部指令 |
 | Criteria | 原题、公开用户要求与统一质量规范；定义共同交付边界，不接收内部指令、标准答案、候选回答或普通工具轨迹 |
-| Attribution | 一条回答、公开基准、可选标准答案与过程事实；核对正确性、逐项事实、核心可用性、优点和问题，不读问题库 |
+| Attribution | 一条回答、公开基准、可选标准答案与过程事实；输出评审总结、问题及证据责任、标准一致性，不读问题库 |
 | Instruction Review | 已接受主归因对应回答的 SYS/DEV、已确认加载的 Skill 与实际行为；独立检查条件、例外及遵循情况，不接收主归因结论 |
 | Comparison | 两条已接受归因、共同基准、完整标准答案与候选材料；核对既有 finding 的事实支持并确认同方面差异，程序派生排名与判决，不改归因 |
 | Rewrite | 指定文本槽位与必要表达上下文；只润色，不接触原始证据或改判 |
@@ -90,21 +90,21 @@ Attribution模型选择`actor_index`，程序从Workflow身份目录回填`compo
 
 Criteria 提交三组 `{source_indices,text}`：requirements、scoring_points、red_flags。程序生成 ID、来源交集作用域和含完整原文的 acceptance_rule。同一来源可支持多个独立检查项；三个数组中作用于全部候选的共同项去重后合计5–12项，私有项不计入共同数量，全部项最多24项。数量在提交解析及正式结果校验时检查，不自动填充。原问与质量来源须由共同 requirement 覆盖。SYS/DEV与已确认加载Skill不进入共同基准和主归因，统一由后置独立指令检查处理。公开要求的数量、必交范围、可选性与例外按原文保留。标准答案不进入 Criteria 来源目录，完整保留给 Attribution 核对事实。
 
-Attribution 按固定 criterion_checks 顺序提交逐项判断；程序绑定判据。核心选择只引用共同 requirements 的正整数编号。核心 false 须有 established 的 unmet/partial 支持；局部 partial 不机械等于整体不可用。整体未知可与局部已确认事实共存，理由须说明未知范围。
+Attribution 正式结果顶层只有 meta、summary、Problem、has_standard_answer、is_correct、correct_reason。meta 由程序组装样本、run、评测器及来源；模型只提交 summary、Problem，以及有标准答案时的正确性判断。原问与适用评测规则继续提供，不要求逐项填表。
 
 普通 Comparison 可用 `source_reviews` 提交决定性来源疑点，每项选择已有 `slot_index`、该槽 `reviewable_candidates` 中的 `candidate` 并说明 `reason`。程序绑定该候选原判据和 finding，保留 `needs_review`、空排名和空决定性引用，不改变归因。非空复核禁止同时提交正式或相对偏好；资源槽、不适用候选及重复选择均拒绝。双方门槛不一致继续用 `scope_conflicts`，同槽不重复提交两种复核。此入口约束已识别的语义风险，结构校验本身不保证模型能识别所有误读。
 
-`is_correct` 表示标准一致性，`meets_core` 表示关键交付可用性，两者独立。有标准时提供核对理由和本方最终回答证据；无法核实正确性时核心也保留未知。无标准时提交固定空值：`is_correct=null`、空理由、空正确性证据和空 numeric_checks。
+`is_correct` 只表示与给定标准答案的一致性，不代表整体质量。有标准时为 true、false 或确实无法判断时的 null，correct_reason 说明对象、依据和具体原因。无标准时程序固定 is_correct=null、correct_reason=null；仍调查事实、过程和交付缺陷。
 
 预测重评复用这套核对，正式 Comparison 增加成对出现的 `evaluation_purpose: "prediction"` 与 `prediction` 元数据，记录原任务、run、比较 ID、题目 ID、提问时刻和适用目标窗口。完整事后标答和来源保存在 `ground_truth`，只核验适用的明确预测结论，不以单次事件证明概率准确；多目标逐项说明，全部命中才判整体正确。判据仍来自原题，原回答和证据坐标不改写。自动入队、原位上传与统计替换见[预测类自动评测](automations.md#预测类自动评测)。
 
-strengths / problems 为两个固定扁平数组。每项用 `basis_index` 选择适用要求或本方规范，无合适关联填 null；没有关联不自动降低事实确定性。问题额外给影响、责任组件、名称和定义。程序生成 finding ID 与正式证据，按 strengths 后接 problems 的顺序保存。
+Problem 为数组，每项保留 problem_id、text、reason、evidence_status、evidence、checks、causes，必要时增加 uncertainty、calculations。reason 合并缺陷依据与实际影响；问题编号、证据坐标、实际主体均由程序绑定。第一责任为主责，关联责任只在独立传播或放大证据存在时填写。
 
 责任沿请求、工具返回、实际模型输入和最终交付定位。模型误用工具与工具自身错误分开；正确返回不证明模型实际收到。呈现、上下文或环境责任须有本方过程与交付证据。来源坐标合法只证明可定位，不证明责任或语义成立。
 
-已采集但尚未读取的材料不能记为未采集，先补查能区分候选原因的相关片段。缺陷确定性与责任确定性独立核验：URL、标题或异常数值只能提示待核状态时，缺陷仍为 uncertain；将责任标为 inferred 不能把推测的外部状态变为已确认事实。核心完成须有可独立支撑原目标的剩余交付，不能仅因已有结论或如实说明能力限制就判完成。
+已采集但尚未读取的材料不能记为未采集，先补查能区分候选原因的相关片段。缺陷确定性与责任确定性独立核验：URL、标题或异常数值只能提示待核状态时，缺陷仍为 uncertain；将责任标为 inferred 不能把推测的外部状态变为已确认事实。任务未完成、必要证据未读或预算耗尽时保留失败状态，不能落盘为成功的空问题结果。summary 不能代替正式问题登记；已成立缺陷必须在 Problem 中，或有可核验的撤销、恢复理由。
 
-`standardAnswerReview` 默认关闭；开启后才允许 standard_conflict 并最多触发一轮双方独立归因复核。原始直接反证是提请条件，复核还须确认双方所求结果一致。保留原收据，采用复核结果；标记不自动改胜负或排除统计。语义门槛见[评测质量](quality.md#流程与科学边界)。
+标准答案存在争议时在 correct_reason 保留具体比较对象、证据及无法判定原因，不新增第二套归因输出字段。
 
 ### 对比与定向补查
 
@@ -121,7 +121,7 @@ Comparison 按 comparison_slots 固定顺序选择 importance、普通格可选 
 | 阶段 | 提交入口 |
 |---|---|
 | Criteria、Rewrite、Clustering | `submit_evaluation` 直接对象 |
-| Attribution | `edit_json` 维护草稿，`submit_evaluation_file({path})` 提交 |
+| Attribution | 一条回答、公开基准、可选标准答案与过程事实；输出评审总结、问题及证据责任、标准一致性，不读问题库 |
 | 普通 Comparison | `submit_evaluation({json})` 传完整 JSON 字符串 |
 | 独立核验 | `inspect_material({path})` 保存首查，随后开放文件提交 |
 
@@ -187,9 +187,9 @@ Rewrite 只接收选定文本槽位，不接触原题、原始消息或证据。
 
 整场都好／都差且源收据已给出相对倾向时，Workflow 从源提交的结构化 `relative_preference` 读取身份，将正式结论与相对倾向合并到现有 `preference` 前缀；改写须原样保留此前缀。完全等价的 null 不生成偏好，正式胜者不重复追加同向表态。不从自然语言判词反推身份，也不靠后置多数票补写偏好。前缀正确仍不保证正文理由没有漂移。
 
-归因按概述、判据、每个 finding、表格理由分组，每组最多20槽；对比包含偏好、总评、取舍及已开启的逐项点评。资源行由程序生成，不进入改写。
+归因改写只接收 summary、Problem 的 text 与 reason 槽位，不接触证据或责任结论；对比改写保留其独立槽位。
 
-原判词与证据保留，Agent 原始结果不含 `rewritten`。Workflow 按[改写导出契约](../schemas/workflow/rewritten.schema.json)组合文案：对比行与独立归因行写入根 `rewritten`，对战归因行写入 `evaluation.rewritten`，对战聚类行写入 `result.rewritten`；独立聚类作业另存 rewrite.jsonl。恢复时分离原始判断与展示文案；同槽按接受时间取最新，局部更新不覆盖其他槽，重放旧收据不回滚。失败保留原文与错误；显式 `validate --require-rewrite` 才要求选定范围全部完成。
+原判词与证据保留，Agent 原始结果不包含 rewritten。归因改写记录放在 meta.rewritten，保持顶层六字段；Comparison 与聚类保持各自当前导出位置。同槽按接受时间取最新，局部更新不覆盖其他槽，重放旧收据不回滚。失败保留原文与错误。
 
 机械校验只检查槽位、非空文本、既定偏好及禁止前缀；事实保真与表达质量须单独复核。失败保留原文和失败记录，不把无改写当成成功改写；后置审阅发现语义漂移时在实验验收中标为未通过。表达优先级为事实与主体、数字条件和确定性、既定取舍、简洁、尖锐。准备、刷新和固定范围见[使用指南](usage.md#重新改写对比文案)。
 
@@ -225,11 +225,11 @@ Rewrite 只接收选定文本槽位，不接触原题、原始消息或证据。
 
 ### 数值与实体核验
 
-numeric_references 只从可信标准提取，模型选 reference_index 并引用本方 actual 原文；程序绑定 expected、换算和算术 matches。exact 精确比较，rounded 按标准精度比较，未交付值用 null。matches 是算术观察，不强制决定 is_correct 或核心状态。
+数值线索来自真实标准或材料。必要计算仅在具体 Problem 的 calculations 内提交原数证据、单位、期间、分母和公式，程序复算；算术相等不证明业务口径或标准一致性。
 
 单位、对象、期间和舍入须按原文解释；只在明确唯一且同维时硬校验倍率。原始计算与展示值分开，不能二次舍入制造差异或反推缺失原值。实现见 [units.ts](../packages/agents/src/attribution/units.ts)。
 
-[表格核验](../packages/agents/src/attribution/table-review.ts)只覆盖可解析的标准 Markdown 表及可比来源。unverified / conflict / ambiguous 是核查线索，不直接判错；只有 invalid_material 阻止正式比较。table_resolutions 须保留完整回答行与全部既有来源，不能裁去反证；语义是否支持仍由归因判断。
+[表格核验](../packages/agents/src/attribution/table-review.ts)只覆盖可解析的标准 Markdown 表及可比来源。unverified / conflict / ambiguous 是核查线索，不直接判错。相关行与来源保留在问题证据闭环，不再强制提交独立 table_resolutions 调查表。
 
 ### 文案校验
 

@@ -1,16 +1,11 @@
-import { ValidationError, type AgentRequest, type TaskAnalysis, type TaskCriterion, type ToolAudit, type ValidationIssue } from "@eval/contracts";
-import { cite, evidenceCovers, evidenceId, evidenceOverlaps, evidenceSources, hasSourceTextBlock, normativeSources, parseEvidenceCoordinates, resolveEvidence, selectEvidenceSource, sourceContentBlocks, sourceTextBlocks, type NormativeSource } from "@eval/tools";
-import type { AttributionResult, Evidence } from "./types.js";
+import { type AgentRequest, type TaskAnalysis, type TaskCriterion, type ValidationIssue } from "@eval/contracts";
+import { cite, evidenceSources, normativeSources, hasSourceTextBlock, parseEvidenceCoordinates, sourceContentBlocks, sourceTextBlocks } from "@eval/tools";
+import type { Evidence } from "./types.js";
 import { ownEvidence } from "./source-evidence.js";
 
 const object = (value: unknown): Record<string, unknown> | undefined =>
   value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : undefined;
 const paragraphs = (text: string) => sourceTextBlocks(text).map(block => block.quote);
-const independentFinalInstruction = (finding: unknown) => {
-  const value = object(finding), assessment = object(value?.assessment);
-  return value?.dimension === "instruction_following" && value.stage === "final_answer" &&
-    assessment?.evidence_status === "established" && assessment.requirement_index === null;
-};
 
 export function instructionEvidenceContext(request: AgentRequest) {
   const raw = request.sources.answer?.value as { messages: unknown[] };
@@ -83,143 +78,4 @@ export function instructionEvidenceContext(request: AgentRequest) {
     return completed;
   };
   return { raw, sources, forCriterion, forRequirement, appendNorms, bindingIssues, finalIndex: answer.final_message_index };
-}
-
-/** Source provenance is checked against the raw norm, not text written into a model observation. */
-function isNormEvidence(item: Evidence, sources: NormativeSource[], raw: { messages: unknown[] }, inputId: string) {
-  return !!item.quote.trim() && sources.some(source => source.evidence.some(original =>
-    evidenceCovers(raw, inputId, original.evidence_id, item.evidence_id)));
-}
-
-export function instructionEvidenceIssues(request: AgentRequest, result: AttributionResult): ValidationIssue[] {
-  const context = instructionEvidenceContext(request);
-  const task = request.input.task_analysis as unknown as TaskAnalysis;
-  const criteria = new Map([...task.requirements, ...task.scoring_points, ...task.red_flags].map(criterion => [criterion.id, criterion]));
-  const errors: ValidationIssue[] = [...context.bindingIssues];
-  const shared = (rule: TaskCriterion) => !rule.applies_to.length ||
-    rule.applies_to.includes(String(request.input.candidate_id)) && rule.applies_to.some(id => id !== request.input.candidate_id);
-  const blocks = context.sources.flatMap(source => sourceContentBlocks(source.content, source.path).map(block => ({
-    ...block, message_index: source.message_index,
-    privateEligible: source.role !== "user" || [...criteria.values()].some(rule =>
-      rule.applies_to.includes(String(request.input.candidate_id)) && !shared(rule) && hasSourceTextBlock(rule.acceptance_rule, block.quote)),
-  })));
-  const commonBlocks = blocks.filter(block => task.requirements.some(rule => shared(rule) && hasSourceTextBlock(rule.acceptance_rule, block.quote)));
-  const coordinate = (block: typeof blocks[number], origin: typeof block.origins[number]) =>
-    evidenceId(request.sources.answer.id, block.message_index, "text", origin.path, origin.start, origin.end);
-  // Runtime USER inputs may carry execution facts; only an accepted private rule makes those blocks normative.
-  const privateOrigins = blocks.filter(block => block.privateEligible && !commonBlocks.includes(block)).flatMap(block => block.origins.filter(origin =>
-    !commonBlocks.some(common => common.origins.some(part => evidenceCovers(context.raw, request.sources.answer.id,
-      coordinate(common, part), coordinate(block, origin))))).map(origin => coordinate(block, origin)));
-  for (const field of ["findings", "criterion_assessments"] as const) result[field].forEach((item, index) => {
-    item.context_evidence?.forEach((evidence, i) => {
-      if (!ownEvidence(evidence) || !isNormEvidence(evidence, context.sources, context.raw, request.sources.answer.id))
-        errors.push({ category: "evidence", code: "instruction_context_invalid", path: `/${field}/${index}/context_evidence/${i}`,
-          message: "规范上下文只能保留本方真实指令来源，不能把最终回答、工具事实或 peer 放入上下文代替实际交付证据。" });
-    });
-  });
-  const answerEvidence = (item: Evidence, finalOnly: boolean) => {
-    if (item.message_index === context.finalIndex) return true;
-    if (finalOnly || item.message_index >= context.finalIndex) return false;
-    const message = object(context.raw.messages[item.message_index]);
-    if (!message) return false;
-    if (message.role === "tool" || message.role === "assistant" ||
-        ["function_call", "function_call_output", "tool_call", "tool_result", "reasoning"].includes(String(message.type))) return true;
-    // An LLM turn also holds input instructions; only its actual assistant output counts as execution.
-    if (message.type !== "llm_turn") return false;
-    const output = selectEvidenceSource(evidenceSources(message), "/output");
-    return !!output && evidenceCovers(context.raw, request.sources.answer.id,
-      cite(request.sources.answer.id, item.message_index, output.source, output.start, output.end).evidence_id, item.evidence_id);
-  };
-  const check = (evidence: Evidence[], normSources: NormativeSource[], path: string, finalOnly: boolean,
-    relatedNorms: Evidence[], completeRelated = false, requireNorm = true) => {
-    evidence = evidence.filter(ownEvidence);
-    const hasNorm = completeRelated && relatedNorms.length
-      ? relatedNorms.every(norm => evidence.some(item => isNormEvidence(item, normSources, context.raw, request.sources.answer.id) &&
-          evidenceCovers(context.raw, request.sources.answer.id, item.evidence_id, norm.evidence_id)))
-      : evidence.some(item => isNormEvidence(item, normSources, context.raw, request.sources.answer.id) && (!relatedNorms.length ||
-          relatedNorms.some(norm => (evidenceCovers(context.raw, request.sources.answer.id, norm.evidence_id, item.evidence_id) ||
-              evidenceCovers(context.raw, request.sources.answer.id, item.evidence_id, norm.evidence_id)))));
-    if (requireNorm && !hasNorm) errors.push({
-      category: "evidence", code: "instruction_evidence_required", path,
-      message: "已关联的指令判断须保留所选原规范及实际回答或执行证据。核对原条件是否触发以及实际行为，来源编号本身不证明遵守或违反。",
-      expected: { normative_sources: (path.startsWith("/findings/") ? context.sources : normSources).map(source => ({ message_index: source.message_index, path: source.path, role: source.role,
-        references: source.evidence.map(item => ({ evidence_id: item.evidence_id })) })) },
-    });
-    if (!evidence.some(item => answerEvidence(item, finalOnly))) errors.push({
-      category: "evidence", code: "instruction_answer_evidence_required", path,
-      message: finalOnly ? `最终回答的指令判断还须引用最终消息 ${context.finalIndex}，只有指令原文不足以证明实际交付。`
-        : "指令评审还须引用最终回答或与结论相关的真实执行过程；只有指令、用户提问或上下文不足以证明已满足或违反。",
-      expected: { final_message_index: context.finalIndex },
-    });
-  };
-  result.criterion_assessments.forEach((assessment, index) => {
-    if (assessment.status === "not_applicable" || assessment.evidence_status !== "established") return;
-    const norms = context.forCriterion(criteria.get(assessment.criterion_id));
-    if (!norms.length) return;
-    const normSources = context.sources.filter(source => norms.some(norm => source.evidence.some(original => evidenceCovers(context.raw, request.sources.answer.id, original.evidence_id, norm.evidence_id))));
-    check([...assessment.evidence, ...assessment.context_evidence ?? []], normSources, `/criterion_assessments/${index}/evidence`, false, norms);
-  });
-  result.findings.forEach((finding, index) => {
-    if (finding.assessment.evidence_status !== "established") return;
-    if (!context.sources.length && !independentFinalInstruction(finding)) return;
-    const criterion = finding.assessment.requirement_index === null ? undefined : task.requirements[finding.assessment.requirement_index];
-    if (criterion && shared(criterion) &&
-        finding.evidence.filter(ownEvidence).some(item => privateOrigins.some(origin =>
-          evidenceOverlaps(context.raw, request.sources.answer.id, item.evidence_id, origin)))) {
-      errors.push({ category: "evidence", code: "instruction_private_basis",
-        path: `/findings/${index}/assessment/requirement_index`,
-        message: "本条发现实际引用了未属于共同要求的本方规范，维度标签不能改变其作用域。保留真实观察、条件与例外，改选对应 own_rule；若已有本方专有 requirement，选择该项。不能借共同原问改成共同缺口。" });
-    }
-    const norms = context.forRequirement(finding.assessment.requirement_index);
-    if (finding.dimension !== "instruction_following" && !norms.length) return;
-    // Bound norms retain their full context; unlinked observations do not acquire guessed norms.
-    check([...finding.evidence, ...finding.context_evidence ?? []], context.sources, `/findings/${index}/evidence`, finding.stage === "final_answer", norms, true,
-      norms.length > 0 || !!finding.context_evidence?.length);
-  });
-  return errors;
-}
-
-/** Include independent closure feedback alongside schema failures; unresolved refs retain their own feedback. */
-export function instructionSubmissionIssues(request: AgentRequest, draft: unknown, audit: ToolAudit): ValidationIssue[] {
-  const value = object(draft);
-  if (!value) return [];
-  const context = instructionEvidenceContext(request);
-  const task = request.input.task_analysis as unknown as TaskAnalysis;
-  const criteria = new Map([...task.requirements, ...task.scoring_points, ...task.red_flags].map(criterion => [criterion.id, criterion]));
-  const resolve = (refs: unknown, criterion: TaskCriterion | undefined,
-    norms = context.forCriterion(criterion)): Evidence[] | undefined => {
-    if (!Array.isArray(refs)) return undefined;
-    const evidence: Evidence[] = [];
-    const ownRefs = refs.filter(item => { const ref = object(item); return typeof ref?.evidence_id === "string" &&
-      parseEvidenceCoordinates(ref.evidence_id)?.input_id === request.sources.answer.id; });
-    for (const item of ownRefs) {
-      const ref = object(item);
-      if (typeof ref?.evidence_id !== "string") return undefined;
-      try { evidence.push(resolveEvidence(context.raw, ref as { evidence_id: string }, "answer", audit, "/evidence", request.sources.answer.id)); }
-      catch (error) { if (error instanceof ValidationError) return undefined; throw error; }
-    }
-    return context.appendNorms(evidence, norms);
-  };
-  const checks: AttributionResult["criterion_assessments"] = [];
-  const checkIndices: number[] = [];
-  if (Array.isArray(value.criterion_assessments)) value.criterion_assessments.forEach((entry, index) => {
-    const assessment = object(entry);
-    if (!assessment || typeof assessment.criterion_id !== "string" || assessment.evidence_status !== "established" ||
-        !["met", "partial", "unmet"].includes(String(assessment.status))) return;
-    const criterion = criteria.get(assessment.criterion_id);
-    if (!criterion) return;
-    const evidence = resolve(assessment.evidence, criterion);
-    if (evidence) {
-      checks.push({ ...assessment, evidence } as unknown as AttributionResult["criterion_assessments"][number]);
-      checkIndices.push(index);
-    }
-  });
-  // Preserve the original array paths even when an unidentifiable entry was skipped.
-  const result = instructionEvidenceIssues(request, { task_analysis: task, criterion_assessments: checks, findings: [] } as unknown as AttributionResult);
-  return result.map(issue => {
-    const match = /^\/(criterion_assessments|findings)\/(\d+)\/evidence$/u.exec(issue.path);
-    if (!match) return issue;
-    const group = match[1]!, index = Number(match[2]);
-    return { ...issue, path: `/${group}/${checkIndices[index]}/evidence` };
-  });
 }

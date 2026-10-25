@@ -95,13 +95,7 @@ export function verificationPresentation(input: Record<string, unknown>, sources
     }))]));
   const findingCatalog = Object.fromEntries(Object.entries(attributions).map(([label, result]) => {
     const shown = attributionPresentation(result, label, rawSources[label], sourceIds[label], rawSources, sourceIds);
-    return [label, shown.findings.map((finding, finding_index) => {
-      const index = finding.assessment.requirement_index;
-      const criterionId = index !== null ? result.task_analysis.requirements[index]?.id : undefined;
-      const globalIndex = criterionId ? analysis.requirements.findIndex(criterion => criterion.id === criterionId) : -1;
-      return { ...finding, finding_index, assessment: { ...finding.assessment,
-        requirement_index: globalIndex >= 0 ? globalIndex : null, source_requirement_index: index, criterion_id: criterionId ?? null } };
-    })];
+    return [label, shown.Problem.map((finding,finding_index)=>({...finding,finding_index}))];
   }));
   const { task_analysis: _analysis, ranking, ...draft } = structuredClone(input.comparison_draft as ComparisonResult);
   return { sections: [
@@ -128,8 +122,7 @@ export function verificationPresentation(input: Record<string, unknown>, sources
     { kind: "proposed_comparison", comparison_draft: { ...draft,
       ranking_tiers: ranking.map((labels, index) => ({ tier: index + 1, candidates: labels, relation: "same_tier" })) },
       source_assessments: Object.fromEntries(Object.entries(attributions).map(([label, result]) => [label, {
-        summary: result.summary, core_assessment: result.core_assessment,
-        criterion_assessments: result.criterion_assessments.map(({ evidence: _evidence, ...assessment }) => assessment),
+        summary: result.summary, is_correct:result.is_correct,correct_reason:result.correct_reason,
       }])) },
   ] as const };
 }

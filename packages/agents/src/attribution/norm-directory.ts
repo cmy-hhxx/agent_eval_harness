@@ -58,27 +58,3 @@ export function normDirectoryIssues(request: AgentRequest): ValidationIssue[] {
     message: "规范目录必须由本方真实原材料与可信 criterion 绑定完整生成，不能缺省、改写或重排。", expected: directory,
   }];
 }
-
-export function submissionFindingEntries(draft: unknown) {
-  const value = object(draft);
-  return Array.isArray(value?.findings) ? value.findings.flatMap((entry, index) => {
-    const finding = object(entry); return finding ? [{ finding, path: `/findings/${index}` }] : [];
-  }) : [];
-}
-
-export function findingNormSelectionIssues(request: AgentRequest, draft: unknown): ValidationIssue[] {
-  const directory = attributionNormDirectory(request), issues: ValidationIssue[] = [];
-  for (const { finding, path } of submissionFindingEntries(draft)) {
-    if (finding.dimension !== "instruction_following" && !Object.hasOwn(finding,"norm_index")) continue;
-    const selected = finding.norm_index;
-    if (selected === null) continue;
-    if (!Number.isSafeInteger(selected) || Number(selected) < 0 || !directory[Number(selected)]) {
-      issues.push({ category: "evidence", code: "finding_norm_index_invalid", path: `${path}/norm_index`,
-        message: `规范编号填写在 ${path}/norm_index，与 dimension 同级，不放进 assessment；只选择本方 norm_directory 的原 norm_index，没有合适的目录关联时填 null。`,
-        actual: selected, expected: directory.map(item => item.norm_index) });
-      continue;
-    }
-
-  }
-  return issues;
-}

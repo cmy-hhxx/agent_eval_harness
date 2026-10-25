@@ -1,5 +1,1 @@
-### 本次有表格待核行
-
-table_check_results是文字对照线索，不直接决定事实或核心状态。按对象、别名、期间和真实来源核查已有rows；table_resolutions只提交这些疑点行，table_index选answer_table_index，row_index从0开始。已匹配行不重新生成resolution，普通表格事实仍按主流程核验。
-
-每项引用完整最终行及全部既有来源行，不能裁掉已知反证。supported须有独立来源支持对应关系；无来源时补读原文，不能用回答自身或自编代码证明来源。conflict须有已确认问题及两侧原文。仍不能独立核实的行不提交resolution，在相应判断保留未知；不存在疑点行时table_resolutions=[]。
+存在程序定位的表格疑点。按read_execution的table_checks核查相关原始行、实体、时间和别名；程序疑点不是判词。成立缺陷登记Problem，排除或恢复保留可核验证据与理由；不能以执行代码输出自证数据正确。

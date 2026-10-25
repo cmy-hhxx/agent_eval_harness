@@ -256,17 +256,10 @@
                               "required": [
                                 "role",
                                 "component",
-                                "failure_stage",
-                                "mechanism",
+                                "transition_index",
+                                "mechanism_source",
                                 "certainty",
-                                "reason",
-                                "evidence_gap",
-                                "alternatives",
-                                "business_component",
-                                "chain_index",
-                                "chain_step",
-                                "field_names",
-                                "mechanism_source"
+                                "reason"
                               ],
                               "properties": {
                                 "role": {
@@ -278,11 +271,11 @@
                                 "component": {
                                   "type": "string"
                                 },
-                                "failure_stage": {
-                                  "type": "string"
-                                },
-                                "mechanism": {
-                                  "type": "string"
+                                "mechanism_source": {
+                                  "enum": [
+                                    "explicit_process",
+                                    "boundary_comparison"
+                                  ]
                                 },
                                 "certainty": {
                                   "enum": [
@@ -293,54 +286,30 @@
                                 "reason": {
                                   "type": "string"
                                 },
-                                "evidence_gap": {
-                                  "type": [
-                                    "string",
-                                    "null"
-                                  ]
-                                },
-                                "alternatives": {
-                                  "type": "array",
-                                  "items": {
-                                    "type": "string"
-                                  }
-                                },
-                                "business_component": {
-                                  "type": "string",
-                                  "minLength": 1
-                                },
-                                "chain_index": {
-                                  "type": [
-                                    "integer",
-                                    "null"
-                                  ],
+                                "transition_index": {
+                                  "type": "integer",
                                   "minimum": 1
                                 },
-                                "chain_step": {
-                                  "enum": [
-                                    "用户目标",
-                                    "查询规划与标的选择",
-                                    "工具请求参数",
-                                    "原始返回及字段含义",
-                                    "返回整理与上下文传递",
-                                    "模型实际输入",
-                                    "数据解释与计算",
-                                    "核验与最终交付"
-                                  ]
-                                },
-                                "field_names": {
-                                  "type": "array",
-                                  "uniqueItems": true,
-                                  "items": {
-                                    "type": "string",
-                                    "minLength": 1
+                                "uncertainty": {
+                                  "type": "object",
+                                  "additionalProperties": false,
+                                  "required": [
+                                    "evidence_gap",
+                                    "alternatives"
+                                  ],
+                                  "properties": {
+                                    "evidence_gap": {
+                                      "type": "string",
+                                      "minLength": 1
+                                    },
+                                    "alternatives": {
+                                      "type": "array",
+                                      "items": {
+                                        "type": "string",
+                                        "minLength": 1
+                                      }
+                                    }
                                   }
-                                },
-                                "mechanism_source": {
-                                  "enum": [
-                                    "explicit_process",
-                                    "boundary_comparison"
-                                  ]
                                 }
                               }
                             }
@@ -409,9 +378,6 @@
               "required": [
                 "finding",
                 "reason",
-                "dimension",
-                "importance",
-                "stage",
                 "evidence_status"
               ],
               "properties": {
@@ -420,15 +386,6 @@
                   "minLength": 1
                 },
                 "reason": {
-                  "type": "string"
-                },
-                "dimension": {
-                  "type": "string"
-                },
-                "importance": {
-                  "type": "string"
-                },
-                "stage": {
                   "type": "string"
                 },
                 "evidence_status": {
@@ -445,20 +402,10 @@
                     "required": [
                       "role",
                       "component",
-                      "failure_stage",
-                      "mechanism",
-                      "certainty",
-                      "reason",
-                      "evidence_gap",
-                      "alternatives",
-                      "business_component",
-                      "chain_index",
-                      "chain_step",
-                      "field_names",
-                      "mechanism_source",
-                      "actor_index",
                       "transition_index",
-                      "basis"
+                      "mechanism_source",
+                      "certainty",
+                      "reason"
                     ],
                     "properties": {
                       "role": {
@@ -470,11 +417,15 @@
                       "component": {
                         "type": "string"
                       },
-                      "failure_stage": {
-                        "type": "string"
+                      "transition_index": {
+                        "type": "integer",
+                        "minimum": 1
                       },
-                      "mechanism": {
-                        "type": "string"
+                      "mechanism_source": {
+                        "enum": [
+                          "explicit_process",
+                          "boundary_comparison"
+                        ]
                       },
                       "certainty": {
                         "enum": [
@@ -485,72 +436,26 @@
                       "reason": {
                         "type": "string"
                       },
-                      "evidence_gap": {
-                        "type": [
-                          "string",
-                          "null"
-                        ]
-                      },
-                      "alternatives": {
-                        "type": "array",
-                        "items": {
-                          "type": "string"
-                        }
-                      },
-                      "business_component": {
-                        "type": "string",
-                        "minLength": 1
-                      },
-                      "chain_index": {
-                        "type": [
-                          "integer",
-                          "null"
+                      "uncertainty": {
+                        "type": "object",
+                        "additionalProperties": false,
+                        "required": [
+                          "evidence_gap",
+                          "alternatives"
                         ],
-                        "minimum": 1
-                      },
-                      "chain_step": {
-                        "enum": [
-                          "用户目标",
-                          "查询规划与标的选择",
-                          "工具请求参数",
-                          "原始返回及字段含义",
-                          "返回整理与上下文传递",
-                          "模型实际输入",
-                          "数据解释与计算",
-                          "核验与最终交付"
-                        ]
-                      },
-                      "field_names": {
-                        "type": "array",
-                        "uniqueItems": true,
-                        "items": {
-                          "type": "string",
-                          "minLength": 1
+                        "properties": {
+                          "evidence_gap": {
+                            "type": "string",
+                            "minLength": 1
+                          },
+                          "alternatives": {
+                            "type": "array",
+                            "items": {
+                              "type": "string",
+                              "minLength": 1
+                            }
+                          }
                         }
-                      },
-                      "mechanism_source": {
-                        "enum": [
-                          "explicit_process",
-                          "boundary_comparison"
-                        ]
-                      },
-                      "actor_index": {
-                        "type": [
-                          "integer",
-                          "null"
-                        ],
-                        "minimum": 1
-                      },
-                      "transition_index": {
-                        "type": "integer",
-                        "minimum": 1
-                      },
-                      "basis": {
-                        "enum": [
-                          "input_deviation",
-                          "independent_addition",
-                          "unknown_transition"
-                        ]
                       }
                     }
                   }

@@ -1,4 +1,3 @@
-import { responsibilityFixture } from "./responsibility.js";
 import { testSettings, writeTestSettings } from "./settings.js";
 import { mkdtemp, rm } from "node:fs/promises";
 import { randomUUID } from "node:crypto";
@@ -7,17 +6,14 @@ import path from "node:path";
 import { DEFAULT_POLICY, emptyUsage, type AttemptSpec, EngineIdentity, ToolAudit, TaskAnalysis, CriteriaInput, PlannedTask, AgentBackend, RunState, SubmissionReceipt } from "@eval/contracts";
 import { criteriaProfile, criteriaSources, type CriterionSource, type CriteriaSubmission } from "@eval/agents/criteria";
 import { evidenceId, hasSourceTextBlock, parseEvidenceCoordinates } from "@eval/tools";
-import { canonicalEvidence } from "./evidence.js";
 import { ROOT } from "./services.js";
 import { writeJson, writeJsonl } from "@eval/data";
 import { loadComparisonConfig, createModelResolver } from "@eval/host-app/config";
 import type { AttributionResult, ComparisonResult, TaskData } from "@eval/workflows/comparison";
 import type { RawInput } from "@eval/workflows/inputs";
 import { comparisonSubmission } from "./comparison-submission.js";
-import { normSelection } from "./attribution-submission.js";
 import type { ComparisonSlot } from "@eval/agents/comparison";
 import { comparisonWorkflow } from "@eval/workflows/comparison";
-import { responsibilityFunctions } from "@eval/agents/attribution";
 
 export const fakeIdentity: EngineIdentity = {
   engine: "pi",
@@ -79,8 +75,8 @@ export function comparisonResult(labels: string[] = ["A", "B"], analysis: TaskAn
     ),
     decision_basis: {
       tradeoff: "双方均满足同一要求，没有结果差异。",
-      comparisons: analysis.requirements.map((criterion, index) => ({ aspect: criterion.text, criterion_ids: [criterion.id], importance: "high", better_candidates: [], assessments: Object.fromEntries(
-        labels.map((label) => [label, { status: "met", evidence_status: "established", summary: "正确给出4。", finding_indices: index === 0 ? [0] : [] }]),
+      comparisons: analysis.requirements.map((criterion) => ({ aspect: criterion.text, criterion_ids: [criterion.id], importance: "high", better_candidates: [], assessments: Object.fromEntries(
+        labels.map((label) => [label, { status: "met", evidence_status: "established", summary: "正确给出4。", finding_indices: [] }]),
       ) })),
       decisive_findings: [],
     },
@@ -147,50 +143,13 @@ export async function fixtureConfig(
   };
 }
 
-export function attributionResult(correct = true, answer = "2+2=4", available = true, inputId = "7c4e3ba8-8f7c-46cc-b8fb-3016e10ea2dd"): AttributionResult {
-  const task_analysis = criteriaResult({ question: "计算2+2", candidates: [{ candidate_id: inputId, instructions: [], context: [] }] });
-  // This two-message fixture records only question and delivery; no generation call is captured.
-  const deliveredId=evidenceId(inputId,1,"text","/content",0,answer.length);
-  const formation={calculations:[],investigation:[{transition_index:1,kind:"delivery" as const,outcome:"unresolved" as const,
-    observation:"已核对交付答案，未采集实际生成输入输出与中间处理记录。",before_evidence_ids:[],after_evidence_ids:[deliveredId]}],
-    component:[responsibilityFixture("处理者未采集：加法答案形成边界",{transition_index:1,actor_index:null,basis:"unknown_transition",
-      chain_step:"核验与最终交付",failure_stage:"结果组织与交付",business_component:"加法答案形成边界",evidence_ids:[deliveredId],
-      mechanism:"推测偏离形成于未采集的计算、生成或交付环节，现有记录无法区分。",
-      evidence_gap:"未采集生成输入、处理过程与实际输出。",alternatives:["上游计算结果错误。","生成或交付引入数值错误。"]})]};
-  return {
-    has_standard_answer: available,
-    is_correct: available ? correct : null,
-    correctness_reason: available ? "与标准答案一致。" : "",
-    numeric_checks: [],
-    correctness_evidence: available ? [{ evidence_id: evidenceId(inputId, 1, "text", "/content", 0, answer.length), message_index: 1, quote: answer }] : [],
-    task_analysis,
-    criterion_assessments: task_analysis.requirements.map(criterion => ({ criterion_id: criterion.id, status: correct || !["r1", "r3", "r4"].includes(criterion.id) ? "met" : "unmet", evidence_status: "established",
-      summary: correct ? "正确给出4。" : "结果错误。", evidence: [{ evidence_id: evidenceId(inputId, 1, "text", "/content", 0, answer.length), message_index: 1, quote: answer },
-        { evidence_id: evidenceId(inputId, 0, "text", "/content", 0, 5), message_index: 0, quote: "计算2+2" }] })),
-    core_assessment: { meets_core: correct, reason: correct ? "核心计算交付完成。" : "关键计算结果错误。", criterion_ids: ["r1"] },
-    summary: correct ? "正确给出结果。" : "结果错误。",
-    findings: [
-      {
-        finding_id: "f0",
-        type: correct ? "strength" : "problem",
-        dimension: "correctness",
-        stage: "final_answer",
-        importance: "high",
-        text: correct ? "加法结果正确" : "加法结果错误",
-        reason: "与题目要求一致。",
-        evidence: [{ evidence_id: evidenceId(inputId, 1, "text", "/content", 0, answer.length), message_index: 1, quote: answer }],
-        assessment: {
-          requirement_index: 0,
-          observation: answer,
-          evidence_status: "established",
-          impact: "决定加法要求是否完成。",
-        },
-        problem: correct
-          ? null
-          : { diagnosis: "other" as const, ...formation, label: "算术错误", definition: "计算与事实不符。" },
-      },
-    ],
-  };
+export function attributionResult(correct=true,answer='2+2=4',available=true,inputId='7c4e3ba8-8f7c-46cc-b8fb-3016e10ea2dd'):AttributionResult{
+  const id=evidenceId(inputId,1,'text','/content',0,answer.length);
+  return {meta:{input_id:inputId},summary:correct?'正确给出结果。':'加法结果错误。',has_standard_answer:available,is_correct:available?correct:null,
+    correct_reason:available?(correct?'回答结果4与给定标准4一致。':'回答结果与给定标准4不一致。'):null,
+    Problem:correct?[]:[{problem_id:'p1',text:'加法结果错误',reason:'2+2应为4，实际回答给出了不同的结果。',evidence_status:'established',
+      evidence:[{evidence_id:id,message_index:1,quote:answer}],checks:[{transition_index:1,kind:'delivery',outcome:'unresolved',observation:'已核对交付，但实际生成输入输出未采集。',before_evidence_ids:[],after_evidence_ids:[id]}],
+      causes:[],uncertainty:{evidence_gap:'实际生成输入输出未采集，无法定位形成主体。',alternatives:['上游计算已经错误。','生成或交付引入错误。']}}]};
 }
 
 /** Task result; Criteria uses its source-selection submission, other stages use resolved results. */
@@ -243,46 +202,23 @@ export function taskResult(spec: Pick<AttemptSpec, "evaluation" | "prompt" | "in
     const material = materialOf(spec, revealed), labels = Object.keys(material.candidates);
     const result = comparisonResult(labels);
     result.task_analysis = fixtureAnalysis(material.task_analysis, spec.inputs);
-    for (const label of labels) {
-      const failed = material.attributions?.[label]?.findings.some((finding) => finding.type === "problem" &&
-        finding.importance === "high" && finding.assessment.evidence_status === "established" &&
-        finding.assessment.requirement_index !== null);
-      const core = material.attributions?.[label]?.core_assessment;
-      result.assessments[label] = { meets_core: core?.meets_core ?? !failed,
-        core_failure_refs: core?.meets_core === false ? core.criterion_ids : [], summary: failed ? "关键结果错误。" : "正确给出了结果。" };
+    for(const label of labels){
+      const failed=material.attributions?.[label]?.Problem.some(item=>item.evidence_status==='established');
+      result.assessments[label]={meets_core:!failed,core_failure_refs:failed?[result.task_analysis.requirements[0].id]:[],summary:failed?'关键结果错误。':'正确给出结果。'};
     }
-    result.decision_basis.comparisons = result.task_analysis.requirements.concat(result.task_analysis.scoring_points, result.task_analysis.red_flags)
-      .map((criterion) => ({ aspect: criterion.text, criterion_ids: [criterion.id], importance: "high" as const, better_candidates: [],
-        assessments: Object.fromEntries(labels.map((label) => {
-          const source = material.attributions?.[label]?.criterion_assessments.find((item) => item.criterion_id === criterion.id);
-          return [label, { status: source?.status ?? "met", evidence_status: source?.evidence_status ?? "established",
-            summary: source?.summary ?? "已完成。", finding_indices: [0] }];
-        })) }));
+    result.decision_basis.comparisons=[...result.task_analysis.requirements,...result.task_analysis.scoring_points,...result.task_analysis.red_flags].map((criterion)=>({
+      aspect:criterion.text,criterion_ids:[criterion.id],importance:'high' as const,better_candidates:[],assessments:Object.fromEntries(labels.map(label=>{
+        const defects=material.attributions?.[label]?.Problem??[],failed=!result.assessments[label].meets_core;
+        return [label,{status:failed?'unmet':'met',evidence_status:'established',summary:failed?'结果与加法规则不符。':'完成受控要求。',finding_indices:defects.map((_,i)=>i)}];
+      }))}));
     result.ranking = [labels.filter((label) => result.assessments[label]!.meets_core),
       labels.filter((label) => !result.assessments[label]!.meets_core)].filter((tier) => tier.length);
     result.decision_basis.tradeoff = labels.every((label) => !result.assessments[label]!.meets_core)
       ? "双方关键结果均错误。" : "按关键结果的可用性比较。";
     return result;
   }
-  const result = attributionResult(true, "2+2=4", true, spec.inputs.find(input => input.name === "answer")!.id);
-  const material = materialOf(spec, revealed);
-  result.task_analysis = fixtureAnalysis(material.task_analysis, spec.inputs);
-  result.criterion_assessments = [...material.task_analysis.requirements, ...material.task_analysis.scoring_points, ...material.task_analysis.red_flags].map(criterion => ({
-    criterion_id: criterion.id, status: criterion.applicable_candidates.includes("answer") ? "met" : "not_applicable",
-    evidence_status: "established", summary: "已按要求完成。", evidence: criterion.applicable_candidates.includes("answer")
-      ? [canonicalEvidence(spec.inputs.find(input => input.name === "answer")!.id, material.answer!.final_message_index, material.answer!.final_answer)] : [] }));
-  result.core_assessment.criterion_ids = material.task_analysis.requirements.filter(criterion => criterion.applicable_candidates.includes("answer")).map(criterion => criterion.id);
-  result.findings[0]!.assessment.requirement_index = material.task_analysis.requirements.find(criterion => criterion.applicable_candidates.includes("answer"))!.requirement_index - 1;
-  const delivered=canonicalEvidence(spec.inputs.find(input => input.name === "answer")!.id,material.answer!.final_message_index,material.answer!.final_answer);
-  result.correctness_evidence=[delivered];
-  result.findings[0]!.evidence=[delivered];
-  result.has_standard_answer = material.ground_truth.available;
-  if (!material.ground_truth.available) {
-    result.is_correct = null;
-    result.correctness_reason = "";
-    result.correctness_evidence = [];
-  }
-  return result;
+  const material=materialOf(spec,revealed);
+  return attributionResult(true,material.answer!.final_answer,material.ground_truth.available,spec.inputs.find(item=>item.name==='answer')!.id);
 }
 
 interface ModelCriterion {
@@ -403,10 +339,16 @@ export async function submitFor(options: Parameters<AgentBackend["createSession"
     }
     value={summary:checks.length?"已独立核查所选规范与交付。":"未采集内部指令，无法核验。",checks};
   }
-  if (!options.spec.evaluation.fileSubmission) return options.execute("submit_evaluation", options.spec.evaluation.jsonStringSubmission ? {json:JSON.stringify(value)} : value);
-  const file = `evaluation-${randomUUID()}.json`;
-  await writeJson(path.join(options.workdir, file), value);
-  return options.execute("submit_evaluation_file", { path: file });
+  let submitted;
+  if (!options.spec.evaluation.fileSubmission) submitted = await options.execute("submit_evaluation", options.spec.evaluation.jsonStringSubmission ? {json:JSON.stringify(value)} : value);
+  else {
+    const file = `evaluation-${randomUUID()}.json`;
+    await writeJson(path.join(options.workdir, file), value);
+    submitted = await options.execute("submit_evaluation_file", { path: file });
+  }
+  if ((submitted.details as {review_pending?:boolean}|undefined)?.review_pending)
+    return options.execute("confirm_evaluation", {reason:"已复核受控测试的实际交付、摘要与问题记录；不存在已成立而未登记的缺陷。"});
+  return submitted;
 }
 
 export async function inspectMaterials(options: Parameters<AgentBackend["createSession"]>[0], value: unknown) {
@@ -481,46 +423,17 @@ export function draftFor(spec: Pick<AttemptSpec, "inputs" | "prompt" | "evidence
       const coordinate = parseEvidenceCoordinates(item.evidence_id);
       return choose(item.evidence_id, coordinate?.kind === "image" ? item.quote.slice("[图像观察]".length) : undefined);
     });
-  if (material.answer && "findings" in result) {
-    const sourceRefs = (items: { reference: { evidence_index: number } }[]) => items.map(item => ({ evidence_id: spec.evidenceBank[item.reference.evidence_index - 1]! }));
-    const directory=material as unknown as {rule_sources?:{reference:{evidence_index:number}}[];
-      finding_basis:{basis_index:number;kind:string;source_indices:number[];evidence:{reference:{evidence_index:number}}[]}[]};
-    const norms=directory.finding_basis.map(basis=>({norm_index:basis.basis_index,requirement_index:basis.kind==="requirement"?basis.basis_index-1:null,
-      evidence:sourceRefs(directory.rule_sources ? basis.source_indices.map(index=>directory.rule_sources![index-1]!) : basis.evidence)}));
-    const selections = (items: unknown) => evidence(items).map(item => item.evidence_index);
-    const core = result.core_assessment as AttributionResult["core_assessment"];
-    const correctness = material.ground_truth.available ? selections(result.correctness_evidence) : [];
-    const references = (parsedMaterial(spec,revealed) as {numeric_references:{reference_index:number;expected:string}[]}).numeric_references;
-    const images = (items: unknown) => evidence(items).flatMap(item => item.observation === undefined ? [] : [{image_number:item.evidence_index,text:item.observation}]);
-    const observation=(row:AttributionResult["findings"][number])=>({
-      dimension:row.dimension,stage:row.stage,importance:row.importance,text:row.text,reason:row.reason,
-      evidence_status:row.assessment.evidence_status,evidence_indices:selections(row.evidence),
-      basis_index:row.dimension==="instruction_following"?normSelection(norms,row):row.assessment.requirement_index===null?null:row.assessment.requirement_index+1,
-    });
-    return {
-      summary:result.summary,meets_core:core.meets_core,core_reason:core.reason,
-      core_requirements:core.criterion_ids.map(id => material.task_analysis.requirements.find(item => item.id === id)!.requirement_index),
-      ...(material.ground_truth.available?{is_correct:result.is_correct,correctness_reason:result.correctness_reason,correctness_evidence_indices:correctness}:{}),
-      criterion_assessments:(result.criterion_assessments as AttributionResult["criterion_assessments"]).filter(row => row.status !== "not_applicable")
-        .map(row => ({status:row.status,evidence_status:row.evidence_status,summary:row.summary,...(row.uncertainty?{uncertainty:structuredClone(row.uncertainty)}:{}),evidence_indices:selections(row.evidence)})),
-      numeric_checks:(result.numeric_checks as AttributionResult["numeric_checks"]).map(({expected,matches:_matches,...row}) => ({...row,
-        reference_index:references.find(item => item.expected === expected)!.reference_index,evidence_index:correctness[row.evidence_index]})),
-      strengths:(result.findings as AttributionResult["findings"]).filter(row=>row.type==="strength").map(observation),
-      problems:(result.findings as AttributionResult["findings"]).filter(row=>row.type==="problem").map(row=>{
-        const observed=observation(row),problem=structuredClone(row.problem!);
-        const checks=problem.investigation.map(check=>({transition_index:check.transition_index,outcome:check.outcome,
-          observation:check.observation,before_evidence_indices:selections(row.evidence.filter(item=>check.before_evidence_ids.includes(item.evidence_id))),
-          after_evidence_indices:selections(row.evidence.filter(item=>check.after_evidence_ids.includes(item.evidence_id)))}));
-        return {...observed,impact:row.assessment.impact,diagnosis:problem.diagnosis,label:problem.label,checks,
-          calculations:problem.calculations.map(calculation=>({...calculation,operands:Object.fromEntries(Object.entries(calculation.operands)
-            .map(([name,{evidence_id,...operand}])=>[name,{...operand,evidence_index:choose(evidence_id).evidence_index}]))})),
-          causes:problem.component.map(cause=>({transition_index:cause.transition_index,basis:cause.basis,
-            function_index:responsibilityFunctions.findIndex(item=>item.technical_domain===cause.technical_domain&&item.functional_component===cause.functional_component)+1,
-            business_component:cause.business_component,mechanism_source:cause.mechanism_source,mechanism:cause.mechanism,certainty:cause.certainty,
-            ...(cause.certainty==='inferred'?{evidence_gap:cause.evidence_gap,alternatives:cause.alternatives}:{})}))};
-      }),
-      image_observations:[...new Map([...images(result.correctness_evidence ?? []),...(result.findings as AttributionResult["findings"]).flatMap(row=>images(row.evidence))].map(item=>[item.image_number,item])).values()],
-    };
+  if(material.answer&&"Problem" in result){
+    const value=result as unknown as AttributionResult;
+    const selections=(ids:string[])=>ids.map(id=>choose(id).evidence_index);
+    return {summary:value.summary,...(value.has_standard_answer?{is_correct:value.is_correct,correct_reason:value.correct_reason}:{}),
+      Problem:value.Problem.map(item=>({text:item.text,reason:item.reason,evidence_status:item.evidence_status,
+        evidence_indices:evidence(item.evidence).map(row=>row.evidence_index),
+        checks:item.checks.map(check=>({transition_index:check.transition_index,outcome:check.outcome,observation:check.observation,
+          before_evidence_indices:selections(check.before_evidence_ids),after_evidence_indices:selections(check.after_evidence_ids)})),
+        causes:item.causes.map(({transition_index,basis,mechanism_source,reason,certainty,uncertainty})=>({transition_index,basis,mechanism_source,reason,certainty,...(uncertainty?{uncertainty}:{})})),
+        ...(item.uncertainty?{uncertainty:item.uncertainty}:{}),
+        ...(item.calculations?{calculations:item.calculations.map(calculation=>({...calculation,operands:Object.fromEntries(Object.entries(calculation.operands).map(([name,{evidence_id,...operand}])=>[name,{...operand,evidence_index:choose(evidence_id).evidence_index}]))}))}:{})}))};
   }
   if ("assessments" in result) {
     const choices = (material as unknown as { comparison_slots: { aspect:string; scope:string; optional:boolean; kind:ComparisonSlot["kind"];
@@ -531,7 +444,7 @@ export function draftFor(spec: Pick<AttemptSpec, "inputs" | "prompt" | "evidence
     const slots: ComparisonSlot[] = choices.map(choice => ({ aspect:choice.aspect,kind:choice.kind,optional:choice.optional,shared:choice.scope === "pair",
       criterion_ids:choice.standards.map(standard => criteria.find(criterion => criterion.text === standard.text)!.id),
       finding_indices:Object.fromEntries(Object.entries(choice.observations).map(([candidate,observations]) => [candidate,
-        observations.map(observation => (material.attributions?.[candidate]?.findings ?? []).findIndex((finding:{text:string}) => finding.text === observation.text))])) }));
+        observations.map(observation => (material.attributions?.[candidate]?.Problem ?? []).findIndex((finding:{text:string}) => finding.text === observation.text))])) }));
     return comparisonSubmission(result as unknown as ComparisonResult,slots);
   }
   return result;
@@ -539,8 +452,8 @@ export function draftFor(spec: Pick<AttemptSpec, "inputs" | "prompt" | "evidence
 
 /** A complete current submission whose first finding selects beyond the provided bank. */
 export function invalidDraft(spec: Pick<AttemptSpec, "evaluation" | "inputs" | "prompt" | "evidenceBank">): unknown {
-  const draft = draftFor(spec, taskResult(spec)) as { strengths: { evidence_indices: number[] }[] };
-  draft.strengths[0].evidence_indices[0] = Number.MAX_SAFE_INTEGER;
+  const draft=draftFor(spec,taskResult(spec)) as {summary:unknown};
+  draft.summary=42;
   return draft;
 }
 

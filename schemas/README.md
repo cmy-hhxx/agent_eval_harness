@@ -8,7 +8,7 @@
 |---|---|
 | [score/](score/) | 原skill单题0–10总分、12项0–4及24诊断输出 |
 | [criteria/](criteria/) | 共同验收基准 |
-| [attribution/](attribution/) | 单回答归因；`judgment.schema.json` 只校验程序绑定后的内部判断 |
+| [attribution/](attribution/) | 单回答归因的最小提交、问题证据责任及六字段正式结果 |
 | [instruction-review/](instruction-review/) | 后置独立指令检查、证据与核验账本 |
 | [comparison/](comparison/) | 普通对比、可选核验及首查检查点 |
 | [rewrite/](rewrite/) | 文本槽位改写 |
@@ -22,9 +22,9 @@
 - `submission.schema.json`：模型提交。Profile 可据可信请求收窄可选编号、槽位与数量。
 - `result.schema.json`：程序绑定身份、展开证据并接受后的结果。
 - `workflow/export.schema.json`：含稳定模型身份、源归因及派生判决的正式对比行，仅接受 `decided`。
-- `workflow/answer-review-attribution.schema.json`：独立归因正式行；点评采用Attribution公开结果契约，输入来源、实际trace_id与业务日期由Workflow绑定，落盘及恢复导出时校验。
+- `workflow/answer-review-attribution.schema.json`：独立归因正式行；顶层严格为meta、summary、Problem、has_standard_answer、is_correct、correct_reason，输入来源、trace_id、run与评测器身份由Workflow写入meta，落盘与恢复时校验。
 - `workflow/clustering-tree.schema.json`：独立聚类完成后的树节点 JSONL；包含模型、功能责任、问题方向和细类，保留待观察问题及全部冻结回答的来源引用。
-- `workflow/rewritten.schema.json`：Workflow 导出的改写文案；Agent 原始结果不包含该字段，正式 JSONL 的既有字段位置保持不变。
+- `workflow/rewritten.schema.json`：Workflow 导出的改写文案；Agent 原始结果不包含该字段，归因改写位于meta.rewritten，其他Workflow维持其当前位置。
 
 提交方式、各阶段选择规则及 Rewrite 的固定 `rewrites: [{id,text}]` 见[数据契约](../docs/contract.md#提交方式与反馈)，不在导航中另抄字段清单。
 

@@ -1,6 +1,5 @@
-import { isDeepStrictEqual } from "node:util";
 import { ValidationError, type AgentRequest, type ValidationIssue } from '@eval/contracts';
-import { criterionAppliesToPair, findingAppliesToPair, findingCriterion } from './pair-scope.js';
+import { criterionAppliesToPair } from './pair-scope.js';
 import type { ComparisonInput, ComparisonResult, ComparisonSlot, CriterionStatus, EvidenceStatus } from './types.js';
 
 /** Only recorded valid measurements count; a missing or conflicted metric stays unknown. */
@@ -33,94 +32,30 @@ export function comparisonResourceAdvantage(input: ComparisonInput): string | nu
   keys.some(key=>metrics[label][key]!<metrics[other][key]!))) ?? null;
 }
 
-/** Empty row IDs may still have an existing source requirement through a cited finding. */
-export function comparisonCellCriterionIds(input: ComparisonInput, candidate: string, criterionIds: string[], findingIndices: number[]): string[] {
-  if (criterionIds.length) return criterionIds;
-  const attribution = input.attributions[candidate];
-  return [...new Set(findingIndices.flatMap(index => {
-    const requirementIndex = attribution?.findings[index]?.assessment.requirement_index;
-    if (typeof requirementIndex !== "number" || !Number.isInteger(requirementIndex) || requirementIndex < 0) return [];
-    const criterion = findingCriterion(input, candidate, index);
-    return criterion ? [criterion.id] : [];
-  }))];
-}
-
-/** Source-derived states never create findings or promote uncertain evidence. */
-export function comparisonCellState(input: ComparisonInput, candidate: string, criterionIds: string[], findingIndices: number[]): {
-  status: CriterionStatus; evidence_status: EvidenceStatus;
+/** Resource states are mechanical measurements. Requirement judgments belong to the model. */
+export function comparisonCellState(input: ComparisonInput, candidate: string, _criterionIds: string[], _findingIndices: number[]): {
+ status: CriterionStatus; evidence_status: EvidenceStatus;
 } {
-  const attribution = input.attributions[candidate];
-  const findings = findingIndices.map(index => attribution?.findings[index]);
-  const uncertainFinding = findings.some(finding => !finding || finding.assessment.evidence_status === "uncertain");
-  if (!criterionIds.length && uncertainFinding) return { status: "unknown", evidence_status: "uncertain" };
-  const effectiveCriterionIds = comparisonCellCriterionIds(input, candidate, criterionIds, findingIndices);
-  if (effectiveCriterionIds.length) {
-    const criteria = [...input.task_analysis.requirements, ...input.task_analysis.scoring_points, ...input.task_analysis.red_flags];
-    const byId = new Map(criteria.map(criterion => [criterion.id, criterion]));
-    const applicable = effectiveCriterionIds.filter(id => {
-      const criterion = byId.get(id);
-      return criterion && (!criterion.applies_to.length || criterion.applies_to.includes(input.candidates[candidate]?.candidate_id));
-    });
-    const facts = applicable.flatMap(id => attribution?.criterion_assessments.filter(fact => fact.criterion_id === id) ?? []);
-    if (effectiveCriterionIds.some(id => !byId.has(id)) || applicable.some(id => facts.filter(fact => fact.criterion_id === id).length !== 1) ||
-      facts.some(fact => fact.status === "not_applicable")) return { status: "unknown", evidence_status: "uncertain" };
-    let status: CriterionStatus = facts.length ? "met" : "not_applicable";
-    for (const candidateStatus of ["unknown", "unmet", "partial"] as const)
-      if (facts.some(fact => fact.status === candidateStatus)) { status = candidateStatus; break; }
-    return { status, evidence_status: status === "unknown" || uncertainFinding || facts.some(fact => fact.evidence_status === "uncertain")
-      ? "uncertain" : "established" };
-  }
-  if (findingIndices.length) return uncertainFinding
-    ? { status: "unknown", evidence_status: "uncertain" }
-    : { status: "met", evidence_status: "established" };
-  const hasMetric = Object.values(comparisonResourceMetrics(input,candidate)).some(value => value !== null);
-  return hasMetric ? { status: "met", evidence_status: "established" } : { status: "unknown", evidence_status: "uncertain" };
+ return Object.values(comparisonResourceMetrics(input,candidate)).some(value=>value!==null)
+  ? {status:'met',evidence_status:'established'} : {status:'unknown',evidence_status:'uncertain'};
 }
-
-export function comparisonSlotCellState(input: ComparisonInput, candidate: string, slot: ComparisonSlot) {
+export function comparisonSlotCellState(input: ComparisonInput,candidate:string,slot:ComparisonSlot) {
  return comparisonCellState(input,candidate,slot.criterion_ids,slot.finding_indices[candidate]);
 }
-
-/** Each cell presents complete accepted facts from its own bound criterion and findings. */
-export function comparisonSlotSummary(input: ComparisonInput, candidate: string, slot: ComparisonSlot): string {
- const attribution=input.attributions[candidate];
- const facts=slot.criterion_ids.flatMap(id=>attribution.criterion_assessments.filter(fact=>fact.criterion_id===id).map(fact=>fact.summary));
- const observations=slot.finding_indices[candidate].flatMap(index=>{
-  const finding=attribution.findings[index];
-  return [finding.text,finding.assessment.impact];
- });
- return [...new Set([...facts,...observations].map(text=>text.trim()).filter(Boolean))].join(' ');
+export function comparisonAdvantageCandidates(assessments:Record<string,{status:CriterionStatus;evidence_status:EvidenceStatus}>,shared=true):string[]{
+ return shared && Object.values(assessments).every(cell=>cell.evidence_status==='established'&&!['unknown','not_applicable'].includes(cell.status))?Object.keys(assessments):[];
 }
-
-/** Scope and already bound facts determine available choices, never their semantic direction. */
-export function comparisonAdvantageCandidates(assessments: Record<string, ReturnType<typeof comparisonCellState>>, shared = true): string[] {
- return shared && Object.values(assessments).every(cell => cell.evidence_status === 'established' &&
-  !['unknown','not_applicable'].includes(cell.status)) ? Object.keys(assessments) : [];
-}
-
-/** Stable source-owned rows: the model selects prose and advantages, never joins references. */
-export function comparisonSlots(request: AgentRequest): ComparisonSlot[] {
- const input = request.input as unknown as ComparisonInput, labels = Object.keys(input.candidates);
- const empty = () => Object.fromEntries(labels.map(label => [label, [] as number[]]));
- const criteria = [...input.task_analysis.requirements, ...input.task_analysis.scoring_points, ...input.task_analysis.red_flags]
-  .filter(criterion => !criterion.applies_to.length || labels.some(label => criterion.applies_to.includes(input.candidates[label].candidate_id)));
- const slots: ComparisonSlot[] = criteria.map(criterion => ({ aspect: criterion.text.slice(0,60), criterion_ids: [criterion.id],
-  shared: criterionAppliesToPair(input, criterion), kind: 'criterion', optional: !criterionAppliesToPair(input, criterion), finding_indices: empty() }));
- for (const [candidate, attribution] of Object.entries(input.attributions)) for (const [finding_index, finding] of attribution.findings.entries()) {
-  const criterion = findingCriterion(input, candidate, finding_index);
-  const shared = findingAppliesToPair(input, candidate, finding_index, request.sources[candidate]?.value);
-  const slot = criterion && slots.find(slot => slot.criterion_ids.includes(criterion.id) && (!slot.shared || shared));
-  if (slot) {
-   slot.finding_indices[candidate].push(finding_index);
-   if (finding.type === 'strength' || finding.importance !== 'low') slot.optional = false;
-  }
-  // Independent findings remain in the source assessment. A missing counterpart is not a comparison fact.
- }
- const hasResource = labels.some(label => Object.values(comparisonResourceMetrics(input,label)).some(value => value !== null));
- if (hasResource) slots.push({ aspect: '原始完成时长与用量', criterion_ids: [], shared: true, kind: 'resource', optional: false, finding_indices: empty() });
+export function comparisonSlots(request:AgentRequest):ComparisonSlot[]{
+ const input=request.input as unknown as ComparisonInput,labels=Object.keys(input.candidates);
+ const empty=()=>Object.fromEntries(labels.map(label=>[label,[] as number[]]));
+ const criteria=[...input.task_analysis.requirements,...input.task_analysis.scoring_points,...input.task_analysis.red_flags]
+  .filter(criterion=>!criterion.applies_to.length||labels.some(label=>criterion.applies_to.includes(input.candidates[label].candidate_id)));
+ const slots:ComparisonSlot[]=criteria.map(criterion=>({aspect:criterion.text.slice(0,60),criterion_ids:[criterion.id],
+  shared:criterionAppliesToPair(input,criterion),kind:'criterion',optional:!criterionAppliesToPair(input,criterion),finding_indices:empty()}));
+ if(labels.some(label=>Object.values(comparisonResourceMetrics(input,label)).some(value=>value!==null)))slots.push({
+  aspect:'原始完成时长与用量',criterion_ids:[],shared:true,kind:'resource',optional:false,finding_indices:empty()});
  return slots;
 }
-
 /** Each fixed cell owns its review choice; the model never copies a row or source association. */
 export function resolveSourceReviews(request: AgentRequest, rows: Record<string, string | null>[]): ComparisonResult['review_requests'] {
  const input = request.input as unknown as ComparisonInput, slots = comparisonSlots(request);
@@ -147,63 +82,25 @@ export function resolveSourceReviews(request: AgentRequest, rows: Record<string,
  return reviews;
 }
 
-/** Known source blockers stay pending without asking the model to repeat them. */
-export function requiredSourceReviews(request: AgentRequest): ComparisonResult['review_requests'] {
- const input = request.input as unknown as ComparisonInput, reviews: ComparisonResult['review_requests'] = [];
- const bothFailed = Object.values(input.attributions).every(attribution => attribution.core_assessment.meets_core === false);
- for (const [candidate, attribution] of Object.entries(input.attributions)) {
-  const blockers = input.source_review?.[candidate]?.filter(item => item.requires_review) ?? [];
-  const core = attribution.core_assessment;
-  const criteria = [...input.task_analysis.requirements, ...input.task_analysis.scoring_points, ...input.task_analysis.red_flags];
-  const applicable = criteria.filter(criterion => !criterion.applies_to.length || criterion.applies_to.includes(input.candidates[candidate].candidate_id));
-  const byId = new Map(criteria.map(criterion => [criterion.id,criterion]));
-  const facts = attribution.criterion_assessments;
-  const sourceMismatch = !isDeepStrictEqual(attribution.task_analysis,input.task_analysis) || facts.length !== criteria.length ||
-    new Set(facts.map(fact => fact.criterion_id)).size !== criteria.length || criteria.some(criterion => !facts.some(fact => fact.criterion_id === criterion.id)) ||
-    facts.some(fact => !byId.has(fact.criterion_id) || (fact.status === "not_applicable") === applicable.some(criterion => criterion.id === fact.criterion_id));
-  const privateCore = core.meets_core === false && !core.criterion_ids.some(id => input.task_analysis.requirements.some(criterion =>
-   criterion.id === id && criterionAppliesToPair(input, criterion) && facts.some(fact => fact.criterion_id === id &&
-    fact.evidence_status === "established" && ["unmet","partial"].includes(fact.status))));
-  if (blockers.length || core.meets_core === null || privateCore || sourceMismatch) reviews.push({ candidate,
-   criterion_ids: [...new Set([...core.criterion_ids.filter(id => byId.has(id)), ...((blockers.length || sourceMismatch) ? applicable.map(criterion => criterion.id) : [])])],
-   finding_indices: [], reason: blockers.map(item => item.reason).join('；') || (sourceMismatch ? '来源标准、适用范围或逐项状态与固定任务不一致，须核查来源归因。' : privateCore
-    ? '核心失败仅由专有要求支持，须独立核查共同交付可用性。' : core.reason) });
-  const uncovered = attribution.findings.flatMap((finding,index) => finding.type === 'problem' && finding.importance !== 'low' &&
-    !findingCriterion(input,candidate,index) && findingAppliesToPair(input,candidate,index,request.sources[candidate]?.value) ? [index] : []);
-  // Extra unmapped defects cannot change an already established both-bad outcome. Source blockers above still apply.
-  if (uncovered.length && !bothFailed) reviews.push({ candidate, criterion_ids: [], finding_indices: uncovered,
-    reason: `以下实质观察尚未绑定可逐项比较的共同要求，不能据此判定没有差距：${uncovered.map(index => attribution.findings[index].text).join('；')}` });
- }
- return reviews;
+/** Only actual source verification blockers require attribution review. */
+export function requiredSourceReviews(request:AgentRequest):ComparisonResult['review_requests']{
+ const input=request.input as unknown as ComparisonInput;
+ return Object.entries(input.source_review??{}).flatMap(([candidate,rows])=>rows.filter(row=>row.requires_review).map(row=>({
+  candidate,criterion_ids:input.task_analysis.requirements.filter(item=>!item.applies_to.length||item.applies_to.includes(input.candidates[candidate].candidate_id)).map(item=>item.id),
+  finding_indices:[],reason:row.reason,
+ })));
 }
-
-/** Model-facing choices contain meaning and scope, never canonical association IDs. */
-export function comparisonSlotChoices(request: AgentRequest) {
- const input = request.input as unknown as ComparisonInput;
- const criteria = [...input.task_analysis.requirements, ...input.task_analysis.scoring_points, ...input.task_analysis.red_flags];
- return comparisonSlots(request).map((slot, slot_index) => ({ slot_index, aspect: slot.aspect, scope: slot.shared ? 'pair' : 'source_only',
-  optional: slot.optional, kind: slot.kind,
-  ...(slot.kind === 'resource' ? { resource_metrics: Object.fromEntries(Object.keys(input.candidates).map(candidate =>
-   [candidate,comparisonResourceMetrics(input,candidate)])), comparable_metrics: comparableResourceMetrics(input) } : {}),
-  advantage_candidates: slot.kind === 'resource' ? [comparisonResourceAdvantage(input)].filter((candidate): candidate is string=>candidate!==null)
-   : comparisonAdvantageCandidates(Object.fromEntries(Object.keys(input.candidates).map(candidate =>
-   [candidate,comparisonSlotCellState(input,candidate,slot)])),slot.shared),
-  applicable_candidates: Object.keys(input.candidates).filter(candidate => slot.criterion_ids.length
-   ? slot.criterion_ids.some(id => { const criterion = criteria.find(criterion => criterion.id === id)!;
-     return !criterion.applies_to.length || criterion.applies_to.includes(input.candidates[candidate].candidate_id); })
-   : slot.shared || slot.finding_indices[candidate].length > 0),
-  reviewable_candidates: Object.keys(input.candidates).filter(candidate => slot.kind !== 'resource' &&
-   (slot.finding_indices[candidate].length > 0 || slot.criterion_ids.some(id => {
-    const criterion = criteria.find(criterion => criterion.id === id)!;
-    return !criterion.applies_to.length || criterion.applies_to.includes(input.candidates[candidate].candidate_id);
-   }))),
-  standards: slot.criterion_ids.map(id => { const criterion = criteria.find(criterion => criterion.id === id)!;
-   return { text: criterion.text, ...(criterion.acceptance_rule === criterion.text ? {} : { acceptance_rule: criterion.acceptance_rule }) }; }),
-  ...(slot.kind === 'criterion' ? { accepted_assessments: Object.fromEntries(Object.entries(input.attributions).map(([candidate,attribution]) =>
-   [candidate,attribution.criterion_assessments.filter(item => slot.criterion_ids.includes(item.criterion_id))
-    .map(({status,evidence_status,summary}) => ({status,evidence_status,summary}))])) } : {}),
-  observations: Object.fromEntries(Object.entries(slot.finding_indices).map(([candidate,indices]) => [candidate,
-   indices.map(index => { const finding = input.attributions[candidate].findings[index];
-    return { type: finding.type, text: finding.text, evidence_status: finding.assessment.evidence_status,
-     reason: finding.reason, impact: finding.assessment.impact }; })])) }));
+export function comparisonSlotChoices(request:AgentRequest){
+ const input=request.input as unknown as ComparisonInput,labels=Object.keys(input.candidates);
+ const criteria=[...input.task_analysis.requirements,...input.task_analysis.scoring_points,...input.task_analysis.red_flags];
+ return comparisonSlots(request).map((slot,slot_index)=>{
+  const applicable_candidates=labels.filter(candidate=>!slot.criterion_ids.length||slot.criterion_ids.some(id=>{
+   const criterion=criteria.find(item=>item.id===id)!;return !criterion.applies_to.length||criterion.applies_to.includes(input.candidates[candidate].candidate_id);
+  }));
+  return {slot_index,aspect:slot.aspect,scope:slot.shared?'pair':'source_only',optional:slot.optional,kind:slot.kind,
+   advantage_candidates:slot.shared?labels:[],applicable_candidates,reviewable_candidates:slot.kind==='resource'?[]:applicable_candidates,
+   standards:slot.criterion_ids.map(id=>criteria.find(item=>item.id===id)!),
+   ...(slot.kind==='resource'?{resource_metrics:Object.fromEntries(labels.map(label=>[label,comparisonResourceMetrics(input,label)])),comparable_metrics:comparableResourceMetrics(input)}:{}),
+   observations:Object.fromEntries(labels.map(label=>[label,input.attributions[label].Problem.map((item,finding_index)=>({finding_index,...item}))]))};
+ });
 }

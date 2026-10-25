@@ -1,5 +1,1 @@
-### 本次有可查看图片
-
-按final_images.view_request查看最终消息全部图片，再描述实际交付；image_observations沿用工具返回image_number，text只写所见。图表缺项须看成图，预览或正文未列不证明图片未交付。
-
-图片内容与标题/正文冲突时，沿真实渲染请求、生成参数和返回追查。图像附在最终消息不证明该消息执行绘图；短渲染返回也不证明请求缺失。检查已有调用后，才判断处理者是否真的未采集。
+实际交付含图像，先view_image。问题引用图片时在evidence_indices选择{image_number,observation}，image_number为工具给出的证据编号，observation只写实际看到的内容。checks仍用该数字引用。图像附在模型回答中不证明该模型执行渲染；定位真实参数生成、渲染和交付边界。

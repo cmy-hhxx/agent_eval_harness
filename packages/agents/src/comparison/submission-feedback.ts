@@ -22,7 +22,7 @@ export function comparisonIssueContext(request: AgentRequest, _value: unknown, i
           : { better_candidate: { enum: [...slot.advantage_candidates, null] } }) } } };
   }
   if (issue.path === "/") return { target: { path: "/" }, submission_shape: structuredClone(schema) };
-  if (["/a_summary", "/b_summary"].includes(issue.path))
-    return { target: { path: issue.path }, submission_shape: structuredClone(schema.properties.a_summary) };
+  if (issue.path === "/assessments")
+    return { target: { path: issue.path }, submission_shape: structuredClone(schema.properties.assessments) };
   return undefined;
 }

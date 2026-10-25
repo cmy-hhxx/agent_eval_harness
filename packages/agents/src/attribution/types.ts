@@ -1,109 +1,63 @@
-import type { DerivationSubmission, ResolvedDerivation } from "./derivations.js";
-export type TransitionKind = "request_formation" | "execution" | "transfer" | "generation" | "delivery";
-import type { ResolvedEvidence, TaskAnalysis } from "@eval/contracts";
-export type { TaskAnalysis, TaskCriterion } from "@eval/contracts";
-export interface Evidence extends ResolvedEvidence {
-  /** Foreign review fact source; both fields are absent on the answer's own evidence. */
-  source?: string;
-  source_input_id?: string;
+import type { DerivationSubmission, ResolvedDerivation } from './derivations.js';
+import type { ResolvedEvidence, JsonObject } from '@eval/contracts';
+export type { TaskAnalysis, TaskCriterion } from '@eval/contracts';
+export type TransitionKind = 'request_formation' | 'execution' | 'transfer' | 'generation' | 'delivery';
+export interface Evidence extends ResolvedEvidence { source?: string; source_input_id?: string }
+export interface Uncertainty { evidence_gap: string; alternatives: string[] }
+export interface ResponsibilitySubmission {
+  transition_index: number;
+  basis: 'input_deviation' | 'independent_addition' | 'unknown_transition';
+  mechanism_source: 'explicit_process' | 'boundary_comparison';
+  reason: string;
+  certainty: 'confirmed' | 'inferred';
+  uncertainty?: Uncertainty;
 }
-export interface Finding {
-  type: "strength" | "problem";
-  dimension:
-    | "correctness"
-    | "completeness"
-    | "instruction_following"
-    | "evidence_quality"
-    | "reasoning"
-    | "format"
-    | "relevance"
-    | "efficiency";
-  stage: "context_recall" | "reasoning" | "execution" | "final_answer";
-  importance: "high" | "medium" | "low";
+export interface Responsibility extends ResponsibilitySubmission {
+  actor_index: number | null;
+  component: string;
+  kind: TransitionKind;
+  role: 'primary' | 'contributing';
+  evidence_ids: string[];
+}
+export type CheckOutcome = 'preserved' | 'changed' | 'recovered' | 'unresolved';
+export interface TransitionCheckSubmission {
+  transition_index: number; outcome: CheckOutcome; observation: string;
+  before_evidence_indices: number[]; after_evidence_indices: number[];
+}
+export interface TransitionCheck {
+  transition_index: number; kind: TransitionKind; outcome: CheckOutcome; observation: string;
+  before_evidence_ids: string[]; after_evidence_ids: string[];
+}
+export interface ProblemProposal {
   text: string;
   reason: string;
+  evidence_status: 'established' | 'uncertain';
+  checks: TransitionCheck[];
+  causes: Responsibility[];
+  uncertainty?: Uncertainty;
+  calculations?: ResolvedDerivation[];
+}
+export interface AttributionFinding extends ProblemProposal {
+  problem_id: string;
   evidence: Evidence[];
-  /** Program-bound complete norms for interpretation; not direct supporting excerpts. */
-  context_evidence?: Evidence[];
-  assessment: {
-    requirement_index: number | null;
-    observation: string;
-    evidence_status: "established" | "uncertain";
-    impact: string;
-  };
 }
-export interface ReviewUncertainty {
-  claim: string;
-  missing_evidence: string;
-  impact: string;
-}
-export interface CriterionAssessment {
-  criterion_id: string;
-  status: "met" | "partial" | "unmet" | "unknown" | "not_applicable";
-  evidence_status: "established" | "uncertain";
+export interface AttributionResult {
+  meta: JsonObject;
   summary: string;
-  uncertainty?: ReviewUncertainty;
-  evidence: Evidence[];
-  context_evidence?: Evidence[];
+  Problem: AttributionFinding[];
+  has_standard_answer: boolean;
+  is_correct: boolean | null;
+  correct_reason: string | null;
 }
-export interface CoreAssessment {
-  /** Null when the evidence does not establish whether the core result is usable. */
-  meets_core: boolean | null;
-  reason: string;
-  /** References applicable shared requirements, never scoring points or red flags. */
-  criterion_ids: string[];
-}
-/**
- * Raw problem description proposed by attribution. The clustering stage owns library classes
- * and decides which class receives this problem; attribution never creates classes.
- */
-export interface ProblemProposal {
-  /** Exactly one primary cause, followed by independently supported contributing causes. */
-  component: Responsibility[];
-  diagnosis: "entity_or_unit" | "source_absence" | "context_loss" | "other";
-  investigation: TransitionCheck[];
-  calculations: ResolvedDerivation[];
-  label: string;
-  definition: string;
-}
-export interface Responsibility {
-  transition_index: number;
-  basis: "input_deviation" | "independent_addition" | "unknown_transition";
-  /** One-based source-directory selection; identical display names remain distinct. */
-  actor_index: number | null;
-  role: "primary" | "contributing";
-  technical_domain: string;
-  functional_component: string;
-  component: string;
-  /** Business operation, independently of the actor and technical classification. */
-  business_component: string;
-  chain_index: number | null;
-  chain_step: string;
-  field_names: string[];
-  mechanism_source: "explicit_process" | "boundary_comparison";
-  failure_stage: string;
-  mechanism: string;
-  certainty: "confirmed" | "inferred";
-  reason: string;
-  evidence_ids: string[];
-  evidence_gap: string | null;
-  alternatives: string[];
-}
-export type CheckOutcome = "preserved" | "changed" | "recovered" | "unresolved";
-export interface TransitionCheck {
-  transition_index: number;
-  kind: TransitionKind;
-  outcome: CheckOutcome;
-  observation: string;
-  before_evidence_ids: string[];
-  after_evidence_ids: string[];
-}
-export interface TransitionCheckSubmission {
-  transition_index: number;
-  outcome: CheckOutcome;
-  observation: string;
-  before_evidence_indices: number[];
-  after_evidence_indices: number[];
+export interface AttributionSubmission {
+  summary: string;
+  Problem: {
+    text: string; reason: string; evidence_status: 'established' | 'uncertain';
+    evidence_indices: (number | {image_number:number;observation:string})[]; checks: TransitionCheckSubmission[]; causes: ResponsibilitySubmission[];
+    uncertainty?: Uncertainty; calculations?: DerivationSubmission[];
+  }[];
+  is_correct?: boolean | null;
+  correct_reason?: string;
 }
 /** Program-owned navigation, always pointing into the original public process records. */
 export interface BusinessChain {
@@ -118,93 +72,4 @@ export interface BusinessChain {
   delivery_changed: boolean | null;
   checkpoints: { step: string; availability: "available" | "not_collected"; evidence: Evidence[]; note: string }[];
   final_evidence: Evidence[];
-}
-export interface ResponsibilitySubmission {
-  transition_index: number;
-  function_index: number;
-  business_component: string;
-  basis: Responsibility["basis"];
-  mechanism_source: Responsibility["mechanism_source"];
-  mechanism: string;
-  certainty: Responsibility["certainty"];
-  evidence_gap?: string;
-  alternatives?: string[];
-}
-export interface AttributionFinding extends Finding {
-  /** Stable within this answer; used to preserve problem-library occurrence lineage. */
-  finding_id: string;
-  /** Null for strengths; problem findings must describe where the problem happened. */
-  problem: ProblemProposal | null;
-}
-export interface AttributionResult {
-  /** Whether the case carries a usable standard answer; mirrors the request input. */
-  has_standard_answer: boolean;
-  /** With a reference, null requires an uncertain applicable core criterion and independent review; otherwise boolean. Without a reference, null. */
-  is_correct: boolean | null;
-  correctness_reason: string;
-  correctness_evidence: Evidence[];
-  /** Same-unit standard-answer checks; matches is verified with decimal arithmetic. */
-  numeric_checks: {
-    label: string;
-    expected: string;
-    actual: string | null;
-    scale: string;
-    mode: "rounded" | "exact";
-    matches: boolean;
-    evidence_index: number;
-  }[];
-  /** With a reference and is_correct=false, set only when verified evidence supports the answer and the standard conflicts. */
-  standard_conflict?: boolean;
-  task_analysis: TaskAnalysis;
-  criterion_assessments: CriterionAssessment[];
-  core_assessment: CoreAssessment;
-  summary: string;
-  findings: AttributionFinding[];
-  /** Only independent review can resolve a specific table row with source evidence. */
-  table_resolutions?: {
-    table_id: string;
-    row_index: number;
-    outcome: "supported" | "conflict";
-    reason: string;
-    evidence: Evidence[];
-  }[];
-}
-
-export type ObservationSubmission = Pick<Finding, "dimension" | "stage" | "importance" | "text" | "reason"> & {
-  evidence_status: "established" | "uncertain";
-  evidence_indices: number[];
-  basis_index: number | null;
-};
-
-/** Fixed shallow rows: strengths never contain problem responsibility fields. */
-export interface AttributionSubmission {
-  summary: string;
-  meets_core: boolean | null;
-  core_reason: string;
-  core_requirements: number[];
-  is_correct?: boolean | null;
-  correctness_reason?: string;
-  correctness_evidence_indices?: number[];
-  standard_conflict?: boolean;
-  criterion_assessments: {
-    status: Exclude<CriterionAssessment["status"], "not_applicable">;
-    evidence_status: "established" | "uncertain";
-    summary: string;
-    uncertainty?: ReviewUncertainty;
-    evidence_indices: number[];
-  }[];
-  strengths: ObservationSubmission[];
-  problems: (ObservationSubmission & Pick<ProblemProposal,"diagnosis" | "label"> & {
-    causes:ResponsibilitySubmission[]; impact:string;
-    checks: TransitionCheckSubmission[];
-    calculations: DerivationSubmission[];
-  })[];
-  numeric_checks: {
-    label: string; reference_index: number; actual: string | number | null; scale: string;
-    mode: "rounded" | "exact"; evidence_index: number;
-  }[];
-  image_observations?: { image_number: number; text: string }[];
-  table_resolutions?: {
-    table_index: number; row_index: number; outcome: "supported" | "conflict"; reason: string; evidence_indices: number[];
-  }[];
 }

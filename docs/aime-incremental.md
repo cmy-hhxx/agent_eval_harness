@@ -44,9 +44,9 @@ tmux attach -t aime-auto
 1_aime/eval_output/0_daily_eval/<MMDD>/results/instruction_review.jsonl
 ```
 
-每条正式结果直接包含真实 `trace_id`、`business_date`、`source_archive`、`source_member`、`source_line`、`source_item`、`input_file`、`input_line`，以及源输入 `meta`。这些字段由程序绑定，不由 Agent 生成。导出契约见 [answer-review-attribution.schema.json](../schemas/workflow/answer-review-attribution.schema.json)。
+归因正式结果顶层只有 `meta`、`summary`、`Problem`、`has_standard_answer`、`is_correct`、`correct_reason`。样本、run、评测器、真实 `trace_id`、业务日期、输入及归档坐标由程序放在 `meta`，源输入元信息原样保留为 `meta.source_meta`。模型只选择稳定证据和边界编号，不重复填写身份。导出契约见 [answer-review-attribution.schema.json](../schemas/workflow/answer-review-attribution.schema.json)。
 
-中文验收使用 `npm run attribution:check-language -- --input <attribution.jsonl>`。`strength` 的 `label=null`、`definition=null` 记为“不适用”；`problem` 的两个字段仍要求非空中文，不把优点的合法空值算成失败。命令只读，不修改结果或运行状态。
+中文验收使用 `npm run attribution:check-language -- --input <attribution.jsonl>`。归因点评检查覆盖 `summary`、`Problem` 中的问题和理由，语言检查不代替证据与完成性验收。命令只读，不修改结果或运行状态。
 
 新增日期的回答建立对应 `MMDD` 目录，补到已有日期的回答写回该日目录，不为每次执行另建 UUID 目录。历史只有归因的回答补建Score任务；可恢复的未完成任务沿原任务与额度继续，内容失败耗尽额度时保留可定位错误，等待显式重试。
 

@@ -5,7 +5,7 @@ import schema from "../../../../schemas/comparison/submission.schema.json" with 
 import type { ComparisonInput, ComparisonResult, ComparisonSubmission } from "./types.js";
 import { criterionAppliesToPair, findingAppliesToPair } from "./pair-scope.js";
 import { comparisonDecisiveFindings } from "./result-checks.js";
-import { comparisonSlots, comparisonSlotChoices, comparisonSlotCellState, comparisonSlotSummary, comparisonAdvantageCandidates, comparisonResourceMetrics, comparisonResourceAdvantage, comparisonResourcesComparable, requiredSourceReviews } from "./slots.js";
+import { comparisonSlots, comparisonSlotChoices, comparisonSlotCellState, comparisonAdvantageCandidates, comparisonResourceMetrics, comparisonResourceAdvantage, comparisonResourcesComparable, requiredSourceReviews } from "./slots.js";
 
 /** Model-facing and local validation share the same program-owned row identities. */
 export function comparisonSubmissionSchema(request: AgentRequest) {
@@ -21,27 +21,12 @@ export function comparisonSubmissionSchema(request: AgentRequest) {
   return result;
 }
 
-/** Preserve source core context; failure refs include only proven requirements common to this pair. */
-export function comparisonCoreFailureRefs(input: ComparisonInput, candidate: string): string[] {
-  const attribution = input.attributions[candidate];
-  if (attribution?.core_assessment.meets_core !== false) return [];
-  const requirements = new Map(input.task_analysis.requirements.map(criterion => [criterion.id, criterion]));
-  return attribution.core_assessment.criterion_ids.filter(id => {
-    const criterion = requirements.get(id);
-    if (!criterion || !criterionAppliesToPair(input, criterion)) return false;
-    const facts = attribution.criterion_assessments.filter(fact => fact.criterion_id === id);
-    return facts.length === 1 && facts[0].evidence_status === "established" && ["unmet", "partial"].includes(facts[0].status);
-  });
-}
-
 /** Source review results never fabricate a comparative verdict. */
 export function pendingComparison(request: AgentRequest, summaries: Record<string, { summary: string }>, reviews: ComparisonResult["review_requests"]): ComparisonResult {
   const input = request.input as unknown as ComparisonInput;
-  const assessments = Object.fromEntries(Object.entries(summaries).map(([label, item]) => {
-    const reviewed = reviews.some(review => review.candidate === label), source = input.attributions[label]?.core_assessment;
-    const meets_core = reviewed ? null : source?.meets_core ?? null;
-    return [label, { summary: item.summary, meets_core, core_failure_refs: meets_core === false ? comparisonCoreFailureRefs(input, label) : [] }];
-  }));
+  const assessments = Object.fromEntries(Object.entries(summaries).map(([label,item])=>[label,{
+    summary:item.summary,meets_core:null,core_failure_refs:[],
+  }]));
   return { status: "needs_review", review_requests: structuredClone(reviews), assessments,
     task_analysis: structuredClone(input.task_analysis), ranking: [],
     decision_basis: { comparisons: [], decisive_findings: [], tradeoff: comparisonText("review_pending") } };
@@ -87,7 +72,7 @@ export function resolveComparison(request: AgentRequest, draft: unknown): Compar
       finding_indices: [...slot.finding_indices[review.candidate]], reason: review.reason.trim() });
   });
   if (conflictIssues.length) throw new ValidationError(conflictIssues);
-  if (reviews.length) return pendingComparison(request, Object.fromEntries(labels.map(label => [label, { summary: label === "A" ? value.a_summary : value.b_summary }])), reviews);
+  if (reviews.length) return pendingComparison(request, value.assessments, reviews);
   const rowIssues: ValidationIssue[] = [];
   const comparisons = value.comparisons.flatMap((row,index) => {
     const slot = slots[index];
@@ -103,10 +88,9 @@ export function resolveComparison(request: AgentRequest, draft: unknown): Compar
     const resolved = { aspect: slot.aspect, criterion_ids: [...slot.criterion_ids], importance: row.importance,
       better_candidates: betterCandidate ? [betterCandidate] : [],
       assessments: Object.fromEntries(labels.map(label => {
-        const state = comparisonSlotCellState(input,label,slot);
-        return [label, { summary: slot.kind === "resource" ? comparisonResourceText(comparisonResourceMetrics(input,label))
-          : state.status === "not_applicable" ? comparisonText("not_applicable") : comparisonSlotSummary(input,label,slot),
-          finding_indices: [...slot.finding_indices[label]], ...state }];
+        if(slot.kind !== "resource") return [label,structuredClone(row.assessments![label])];
+        return [label,{summary:comparisonResourceText(comparisonResourceMetrics(input,label)),
+          finding_indices:[],...comparisonSlotCellState(input,label,slot)}];
       })) };
     if (betterCandidate && slot.shared && !comparisonAdvantageCandidates(resolved.assessments,
       slot.kind !== 'resource' || comparisonResourcesComparable(input)).includes(betterCandidate))
@@ -115,11 +99,11 @@ export function resolveComparison(request: AgentRequest, draft: unknown): Compar
     return [resolved];
   });
   if (rowIssues.length) throw new ValidationError(rowIssues);
-  const assessments = Object.fromEntries(labels.map(label => {
-    const meets_core = input.attributions[label].core_assessment.meets_core;
-    return [label, { summary: (label === "A" ? value.a_summary : value.b_summary), meets_core,
-      core_failure_refs: meets_core === false ? comparisonCoreFailureRefs(input,label) : [] }];
-  }));
+  const assessments = structuredClone(value.assessments);
+  const unresolved=labels.filter(label=>assessments[label].meets_core===null);
+  if(unresolved.length) return pendingComparison(request,assessments,unresolved.map(candidate=>({candidate,
+    criterion_ids:input.task_analysis.requirements.filter(item=>criterionAppliesToPair(input,item)).map(item=>item.id),
+    finding_indices:[],reason:assessments[candidate].summary})));
   const failed = labels.filter(label => assessments[label].meets_core === false), passed = labels.filter(label => assessments[label].meets_core === true);
   const advantages = labels.filter(label => comparisons.some(row => row.importance !== "low" && row.better_candidates.includes(label)));
   let ranking: string[][];
@@ -142,8 +126,8 @@ export function resolveComparison(request: AgentRequest, draft: unknown): Compar
       row.criterion_ids.some(id => commonIds.has(id)) && Object.values(row.assessments).some(cell =>
         cell.evidence_status !== "established" || cell.status !== row.assessments[labels[0]].status));
     // Unmapped facts have no paired equivalence check, even when they cannot change a both-bad verdict.
-    const unpairedObservation = labels.some(candidate => input.attributions[candidate].findings.some((finding, index) =>
-      finding.assessment.evidence_status === "established" &&
+    const unpairedObservation = labels.some(candidate => input.attributions[candidate].Problem.some((finding, index) =>
+      finding.evidence_status === "established" &&
       findingAppliesToPair(input, candidate, index, request.sources[candidate]?.value) &&
       !comparisons.some(row => row.assessments[candidate].finding_indices.includes(index))));
     if (sharedDifference || resourceDifference || unpairedObservation) throw new ValidationError([{ category: "decision", code: "relative_preference_required",

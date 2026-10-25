@@ -166,10 +166,10 @@ async function restoreRecall(params = new URLSearchParams((root.ownerDocument ||
   if (state.selectedRun !== runId || state.selectedCase?.batch !== batch || state.selectedCase?.caseId !== caseId) return;
   const result = state.taskResults[task.id];
   if (result?.error) { showError(`样本召回失败：${result.error}`); return; }
-  const index = result?.result?.evaluation?.findings?.findIndex((finding) => finding.finding_id === findingId) ?? -1;
+  const index = result?.result?.Problem?.findIndex((finding) => finding.problem_id === findingId) ?? -1;
   if (findingId && index < 0) { showError("样本召回失败：归因 finding 不可用"); return; }
   if (index >= 0) {
-    const path = `${task.id}.findings.${index}`;
+    const path = `${task.id}.Problem.${index}`;
     state.openFindings.add(path);
     renderTaskResult(task.id);
     const target = root.getElementById(`finding-${path}`);

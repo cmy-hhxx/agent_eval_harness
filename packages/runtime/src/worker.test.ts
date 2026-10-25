@@ -1,5 +1,4 @@
 import { draftFor, submitFor } from "../../../tests/fixtures/comparison.js";
-import { canonicalEvidence } from "../../../tests/fixtures/evidence.js";
 import { waitForTestState } from "../../../tests/fixtures/wait.js";
 import test from "node:test";
 import assert from "node:assert/strict";
@@ -46,7 +45,6 @@ import {
   raw,
   taskResult,
   criteriaResult,
-  parsedMaterial,
 } from "../../../tests/fixtures/comparison.js";
 
 interface WorkerHarnessOptions {
@@ -1039,20 +1037,6 @@ test("file submission repairs evidence through locating, reading and editing aft
     );
     assert.equal(source.messages[0]!.role, "user");
     const expected = taskResult(fixture.spec) as AttributionResult;
-    const task = fixture.store.manifest.tasks.find(item => item.id === fixture.spec.taskId)!;
-    const trustedAnalysis = fixture.store.state.receipts[task.dependencies.criteria]!.evaluation as AttributionResult["task_analysis"];
-    const shown = parsedMaterial(fixture.spec) as { task_analysis: { requirements: { requirement_index: number }[] } };
-    assert.deepEqual(shown.task_analysis.requirements.map(item => item.requirement_index), [1, 2, 3, 4, 5],
-      "the model view displays the global requirement index");
-    assert(trustedAnalysis.requirements.every(item => !Object.hasOwn(item, "requirement_index")),
-      "the accepted Criteria remains the undecorated business analysis");
-    expected.task_analysis = structuredClone(trustedAnalysis);
-    expected.findings[0]!.assessment.observation = expected.findings[0]!.text;
-    expected.findings[0]!.assessment.impact = expected.findings[0]!.reason;
-    expected.criterion_assessments.forEach(row => {
-      row.context_evidence = [canonicalEvidence(fixture.spec.inputs.find(input => input.name === "answer")!.id, 0, source.messages[0]!.content)];
-    });
-    expected.findings[0]!.context_evidence = [canonicalEvidence(fixture.spec.inputs.find(input => input.name === "answer")!.id, 0, source.messages[0]!.content)];
     assert.deepEqual(receipt?.evaluation, expected);
     assert.equal(receipt?.audit.calls, 1 + 3 * fixture.spec.policy.repairAttempts);
   } finally {
@@ -2363,6 +2347,44 @@ const inspectionProfile: Partial<AgentProfile> = {
       ]);
     } },
 };
+
+for (const stalled of [false, true]) test(`inspection dynamic reads use protected budget and bounded progress (${stalled})`, async () => {
+  const target: TraceRead = { candidate: "answer", message_index: 0, kind: "text", path: "/content", start: 0, end: 14 };
+  const fixture = await harness(async options => ({ async run() {
+    const draft = { actual: "original facts" };
+    const pending = await inspectMaterials(options, draft);
+    const feedback = pending.details as { material_pending: boolean; budget: { content_remaining: number } };
+    assert.equal(feedback.material_pending, true);
+    assert.equal(feedback.budget.content_remaining, 2);
+    assert(pending.content.slice(1).some(block => block.text?.includes("original facts")));
+    const inspected = await inspectMaterials(options, draft);
+    if (stalled) { assert.equal(inspected.isError, true); return; }
+    assert.equal(inspected.isError, undefined, JSON.stringify(inspected));
+    assert.equal((await submitFor(options, { ok: true })).terminate, true);
+  }, async abort() {}, async dispose() {} }), { material: "original facts", policy: { maxToolCalls: 0, repairAttempts: 1 }, profile: {
+    ...inspectionProfile, requiredReads: () => [], inspection: { ...inspectionProfile.inspection!, validate(request, value, audit) {
+      if (stalled || !traceReadCoverage(audit, target).covered) throw new ValidationError([{ category: "evidence",
+        code: "investigation_read_required", path: "/actual", message: "登记评审前须读取相关原文。", expected: { read_requests: [target] } }]);
+      inspectionProfile.inspection!.validate(request, value, audit);
+    } },
+  } });
+  try {
+    await fixture.start(); const status = await fixture.done();
+    if (stalled) {
+      assert.notEqual(status.state, "succeeded");
+      assert.equal(status.failure?.contentSubmissions, 0);
+      assert(status.failure?.errors.some(issue => issue.code === "investigation_read_no_progress"));
+      assert.equal(status.failure?.inspection, undefined);
+    } else {
+      assert.equal(status.state, "succeeded", status.error);
+      const receipt = (await fixture.store.receipt(fixture.spec.taskId))!;
+      assert.equal(receipt.submissionStats!.contentSubmissions, 2);
+      assert.equal(receipt.audit.requiredReadCalls, 1);
+      assert(traceReadCoverage(receipt.audit, target).covered);
+      assert.deepEqual(receipt.audit.inspection!.value, { actual: "original facts" });
+    }
+  } finally { await fixture.close(); }
+});
 
 for (const method of ["accept", "inspect"] as const)
   for (const deadline of [false, true])

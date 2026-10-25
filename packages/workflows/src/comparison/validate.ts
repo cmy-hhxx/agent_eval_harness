@@ -16,7 +16,7 @@ import { taskCase } from "./input.js";
 import { Ajv2020 } from "ajv/dist/2020.js";
 import { clusteringSchema, rewrittenSchema, outputSchema } from "./schema.js";
 import { attributionProfile } from "@eval/agents/attribution";
-import { stageResult, originalResultRow, comparisonRow, attributionRow, rewrittenResult, clusteringRow, encodeResult, acceptedRewriteProjection } from "./results.js";
+import { stageResult,stageRewritten, originalResultRow, comparisonRow, attributionRow, rewrittenResult, clusteringRow, encodeResult, acceptedRewriteProjection } from "./results.js";
 import { acceptedAttributionView } from "./accepted-attribution.js";
 import { bindAcceptedAttribution } from "./binding.js";
 import { taskObservations } from "./observations.js";
@@ -94,7 +94,7 @@ export async function validateRun(
     if (!receipt) continue;
     try {
       if (Object.values(task.inputIds).every((id) => Object.hasOwn(inputs, id))) {
-        const binding = task.stage === "attribution" ? bindAcceptedAttribution(task, receipt, inputs, { tasks: manifest.tasks }) : bindTask(
+        const binding = task.stage === "attribution" ? bindAcceptedAttribution(task, receipt, inputs, { tasks: manifest.tasks }, receipts.get(task.dependencies.criteria)!.evaluation as import("@eval/contracts").TaskAnalysis) : bindTask(
             task,
             inputs,
             Object.fromEntries(
@@ -164,10 +164,10 @@ export async function validateRun(
           continue;
         }
         if (task.stage === "attribution") {
-          const row = receipt.exported?.row || attributionRow(task, receipt);
+          const row = receipt.exported?.row || attributionRow(task, receipt,state.manifest.runId);
           if (
-            (!receipt.exported && !attributionValidator(row.evaluation)) ||
-            canonical(originalResultRow(task.stage, row)) !== canonical(attributionRow(task, receipt))
+            (!receipt.exported && !attributionValidator(row)) ||
+            canonical(originalResultRow(task.stage, row)) !== canonical(attributionRow(task, receipt,state.manifest.runId))
           )
             throw new Error("归因结果结构或收据不一致");
           const name = "attribution.jsonl";
@@ -178,7 +178,7 @@ export async function validateRun(
         if (task.stage === "rewrite") {
           const source = (task.data as TaskData).rewriteOf!, owned = rewrittenResult(receipt);
           const projection = acceptedRewriteProjection(state, source.taskId)!;
-          const row = receipt.exported ? stageResult(source.stage, receipt.exported.row).rewritten : projection.rewritten;
+          const row = receipt.exported ? stageRewritten(source.stage,receipt.exported.row) : projection.rewritten;
           if (!rewrittenValidator(owned) || !rewrittenValidator(row))
             throw new Error("改写结果结构或收据不一致");
           const stored = row as { evaluator_version: string; rewrites: { id: string; text: string }[] };

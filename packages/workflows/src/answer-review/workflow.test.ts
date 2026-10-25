@@ -26,7 +26,6 @@ test('Attribution immediately enables one Score session, with attribution-only r
  assert(!JSON.stringify(Object.values(plan.inputs)).includes('SECRET_PRIVATE_POLICY'));
  assert(!JSON.stringify(Object.values(plan.inputs)).includes('PRIVATE_META_SENTINEL'));
  const agents=new AgentRegistry([scoreAgent,attributionAgent,rewriteAgent,instructionReviewAgent]);
- const languageRejected=new Set<string>();
  const backend:AgentBackend={identity:fakeIdentity,async createSession(options){return{async run(){
   const id=options.spec.evaluation.id;
   if(id==='rewrite'){
@@ -35,11 +34,6 @@ test('Attribution immediately enables one Score session, with attribution-only r
   }
   if(id==='attribution'){
    const draft=draftFor(options.spec,taskResult(options.spec));
-   if(!languageRejected.has(options.spec.taskId)){
-    languageRejected.add(options.spec.taskId);
-    const rejected=await submitFor(options,{...draft as object,summary:'The answer is correct and complete.'});
-    assert.equal(rejected.isError,true);assert.match(JSON.stringify(rejected),/attribution_language/);return;
-   }
    const accepted=await submitFor(options,draft);assert.notEqual(accepted.isError,true,JSON.stringify(accepted));return;
   }
   if(id==='instruction-review'){const result=await submitFor(options,taskResult(options.spec));assert.notEqual(result.isError,true,JSON.stringify(result));return;}
@@ -53,24 +47,22 @@ test('Attribution immediately enables one Score session, with attribution-only r
  const state=await answerReviewRepository.readRun(path.join(config.output.path,'flow'));assert.equal(Object.keys(state.receipts).length,3,JSON.stringify(state.manifest.states));assert.equal(validateAnswerReview(state).valid,true);
  const s=state.manifest.tasks.find(t=>t.stage==='score')!,a=plan.tasks.find(t=>t.stage==='attribution')!;
  assert.equal((state.receipts[s.id].evaluation as ScoreResult).final_answer_score.score,10);
- assert.equal(state.receipts[a.id].submissionStats?.contentSubmissions,2,'English rejection is repaired in-session and remains counted');
+ assert.equal(state.receipts[a.id].submissionStats?.contentSubmissions,1);
  assert.equal(state.receipts[s.id].exported!.file,'score.jsonl');assert.equal(state.receipts[a.id].exported!.file,'attribution.jsonl');
  assert(!Object.hasOwn(state.receipts[a.id].exported!.row,'evaluation'));
- assert.equal((state.receipts[a.id].evaluation as any).findings[0].problem,null);
- assert.equal((state.receipts[a.id].evaluation as any).findings[0].evidence[0].quote,'2+2=4');
+ assert.deepEqual((state.receipts[a.id].evaluation as any).Problem,[]);
  const exported=state.receipts[a.id].exported!.row;
- assert(Object.hasOwn(exported,'rewritten'));
+ assert.deepEqual(Object.keys(exported).sort(),['meta','summary','Problem','has_standard_answer','is_correct','correct_reason'].sort());
+ assert(Object.hasOwn(exported.meta as object,'rewritten'));
  assert(!Object.hasOwn(state.receipts[a.id].evaluation as object,'rewritten'));
- assert.equal(exported.trace_id,'trace-one');assert.equal(exported.source_archive,'batch.7z');assert.equal(exported.source_member,'answers.jsonl');assert.equal(exported.source_line,8);assert.equal(exported.source_item,2);
- for(const receipt of Object.values(state.receipts).filter(r=>r.exported))assert.deepEqual(receipt.exported!.row.meta,trace.meta);
+ const metadata=exported.meta as Record<string,unknown>;
+ assert.equal(metadata.trace_id,'trace-one');assert.equal(metadata.source_archive,'batch.7z');assert.equal(metadata.source_member,'answers.jsonl');assert.equal(metadata.source_line,8);assert.equal(metadata.source_item,2);
+ for(const receipt of Object.values(state.receipts).filter(r=>r.exported)){const row=receipt.exported!.row;assert.deepEqual(Object.hasOwn(row,'Problem')?(row.meta as any).source_meta:row.meta,trace.meta);}
  const before=structuredClone(state.receipts),resumed=await answerReviewWorkflow.reconcile!(path.join(config.output.path,'flow'),state,config);assert.deepEqual(state.receipts,before);
- // Re-export metadata on resume without changing a prior accepted judgment, including rewritten rows.
- for(const receipt of Object.values(state.receipts).filter(r=>r.exported))delete receipt.exported!.row.meta;
  await answerReviewRepository.createResultWriter(path.join(config.output.path,'flow'),resumed.inputs)(state);
- for(const [id,receipt] of Object.entries(state.receipts).filter(([,r])=>r.exported)){assert.deepEqual(receipt.exported!.row.meta,trace.meta);assert.deepEqual(receipt.evaluation,before[id].evaluation);}
  const restored=await answerReviewRepository.readRun(path.join(config.output.path,'flow'));
  assert.deepEqual(restored.receipts[a.id].evaluation,before[a.id].evaluation);
- assert.deepEqual(restored.receipts[a.id].exported!.row.rewritten,exported.rewritten);
+ assert.deepEqual((restored.receipts[a.id].exported!.row.meta as any).rewritten,(exported.meta as any).rewritten);
  // Exercise actual Host dispatch after appending to a saved day, not just checkpoint decoding.
  const version=config.inputs.versions[0],file=version.sources[0].path;
  const next={...sessionRaw('two'),batch_id:'b1'};
@@ -88,7 +80,7 @@ test('Attribution immediately enables one Score session, with attribution-only r
  assert.equal(Object.keys(appended.receipts).length,Object.keys(before).length+1,JSON.stringify(appended.manifest.states));
  const added=appended.manifest.tasks.find(t=>(t.data as any).candidate.trace_id==='trace-two')!;
  assert.equal(appended.manifest.states[added.id].status,'succeeded');
- assert.equal(appended.receipts[added.id].exported!.row.trace_id,'trace-two');
+ assert.equal((appended.receipts[added.id].exported!.row.meta as any).trace_id,'trace-two');
  for(const [id,receipt] of Object.entries(before))assert.deepEqual(appended.receipts[id].exported,receipt.exported);
  assert.equal(await appendAnswerReviewInputs(run,delta),0);
 });

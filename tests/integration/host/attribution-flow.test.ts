@@ -9,7 +9,7 @@ import { startWorker } from "@eval/runtime/worker";
 import { bindAttributionMaterial } from "@eval/workflows/review";
 import type { RawInput } from "@eval/workflows/inputs";
 import { buildPlan, readRunState, type AttributionResult, type TaskData } from "@eval/workflows/comparison";
-import { draftFor, fakeEvaluatorVersion, fakeIdentity, fixtureConfig, inspectFor, parsedMaterial, submitFor, taskResult } from "../../fixtures/comparison.js";
+import { attributionResult, draftFor, fakeEvaluatorVersion, fakeIdentity, fixtureConfig, inspectFor, parsedMaterial, submitFor, taskResult } from "../../fixtures/comparison.js";
 import { services, validateRun } from "../../fixtures/services.js";
 
 test("Host preserves one attribution per answer and records unresolved comparison without automatic rechecks", { timeout: 60_000 }, async t => {
@@ -27,17 +27,17 @@ test("Host preserves one attribution per answer and records unresolved compariso
       const evaluation = taskResult(options.spec), material = parsedMaterial(options.spec) as { review_context?: unknown };
       const original = options.spec.evaluation.id === "attribution" && !material.review_context;
       if (original) {
-        const result = evaluation as AttributionResult, finding = structuredClone(result.findings[0]);
-        finding.finding_id = "f-extra"; finding.type = "problem"; finding.dimension = "reasoning"; finding.importance = "medium";
+        const result = evaluation as AttributionResult, finding = structuredClone(attributionResult(false).Problem[0]);
+        finding.problem_id = "f-extra";
         finding.text = "计算过程缺少展开。"; finding.reason = "直接给出结果，缺少中间计算说明。";
-        finding.assessment.requirement_index = null; finding.assessment.impact = "过程的可检查性不足。";
+         finding.reason = "过程的可检查性不足。";
         const task=plan.tasks.find(task=>task.id===options.spec.taskId)!;
         const candidate=Object.values((task.data as TaskData).candidates).find(candidate=>candidate.input_id===task.inputIds.answer)!;
-        const binding=bindAttributionMaterial(candidate,plan.inputs[candidate.input_id] as RawInput,result.task_analysis);
+        const binding=bindAttributionMaterial(candidate,plan.inputs[candidate.input_id] as RawInput);
         const read=await options.execute("read_trace",{candidate:"answer",message_index:candidate.final_index,path:"/content",offset:0,max_chars:16000});
         assert.equal(read.isError,undefined,JSON.stringify(read));
-        finding.problem = { diagnosis: "other" as const, ...unknownFormationFixture(binding.request,finding.evidence), label: "计算过程缺口", definition: "缺少中间计算说明。" };
-        result.findings.push(finding);
+        Object.assign(finding, unknownFormationFixture(binding.request,finding.evidence));
+        result.Problem.push(finding);
       }
       const submitted = await submitFor(options, draftFor(options.spec, evaluation));
       assert.equal(submitted.isError, undefined, JSON.stringify(submitted));

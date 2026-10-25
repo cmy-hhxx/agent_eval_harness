@@ -1,6 +1,6 @@
 import type {ValidationIssue} from '@eval/contracts';
 
-export type AttributionLanguageField='summary'|'text'|'reason'|'label'|'definition';
+export type AttributionLanguageField='summary'|'text'|'reason';
 export type AttributionLanguageStatus='passed'|'failed'|'not_applicable';
 export interface AttributionLanguageCheck {path:string;field:AttributionLanguageField;status:AttributionLanguageStatus}
 
@@ -11,28 +11,13 @@ export function isChineseAttributionText(text:string){
   return han>=2&&han>=words;
 }
 
-/** Problem descriptors are inapplicable only when a strength explicitly carries null. */
+/** Display-language audit; not an acceptance or semantic-completion gate. */
 export function checkAttributionLanguage(value:unknown){
+  const v=value as {summary?:unknown;Problem?:{text?:unknown;reason?:unknown}[]};
   const checks:AttributionLanguageCheck[]=[],issues:ValidationIssue[]=[];
-  const object=(v:unknown):v is Record<string,unknown>=>typeof v==='object'&&v!==null&&!Array.isArray(v);
-  const issue=(path:string,message:string)=>issues.push({category:'structure',code:'attribution_language',path,message});
-  const check=(text:unknown,field:AttributionLanguageField,path:string,strength=false)=>{
-    const status:AttributionLanguageStatus=strength&&text===null?'not_applicable':
-      !strength&&typeof text==='string'&&isChineseAttributionText(text)?'passed':'failed';
-    checks.push({field,path,status});
-    if(status==='failed')issue(path,strength?'strength 的 label、definition 必须为 null，记为不适用。':'该点评字段必须为非空中文字符串。');
-  };
-  if(!object(value)){issue('/','归因结果必须为对象。');return {checks,issues};}
-  check(value.summary,'summary','/summary');
-  if(!Array.isArray(value.findings)){issue('/findings','findings 必须为数组。');return {checks,issues};}
-  value.findings.forEach((finding,index)=>{
-    const base='/findings/'+index;
-    if(!object(finding)){issue(base,'finding 必须为对象。');return;}
-    if(!['strength','problem'].includes(String(finding.type)))issue(base+'/type','finding 类型必须为 strength 或 problem。');
-    for(const field of ['text','reason'] as const)check(finding[field],field,base+'/'+field);
-    const problem=object(finding.problem)?finding.problem:undefined;
-    for(const field of ['label','definition'] as const)
-      check(finding.type==='strength'&&finding.problem===null?null:problem?.[field],field,base+'/problem/'+field,finding.type==='strength');
-  });
+  for(const [path,field,text] of [['/summary','summary',v?.summary],...(Array.isArray(v?.Problem)?v.Problem.flatMap((p,i)=>[['/Problem/'+i+'/text','text',p.text],['/Problem/'+i+'/reason','reason',p.reason]]):[])] as [string,AttributionLanguageField,unknown][]){
+    const status=typeof text==='string'&&isChineseAttributionText(text)?'passed':'failed';checks.push({path,field,status});
+    if(status==='failed')issues.push({category:'structure',code:'attribution_language',path,message:'点评使用中文。'});
+  }
   return {checks,issues};
 }

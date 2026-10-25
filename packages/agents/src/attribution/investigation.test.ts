@@ -11,21 +11,21 @@ const codes = (f: ReturnType<typeof businessChainFixture>) => investigationIssue
 
 test('generation primary requires its own boundary check and every relevant upstream check',()=>{
  const f=businessChainFixture(); assert.deepEqual(codes(f),[]);
- const complete=structuredClone(f.problem.investigation);
- f.problem.investigation=[]; assert(codes(f).includes('responsibility_check_required'));
- f.problem.investigation=complete.filter(check=>check.transition_index===f.generated.transition_index);
+ const complete=structuredClone(f.problem.checks);
+ f.problem.checks=[]; assert(codes(f).includes('responsibility_check_required'));
+ f.problem.checks=complete.filter(check=>check.transition_index===f.generated.transition_index);
  assert(codes(f).includes('responsibility_upstream_required'));
- f.problem.investigation=complete;
+ f.problem.checks=complete;
  assert.deepEqual(codes(f),[]);
 });
 test('a correct source and execution are checked without assigning them responsibility',()=>{
  const f=businessChainFixture(), registry=new AgentRegistry([attributionAgent]);
  const result=registry.resolve(f.binding,attributionSubmission(f.binding.request,f.result,f.audit),f.audit) as AttributionResult;
  registry.validate(f.binding,result,f.audit);
- assert.equal(result.findings[0].problem!.component.length,1);
- assert.equal(result.findings[0].problem!.component[0].transition_index,f.generated.transition_index);
- assert.equal(result.findings[0].problem!.component[0].certainty,'inferred');
- assert(result.findings[0].problem!.investigation.some(check=>check.kind==='execution'&&check.outcome==='preserved'));
+ assert.equal(result.Problem[0].causes.length,1);
+ assert.equal(result.Problem[0].causes[0].transition_index,f.generated.transition_index);
+ assert.equal(result.Problem[0].causes[0].certainty,'inferred');
+ assert(result.Problem[0].checks.some(check=>check.kind==='execution'&&check.outcome==='preserved'));
 });
 test('boundary differences do not certify a hidden model action',()=>{
  const f=businessChainFixture(); f.cause.certainty='confirmed';
@@ -42,8 +42,8 @@ test('available unread boundaries request real protected reads',()=>{
  }
 });
 test('read coverage cannot let an input quote impersonate the actual return',()=>{
- const f=businessChainFixture(), execution=f.problem.investigation.find(check=>check.kind==='execution')!;
- execution.after_evidence_ids=f.problem.investigation.find(check=>check.transition_index===f.generated.transition_index)!.before_evidence_ids;
+ const f=businessChainFixture(), execution=f.problem.checks.find(check=>check.kind==='execution')!;
+ execution.after_evidence_ids=f.problem.checks.find(check=>check.transition_index===f.generated.transition_index)!.before_evidence_ids;
  assert(codes(f).includes('investigation_boundary_evidence'));
 });
 test('serialized complete source reads cover decoded text without duplicate mandatory reading',()=>{
@@ -56,7 +56,7 @@ test('serialized complete source reads cover decoded text without duplicate mand
 });
 test('preserved and recovered transitions cannot be relabeled as causes without a defect',()=>{
  for(const outcome of ['preserved','recovered'] as const){
-  const f=businessChainFixture();f.problem.investigation.find(check=>check.transition_index===f.generated.transition_index)!.outcome=outcome;
+  const f=businessChainFixture();f.problem.checks.find(check=>check.transition_index===f.generated.transition_index)!.outcome=outcome;
   assert(codes(f).includes('responsibility_formation'));
  }
 });
@@ -67,7 +67,7 @@ test('mechanical transition identity cannot be forged in the formal result',()=>
  assert(codes(f).includes('transition_directory'));
 });
 test('changed upstream material prevents a claim of first deviation after intact input',()=>{
- const f=businessChainFixture();f.problem.investigation.find(check=>check.kind==='transfer')!.outcome='changed';
+ const f=businessChainFixture();f.problem.checks.find(check=>check.kind==='transfer')!.outcome='changed';
  assert(codes(f).includes('responsibility_generation_formation'));
  f.cause.basis='independent_addition';assert(!codes(f).includes('responsibility_generation_formation'));
 });

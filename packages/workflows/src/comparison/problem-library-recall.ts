@@ -34,8 +34,8 @@ export async function recallProblemLibrary(library: ProblemLibrary, output: stri
         (sample.attribution && (source.manifest.runId !== sample.attribution.run_id || receipt.submissionId !== sample.attribution.submission_id ||
           receipt.evaluatorVersion !== sample.attribution.evaluator_version)))
         throw new Error("问题类代表样本的原归因身份不一致：" + sample.finding_id);
-      const finding = (receipt.evaluation as AttributionResult).findings.find(item => item.finding_id === sample.finding_id);
-      if (!finding || finding.type !== "problem" || finding.assessment.evidence_status !== sample.evidence_status)
+      const finding = (receipt.evaluation as AttributionResult).Problem.find(item => item.problem_id === sample.finding_id);
+      if (!finding || finding.evidence_status !== sample.evidence_status)
         throw new Error("问题类代表样本的原发现缺失或不一致：" + sample.finding_id);
       sample.finding = finding.text;
       sample.reason = finding.reason;

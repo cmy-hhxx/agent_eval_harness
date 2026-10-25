@@ -18,7 +18,7 @@ import { buildPlan, createResultWriter, listConfiguredProblemLibrary, readConfig
 import { type Candidate } from "@eval/workflows/inputs";
 import { ROOT } from "../../fixtures/services.js";
 import {
-  attributionResult, criteriaResultForTask, emptyAudit, fakeEvaluatorVersion, fakeIdentity, fixtureConfig, raw,
+  attributionResult, emptyAudit, fakeEvaluatorVersion, fakeIdentity, fixtureConfig, raw,
 } from "../../fixtures/comparison.js";
 
 async function fixture(peer = false) {
@@ -46,10 +46,9 @@ async function fixture(peer = false) {
   const receipts: Record<string, SubmissionReceipt> = {};
   for (const task of ownerTasks) {
     const evaluation = attributionResult(false, "2+2=5");
-    evaluation.task_analysis = criteriaResultForTask(task, plan.inputs);
+
     receipts[task.id] = receipt(task.id, evaluation);
-    const criteriaId = task.dependencies.criteria!;
-    receipts[criteriaId] = receipt(criteriaId, evaluation.task_analysis);
+
   }
   const observations = taskObservations(cluster, id => receipts[id]);
   const result: ClusteringResult = {
@@ -270,7 +269,7 @@ test("a missing original finding or a forged clustering submission has no mainte
     const attrId = f.cluster.dependencies[f.library.occurrences[0]!.input_id]!;
     const saved = f.state.receipts[attrId]!.exported!;
     const row = structuredClone(saved.row);
-    (row.evaluation as { findings: { finding_id: string }[] }).findings[0]!.finding_id = "different";
+    (row.evaluation as { Problem: { problem_id: string }[] }).Problem[0].problem_id = "different";
     const rows = Object.values(f.state.receipts).filter(receipt => receipt.exported?.file === "attribution.jsonl")
       .map(receipt => receipt.taskId === attrId ? row : receipt.exported!.row);
     await writeJsonl(path.join(f.run, "results", "attribution.jsonl"), rows);
@@ -307,14 +306,14 @@ test("review rejects a same-label finding that has no original accepted observat
     const original = f.state.receipts[attrId]!.exported!.row;
     const row = structuredClone(original);
     const evaluation = row.evaluation as ReturnType<typeof attributionResult>;
-    const added = structuredClone(evaluation.findings[0]!);
-    added.finding_id = "never-clustered";
-    added.problem!.definition = "\uffffAnother independent problem definition absent from the original clustering request.";
-    evaluation.findings.push(added);
+    const added = structuredClone(evaluation.Problem[0]!);
+    added.problem_id = "never-clustered";
+    added.reason = "\uffffAnother independent problem definition absent from the original clustering request.";
+    evaluation.Problem.push(added);
     await writeJsonl(path.join(f.run, "results", "attribution.jsonl"),
       Object.values(f.state.receipts).filter(receipt => receipt.exported?.file === "attribution.jsonl")
         .map(receipt => receipt.taskId === attrId ? row : receipt.exported!.row));
-    occurrence.finding_id = added.finding_id;
+    occurrence.finding_id = added.problem_id;
     await writeJson(f.file, f.library);
     const before = await readFile(f.file, "utf8");
     await assert.rejects(reviewProblemOccurrences(f.config, f.decision, { apply: true, evaluatorVersion: "review" }), /实际归类|原观察/);

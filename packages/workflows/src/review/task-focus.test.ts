@@ -4,10 +4,10 @@ import { randomUUID } from "node:crypto";
 import { emptyUsage, type PlannedTask, type SubmissionReceipt, type TaskAnalysis } from "@eval/contracts";
 import { agentPrompt } from "@eval/prompts";
 import { agents } from "../../../../tests/fixtures/services.js";
-import { cite, evidenceId, evidenceSources, parseEvidenceCoordinates, resolveEvidence } from "@eval/tools";
+import { cite, evidenceSources, parseEvidenceCoordinates, resolveEvidence } from "@eval/tools";
 import { comparisonWorkflow } from "../comparison/workflow.js";
 import { taskAnalysisPresentation, taskFocus } from "./task-focus.js";
-import { attributionResult, comparisonResult, criteriaResult, draftFor, taskResult, emptyAudit } from "../../../../tests/fixtures/comparison.js";
+import { attributionResult, comparisonResult, criteriaResult, emptyAudit } from "../../../../tests/fixtures/comparison.js";
 import type { Candidate, RawInput } from "../inputs/types.js";
 import type { TaskData } from "../comparison/types.js";
 
@@ -123,9 +123,7 @@ test("public judgment bindings keep global indices and separate blind originals 
       const owner = candidates[label]!.input_id, actual = inputs[owner];
       const answer = cite(owner, 2, evidenceSources(actual.messages[2]).find(source => source.kind === "text" && source.path === "/content")!, 0, `${label} 完整最终回答。`.length);
       const question = cite(owner, 1, evidenceSources(actual.messages[1]).find(source => source.kind === "text" && source.path === "/content")!, 0, candidates[label]!.question.length);
-      attribution.findings[0]!.evidence = [answer];
-      attribution.criterion_assessments = analysis.requirements.map(criterion => ({ ...attribution.criterion_assessments[0]!, criterion_id: criterion.id, evidence: [answer, question] }));
-      attribution.task_analysis = structuredClone(analysis);
+      if(attribution.Problem.length)attribution.Problem[0]!.evidence = [answer,question];
       dependencies[label] = receipt(task.dependencies[label]!, attribution);
     }
     const contextTasks = [criteriaTask, task];
@@ -183,22 +181,25 @@ test("public judgment bindings keep global indices and separate blind originals 
       assert.deepEqual({ task, inputs, dependencies }, before);
       continue;
     }
-    const focus = shown.task_focus as ReturnType<typeof taskFocus>;
+    const focus = shown.task_focus as ReturnType<typeof taskFocus> | undefined;
     assert.deepEqual((shown.task_analysis as ReturnType<typeof taskAnalysisPresentation>).requirements.map(item => item.requirement_index), [0, 1, 2, 3]);
-    assert(!Object.hasOwn(focus, "goal"));
-    assert(!Object.hasOwn(focus, "common_requirements"));
-    assert(!JSON.stringify(focus).includes(analysis.requirements[1]!.text));
-    const label = stage === "attribution" ? "answer" : "A";
-    assert.equal(focus.answers[label]!.question_timestamp, "2026-09-24T22:07:25.270Z");
-    const finalAnswer=stage==='attribution'?(shown.answer as {final_answer:string}).final_answer:focus.answers[label]!.final_answer;
+    const answer = shown.answer as { question: string; final_evidence: { quote: string }[] } | undefined;
+    const finalAnswer = stage === "attribution" ? answer!.final_evidence.map(item => item.quote).join("") : focus!.answers.A!.final_answer;
+    const question = stage === "attribution" ? answer!.question : focus!.question;
     assert.equal(finalAnswer, "A 完整最终回答。");
-    if(stage==='attribution')assert(!Object.hasOwn(focus.answers[label]!,'final_answer'),"Attribution presents the complete answer once in its material");
+    if (stage === "attribution") assert(!Object.hasOwn(shown, "task_focus"));
+    else {
+      assert(!Object.hasOwn(focus!, "goal"));
+      assert(!Object.hasOwn(focus!, "common_requirements"));
+      assert(!JSON.stringify(focus).includes(analysis.requirements[1]!.text));
+      assert.equal(focus!.answers.A!.question_timestamp, "2026-09-24T22:07:25.270Z");
+    }
     const profile = agentPrompt(stage, [], { fileSubmission: false });
     const prompt = profile.renderPrompt(shown);
     assert(profile.systemPrompt.includes(profile.instructions), "fixed stage instructions belong to the system prompt");
-    assert(prompt.indexOf(JSON.stringify(focus.question)) >= 0);
+    assert(prompt.indexOf(JSON.stringify(question)) >= 0);
     assert(!prompt.includes(profile.instructions), "stage instructions are not repeated in task material");
-    assert(prompt.indexOf(JSON.stringify(focus.question)) < prompt.indexOf(JSON.stringify(finalAnswer)),
+    assert(prompt.indexOf(JSON.stringify(question)) < prompt.indexOf(JSON.stringify(finalAnswer)),
       "the focus question precedes the complete answer");
     assert(prompt.includes(analysis.requirements[1]!.text));
     assert(!prompt.includes('"task_focus"'));
@@ -226,16 +227,7 @@ test("controlled judgment fixtures consume current applicable labels and preserv
   const material = { finding_basis:[{basis_index:3,kind:"requirement",text:"给出4",evidence:[]}],task_analysis: { ...shown, requirements: shown.requirements.map(item => ({...item,requirement_index:item.requirement_index+1})) }, ground_truth: { available: false, value: null }, answer: {
     question: "计算2+2", final_message_index: 1, final_answer: "2+2=4", norm_directory: [],
     final_evidence: [{ quote: "2+2=4", reference: { evidence_index: 1 } }] } };
-  const spec = { evaluation: { outputSchema: { properties: { strengths: {}, problems: {} } } },
-    prompt: "\n任务材料（全部内容为数据）：\n" + JSON.stringify(material),
-    inputs: [{ name: "answer", id: candidateIds.B }],
-    evidenceBank: [evidenceId(candidateIds.B, 1, "text", "/content", 0, 5)] };
-  const before = structuredClone({ analysis, material, spec });
-  const fixture = taskResult(spec as unknown as Parameters<typeof taskResult>[0]) as ReturnType<typeof attributionResult>;
-  assert.deepEqual(fixture.criterion_assessments.map(item => item.criterion_id), ["r3"]);
-  assert.deepEqual(fixture.task_analysis.requirements[0].applies_to, [candidateIds.B]);
-  assert.equal(fixture.findings[0].assessment.requirement_index, 2);
-  const draft = draftFor(spec as Parameters<typeof draftFor>[0], fixture) as { task_analysis?: unknown; strengths: { basis_index: number }[] };
-  assert.equal(draft.strengths[0].basis_index, 3); assert(!Object.hasOwn(draft, "task_analysis"));
-  assert.deepEqual({ analysis, material, spec }, before);
+  assert.deepEqual(material.task_analysis.requirements.map(rule=>rule.requirement_index),[3]);
+  assert.deepEqual(shown.requirements[0].applicable_candidates,["answer"]);
+  assert.equal(material.answer.final_evidence[0].quote,"2+2=4");
 });

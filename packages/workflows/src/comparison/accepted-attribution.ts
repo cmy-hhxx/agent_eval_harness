@@ -2,7 +2,7 @@ import { ValidationError, type AgentRequest, type SubmissionReceipt, type Valida
 import type { AttributionResult } from "@eval/agents/attribution";
 import { images, parseEvidenceCoordinates, resolveEvidence } from "@eval/tools";
 
-type Evidence = AttributionResult["findings"][number]["evidence"][number];
+type Evidence = AttributionResult["Problem"][number]["evidence"][number];
 const mismatch = (path: string, message: string, expected?: unknown, actual?: unknown): ValidationIssue => ({
   category: "evidence", code: "accepted_evidence_origin_mismatch", path, message, expected, actual,
 });
@@ -40,12 +40,7 @@ export function acceptedAttributionView(receipt: SubmissionReceipt, sourceReques
       }
     }
   };
-  evidence(result.correctness_evidence, "/correctness_evidence");
-  for (const field of ["criterion_assessments", "findings"] as const) result[field].forEach((item, index) => {
-    evidence(item.evidence, `/${field}/${index}/evidence`);
-    evidence(item.context_evidence ?? [], `/${field}/${index}/context_evidence`);
-  });
-  result.table_resolutions?.forEach((item, index) => evidence(item.evidence, `/table_resolutions/${index}/evidence`));
+  result.Problem.forEach((item,index)=>evidence(item.evidence,`/Problem/${index}/evidence`));
   if (errors.length) throw new ValidationError(errors);
   return result;
 }

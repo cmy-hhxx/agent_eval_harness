@@ -111,10 +111,11 @@ export class AgentRegistry {
     const modelInput = binding.modelInput ?? binding.request.input;
     if (profile.inspection && (!binding.modelInput || !binding.inspectionInput || !profile.toolNames.includes("inspect_material")))
       throw new Error(`Inspection requires separate primary and secondary material: ${binding.agent}/${binding.profile}`);
-    const names = [...profile.toolNames, ...submissionToolNames(profile.fileSubmission)];
+    const names = [...profile.toolNames, ...submissionToolNames(profile.fileSubmission, Boolean(profile.completionReview))];
+    const descriptions: Record<string, string> = { ...profile.toolDescriptions, ...(profile.completionReview ? { confirm_evaluation: profile.completionReview } : {}) };
     if (typeof profile.fileSubmission !== "boolean" || new Set(names).size !== names.length ||
-      Object.keys(profile.toolDescriptions).length !== names.length ||
-      names.some((name) => !profile.toolDescriptions[name]?.trim()))
+      Object.keys(descriptions).length !== names.length ||
+      names.some((name) => !descriptions[name]?.trim()))
       throw new Error(`Incomplete tool descriptions: ${binding.agent}/${binding.profile}`);
     if (typeof profile.submissionNudge !== "string" || !profile.submissionNudge.trim())
       throw new Error(`Missing submission nudge: ${binding.agent}/${binding.profile}`);
@@ -138,7 +139,8 @@ export class AgentRegistry {
         fileSubmission: profile.fileSubmission,
         ...(profile.draftWriteInCallLimit ? { draftWriteInCallLimit: true } : {}),
         ...(profile.jsonStringSubmission ? {jsonStringSubmission:true} : {}),
-        toolDescriptions: { ...profile.toolDescriptions },
+        toolDescriptions: descriptions,
+        ...(profile.completionReview ? { completionReview: profile.completionReview } : {}),
         submissionNudge: profile.submissionNudge,
         requiredReads: profile.requiredReads?.(binding.request) ?? [],
         ...(binding.presentedReads ? { presentedReads: binding.presentedReads } : {}),

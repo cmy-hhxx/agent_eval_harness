@@ -1,357 +1,35 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "description": "只提交本对象 properties 定义的判断字段，required 字段必须全部填写；candidate 是读取工具参数，禁止作为提交字段，也不附加 case_id、findings 等导出包装。 所有点评字段使用简体中文，专有名词和证据原文保留原语言。",
   "type": "object",
   "additionalProperties": false,
+  "required": [
+    "summary",
+    "Problem"
+  ],
   "properties": {
     "summary": {
       "type": "string",
       "minLength": 1
     },
-    "criterion_assessments": {
+    "Problem": {
       "type": "array",
       "items": {
         "type": "object",
         "additionalProperties": false,
-        "properties": {
-          "status": {
-            "enum": [
-              "met",
-              "partial",
-              "unmet",
-              "unknown"
-            ]
-          },
-          "evidence_status": {
-            "enum": [
-              "established",
-              "uncertain"
-            ]
-          },
-          "summary": {
-            "type": "string",
-            "minLength": 1
-          },
-          "evidence_indices": {
-            "type": "array",
-            "items": {
-              "type": "integer",
-              "minimum": 1
-            }
-          },
-          "uncertainty": {
-            "type": "object",
-            "additionalProperties": false,
-            "properties": {
-              "claim": {
-                "type": "string",
-                "minLength": 1,
-                "description": "从本项所选本方最终交付证据逐字引用的完整待核主张；允许保留原文语言。"
-              },
-              "missing_evidence": {
-                "type": "string",
-                "minLength": 1,
-                "description": "说明判定此主张仍缺的具体证据；可读材料须实际定向核查，不得把未读称为未采集。"
-              },
-              "impact": {
-                "type": "string",
-                "minLength": 1,
-                "description": "该缺口如何影响本项要求和实际交付的判断。"
-              }
-            },
-            "required": [
-              "claim",
-              "missing_evidence",
-              "impact"
-            ],
-            "description": "unknown 或 uncertain 必填；确定项不得填。claim 必须绑定本项实际交付证据。"
-          }
-        },
         "required": [
-          "status",
-          "evidence_status",
-          "summary",
-          "evidence_indices"
-        ]
-      },
-      "minItems": 1,
-      "maxItems": 24
-    },
-    "meets_core": {
-      "type": [
-        "boolean",
-        "null"
-      ],
-      "description": "true 仅表示所选核心要求全部已确认实际完成（met）；核心 partial/unmet 不能判 true，影响核心的事实待核则为 null；非核心附属缺陷不自动否定完成。"
-    },
-    "core_reason": {
-      "type": "string",
-      "minLength": 1
-    },
-    "core_requirements": {
-      "type": "array",
-      "uniqueItems": true,
-      "items": {
-        "type": "integer",
-        "minimum": 1
-      }
-    },
-    "numeric_checks": {
-      "type": "array",
-      "description": "记录有原文证据的直接点值及换算，程序仅计算算术比较；整体正确性在 correctness_reason 结合原题、计算与证据判断。",
-      "items": {
-        "type": "object",
-        "additionalProperties": false,
-        "properties": {
-          "label": {
-            "type": "string",
-            "minLength": 1,
-            "maxLength": 100
-          },
-          "reference_index": {
-            "type": "integer",
-            "minimum": 1
-          },
-          "actual": {
-            "type": [
-              "string",
-              "number",
-              "null"
-            ],
-            "pattern": "^[+-]?\\d+(?:\\.\\d+)?(?:[eE][+-]?\\d{1,3})?$",
-            "maxLength": 80
-          },
-          "scale": {
-            "type": "string",
-            "minLength": 1,
-            "pattern": "^[+-]?\\d+(?:\\.\\d+)?(?:[eE][+-]?\\d{1,3})?$",
-            "maxLength": 80
-          },
-          "mode": {
-            "description": "算术观察方式：rounded 按标准末位精度舍入，exact 精确比较；不代替语义正确性判断。",
-            "enum": [
-              "rounded",
-              "exact"
-            ]
-          },
-          "evidence_index": {
-            "type": "integer",
-            "minimum": 1
-          }
-        },
-        "required": [
-          "label",
-          "reference_index",
-          "actual",
-          "scale",
-          "mode",
-          "evidence_index"
-        ]
-      },
-      "maxItems": 64
-    },
-    "is_correct": {
-      "type": [
-        "boolean",
-        "null"
-      ]
-    },
-    "correctness_reason": {
-      "type": "string"
-    },
-    "correctness_evidence_indices": {
-      "type": "array",
-      "items": {
-        "type": "integer",
-        "minimum": 1
-      }
-    },
-    "standard_conflict": {
-      "type": "boolean",
-      "description": "默认 false。初评有原始披露或完整底层复算直接反证时填 true 提请复核，无须当时已看到对方答案；独立复核仅在双方最终所求结果一致且直接反证成立时保留 true。"
-    },
-    "image_observations": {
-      "type": "array",
-      "items": {
-        "type": "object",
-        "additionalProperties": false,
-        "properties": {
-          "image_number": {
-            "type": "integer",
-            "minimum": 1
-          },
-          "text": {
-            "type": "string",
-            "minLength": 1
-          }
-        },
-        "required": [
-          "image_number",
-          "text"
-        ]
-      }
-    },
-    "table_resolutions": {
-      "type": "array",
-      "items": {
-        "type": "object",
-        "additionalProperties": false,
-        "properties": {
-          "table_index": {
-            "type": "integer",
-            "minimum": 1
-          },
-          "row_index": {
-            "type": "integer",
-            "minimum": 0
-          },
-          "outcome": {
-            "enum": [
-              "supported",
-              "conflict"
-            ]
-          },
-          "reason": {
-            "type": "string",
-            "minLength": 1
-          },
-          "evidence_indices": {
-            "type": "array",
-            "items": {
-              "type": "integer",
-              "minimum": 1
-            },
-            "minItems": 2
-          }
-        },
-        "required": [
-          "table_index",
-          "row_index",
-          "outcome",
-          "reason",
-          "evidence_indices"
-        ]
-      },
-      "maxItems": 100
-    },
-    "strengths": {
-      "type": "array",
-      "items": {
-        "type": "object",
-        "additionalProperties": false,
-        "properties": {
-          "dimension": {
-            "enum": [
-              "correctness",
-              "completeness",
-              "instruction_following",
-              "evidence_quality",
-              "reasoning",
-              "format",
-              "relevance",
-              "efficiency"
-            ]
-          },
-          "stage": {
-            "enum": [
-              "context_recall",
-              "reasoning",
-              "execution",
-              "final_answer"
-            ]
-          },
-          "importance": {
-            "enum": [
-              "high",
-              "medium",
-              "low"
-            ]
-          },
-          "text": {
-            "type": "string",
-            "minLength": 1
-          },
-          "reason": {
-            "type": "string",
-            "minLength": 1
-          },
-          "evidence_status": {
-            "enum": [
-              "established",
-              "uncertain"
-            ]
-          },
-          "evidence_indices": {
-            "type": "array",
-            "items": {
-              "type": "integer",
-              "minimum": 1
-            },
-            "minItems": 1
-          },
-          "basis_index": {
-            "type": [
-              "integer",
-              "null"
-            ],
-            "minimum": 1
-          }
-        },
-        "required": [
-          "dimension",
-          "stage",
-          "importance",
           "text",
           "reason",
           "evidence_status",
           "evidence_indices",
-          "basis_index"
-        ]
-      },
-      "description": "优点仅提交本项 Schema 允许的字段，不允许 impact；impact 仅属于 problems。"
-    },
-    "problems": {
-      "type": "array",
-      "items": {
-        "type": "object",
-        "additionalProperties": false,
+          "checks",
+          "causes"
+        ],
         "properties": {
-          "dimension": {
-            "enum": [
-              "correctness",
-              "completeness",
-              "instruction_following",
-              "evidence_quality",
-              "reasoning",
-              "format",
-              "relevance",
-              "efficiency"
-            ]
-          },
-          "stage": {
-            "enum": [
-              "context_recall",
-              "reasoning",
-              "execution",
-              "final_answer"
-            ]
-          },
-          "importance": {
-            "enum": [
-              "high",
-              "medium",
-              "low"
-            ]
-          },
           "text": {
             "type": "string",
             "minLength": 1
           },
           "reason": {
-            "type": "string",
-            "minLength": 1
-          },
-          "impact": {
             "type": "string",
             "minLength": 1
           },
@@ -364,128 +42,36 @@
           "evidence_indices": {
             "type": "array",
             "items": {
-              "type": "integer",
-              "minimum": 1
-            },
-            "minItems": 1
-          },
-          "basis_index": {
-            "type": [
-              "integer",
-              "null"
-            ],
-            "minimum": 1
-          },
-          "label": {
-            "type": "string",
-            "minLength": 1
-          },
-          "diagnosis": {
-            "enum": [
-              "entity_or_unit",
-              "source_absence",
-              "context_loss",
-              "other"
-            ]
-          },
-          "causes": {
-            "type": "array",
-            "minItems": 1,
-            "uniqueItems": true,
-            "items": {
-              "type": "object",
-              "additionalProperties": false,
-              "required": [
-                "transition_index",
-                "function_index",
-                "business_component",
-                "basis",
-                "mechanism_source",
-                "mechanism",
-                "certainty"
-              ],
-              "properties": {
-                "function_index": {
-                  "type": "integer",
-                  "minimum": 1
-                },
-                "business_component": {
-                  "type": "string",
-                  "minLength": 1
-                },
-                "mechanism_source": {
-                  "enum": [
-                    "explicit_process",
-                    "boundary_comparison"
-                  ]
-                },
-                "mechanism": {
-                  "description": "说明所选真实节点对哪个事实、字段、来源或计算，在什么处理动作上发生偏离及输入输出边界。模型推理问题、模型能力不足、模型推断与生成、模型理解错误或终稿有问题只说明标签/位置，不能作为原因；未知责任明确待查边界，隐藏机制保留推断、缺口及替代解释。",
-                  "type": "string",
-                  "minLength": 1
-                },
-                "certainty": {
-                  "enum": [
-                    "confirmed",
-                    "inferred"
-                  ]
-                },
-                "evidence_gap": {
-                  "type": "string",
-                  "minLength": 1
-                },
-                "alternatives": {
-                  "type": "array",
-                  "minItems": 1,
-                  "uniqueItems": true,
-                  "items": {
-                    "type": "string",
-                    "minLength": 1
-                  }
-                },
-                "transition_index": {
-                  "type": "integer",
-                  "minimum": 1
-                },
-                "basis": {
-                  "enum": [
-                    "input_deviation",
-                    "independent_addition",
-                    "unknown_transition"
-                  ]
-                }
-              },
-              "allOf": [
+              "oneOf": [
                 {
-                  "if": {
-                    "properties": {
-                      "certainty": {
-                        "const": "inferred"
-                      }
+                  "type": "integer",
+                  "minimum": 1
+                },
+                {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": [
+                    "image_number",
+                    "observation"
+                  ],
+                  "properties": {
+                    "image_number": {
+                      "type": "integer",
+                      "minimum": 1
                     },
-                    "required": [
-                      "certainty"
-                    ]
-                  },
-                  "then": {
-                    "required": [
-                      "evidence_gap",
-                      "alternatives"
-                    ]
-                  },
-                  "else": {
-                    "properties": {
-                      "evidence_gap": false,
-                      "alternatives": false
+                    "observation": {
+                      "type": "string",
+                      "minLength": 1
                     }
                   }
                 }
               ]
-            }
+            },
+            "minItems": 1,
+            "uniqueItems": true
           },
           "checks": {
             "type": "array",
-            "minItems": 1,
             "items": {
               "type": "object",
               "additionalProperties": false,
@@ -529,6 +115,93 @@
                     "minimum": 1
                   }
                 }
+              }
+            }
+          },
+          "causes": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "transition_index",
+                "basis",
+                "mechanism_source",
+                "reason",
+                "certainty"
+              ],
+              "properties": {
+                "transition_index": {
+                  "type": "integer",
+                  "minimum": 1
+                },
+                "basis": {
+                  "enum": [
+                    "input_deviation",
+                    "independent_addition",
+                    "unknown_transition"
+                  ]
+                },
+                "mechanism_source": {
+                  "enum": [
+                    "explicit_process",
+                    "boundary_comparison"
+                  ]
+                },
+                "reason": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "certainty": {
+                  "enum": [
+                    "confirmed",
+                    "inferred"
+                  ]
+                },
+                "uncertainty": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": [
+                    "evidence_gap",
+                    "alternatives"
+                  ],
+                  "properties": {
+                    "evidence_gap": {
+                      "type": "string",
+                      "minLength": 1
+                    },
+                    "alternatives": {
+                      "type": "array",
+                      "items": {
+                        "type": "string",
+                        "minLength": 1
+                      },
+                      "minItems": 1
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "uncertainty": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "evidence_gap",
+              "alternatives"
+            ],
+            "properties": {
+              "evidence_gap": {
+                "type": "string",
+                "minLength": 1
+              },
+              "alternatives": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "minItems": 1
               }
             }
           },
@@ -689,34 +362,18 @@
               }
             }
           }
-        },
-        "required": [
-          "dimension",
-          "stage",
-          "importance",
-          "text",
-          "reason",
-          "impact",
-          "evidence_status",
-          "evidence_indices",
-          "basis_index",
-          "label",
-          "diagnosis",
-          "checks",
-          "causes",
-          "calculations"
-        ]
+        }
       }
+    },
+    "is_correct": {
+      "type": [
+        "boolean",
+        "null"
+      ]
+    },
+    "correct_reason": {
+      "type": "string",
+      "minLength": 1
     }
-  },
-  "required": [
-    "summary",
-    "criterion_assessments",
-    "meets_core",
-    "core_reason",
-    "core_requirements",
-    "numeric_checks",
-    "strengths",
-    "problems"
-  ]
+  }
 }

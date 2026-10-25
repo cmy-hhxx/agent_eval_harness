@@ -29,32 +29,22 @@ export function bindScore(task:PlannedTask,raw:RawInput,dependencies:Record<stri
     else id=add(evidence.evidence_id,evidence.quote);
     byOrigin.set(evidence.evidence_id,id);return id;
   };
-  const completion=attribution.criterion_assessments.map(row=>({criterion_id:row.criterion_id,status:row.status,
-    evidence_status:row.evidence_status,summary:row.summary,evidence_ids:[...new Set(row.evidence.map(select))]}));
   const problem_facts:ScoreProblemFact[]=[],problems:JsonObject[]=[];
-  for(const finding of attribution.findings.filter(finding=>finding.type==='problem')){
-    const problem=finding.problem!,needed=new Set(problem.component.flatMap(cause=>cause.evidence_ids));
-    const proof=finding.evidence.filter(evidence=>needed.has(evidence.evidence_id)||!evidence.source&&evidence.message_index===candidate.final_index);
-    const evidence_ids=[...new Set(proof.map(select))];
-    if(!evidence_ids.length)throw Error('已接受归因的问题缺少可供评分引用的依据：'+finding.finding_id);
-    const primary=problem.component.find(cause=>cause.role==='primary')!;
-    const component=primary.technical_domain==='工具业务实现'?'tool_service':primary.technical_domain==='工具接入与协议'?'tool_call':'candidate_output';
-    const fact:ScoreProblemFact={finding_id:finding.finding_id,description:finding.text,impact:finding.assessment.impact,stage:finding.stage,
-      attribution:finding.assessment.evidence_status==='established'?'established':'hypothesis',component,evidence_ids,
-      required_final_impact:finding.stage==='final_answer'&&finding.assessment.evidence_status==='established'};
-    problem_facts.push(fact);problems.push({...fact,reason:finding.reason,importance:finding.importance,
-      responsibility_certainties:problem.component.map(cause=>({role:cause.role,certainty:cause.certainty,evidence_gap:cause.evidence_gap}))});
+  for(const problem of attribution.Problem){
+    const evidence_ids=[...new Set(problem.evidence.map(select))];
+    if(!evidence_ids.length)throw Error('已接受归因的问题缺少可供评分引用的依据：'+problem.problem_id);
+    const fact:ScoreProblemFact={finding_id:problem.problem_id,description:problem.text,reason:problem.reason,
+      attribution:problem.evidence_status==='established'?'established':'hypothesis',
+      component:problem.causes.find(cause=>cause.role==='primary')!.component,evidence_ids};
+    problem_facts.push(fact);problems.push({...fact,
+      ...(problem.uncertainty?{uncertainty:problem.uncertainty}:{}),
+      responsibilities:problem.causes.map(cause=>({component:cause.component,role:cause.role,reason:cause.reason,
+        certainty:cause.certainty,...(cause.uncertainty?{uncertainty:cause.uncertainty}:{})}))});
   }
-  const accepted={task_id:receipt.taskId,evaluator_version:receipt.evaluatorVersion,core_assessment:attribution.core_assessment,
-    completion,problems,strengths:attribution.findings.filter(finding=>finding.type==='strength').map(finding=>({
-      dimension:finding.dimension,stage:finding.stage,text:finding.text,reason:finding.reason,evidence_status:finding.assessment.evidence_status,
-      evidence_ids:[...new Set(finding.evidence.map(select))]}))};
+  const accepted={task_id:receipt.taskId,evaluator_version:receipt.evaluatorVersion,summary:attribution.summary,problems};
   const material:AcceptedScoreCase={case_id:candidate.input_id,task_question:question,
     candidate_output_id:'A',evidence:sources,availability:{candidate_output:'available',analysis:'not_collected',tool_trace:'not_collected'},
-    public_requirements:{question},attribution_task_id:receipt.taskId,problem_facts,shared_quotes:quotes,
-    requires_final_defect:attribution.core_assessment.meets_core===false||attribution.criterion_assessments.some(row=>
-      attribution.task_analysis.requirements.some(requirement=>requirement.id===row.criterion_id)&&
-      row.evidence_status==='established'&&['unmet','partial'].includes(row.status))};
+    public_requirements:{question},attribution_task_id:receipt.taskId,problem_facts,shared_quotes:quotes};
   const input={case_id:material.case_id,task_question:question,candidate_answer:answer,accepted_attribution:accepted,
     evidence_catalog:quotes.map(({quote,...entry})=>({...entry,...(['Q','A'].includes(entry.source_id)?{}:{quote}),
       ...(!['Q','A'].includes(entry.source_id)?{origin_evidence_id:entry.source_id}:{})}))} as unknown as JsonObject;

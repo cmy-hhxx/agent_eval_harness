@@ -37,27 +37,20 @@ export function businessChainFixture(loss = false, question = "Gold prediction f
   const chain = chains[0], evidence = [...new Map([...chain.checkpoints.flatMap(point => point.evidence), ...chain.final_evidence, ...transitions.flatMap(edge=>[...edge.before,...edge.after]).map(boundary=>resolveEvidence({messages},boundary,"answer",emptyAudit(),"/fixture",id))]
     .filter((item): item is Evidence => typeof item.quote === "string")
     .map(item => [item.evidence_id, item])).values()];
-  const cause = responsibilityFixture(undefined, { transition_index:generated.transition_index,actor_index:(binding.request.input.answer as {component_catalog:{component:string}[]}).component_catalog.findIndex(actor=>actor.component==='最终回答组织')+1,
-    business_component: "finquery 返回的价格口径解释与使用", chain_index: generated.chain_index,
-    chain_step: "数据解释与计算", field_names: ["etf code", "etf name", "Closing Price[20261022]"],
-    mechanism: "将ETF份额价格用于现货黄金报价构造，输入369与输出3690的十倍差异可见，具体转换动作未记录。",
-    evidence_ids: [...generated.before,...generated.after].map(item => item.evidence_id), evidence_gap: "未记录中间换算或计算过程。",
-    alternatives: ["小数点或零位误写。", "从其他价格记忆拼接现货报价。"] });
-  const problem: ProblemProposal = { diagnosis: "entity_or_unit", calculations:[], investigation:transitions.map(edge=>({
-    transition_index:edge.transition_index,kind:edge.kind,outcome:edge.transition_index===generated.transition_index?"changed":"preserved",
-    observation:edge.transition_index===generated.transition_index?"输入保留ETF身份和369价格，生成文本却声明现货3690；具体转换动作未记录。":"该边界前后记录保持相同对象与价格，未发现本问题的新增偏离。",
-    before_evidence_ids:edge.before.map(item=>item.evidence_id),after_evidence_ids:edge.after.map(item=>item.evidence_id),
-  })), component: [cause], label: "ETF份额价错配现货报价", definition: "把GLD.P份额报价作为XAU/USD现货报价使用。" };
-  const result: AttributionResult = { has_standard_answer: false, is_correct: null, correctness_reason: "", correctness_evidence: [], numeric_checks: [],
-    task_analysis: binding.request.input.task_analysis as unknown as AttributionResult["task_analysis"],
-    criterion_assessments: [{ criterion_id: "r1", status: "partial", evidence_status: "established", summary: "预测使用的基准标的和价格错配。", evidence }],
-    core_assessment: { meets_core: false, reason: "预测基准错误，不能直接用于现货黄金决策。", criterion_ids: ["r1"] },
-    summary: "引用的ETF价格被用于构造错误的现货基准。", findings: [{ finding_id: "f0", type: "problem", dimension: "correctness", stage: "reasoning", importance: "high",
-      text: "ETF份额价格被写成现货黄金报价。", reason: "实际输入保留身份和369美元，最终回答引用同一来源却声明XAU/USD为3690美元。", evidence,
-      assessment: { requirement_index: 0, observation: "标的及价格口径错配已确认。", evidence_status: "established", impact: "预测收益与阈值基准不可直接使用。" }, problem }] };
-  const audit = emptyAudit();
-  cause.component=responsibilityComponentName((binding.request.input.answer as {component_catalog:import('@eval/tools').TraceComponentIdentity[]})
-    .component_catalog[Number(cause.actor_index)-1],cause.business_component);
+  const cause = responsibilityFixture(undefined,{transition_index:generated.transition_index,actor_index:generated.actor_index,kind:generated.kind,
+    component:responsibilityComponentName((binding.request.input.answer as {component_catalog:import('@eval/tools').TraceComponentIdentity[]}).component_catalog[Number(generated.actor_index)-1]),
+    reason:'将ETF份额价格用于现货报价，输入369与输出3690差异可见，内部转换仅属推断。',
+    evidence_ids:[...generated.before,...generated.after].map(e=>e.evidence_id),uncertainty:{evidence_gap:'未记录中间换算过程。',alternatives:['零位误写。','拼接其他价格记忆。']}});
+  const problem:ProblemProposal={text:'ETF份额价错配现货报价',reason:'将GLD.P份额369美元错误作为XAU/USD现货3690美元，预测基准不可用。',evidence_status:'established',
+    checks:transitions.map(edge=>({transition_index:edge.transition_index,kind:edge.kind,outcome:edge.transition_index===generated.transition_index?'changed':'preserved',
+      observation:edge.transition_index===generated.transition_index?'输入保留ETF身份与369价格，生成现货3690。':'该边界保持对象与价格。',
+      before_evidence_ids:edge.before.map(e=>e.evidence_id),after_evidence_ids:edge.after.map(e=>e.evidence_id)})),causes:[cause]};
+  const generationCheck=problem.checks.find(check=>check.transition_index===generated.transition_index)!;
+  const incoming=transitions.filter(edge=>generated.predecessors.includes(edge.transition_index)).flatMap(edge=>edge.after);
+  if(incoming.length){generationCheck.before_evidence_ids=incoming.map(e=>e.evidence_id);cause.evidence_ids=[...new Set([...generationCheck.before_evidence_ids,...generationCheck.after_evidence_ids])];}
+  const result:AttributionResult={meta:{input_id:id},summary:problem.text,has_standard_answer:false,is_correct:null,correct_reason:null,
+    Problem:[{...problem,problem_id:'p1',evidence}]};
+  const audit=emptyAudit();
   audit.traceReads = evidence.flatMap(item => {
     const point=parseEvidenceCoordinates(item.evidence_id)!;
     return point.kind==='image'?[]:[{candidate:'answer',message_index:point.message_index,kind:point.kind,path:point.path,start:point.start,end:point.end}];

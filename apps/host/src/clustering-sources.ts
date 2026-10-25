@@ -14,12 +14,12 @@ export const readClusteringSource: ClusteringRunReader = async (run, taskIds) =>
     const task = state.manifest.tasks.find(task => task.id === id), receipt = state.receipts[id];
     if (!task) throw new Error("聚类来源任务不存在：" + id);
     if (!receipt) continue;
-    const candidate = (task.data as { candidate: Candidate }).candidate, row = receipt.exported?.row;
+    const candidate = (task.data as { candidate: Candidate }).candidate, row = receipt.exported?.row, meta = row?.meta as Record<string,unknown>|undefined;
     if (task.stage !== "attribution" || !row || receipt.taskId !== id || receipt.exported?.file !== "attribution.jsonl" ||
-        row.task_id !== id || row.submission_id !== receipt.submissionId || row.evaluator_version !== receipt.evaluatorVersion ||
-        row.input_id !== candidate.input_id || row.version !== candidate.version || row.batch_id !== candidate.batch_id ||
-        row.case_id !== candidate.case_id || row.trace_id !== candidate.trace_id ||
-        row.input_file !== candidate.source || row.input_line !== candidate.line)
+        meta?.task_id !== id || meta?.submission_id !== receipt.submissionId || meta?.evaluator_version !== receipt.evaluatorVersion ||
+        meta?.input_id !== candidate.input_id || meta?.version !== candidate.version || meta?.batch_id !== candidate.batch_id ||
+        meta?.case_id !== candidate.case_id || meta?.trace_id !== candidate.trace_id ||
+        meta?.input_file !== candidate.source || meta?.input_line !== candidate.line)
       throw new Error("AIME 正式归因与来源收据不一致：" + id);
   }
   return { ...state, manifest: { ...state.manifest, tasks: state.manifest.tasks.map(task => {
