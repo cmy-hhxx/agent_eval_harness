@@ -86,6 +86,7 @@ function bindSubmission(request: AgentRequest, submitted: unknown, audit: ToolAu
       issues.push({category:"evidence",code:"investigation_fact_fields",path:`${path}/field_names`,
         message:"共享事实的字段必须分别出现在本事实引用的原文或坐标中，不能借用另一事实的字段。"});
     return {...fact, chain_index:fact.chain_index,field_names:fact.field_names,observation:fact.observation,
+      source_proofs:proofs.filter(proof=>!proof.source&&checkpoint?.evidence.some(boundary=>boundary.message_index===proof.message_index)),
       evidence_indices:fact.evidence_indices,step,evidence_ids:evidence.map(ref=>ref.evidence_id)};
   });
   const numericRows=list(value.numeric_checks).map(object);
@@ -136,7 +137,10 @@ function bindSubmission(request: AgentRequest, submitted: unknown, audit: ToolAu
         return [];
       }) : [];
       for (const cause of component) if (cause.chain_index !== null && list(cause.field_names).some(field =>
-        !linkedFacts.some(fact => fact.chain_index === cause.chain_index && list(fact.field_names).includes(field))))
+        !linkedFacts.some(fact => fact.chain_index === cause.chain_index && fact.source_proofs.some(proof=>{
+          const point=parseEvidenceCoordinates(proof.evidence_id);
+          return proof.quote.includes(field)||point&&point.kind!=="image"&&point.path.includes(field);
+        }))))
         issues.push({category:"evidence",code:"investigation_fact_scope",path:`${path}/investigation_fact_indices`,
           message:"每条问题须关联核实自身实际字段的调查事实，不能因使用同一链路就借用其他字段的核查。"});
       const investigation = [...new Set(linkedFacts.map(fact=>fact.chain_index))].map(chain_index => ({

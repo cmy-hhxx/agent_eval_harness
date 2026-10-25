@@ -64,25 +64,25 @@ test('automatic Score backfill retains the exact task scope and does not reopen 
 });
 
 
-test('Score phases project once, wait for a formal result and retry dependencies without reopening Attribution',async t=>{
+test('one Score task retries without reopening accepted Attribution',async t=>{
   const f=await fixtureConfig([[{...sessionRaw('phases'),batch_id:'b1'} as any],[],[],[]]);t.after(()=>rm(f.directory,{recursive:true,force:true}));
   const config:AnswerReviewConfig={...f.config,workflow:'answer-review',inputs:{...f.config.inputs,versions:f.config.inputs.versions.slice(0,1)}};
   const plan=await planAnswerReview(config),dimensions=plan.tasks.find(task=>task.stage==='score')!,attribution=plan.tasks.find(task=>task.stage==='attribution')!,c=(attribution.data as any).candidate;
-  const final:PlannedTask={...dimensions,id:'final',dependencies:{T:dimensions.id},data:{candidate:c,score_part:'final'}};
+  const final=dimensions;
   const instruction:PlannedTask={id:'instruction',stage:'instruction-review',inputIds:{case:c.input_id},dependencies:{source:attribution.id},data:{candidate:c}};
   const receipt=(task:PlannedTask,evaluation:unknown):SubmissionReceipt=>({taskId:task.id,attemptId:task.id+'-attempt',submissionId:task.id+'-submission',evaluatorVersion:fakeEvaluatorVersion,judge:'fixture',status:'succeeded',acceptedAt:1,evaluation,audit:emptyAudit(),usage:emptyUsage()});
-  const run=path.join(f.directory,'phases'),state:RunState={manifest:{runId:'phases',format:'evaluation-run',debug:false,status:'interrupted',engine:fakeIdentity,evaluatorVersion:fakeEvaluatorVersion,config,tasks:[...plan.tasks,final,instruction],states:{
-    [attribution.id]:{status:'succeeded',attempts:1},[dimensions.id]:{status:'failed',attempts:2},final:{status:'blocked',attempts:0},instruction:{status:'failed',attempts:1}},inputCatalog:plan.catalog,inputs:{},preflight:plan.summary,startedAt:1},receipts:{
+  const run=path.join(f.directory,'phases'),state:RunState={manifest:{runId:'phases',format:'evaluation-run',debug:false,status:'interrupted',engine:fakeIdentity,evaluatorVersion:fakeEvaluatorVersion,config,tasks:[...plan.tasks,instruction],states:{
+    [attribution.id]:{status:'succeeded',attempts:1},[dimensions.id]:{status:'failed',attempts:2},instruction:{status:'failed',attempts:1}},inputCatalog:plan.catalog,inputs:{},preflight:plan.summary,startedAt:1},receipts:{
       [attribution.id]:receipt(attribution,attributionResult(true,'2+2=4',true,c.input_id))},usage:emptyUsage(),recordedAttempts:4};
   const save=async()=>{await answerReviewRepository.createResultWriter(run,plan.inputs)(state);await answerReviewRepository.writeRun(run,state);};await save();
   const accepted=structuredClone(state.receipts);
-  assert.deepEqual((await retryAnswerReviewTasks(run,{taskIds:[dimensions.id]})).retried,[dimensions.id,final.id]);
+  assert.deepEqual((await retryAnswerReviewTasks(run,{taskIds:[dimensions.id]})).retried,[dimensions.id]);
   const retried=await answerReviewRepository.readRun(run);assert.equal(retried.manifest.states[dimensions.id].attempts,2);assert.deepEqual(retried.receipts,accepted);assert.equal(retried.manifest.states.instruction.status,'failed');
-  state.receipts[dimensions.id]=receipt(dimensions,{evaluations:[],diagnostics:[],findings:[],verification_requests:[]});state.manifest.states[dimensions.id].status='succeeded';state.manifest.states.final.status='pending';await save();
+  state.manifest.states[dimensions.id].status='pending';await save();
   const pending=(await answerReviewRunSummaries([{run}])).runs[0];assert.equal(pending.stages.score.total,1);assert.equal(pending.stages.score.pending,1);assert.equal(pending.succeeded,0);
   assert.equal((await answerReviewSample(run,c.input_id)).results.score,null);
   await assert.rejects(readAnswerReviewSources(run,dimensions.id),/正式结果/);
-  state.receipts.final=receipt(final,{case_id:c.input_id,assessment_status:'needs_material',reason:'缺少必要材料。',missing_material:['原始来源'],affected_units:['T1']});state.manifest.states.final={status:'succeeded',attempts:1};await save();
+  state.receipts[final.id]=receipt(final,{case_id:c.input_id,assessment_status:'needs_material',reason:'缺少必要材料。',missing_material:['原始来源'],affected_units:['T1']});state.manifest.states[final.id]={status:'succeeded',attempts:3};await save();
   const summary=(await answerReviewRunSummaries([{run}])).runs[0];assert.equal(summary.succeeded,1);assert.equal(summary.taskCompleted,2);assert.equal(summary.taskTotal,2);assert.equal(summary.instructionReview.failed,1);
   assert.equal((await answerReviewProgress(run))[0].status,'succeeded');
   assert.equal(((await answerReviewSample(run,c.input_id)).results.score?.evaluation as any).assessment_status,'needs_material');

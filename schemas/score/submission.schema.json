@@ -1,0 +1,278 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "evaluations",
+    "diagnostics",
+    "problem_assignments",
+    "final_answer_score",
+    "explicit_probability",
+    "probability_evidence_ids"
+  ],
+  "properties": {
+    "evaluations": {
+      "type": "array",
+      "minItems": 12,
+      "maxItems": 12,
+      "items": {
+        "$ref": "#/$defs/evaluation"
+      }
+    },
+    "diagnostics": {
+      "type": "array",
+      "minItems": 24,
+      "maxItems": 24,
+      "items": {
+        "$ref": "#/$defs/diagnostic"
+      }
+    },
+    "problem_assignments": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "affected_unit_indices",
+          "diagnostic_indices",
+          "final_delivery_affected"
+        ],
+        "properties": {
+          "affected_unit_indices": {
+            "type": "array",
+            "minItems": 1,
+            "uniqueItems": true,
+            "items": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 12
+            }
+          },
+          "diagnostic_indices": {
+            "type": "array",
+            "uniqueItems": true,
+            "items": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 24
+            }
+          },
+          "final_delivery_affected": {
+            "type": "boolean"
+          },
+          "unmapped_reason": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "allOf": [
+          {
+            "if": {
+              "properties": {
+                "diagnostic_indices": {
+                  "maxItems": 0
+                }
+              }
+            },
+            "then": {
+              "required": [
+                "unmapped_reason"
+              ]
+            }
+          }
+        ]
+      }
+    },
+    "final_answer_score": {
+      "$ref": "#/$defs/final_score"
+    },
+    "explicit_probability": {
+      "type": [
+        "number",
+        "null"
+      ],
+      "minimum": 0,
+      "maximum": 1
+    },
+    "probability_evidence_ids": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      },
+      "uniqueItems": true
+    }
+  },
+  "$defs": {
+    "evaluation": {
+      "type": "object",
+      "properties": {
+        "applicability": {
+          "enum": [
+            "both",
+            "not_triggered",
+            "observed_behavior",
+            "task_requirement",
+            "undetermined"
+          ]
+        },
+        "status": {
+          "enum": [
+            "met",
+            "not_applicable",
+            "unverified",
+            "violated"
+          ]
+        },
+        "score": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0,
+          "maximum": 4
+        },
+        "score_range": {
+          "oneOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "array",
+              "items": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 4
+              },
+              "minItems": 2,
+              "maxItems": 2
+            }
+          ]
+        },
+        "reason": {
+          "type": "string",
+          "minLength": 1
+        },
+        "evidence_ids": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          },
+          "uniqueItems": true,
+          "minItems": 1
+        }
+      },
+      "required": [
+        "applicability",
+        "status",
+        "score",
+        "score_range",
+        "reason",
+        "evidence_ids"
+      ],
+      "additionalProperties": false
+    },
+    "diagnostic": {
+      "type": "object",
+      "properties": {
+        "applicability": {
+          "enum": [
+            "both",
+            "not_triggered",
+            "observed_behavior",
+            "task_requirement",
+            "undetermined"
+          ]
+        },
+        "status": {
+          "enum": [
+            "met",
+            "not_applicable",
+            "unverified",
+            "violated"
+          ]
+        },
+        "reason": {
+          "type": "string",
+          "minLength": 1
+        },
+        "evidence_ids": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          },
+          "uniqueItems": true,
+          "minItems": 1
+        }
+      },
+      "required": [
+        "applicability",
+        "status",
+        "reason",
+        "evidence_ids"
+      ],
+      "additionalProperties": false
+    },
+    "final_score": {
+      "type": "object",
+      "properties": {
+        "status": {
+          "enum": [
+            "met",
+            "not_applicable",
+            "unverified",
+            "violated"
+          ]
+        },
+        "score": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0,
+          "maximum": 10
+        },
+        "score_range": {
+          "oneOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "array",
+              "items": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 10
+              },
+              "minItems": 2,
+              "maxItems": 2
+            }
+          ]
+        },
+        "reason": {
+          "type": "string",
+          "minLength": 1
+        },
+        "evidence_ids": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          },
+          "uniqueItems": true,
+          "minItems": 1
+        }
+      },
+      "required": [
+        "status",
+        "score",
+        "score_range",
+        "reason",
+        "evidence_ids"
+      ],
+      "additionalProperties": false
+    }
+  }
+}

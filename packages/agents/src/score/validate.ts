@@ -3,7 +3,7 @@ import { canonical, schemaIssues, ValidationError, type AgentRequest, type ToolA
 import { reviewSources } from "@eval/tools";
 import { scoreDirectory } from "@eval/prompts";
 import schema from "../../../../schemas/score/result.schema.json" with {type:"json"};
-import type { ScoreResult, ScoreException, Judgment, Rating, Applicability, ScoreAxisResult, ScoreAxis } from "./types.js";
+import type { ScoreResult, ScoreException, Judgment, Rating, Applicability } from "./types.js";
 const validateShape = new Ajv2020({allErrors:true,strict:false}).compile(schema);
 const directory = scoreDirectory as {units:Record<string,string>;diagnostics:Record<string,string>;parents:Record<string,string>;core_grades:Record<string,string>;final_grades:Record<string,string>;always_units:string[];always_diagnostics:string[]};
 const known = new Set(["task_requirement","observed_behavior","both"]);
@@ -11,13 +11,7 @@ export function validateScore(request: AgentRequest, result: unknown, audit: Too
   if (!validateShape(result)) throw new ValidationError(schemaIssues(validateShape.errors,result));
   validateScoreBody(request,result as ScoreResult|ScoreException,audit);
 }
-export function validateScoreAxis(request:AgentRequest,result:ScoreAxisResult,audit:ToolAudit,axis:ScoreAxis){
-  validateScoreBody(request,result,audit,[axis+'1',axis+'2']);
-}
-export function validateScoreJudgments(request:AgentRequest,result:ScoreAxisResult,audit:ToolAudit,axes:ScoreAxis[]){
-  validateScoreBody(request,result,audit,axes.flatMap(axis=>[axis+'1',axis+'2']));
-}
-function validateScoreBody(request:AgentRequest,value:ScoreResult|ScoreException|ScoreAxisResult,audit:ToolAudit,expectedUnits=Object.keys(directory.units)){
+function validateScoreBody(request:AgentRequest,value:ScoreResult|ScoreException,audit:ToolAudit,expectedUnits=Object.keys(directory.units)){
   const material=request.sources.case.value as unknown as ReviewCase, issues:ValidationIssue[]=[];
   const bad=(path:string,message:string)=>issues.push({category:"decision",code:"score_contract",path,message});
   if(value.case_id!==material.case_id)bad('/case_id','必须使用执行器提供的本题ID。');
@@ -79,12 +73,12 @@ function validateScoreBody(request:AgentRequest,value:ScoreResult|ScoreException
       if(known.has(d.applicability)&&!known.has(row.applicability)||row.status==='not_applicable'&&d.status!=='not_applicable'||d.status==='violated'&&row.status!=='violated'||row.status==='met'&&!['met','not_applicable'].includes(d.status))bad(path,'父子项状态不一致，不能以一个正确细项抹去其他缺陷或待核。');
     }
   }
-  const findings=new Map(value.findings.map(row=>[row.finding_id,row])),descriptions=new Set<string>(),confirmedItems=new Set<string>(),confirmedDiagnostics=new Set<string>(),unmapped=new Set<string>();
+  const findings=new Map(value.findings.map(row=>[row.finding_id,row])),confirmedItems=new Set<string>(),confirmedDiagnostics=new Set<string>(),unmapped=new Set<string>();
   if(findings.size!==value.findings.length)bad('/findings','问题编号不能重复。');
   for(const [i,f] of value.findings.entries()){
     const path=`/findings/${i}`,publicRule=f.component==='public_rule',confirmed=f.attribution==='established'&&!publicRule;
     refs(f.evidence_ids,path+'/evidence_ids');if(!f.evidence_ids.length)bad(path,'问题记录需要真实证据。');
-    const description=f.description.trim().toLowerCase();if(!description||descriptions.has(description))bad(path,'同一问题只记录一次。');descriptions.add(description);
+    if(!f.description.trim())bad(path,'源归因的问题正文不能为空。');
     if(!publicRule&&!f.affected_item_ids.length)bad(path,'候选问题需要实际受影响单元。');
     for(const id of f.affected_item_ids){if(!items.has(id)||!publicRule&&!['violated','unverified'].includes(items.get(id)!.status))bad(path,'问题不能关联满足或不适用单元。');if(confirmed)confirmedItems.add(id);}
     if(f.primary_diagnostic_id==='unmapped'){if(!f.unmapped_reason?.trim()||f.diagnostic_ids.length)bad(path,'无法映射需明确原因，不填伪造诊断。');if(confirmed)f.affected_item_ids.forEach(id=>unmapped.add(id));}
@@ -92,7 +86,6 @@ function validateScoreBody(request:AgentRequest,value:ScoreResult|ScoreException
       for(const id of f.diagnostic_ids){if(!f.affected_item_ids.includes(directory.parents[id])||!diagnostics.has(id)||!publicRule&&!['violated','unverified'].includes(diagnostics.get(id)!.status))bad(path,'问题与诊断及其父单元必须对应。');if(confirmed)confirmedDiagnostics.add(id);}}
   }
   for(const row of value.evaluations){if(row.status==='violated'&&(!confirmedItems.has(row.item_id)||!unmapped.has(row.item_id)&&!value.diagnostics.some(d=>directory.parents[d.diagnostic_id]===row.item_id&&d.status==='violated')))bad('/evaluations','违反单元需要已确认的非题目问题和受影响诊断。');for(const d of value.diagnostics.filter(d=>directory.parents[d.diagnostic_id]===row.item_id))if(d.status==='violated'&&!confirmedDiagnostics.has(d.diagnostic_id)&&!unmapped.has(row.item_id))bad('/evaluations','违反诊断缺少已确认问题。');}
-  if(!('final_answer_score' in value)){if(issues.length)throw new ValidationError(issues);return;}
   const final=value.final_answer_score;rating(final,'/final_answer_score',true);
   if(final.finding_ids.some(id=>!findings.has(id)))bad('/final_answer_score/finding_ids','总分引用不存在的问题。');
   const defects=final.finding_ids.flatMap(id=>{const f=findings.get(id);return f&&f.attribution==='established'&&f.component!=='public_rule'?[f]:[];});

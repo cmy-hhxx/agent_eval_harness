@@ -47,27 +47,12 @@ export function sharedPromptResources() {
 
 /** The only source of model-facing text for the built-in evaluation profiles. */
 function scoreRules(profile:string):string {
+  if(profile!=='default')throw Error('Unknown Score profile: '+profile);
   const rubric=resource('score/skill/rubric.md'),scoring=resource('score/skill/scoring.md');
-  const section=(document:string,prefix:string)=>{
-    const heading=document.split('\n').find(line=>line.startsWith(prefix));
-    if(!heading)throw Error(`Missing Score rule section: ${prefix}`);
-    const start=document.indexOf(heading),from=start+heading.length,depth=heading.match(/^#+/)![0].length;
-    const next=document.slice(from).search(new RegExp(`\\n#{1,${depth}} `));
-    return document.slice(start,next<0?undefined:from+next).trim();
-  };
-  const common=[1,2,3,4,5,6].map(n=>section(rubric,`## ${n}.`));
-  const axis=/^axis-([telaud])$/.exec(profile)?.[1].toUpperCase();
-  if(axis){
-    const table=(n:number)=>section(rubric,`## ${n}.`).split('\n').filter(line=>!line.startsWith('|')||line.startsWith('| ---')||line.startsWith('| 维度')||line.startsWith('| 细项')||new RegExp(`\\| ${axis}${n===7?'[12] ':'[0-9]{2} \\|'}`).test(line)).join('\n');
-    common.push(table(7),table(8),section(scoring,'## 1.'),section(scoring,'## 2.'),section(scoring,'## 3.').split('\n### ')[0],section(scoring,`### ${axis}1 `),section(scoring,`### ${axis}2 `));
-  }else if(profile==='dimensions')common.push(section(rubric,'## 7.'),section(rubric,'## 8.'),section(scoring,'## 1.'),section(scoring,'## 2.'),section(scoring,'## 3.'));
-  else if(profile==='evidence')common.push(section(rubric,'## 7.'));
-  else if(profile==='default')common.push(section(rubric,'## 9.'),section(scoring,'## 2.'),section(scoring,'## 4.'));
-  else throw Error(`Unknown Score profile: ${profile}`);
-  if(profile!=='evidence')common.push(resource('score/skill/calibration.md'));
-  common.push(resource('score/skill/source-policy.md'),resource('score/skill/question-issue-policy.md'),resource('score/material-boundary.md'));
-  return common.join('\n\n');
+  const start=rubric.indexOf('## 7.'),end=rubric.indexOf('## 9.');
+  return [rubric.slice(start,end),scoring].join('\n\n');
 }
+
 export interface AgentPromptOptions {
   profile?: string;
   fileSubmission: boolean;
@@ -77,7 +62,7 @@ export interface AgentPromptOptions {
 export function agentPrompt(stage: PromptStage, toolNames: string[], options: AgentPromptOptions) {
   const { profile = "default", fileSubmission, draftWriteInCallLimit = false } = options;
   if (!/^[a-z][a-z0-9_-]*$/.test(profile)) throw new Error(`Invalid prompt profile: ${profile}`);
-  const resourceProfile=stage==='score'&&(profile.startsWith('axis-')||profile==='dimensions')?'axis':profile;
+  const resourceProfile=profile;
   const instructions = resource(`${stage}/${resourceProfile}/instructions.md`) + (stage === "score" ? '\n\n'+scoreRules(profile) : "");
   const evidenceGuide = toolNames.some(name => ["read_trace", "search_trace", "view_image", "check_table"].includes(name))
     ? `\n${evidence}\n` : "";

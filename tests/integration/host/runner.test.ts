@@ -684,15 +684,13 @@ for (const exhausted of [false, true]) test(`completed SDK malformed arguments $
 });
 
 for (const reason of ["no-submission", "idle"] as const)
-  for (const written of [false, true])
     for (const scenario of ["disabled", "recovered", "exhausted"] as const)
-      test(`unsubmitted ${reason} interruptions ${scenario} respect the configured retry budget (written draft: ${written})`, async () => {
+      test(`unsubmitted ${reason} interruptions ${scenario} respect the configured retry budget`, async () => {
         const { directory, config, modelForStage } = await fixtureConfig();
         let targetId: string | undefined, targetAttempts = 0, targetRuns = 0, retryAt: number | undefined;
         const starts: number[] = [];
-        let draft: unknown;
         const worker = await startWorker({ identity: fakeIdentity, async createSession(options) {
-          if (!written || options.spec.evaluation.id === "attribution") targetId ??= options.spec.taskId;
+          targetId ??= options.spec.taskId;
           const targeted = options.spec.taskId === targetId;
           const fail = targeted && (++targetAttempts === 1 || scenario === "exhausted");
           if (targeted) starts.push(Date.now());
@@ -700,15 +698,7 @@ for (const reason of ["no-submission", "idle"] as const)
           return { async run() {
             await inspectFor(options);
             if (targeted) targetRuns++;
-            if (targeted && written && options.spec.recovery) {
-              assert.deepEqual(await readJson(path.join(options.workdir, "submission-rejected.json")), draft);
-              assert.equal(options.spec.recovery.contentSubmissions, 0);
-            }
             if (fail) {
-              if (written) {
-                draft = draftFor(options.spec, taskResult(options.spec));
-                assert.equal((await options.execute("edit_json", { path: "evaluation-draft.json", set_json: JSON.stringify(draft) })).isError, undefined);
-              }
               if (reason === "idle") await new Promise<void>((resolve) => { release = resolve; });
               return;
             }
@@ -749,7 +739,7 @@ for (const reason of ["no-submission", "idle"] as const)
             assert.equal(state.reason, reason === "idle" ? "Model/tool idle timeout" : "Agent ended without an accepted submission");
             assert.equal(state.failure?.errors[0]?.category, "interruption");
             assert.equal(state.failure?.contentSubmissions, 0);
-            assert.deepEqual(state.failure?.draft, written ? draft : undefined);
+            assert.equal(state.failure?.draft,undefined);
             assert.equal(saved.receipts[targetId!], undefined);
           }
           assert.equal(targetRuns, reason === "idle" ? attempts : scenario === "recovered" ? 3 : 2 * attempts,

@@ -34,17 +34,11 @@ test("all stage texts come from one resource tree; tool descriptions are complet
 
 function pathName(source: string): string { return source.slice(source.lastIndexOf("/") + 1); }
 
-test('all Score phases share the public-material boundary without changing other agents',()=>{
-  const boundary=readFileSync(new URL('../resources/score/material-boundary.md',import.meta.url),'utf8').trim();
-  for(const profile of ['evidence','dimensions','axis-t','axis-e','axis-l','axis-a','axis-u','axis-d','default']){
-    const prompt=agentPrompt('score',['score_material'],{ profile: profile, fileSubmission: false });
-    assert(prompt.instructions.includes(boundary));assert(prompt.systemPrompt.includes(boundary));
-  }
-  for(const stage of stages)assert(!agentPrompt(stage,[], { fileSubmission: false }).instructions.includes(boundary));
-  const calculation=readFileSync(new URL('../resources/tools/review_calculate.md',import.meta.url),'utf8').trim();
-  const scoreCalculation=readFileSync(new URL('../resources/tools/score_calculate.md',import.meta.url),'utf8').trim();
-  assert.equal(agentPrompt('score',['score_calculate'],{ profile: 'evidence', fileSubmission: false }).toolDescriptions.score_calculate,scoreCalculation);
-  assert.equal(agentPrompt('instruction-review',['review_calculate'],{ profile: 'default', fileSubmission: false }).toolDescriptions.review_calculate,calculation);
+test('Score has one attribution-based submission-only profile',()=>{
+ const prompt=agentPrompt('score',[],{profile:'default',fileSubmission:false});
+ assert.deepEqual(Object.keys(prompt.toolDescriptions),['submit_evaluation']);
+ assert.match(prompt.systemPrompt,/归因/);
+ assert.throws(()=>agentPrompt('score',[],{profile:'axis',fileSubmission:false}));
 });
 
 test("submission-only stages expose only their direct submission tool", () => {

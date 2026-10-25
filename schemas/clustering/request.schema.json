@@ -455,7 +455,8 @@
                       "chain_index",
                       "chain_step",
                       "field_names",
-                      "mechanism_source"
+                      "mechanism_source",
+                      "actor_index"
                     ],
                     "properties": {
                       "role": {
@@ -530,6 +531,10 @@
                           "explicit_process",
                           "boundary_comparison"
                         ]
+                      },
+                      "actor_index": {
+                        "type": "integer",
+                        "minimum": 1
                       }
                     }
                   }

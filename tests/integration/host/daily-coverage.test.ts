@@ -51,9 +51,7 @@ test('AIME report keeps historical Attribution coverage and marks its missing Sc
   assert.deepEqual(page.items[0].coverage.runIds,['1024']);assert.equal(page.items[0].coverage.stages.attribution.failed,1);assert.equal(page.items[0].coverage.stages.score.pending,1);
   assert.equal(Object.hasOwn(page.items[0].coverage,'mongoStatus'),false);
   const saved=await readJson<any>(path.join(run,'state.json'));
-  for(const [id,status,part]of [['evidence','succeeded','evidence'],['dimensions','succeeded','axes'],['final','pending','final']])saved.tasks[id]={
-    task:{stage:'score',inputIds:{case:candidate.input_id},dependencies:{}},data:{input_id:candidate.input_id,score_part:part},state:{status,attempts:status==='succeeded'?1:0},
-    ...(status==='succeeded'?{receipt:{taskId:id,evaluation:{}}}:{})};
+  saved.tasks.final={task:{stage:'score',inputIds:{case:candidate.input_id},dependencies:{attribution:task.id}},data:{input_id:candidate.input_id},state:{status:'pending',attempts:0}};
   await writeJson(path.join(run,'state.json'),saved);
   const inProgress=await dailyPackageReport({sourceUrl:'http://data.test/data/aime',source:'aime',output},'package',new URLSearchParams());
   assert.deepEqual(inProgress.items[0].coverage.stages.score,{total:1,completed:0,failed:0,pending:1,running:0});

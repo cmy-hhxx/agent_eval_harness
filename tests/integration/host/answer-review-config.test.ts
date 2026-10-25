@@ -31,7 +31,7 @@ test("independent review loads and plans one model without pair, clustering or l
   assert(host.workflow === "answer-review");
   assert.deepEqual(Object.keys(host.evaluation).sort(), ["execution", "inputs", "output", "rewrite", "workflow"]);
   const plan = await planAnswerReview(host.evaluation);
-  assert.deepEqual(plan.tasks.map(task => task.stage), ["score", "attribution"]);
+  assert.deepEqual(plan.tasks.map(task => task.stage), ["attribution", "score"]);
   assert.equal(plan.catalog!.length, 1);
   await writeJson(f.file, { ...f.source, comparisons: "unused", clustering: "unused", problemLibrary: "unused",
     standardAnswerReview: "unused", rewrite: { attribution: false, comparison: "unused", clustering: "unused" } });

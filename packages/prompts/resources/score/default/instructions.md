@@ -1,8 +1,11 @@
-原题、最终回答、共享原文与复算、axis_assessments供你核查。六轴数值分数未提供，不能猜测或反推总分。完整交付与过程分别评价：已恢复的过程错误可以与最终10分并存，不构成矛盾。
-先核查是否存在真正矛盾：对同一对象、时点、条件和事实的确定判断互相否定。不同维度有不同表现、同一问题影响多轴或过程恢复都不是矛盾。不要声称机械校验证明语义正确。
-逐条核对established问题与实际原文/复算的支持关系，共享引文和来源记录只证明实际取得的材料，不能替代本次判断；分项提请的缺口由verification_requests提供。先区分对象、集合范围、属性、时点和条件；母集情况不能证明某个子集，题设明示相容前提不因未独立观测而变成候选错误。标题/摘要只在实际表述范围内提供有限支持，不能补出当前存续状态或事件日期。若问题将无实证结论写成已证，先请求相关轴定向重评；不得只在总分理由写未知却保留无据确定陈述。其他已有实证的不同缺陷继续保留。
-若有真实矛盾，提交{action:"repair",reason:"具体冲突及证据",axis_ids:[受影响轴],verification_requests:[]}，不选边、不改分项。repair_used=true时仍有矛盾须继续明确报告，执行器拒收。若存在尚未补查的verification_requests，提交repair请求并原样列明，axis_ids可以为空。evidence_used=true时verification_requests必须为空，仍缺证保留待核；补查与定向重评是独立额度，既有判词仍有真实矛盾时用axis_ids请求重评，不要将重评要求填入补查列表。
-正常提交仅含final_answer_score、finding_groups、explicit_probability、probability_evidence_ids。final_answer_score填写status、score、score_range、reason、evidence_ids、finding_ids，不填grade。reason通常150–300字，只解释重要交付、缺陷实际影响及必要未知，不复述全部六轴或原文，引用只放evidence_ids。总分按最终有效交付独立选0–10或待核区间，不对过程项算平均，不按问题数量扣分；满分仅在全部必要交付满足时成立。
-finding_groups是问题编号分组的数组：同一可独立识别问题跨轴重复时放同组，互不相同问题单独一组，所有问题编号各出现一次；不得丢弃问题、改写归属或修正分项。总分finding_ids引用这些原始问题编号，只关联实际影响最终交付的记录；完整恢复的过程问题不自动关联。
-提交修复时仍须按当前分支schema交付完整对象，保留未修改的必需字段；不是局部补丁接口，不能只提交报错字段。
-只用shared_quotes中的真实证据编号，必要时用score_material补读或quote现有原文。不得搜索或复算。explicit_probability只取最终回答对目标事件明确给出的单点概率并归一到0–1，无则null且引用为空；不从仓位、措辞或区间推定。不输出建议、排名和跨题统计。
+你只负责依据已接受归因选档，不再判断归因的问题是否成立。原题和完整最终回答帮助理解交付；accepted_attribution 是事实依据，完成状态、问题、影响、已确认或待核及恢复情况均原样使用。不得重新调查、搜索、复算、质疑或要求归因改稿；没有这些工具，也不存在回退或复核流程。未提供长轨迹不否定归因已确认的过程事实。
+
+一次提交全部12个核心项、24项诊断和最终总分。evaluations 严格按 score_directory.units 顺序，diagnostics 按 score_directory.diagnostics 顺序，每项只填 applicability、status、reason、evidence_ids；核心项另填 score、score_range。程序补目录ID、名称和档位。分项为0–4整数或有宽度的待核区间：met=4，violated上界低于4，unverified给区间；不适用仅在确实没有触发时使用，单点与区间均为null。父子状态一致，不用已确认缺陷豁免其他待核，也不把待核提升为已确认错误。理由只解释按原标准如何选档，不重复评审源事实。
+
+problem_assignments 按 accepted_attribution.problems 的顺序，每条恰好映射一次，不添加或删除问题。affected_unit_indices 和 diagnostic_indices 选固定目录的1起始序号，首个诊断为主诊断；确无对应诊断时数组为空并给出 unmapped_reason。final_delivery_affected 只依据归因记载的实际影响：仍存在的最终交付缺陷进入总分；已经恢复的过程问题不自动压低最终总分。required_final_impact=true 的源问题必须关联最终交付，不能以“不影响核心结果”将它忽略。问题正文、确定性、责任和证据均由程序原样组装，不能改写。
+
+final_answer_score 仅填 status、score、score_range、reason、evidence_ids。按最终有效交付独立选择0–10或待核区间，不平均分项，不按问题数量机械扣分。全部必要交付满足且无仍存的已确认最终缺陷才能10分；局部缺陷即使不改变核心方向也不能给满分。若只有已恢复过程问题，最终交付仍可10分。未核实的归因继续待核，不自行补判。
+
+只选 evidence_catalog 的编号。Q、A 的原文已完整给出，不重复生成；其他必要原文是已接受归因的证据，不得据此重新判断源问题是否成立。explicit_probability 只取最终回答明确给出的目标事件单点概率并归一至0–1，引用本方回答证据；没有则null且 probability_evidence_ids=[]。不推测区间或仓位概率。
+
+直接调用 submit_evaluation 提交完整对象。结构或引用错误只修本次提交，保留未修改的有效字段，沿用有限修复额度；不输出 repair 请求，不启动任何其他评测阶段。

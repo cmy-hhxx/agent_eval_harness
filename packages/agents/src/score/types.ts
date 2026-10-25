@@ -8,10 +8,3 @@ export interface Unit extends Rating { item_id: string; item_name: string; appli
 export interface ScoreFinding { finding_id: string; affected_item_ids: string[]; description: string; component: "candidate_output"|"tool_call"|"tool_service"|"capture"|"public_rule"|"unknown"; attribution: "established"|"hypothesis"|"unknown"; primary_diagnostic_id: string; diagnostic_ids: string[]; evidence_ids: string[]; unmapped_reason?: string|null }
 export interface ScoreResult { case_id: string; final_answer_score: Rating & {finding_ids:string[]}; evaluations: Unit[]; diagnostics: Diagnostic[]; findings: ScoreFinding[]; evidence: import("@eval/contracts").ReviewQuote[]; explicit_probability: number|null; probability_evidence_ids:string[] }
 export interface ScoreException {case_id:string;assessment_status:"needs_material"|"blocked_by_rule_conflict"|"host_empty_response";reason:string;missing_material:string[];affected_units:string[]}
-export const scoreAxes=['T','E','L','A','U','D'] as const;
-export type ScoreAxis=typeof scoreAxes[number];
-export interface VerificationRequest {claim:string;affected_item_ids:string[]}
-export interface ScoreFact {affected_item_ids:string[];evidence_ids:string[]}
-export interface ScoreEvidence {facts:ScoreFact[];unresolved:VerificationRequest[];changed_item_ids:string[];full_rescore_reason?:string}
-export interface ScoreAxisResult {case_id:string;evaluations:Unit[];diagnostics:Diagnostic[];findings:ScoreFinding[];evidence:import('@eval/contracts').ReviewQuote[];verification_requests:VerificationRequest[]}
-export interface ScoreRepair {action:'repair';reason:string;axis_ids:ScoreAxis[];verification_requests:VerificationRequest[]}

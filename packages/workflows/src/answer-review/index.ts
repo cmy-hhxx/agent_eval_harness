@@ -12,7 +12,7 @@ import rewrittenSchema from '../../../../schemas/workflow/rewritten.schema.json'
 import type {ScoreResult} from "@eval/agents/score";
 import {answerReviewMaterial} from "./material.js";
 import {reviewExecutionOrder} from './ordering.js';
-import {scoreTask,bindScore,advanceScore,scoreBlockedReason,isFormalScore,scoreExportState,type ReviewTaskData} from './score.js';
+import {scoreTask,bindScore,isFormalScore,scoreExportState,type ReviewTaskData} from './score.js';
 export {answerReviewMaterial} from "./material.js";
 export * from './incremental.js';
 export * from './watch.js';
@@ -31,8 +31,12 @@ export function attributionTextSlots(value:AttributionResult){return [{id:'summa
 export async function planAnswerReview(config:AnswerReviewConfig){
   const indexed=await collectInputs(config,undefined,{materializeInputs:false});
   const catalog=indexed.catalog,stages=config.reviewStages??['score','attribution'],tasks:PlannedTask[]=[];
-  for(const candidate of reviewExecutionOrder(catalog,config.execution.concurrency,stages.length))for(const stage of stages){const task:PlannedTask=stage==='score'?scoreTask(candidate):{id:randomUUID(),stage,inputIds:{answer:candidate.input_id},dependencies:{},data:{candidate} satisfies TaskData};tasks.push(task);
-    if(stage==='attribution'&&config.rewrite.attribution)tasks.push({id:randomUUID(),stage:'rewrite',inputIds:{},dependencies:{source:task.id},data:{candidate,rewriteOf:task.id} satisfies TaskData});}
+  for(const candidate of reviewExecutionOrder(catalog,config.execution.concurrency,stages.length)){
+    const attribution:PlannedTask={id:randomUUID(),stage:'attribution',inputIds:{answer:candidate.input_id},dependencies:{},data:{candidate}};
+    tasks.push(attribution);
+    if(stages.includes('score'))tasks.push(scoreTask(candidate,attribution.id));
+    if(config.rewrite.attribution)tasks.push({id:randomUUID(),stage:'rewrite',inputIds:{},dependencies:{source:attribution.id},data:{candidate,rewriteOf:attribution.id}});
+  }
   const manifest={config,tasks,inputCatalog:catalog} as RunManifest,inputs=prepareInputs(await loadReviewInputs(manifest),catalog);
   const summary={workflow:'answer-review',cases:catalog.length,valid_inputs:catalog.length,score_tasks:tasks.filter(t=>t.stage==='score').length,attribution_tasks:tasks.filter(t=>t.stage==='attribution').length,rewrite_tasks:tasks.filter(t=>t.stage==='rewrite').length,criteria_tasks:0,comparison_tasks:0,issues:indexed.issues};
   return {tasks,inputs,catalog,summary};
@@ -64,26 +68,22 @@ export function bindAnswerReview(task:PlannedTask,inputs:Record<string,unknown>,
   if(task.stage==='attribution')return bindAttributionMaterial(data.candidate,
     (inputs[data.candidate.input_id] as {[sourceTrace]:RawInput})[sourceTrace]);
   const original=(inputs[data.candidate.input_id] as {[sourceTrace]:RawInput})[sourceTrace];
-  const source=answerReviewMaterial(data.candidate,original,data.candidate.input_id);
-  return bindScore(task,{...source.material,view:source.shown},dependencies);
+  return bindScore(task,original,dependencies);
 }
 export const answerReviewWorkflow:WorkflowDefinition={
-  id:'answer-review',plan:config=>planAnswerReview(config as AnswerReviewConfig),bind:bindAnswerReview,blockedReason:scoreBlockedReason,
-  advance:(task,receipt,state,inputs)=>{
-    if(task.stage==='score')return advanceScore(task,receipt,state,inputs);
+  id:'answer-review',plan:config=>planAnswerReview(config as AnswerReviewConfig),bind:bindAnswerReview,observesFailures:()=>false,
+  advance:(task,receipt,_state,inputs)=>{
+    if(task.stage==='score')return {tasks:[]};
     if(task.stage==='attribution'){
       const candidate=(task.data as TaskData).candidate,original=(inputs[candidate.input_id] as {[sourceTrace]:RawInput})[sourceTrace];
       validateOriginalAttributionEvidence(receipt.evaluation,{[candidate.input_id]:original},receipt.audit);
     }
-    if(task.stage!=='attribution'||state.manifest.tasks.some(item=>item.stage==='instruction-review'&&item.dependencies.source===task.id))return {tasks:[]};
-    const inputId=task.inputIds.answer;
-    if(!inputId)throw Error('归因后置检查缺少本方原始输入身份。');
-    const candidate=(task.data as TaskData).candidate;
-    return {tasks:[{id:randomUUID(),stage:'instruction-review',inputIds:{case:inputId},dependencies:{source:task.id},data:{candidate}}]};
+    return {tasks:[]};
   },
   async reconcile(_run,state,current){
     const manifest=state.manifest,saved=manifest.config as AnswerReviewConfig,config=current as AnswerReviewConfig;
-    const stages=config.reviewStages??['score','attribution'];
+    const requested=config.reviewStages??['score','attribution'];
+    const stages=[...new Set(['attribution',...requested])] as ('score'|'attribution')[];
     manifest.config={...saved,execution:config.execution,rewrite:config.rewrite,reviewStages:stages};
     const records=new Map<string,Candidate>(),raw=await loadReviewInputs(manifest,records);
     const catalog=(manifest.inputCatalog as Candidate[]).map(candidate=>({...records.get(candidate.input_id)!,input_id:candidate.input_id}));
@@ -118,7 +118,8 @@ export const answerReviewWorkflow:WorkflowDefinition={
     const add=(task:PlannedTask)=>{manifest.tasks.push(task);manifest.states[task.id]={status:'pending',attempts:0};};
     for(const candidate of selected)for(const stage of stages){
       const key=canonical([stage,candidate.input_id]);let task=tasks.get(key);
-      if(!task){task=stage==='score'?scoreTask(candidate):{id:randomUUID(),stage,inputIds:{answer:candidate.input_id},dependencies:{},data:{candidate} satisfies TaskData};add(task);tasks.set(key,task);}
+      if(!task){task=stage==='score'?scoreTask(candidate,tasks.get(canonical(['attribution',candidate.input_id]))!.id):{id:randomUUID(),stage,inputIds:{answer:candidate.input_id},dependencies:{},data:{candidate} satisfies TaskData};add(task);tasks.set(key,task);}
+      if(stage==='score'&&!state.receipts[task.id])task.dependencies={attribution:tasks.get(canonical(['attribution',candidate.input_id]))!.id};
       if(stage==='attribution'&&config.rewrite.attribution&&!rewrites.has(task.id)){
         add({id:randomUUID(),stage:'rewrite',inputIds:{},dependencies:{source:task.id},data:{candidate,rewriteOf:task.id} satisfies TaskData});
         rewrites.add(task.id);
@@ -202,9 +203,10 @@ export async function appendAnswerReviewInputs(run:string,config:AnswerReviewCon
       if(prior&&prior.trace_id!==candidate.trace_id)throw Error('同一回答身份的trace_id发生变化');
       const selected=prior??candidate;
       if(!prior){catalog.push(candidate);known.set(key(candidate),candidate);added++;}
-      for(const stage of config.reviewStages??['score','attribution']){
+      for(const stage of [...new Set(['attribution',...config.reviewStages??['score','attribution']])] as ('score'|'attribution')[]){
         const identity=canonical([stage,selected.input_id]);if(taskKeys.has(identity))continue;
-        const task:PlannedTask=stage==='score'?scoreTask(selected):{id:randomUUID(),stage,inputIds:{answer:selected.input_id},dependencies:{},data:{candidate:selected} satisfies TaskData};
+        const attribution=state.manifest.tasks.find(task=>task.stage==='attribution'&&(task.data as TaskData).candidate.input_id===selected.input_id);
+        const task:PlannedTask=stage==='score'?scoreTask(selected,attribution!.id):{id:randomUUID(),stage,inputIds:{answer:selected.input_id},dependencies:{},data:{candidate:selected} satisfies TaskData};
         state.manifest.tasks.push(task);state.manifest.states[task.id]={status:'pending',attempts:0};taskKeys.add(identity);
       }
     }
@@ -268,7 +270,7 @@ export async function reportAnswerReview(run:string,state?:RunState){
   const phases=state.manifest.tasks.filter(t=>t.stage==='score'&&selected.has(t.id));
   const submissions=phases.map(t=>({accepted:Boolean(state!.receipts[t.id]),count:state!.receipts[t.id]?.submissionStats?.contentSubmissions??state!.manifest.states[t.id].failure?.contentSubmissions??0}));
   const score_execution={planned_answers:new Set(phases.map(t=>(t.data as TaskData).candidate.input_id)).size,
-    rejected_answers:new Set(phases.filter(t=>(t.data as TaskData).score_part==='rejected').map(t=>(t.data as TaskData).candidate.input_id)).size,
+    rejected_answers:new Set(phases.filter(t=>state!.manifest.states[t.id].status==='failed').map(t=>(t.data as TaskData).candidate.input_id)).size,
     phase_tasks:phases.length,phase_attempts:phases.reduce((n,t)=>n+state!.manifest.states[t.id].attempts,0),
     phase_tasks_with_submission:submissions.filter(s=>s.count>0).length,first_submission_acceptances:submissions.filter(s=>s.accepted&&s.count===1).length,
     content_submissions:submissions.reduce((n,s)=>n+s.count,0),accepted_normal:results.filter(r=>'final_answer_score' in (r.receipt.evaluation as object)).length,

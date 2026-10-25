@@ -65,11 +65,11 @@ test("resume adds newly selected Score and Rewrite tasks once while preserving a
   const score: AnswerReviewConfig = { ...f.config, reviewStages: ["score"] };
   await answerReviewWorkflow.reconcile!(f.run, f.state, score);
   const selected = () => f.state.manifest.tasks.filter(task => f.state.manifest.executionScope!.includes(task.id));
-  assert.deepEqual(selected().map(task => task.stage), ["score"]);
+  assert.deepEqual(selected().map(task => task.stage), ["attribution", "score"]);
   assert.equal((selected()[0].data as { candidate: Candidate }).candidate.case_id, "accepted", "retain pilot answer selection");
-  const scoreId = selected()[0].id;
+  const scoreId = selected().find(task=>task.stage==='score')!.id;
   await answerReviewWorkflow.reconcile!(f.run, f.state, score);
-  assert.deepEqual(selected().map(task => task.id), [scoreId]);
+  assert.deepEqual(selected().map(task => task.id), [f.accepted.id,scoreId]);
   await answerReviewWorkflow.reconcile!(f.run, f.state, { ...f.config, rewrite: { ...f.config.rewrite, attribution: true } });
   assert.deepEqual(selected().map(task => task.stage).sort(), ["attribution", "rewrite"]);
   assert.equal(selected().find(task => task.stage === "rewrite")!.dependencies.source, f.accepted.id);

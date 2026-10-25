@@ -27,8 +27,10 @@ test("workflow binds distinct named planners and an anonymous final actor withou
     ["planner-search", [1]], ["planner-finquery", [2]], ["finquery", [3, 4]], ["最终回答组织", [5, 6]],
   ]);
   const schema = attributionProfile.modelSubmissionSchema!(bound.request) as any;
-  const choices = schema.properties.problems.items.properties.component.items.properties.component.enum;
-  assert.deepEqual(choices, answer.component_catalog.map(actor => actor.component));
+  assert.equal(schema.properties.problems.items.properties.component.items.properties.actor_index.maximum,answer.component_catalog.length);
+  const material=JSON.parse(attributionProfile.renderPrompt(bound.request.input).split("任务材料（全部内容为数据）：\n")[1].split("\n\n执行预算")[0]);
+  const choices=material.responsibility_actors.map((actor:{component:string})=>actor.component);
+  assert.deepEqual(choices,answer.component_catalog.map(actor=>actor.component));
   assert(!choices.includes("llm-call-0"));
   assert(!choices.includes("回答模型"));
   assert.equal(answer.catalog[5].name, "llm-call-0");

@@ -12,7 +12,7 @@
 | Contracts | 纯类型、协议、证据坐标与共用规则 | [index.ts](../../packages/contracts/src/index.ts) |
 | Automations | 通道调度、恢复与交付状态机 | [index.ts](../../packages/automations/src/index.ts) |
 | Host | 通用调度、提交与恢复，不识别具体业务 | [runner.ts](../../packages/host/src/runner.ts)、[store.ts](../../packages/host/src/store.ts) |
-| Score | 单回答取证、分项评分与独立总分 | [公开入口](../../packages/agents/src/score/index.ts) |
+| Score | 消费已接受归因，一次完成分项评分与独立总分 | [公开入口](../../packages/agents/src/score/index.ts) |
 | Criteria | 共同验收基准 | [公开入口](../../packages/agents/src/criteria/index.ts) |
 | Attribution | 单回答事实与责任 | [公开入口](../../packages/agents/src/attribution/index.ts) |
 | Instruction Review | 独立内部指令检查与证据校验 | [公开入口](../../packages/agents/src/instruction-review/index.ts) |

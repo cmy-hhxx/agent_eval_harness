@@ -37,7 +37,7 @@ test("shared chain facts preserve each problem's fields and cannot be swapped ac
   const accepted=registry.resolve(f.binding,draft,f.audit) as AttributionResult;
   assert.deepEqual(accepted.findings.map(row=>row.problem!.component[0].field_names),[["etf code"],["Closing Price[20261022]"]]);
   assert(accepted.findings.every(row=>row.problem!.investigation[0].steps.length===8));
-  draft.problems[1].investigation_fact_indices=[...draft.problems[0].investigation_fact_indices];
+  draft.problems[1].investigation_fact_indices=[draft.investigation_facts.findIndex(fact=>fact.step_index===1)+1];
   assert.throws(()=>registry.resolve(f.binding,draft,f.audit),error=>error instanceof ValidationError&&
     error.issues!.some(issue=>issue.code==="investigation_fact_scope"));
 });

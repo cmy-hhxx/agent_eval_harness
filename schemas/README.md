@@ -40,6 +40,4 @@
 
 修改 Schema 时同步公开 Profile、解析与业务校验、当前调用方、提示词和测试；影响判词时更新 `evaluatorVersion`。验证入口见[开发指南](../docs/development.md#验证)。
 
-Score将取证、分项、总分的精简提交与正式结果分开校验。取证只提交facts（证据编号及受影响核心项）和unresolved，不提交共用对错判词；unresolved只用于取证恢复，评分阶段仅接收facts。程序补changed_item_ids，补查影响无法隔离时须说明full_rescore_reason，重复旧引用不能触发全量重评。正式result的evaluations与diagnostics为平级数组；内部片段不导出为正式评分。
-
-axis提交与结果的基础Schema容纳1–6个轴；公开Profile按可信score_axes收窄核心项、诊断及问题引用范围，并逐轴校验全部判断。联合收据只做机械投影，独立总分仍不接收分项数值。
+Score 的 submission.schema.json 校验单次模型提交：12核心项、24诊断、源归因问题逐项映射及独立总分。result.schema.json 校验程序补齐目录身份、名称、分档、不可改写的源问题与精确证据后的正式结果。评分只消费已接受归因事实，不建立补查或定向重评协议。
