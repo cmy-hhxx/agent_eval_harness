@@ -163,7 +163,12 @@ export function investigationIssues(request: AgentRequest, problem: ProblemPropo
         : cause.chain_step === "核验与最终交付" ? [...chain.context_indices, (request.input.answer as {final_message_index:number}).final_message_index]
         : [...chain.context_indices, chain.planner_index];
       if (!actor?.message_indices.some(index => nodes.includes(index)))
-        add("responsibility_chain_actor", location, "执行主体与所选业务环节没有实际节点关联；不能把规划、返回或输入处理责任兜底给最终作答者。");
+        add("responsibility_chain_actor", location + "/actor_index", "执行主体与所选业务环节没有实际节点关联；核对真实节点后选择，不按其他目录的顺序猜编号。", {
+          chain_index: chain.chain_index, step: cause.chain_step, actor_index_choices:
+            (request.input.answer as { component_catalog: { component: string; message_indices: number[] }[] }).component_catalog
+              .flatMap((item, i) => item.message_indices.some(index => nodes.includes(index))
+                ? [{ actor_index: i + 1, component: item.component, message_indices: item.message_indices }] : []),
+        });
       if (actor?.kind === "model" && cause.chain_step === "数据解释与计算" && cause.mechanism_source === "explicit_process" &&
         !explicitModelProcess(request, actor, proof))
         add("responsibility_mechanism_source", location, "所选证据只有输入、生成或交付边界，没有该模型的推理、计算或转换过程记录。mechanism_source 应为 boundary_comparison，责任机制标 inferred 并列缺口及替代解释；缺陷仍可 established。数值成十倍或其他资料中的价位不能证明内部执行了乘法。");

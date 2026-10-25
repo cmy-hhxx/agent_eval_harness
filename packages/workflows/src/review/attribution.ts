@@ -223,7 +223,7 @@ export function bindAttributionMaterial(candidate: Candidate, original: RawInput
     // against the same budget. Raw-only fields stay behind read_trace for progressive
     // disclosure instead of inflating the first prompt with quotes from hidden content.
     const evidence = evidenceSources(value)
-      .filter((source) => source.kind === "text" && source.text.length && source.text.length <= 2000)
+      .filter((source) => source.quotable !== false && source.kind === "text" && source.text.length && source.text.length <= 2000)
       .map((source) => cite(candidate.input_id, i, source, 0, source.text.length));
     addInitial(i, value, evidence);
   }

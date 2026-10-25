@@ -100,7 +100,7 @@ export function instructionEvidenceIssues(request: AgentRequest, result: Attribu
     rule.applies_to.includes(String(request.input.candidate_id)) && rule.applies_to.some(id => id !== request.input.candidate_id);
   const blocks = context.sources.flatMap(source => sourceContentBlocks(source.content, source.path).map(block => ({
     ...block, message_index: source.message_index,
-    privateEligible: source.role !== "user" || source.path === "/content" || [...criteria.values()].some(rule =>
+    privateEligible: source.role !== "user" || [...criteria.values()].some(rule =>
       rule.applies_to.includes(String(request.input.candidate_id)) && !shared(rule) && hasSourceTextBlock(rule.acceptance_rule, block.quote)),
   })));
   const commonBlocks = blocks.filter(block => task.requirements.some(rule => shared(rule) && hasSourceTextBlock(rule.acceptance_rule, block.quote)));

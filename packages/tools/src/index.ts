@@ -375,10 +375,10 @@ export const builtinTools: ExecutableTool[] = [
       if (path !== undefined && (args.source_offset ?? 0) > 0) throw new Error("非零 source_offset 仅用于整条消息的文本路径目录，读取具体路径时使用正文 offset");
       const offset = args.offset ?? 0;
       if (offset > totalChars) throw new Error(`offset 超出当前来源长度 ${totalChars}，请使用上次返回的 next_offset`);
-      const paths = sources.filter((item) => item.kind === "text");
+      const paths = sources.filter((item) => item.kind === "text" && item.quotable !== false);
       const sourceOffset = args.source_offset ?? 0;
       if (sourceOffset > paths.length) throw new Error("source_offset 超出文本路径目录范围");
-      const showDirectory = path === undefined;
+      const showDirectory = path === undefined || source.quotable === false;
       const shownPaths = showDirectory ? paths.slice(sourceOffset, sourceOffset + 16).map((item) => ({ path: item.path, chars: item.text.length })) : [];
       const coverage = (end: number) => readInJson ? { covered: true, missing: [] } : traceReadCoverage(requiredSource ? ctx.audit : presentedAudit(ctx), {
         candidate: args.candidate, message_index: args.message_index, kind: source.kind, path: source.path,
@@ -389,7 +389,7 @@ export const builtinTools: ExecutableTool[] = [
       const wholeContext = path !== undefined && args.max_chars !== undefined && args.max_chars <= 1800;
       const page = (end: number) => {
         const evidence = cite(registeredInputId(ctx, args.candidate), args.message_index, source, start + offset, start + end);
-        const quotable = !!evidence.quote && !overlapsImagePlaceholder(source.text, start + offset, start + end);
+        const quotable = source.quotable !== false && !!evidence.quote && !overlapsImagePlaceholder(source.text, start + offset, start + end);
         const { covered, missing } = coverage(end);
         const alreadyRead = quotable && covered;
         const reused: { start: number; end: number }[] = [];
@@ -490,6 +490,7 @@ export const builtinTools: ExecutableTool[] = [
         });
         const searchable = range?.source.kind === "text" ? [range.source] : [...leaves, ...(range ? [range.source] : jsonSources)];
         for (const source of searchable) {
+          if (source.quotable === false) continue;
           const { path: location, text } = source;
           const from = range?.source === source ? range.start : 0, to = range?.source === source ? range.end : text.length;
           let start = from,

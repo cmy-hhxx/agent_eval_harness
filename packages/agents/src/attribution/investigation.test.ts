@@ -22,7 +22,7 @@ test("optional field metadata is assembled without rewriting the responsibility 
   const cause=accepted.findings.find(f=>f.type==='problem')!.problem!.component[0];
   assert.deepEqual(cause.field_names,[]);assert.equal(cause.mechanism,f.cause.mechanism);
 });
-test("a read original return leaf beyond the directory preview stays in its actual boundary",()=>{
+test("a read original return leaf after a long preceding result stays in its actual boundary",()=>{
   const seed=businessChainFixture(),question='查找 MU 的杠杆 ETF。',title='MULL - Leveraged Micron Technology ETF';
   const messages=[{type:'user_question',role:'user',content:question},
     {type:'llm_turn',name:'planner-search',parent_span:'plan',input_messages:[{role:'user',content:question}],output:[{role:'assistant',content:'搜索 MU 杠杆 ETF。'}]},
@@ -34,9 +34,10 @@ test("a read original return leaf beyond the directory preview stays in its actu
   const source=evidenceSources(messages[3]).find(s=>s.kind==='text'&&s.path==='/output/items/1/title')!;
   const proof=cite(seed.candidate.input_id,3,source,0,source.text.length);
   const chain=(binding.request.input.answer as any).business_chains[0];
-  const preview=parseEvidenceCoordinates(chain.checkpoints[3].evidence[0].evidence_id)!;
-  assert(preview.kind!=='image'&&preview.end<
-    selectEvidenceSource(evidenceSources(messages[3]).filter(s=>s.kind==='json'),source.path)!.start);
+  const boundary=parseEvidenceCoordinates(chain.checkpoints[3].evidence[0].evidence_id)!;
+  const range=selectEvidenceSource(evidenceSources(messages[3]).filter(s=>s.kind==='json'),source.path)!;
+  assert(range.start>4800);
+  assert(boundary.kind!=='image'&&boundary.start<=range.start&&boundary.end>=range.end);
   const problem={...seed.problem,component:[],investigation:[{chain_index:1,steps:[{step:'原始返回及字段含义',status:'checked' as const,
     observation:'返回的产品标题为 MULL，正文为隐私政策。',evidence_ids:[proof.evidence_id]}]}]};
   const audit={...seed.audit,traceReads:[{candidate:'answer',message_index:3,kind:'text' as const,path:source.path,start:0,end:source.text.length}]};
@@ -110,6 +111,10 @@ test("a wrong target selected by the planner points back to that planner and exa
   assert.deepEqual(codes(f), []);
   f.cause.component = "最终回答组织"; f.cause.actor_index=(f.binding.request.input.answer as any).component_catalog.findIndex((actor:any)=>actor.component===f.cause.component)+1;
   assert(codes(f).includes("responsibility_chain_actor"));
+  const issue = investigationIssues(f.binding.request, f.problem, f.result.findings[0].evidence, f.audit, "/problems/0")
+    .find(item => item.code === "responsibility_chain_actor")!;
+  assert(issue.path.endsWith("/actor_index"));
+  assert((issue.expected as { actor_index_choices: { actor_index: number }[] }).actor_index_choices.some(item => item.actor_index === 1));
 });
 test("captured context preparation can own identity and unit loss; the receiving final node alone cannot prove that responsibility", () => {
   const f = businessChainFixture(true);

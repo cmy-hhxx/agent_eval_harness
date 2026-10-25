@@ -6,7 +6,7 @@ import { businessChains } from "./business-chains.js";
 
 test("financial return navigation retains failure status and execution identity beside rows",()=>{
   const id="19b0f4da-601f-46d2-83bc-1adec8758217";
-  for(const [status_code,status_msg]of [[0,'ok'],[-2601,'SQL取数异常']] as const){
+  for(const [status_code,status_msg]of [[0,'ok'],[-2601,'SQL取数异常'],[-2601,'SQL取数异常'.repeat(400)]] as const){
     const raw={messages:[{role:'user',content:'查询 FIX 持仓权重'},
       {type:'tool_call',name:'finquery',call_id:'q',input:{query:'FIX holding weight'}},
       {type:'tool_result',name:'finquery',call_id:'q',output:{query:'FIX holding weight',columns:[],datas:[],row_count:0,
@@ -16,7 +16,7 @@ test("financial return navigation retains failure status and execution identity 
     const chain=businessChains(raw,id,4)[0],returned=chain.checkpoints[3].evidence;
     for(const field of ['status_code','status_msg','row_count','model_sql','data_sql']){
       const range=selectEvidenceSource(evidenceSources(raw.messages[2]),'/output/'+field)!;
-      const expected=cite(id,2,range.source,range.start,Math.min(range.end,range.start+1600));
+      const expected=cite(id,2,range.source,range.start,range.end);
       assert(returned.some(item=>item.evidence_id===expected.evidence_id),field);
     }
     assert(returned.some(item=>item.quote.includes(status_msg)));
@@ -46,7 +46,7 @@ test("multimodal tool returns expose original text without citing image placehol
   assert(returned.length > 0, "captured return text remains available");
   assert(returned.some(item => item.quote.includes("ID: 30")));
   assert(returned.some(item => item.quote.includes("原始图表说明")));
-  assert(returned.reduce((total, item) => total + item.quote.length, 0) <= 4800);
+  assert(returned.some(item => item.quote === raw.messages[2].output![4].text), "navigation limits must not truncate the boundary used by validation");
   validateEvidenceBankSources(chains.flatMap(chain => chain.checkpoints.flatMap(point =>
     point.evidence.map(item => item.evidence_id))), new Map([[id, raw]]));
   assert.deepEqual(raw, before);

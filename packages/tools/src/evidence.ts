@@ -29,7 +29,7 @@ function readSuggestions(raw: { messages: unknown[] }, candidate: string, inputI
   const reads = audit.traceReads.slice().reverse().flatMap((read) => {
     if (read.candidate !== candidate || read.message_index !== index) return [];
     const source = sources.find((item) => item.kind === read.kind && item.path === read.path);
-    if (!source || !Number.isInteger(read.start) || !Number.isInteger(read.end) || read.start < 0 ||
+    if (!source || source.quotable === false || !Number.isInteger(read.start) || !Number.isInteger(read.end) || read.start < 0 ||
       read.end <= read.start || read.end > source.text.length || overlapsImagePlaceholder(source.text, read.start, read.end)) return [];
     return [{ ...cite(inputId, index, source, read.start, read.end), kind: read.kind, start: read.start, end: read.end }];
   });
@@ -84,7 +84,7 @@ function coordinateRepair(raw: { messages: unknown[] }, candidate: string, input
   const selected = exact ? { source: exact, start: 0, end: exact.text.length } : selectEvidenceSource(sources, path);
   const source = selected?.source;
   // A structured value is quoted from the rendered message, never invented as a text leaf.
-  const suggested = selected && source ? [...new Set([selected.start, Math.max(selected.start, selected.end - 400)])]
+  const suggested = selected && source && source.quotable !== false ? [...new Set([selected.start, Math.max(selected.start, selected.end - 400)])]
     .filter((start) => !overlapsImagePlaceholder(source.text, start, Math.min(start + 400, selected.end)))
     .map((start) => cite(inputId, index, source, start, Math.min(start + 400, selected.end)))
     .filter((item) => item.quote && !item.quote.includes(imagePlaceholder)) : [];
@@ -161,7 +161,7 @@ export function resolveEvidence(
     const starts = source?.text.length
       ? [...new Set([start < source.text.length ? start : 0, Math.max(0, source.text.length - 400)])]
       : [];
-    const suggested = source ? starts.filter((offset) => !overlapsImagePlaceholder(source.text, offset, Math.min(offset + 400, source.text.length))).map((offset) =>
+    const suggested = source && source.quotable !== false ? starts.filter((offset) => !overlapsImagePlaceholder(source.text, offset, Math.min(offset + 400, source.text.length))).map((offset) =>
       cite(inputId, index, source, offset, Math.min(offset + 400, source.text.length)),
     ).filter((item) => item.quote && !item.quote.includes(imagePlaceholder)) : [];
     return fail("evidence_range_invalid", "证据原文位置无效", coordinateHint(sources, kind, path, index), {

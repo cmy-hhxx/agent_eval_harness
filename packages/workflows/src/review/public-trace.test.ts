@@ -7,6 +7,12 @@ import { bindInstructionReview } from "./instruction.js";
 import type { Candidate, RawInput } from "../inputs/types.js";
 import { cite, evidenceSources, resolveEvidence, selectEvidenceSource } from "@eval/tools";
 import { emptyAudit } from "../../../../tests/fixtures/comparison.js";
+import { mkdtemp, rm } from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
+import { DEFAULT_POLICY, type ToolContext } from "@eval/contracts";
+import { ArtifactStore } from "@eval/data";
+import { createRegistry, ToolRuntime } from "@eval/tools";
 
 test("main attribution excludes private rules from both prompt and readable sources while preserving factual coordinates", () => {
   const id = randomUUID(), question = "查询价格。", fact = "ETF价格为369美元。";
@@ -32,6 +38,8 @@ test("main attribution excludes private rules from both prompt and readable sour
   assert.equal(resolveEvidence(raw, { evidence_id: evidence.evidence_id }, "answer", emptyAudit(), "/evidence", id).quote, fact);
   validateOriginalAttributionEvidence({evidence}, {[id]:raw}, emptyAudit());
   const parent = selectEvidenceSource(evidenceSources(view.messages[5]), "/input_messages")!;
+  assert.equal(parent.source.quotable, false);
+  assert.equal(leaf.quotable, undefined);
   const projected = cite(id, 5, parent.source, parent.start, parent.end);
   assert.throws(() => validateOriginalAttributionEvidence({evidence:projected}, {[id]:raw}, emptyAudit()), /原始数据源|原文/);
   const audit = { ...emptyAudit(), evidenceBank: [projected.evidence_id] };
@@ -56,4 +64,32 @@ test("main attribution excludes private rules from both prompt and readable sour
   const skillCopy = structuredClone(raw);
   skillCopy.messages[5].input_messages = JSON.stringify([{ role: "tool", content: raw.messages[3].output }]);
   assert(!JSON.stringify(attributionTrace(skillCopy, id, 6)).includes("SKILL_PRIVATE_SENTINEL"));
+});
+
+test("cache-cleaning failure: projected JSON is navigation and only original leaves enter the bank", async () => {
+  // Reduced from r352 task 2cd970aa-aea4-481e-ab80-fa01c8b4c960.
+  const id = "2b474d44-4f78-4612-a670-57b9187b60e8";
+  const raw = { messages: [{ type: "llm_turn", system_prompt: "内部规范", input_messages: { messages: [
+    { role: "system", content: "内部规则".repeat(5000) },
+    { role: "user", content: "怎么清理同花顺APP的缓存" },
+    { role: "tool", content: "点首页左上角头像，右上角设置，找到清除缓存。" },
+  ] }, output: [{ role: "assistant", content: "在设置中清除缓存。" }] }] };
+  const view = attributionTrace(raw, id, 0), workdir = await mkdtemp(path.join(os.tmpdir(), "projected-source-"));
+  try {
+    const audit = { ...emptyAudit(), evidenceBank: [] as string[] };
+    const ctx: ToolContext = { attemptId: "projection", workdir, inputs: new Map([["answer", view]]), inputIds: new Map([["answer", id]]),
+      audit, policy: { ...DEFAULT_POLICY, maxToolCalls: 10 }, artifacts: new ArtifactStore(path.join(workdir, "artifacts")) };
+    const runtime = new ToolRuntime(ctx, createRegistry().select(["read_trace", "search_trace"]));
+    const signal = new AbortController().signal;
+    const page = await runtime.execute("read_trace", { candidate: "answer", message_index: 0, path: "/input_messages" }, signal);
+    assert.deepEqual((page.details as { evidence: unknown[] }).evidence, []);
+    assert.equal(audit.evidenceBank.length, 0);
+    await runtime.execute("search_trace", { candidate: "answer", query: "清除缓存" }, signal);
+    await runtime.execute("read_trace", { candidate: "answer", message_index: 0, path: "/input_messages/messages/2/content" }, signal);
+    assert(audit.evidenceBank.length > 0);
+    for (const evidence_id of audit.evidenceBank) {
+      const evidence = resolveEvidence(view, { evidence_id }, "answer", audit, "/", id);
+      validateOriginalAttributionEvidence(evidence, { [id]: raw }, audit);
+    }
+  } finally { await rm(workdir, { recursive: true, force: true }); }
 });

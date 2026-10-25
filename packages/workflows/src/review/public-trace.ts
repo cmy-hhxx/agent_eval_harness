@@ -13,8 +13,10 @@ export function attributionTrace(raw: RawInput, inputId: string, finalIndex: num
     if (!value || typeof value !== "object") return value;
     const row = value as Record<string, unknown>;
     if (row.role === "system" || row.role === "developer") return { type: "private_instruction_omitted" };
-    return Object.fromEntries(Object.entries(row).filter(([key]) => !["system_prompt", "developer_prompt", "systemPrompt", "developerPrompt"].includes(key))
+    return Object.fromEntries(Object.entries(row)
       .map(([key, child]) => {
+        if (["system_prompt", "developer_prompt", "systemPrompt", "developerPrompt"].includes(key))
+          return [key, "[内部技能规范由独立指令会话检查]"];
         // A serialized snapshot has no independent leaf coordinates. Keep it outside
         // the main view when decoding reveals private instructions.
         if (key === "input_messages" && typeof child === "string") {
@@ -74,7 +76,8 @@ export function validateOriginalAttributionEvidence(value: unknown, originals: R
           message: "该编号来自经过私密规范裁剪的材料，与原始数据源原文不一致。改选同一消息未改写的事实叶子，不要重复提交原编号。",
           ...(index ? { actual: index } : {}), expected: {
             evidence_indices: available,
-            read_requests: safe.slice(0, 8).map(source => ({ candidate: String(row.source ?? "answer"),
+            read_requests: safe.slice().sort((a, b) => Number(/\/(?:content|output|result)(?:\/|$)/u.test(b.path)) -
+              Number(/\/(?:content|output|result)(?:\/|$)/u.test(a.path)) || b.text.length - a.text.length).slice(0, 8).map(source => ({ candidate: String(row.source ?? "answer"),
               message_index: point.message_index, path: source.path, offset: 0, max_chars: Math.min(16000, source.text.length) })),
             repair_action: "替换本字段的证据编号；已有叶子编号不足时按 read_requests 读取，保持私密规范隔离和原文一致性校验。",
           },

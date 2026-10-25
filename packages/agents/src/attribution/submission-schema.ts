@@ -7,12 +7,18 @@ import type { TaskAnalysis } from "@eval/contracts";
 import { componentCatalogIssues, responsibilityIdentities, responsibilityFunctions } from "./responsibility.js";
 import { attributionTaxonomy } from "@eval/prompts";
 import { parseTraceTables, type TableCheckResult } from "@eval/tools";
+import { businessChainDirectory } from "./investigation.js";
 
 /** The tool contract and repair feedback share the same request-derived shape. */
 export function attributionSubmissionSchema(request: AgentRequest) {
   const issues = [...normDirectoryIssues(request), ...componentCatalogIssues(request)];
   if (issues.length) throw new ValidationError(issues);
   const schema = structuredClone(submissionSchema);
+  const boundaries = businessChainDirectory(request).map(chain => ({ properties: {
+    chain_index: { const: chain.chain_index }, step_index: { enum: chain.checkpoints.flatMap((point, i) => point.availability === "available" ? [i + 1] : []) },
+  } }));
+  if (boundaries.length) Object.assign(schema.properties.investigation_facts.items, { anyOf: boundaries });
+  else Object.assign(schema.properties.investigation_facts, { maxItems: 0 });
   if (request.input.allow_standard_conflict !== true)
     delete (schema.properties as Record<string, unknown>).standard_conflict;
   const responsibility = schema.properties.problems.items.properties.component.items;

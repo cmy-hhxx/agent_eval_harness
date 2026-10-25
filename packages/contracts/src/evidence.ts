@@ -60,14 +60,18 @@ function textLeaves(value: unknown, prefix = ""): [string, string][] {
       : textLeaves(child, `${prefix}/${key.replaceAll("~", "~0").replaceAll("/", "~1")}`),
   );
 }
-export function evidenceSources(message: unknown): { kind: "text" | "json"; path: string; text: string }[] {
+const privateMarkers = ["private_instruction_omitted", "[内部技能规范由独立指令会话检查]", "[含内部规范的序列化输入未进入主归因]"];
+export function evidenceSources(message: unknown): { kind: "text" | "json"; path: string; text: string; quotable?: false }[] {
+  const json = renderMessage(message);
   return [
     ...textLeaves(message).map(([path, text]) => ({
       kind: "text" as const,
       path,
       text,
+      ...(privateMarkers.some(marker => text.includes(marker)) ? { quotable: false as const } : {}),
     })),
-    { kind: "json", path: "", text: renderMessage(message) },
+    { kind: "json", path: "", text: json,
+      ...(privateMarkers.some(marker => json.includes(marker)) ? { quotable: false as const } : {}) },
   ];
 }
 
