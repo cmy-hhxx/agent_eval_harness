@@ -1,4 +1,6 @@
-import { cite, evidenceSources } from "./evidence.js";
+import { cite, evidenceSources,selectEvidenceSource } from "./evidence.js";
+import {parseEvidenceCoordinates} from '@eval/contracts';
+import {traceCallOrigins} from './trace-exchanges.js';
 import { answerTurnContexts } from "./instructions.js";
 
 export interface TraceComponentIdentity {
@@ -11,6 +13,31 @@ export interface TraceComponentIdentity {
   identity_gap: string | null;
   /** Same generation, distinct captured reasoning and delivery boundaries. */
   generation_message_index?: number;
+  generated_call_indices?: number[];
+}
+
+function inSource(raw:{messages:unknown[]},point:NonNullable<ReturnType<typeof parseEvidenceCoordinates>>,path:string){
+  if(point.kind==='image')return false;
+  if(point.kind==='text')return point.path===path||point.path.startsWith(path+'/');
+  const sources=evidenceSources(raw.messages[point.message_index]),json=sources.filter(source=>source.kind==='json');
+  const paths=sources.filter(source=>source.kind==='text'&&(source.path===path||source.path.startsWith(path+'/'))).map(source=>source.path);
+  return paths.some(leaf=>{const range=selectEvidenceSource(json,leaf);
+    return !!range&&point.path===range.source.path&&point.start<range.end&&range.start<point.end;});
+}
+export function isGeneratedCallEvidence(raw:{messages:unknown[]},actor:Pick<TraceComponentIdentity,'message_indices'>,evidenceId:string){
+  const point=parseEvidenceCoordinates(evidenceId);if(!point)return false;
+  return traceCallOrigins(raw.messages).some(origin=>actor.message_indices.includes(origin.planner_index)&&
+    (point.message_index===origin.request_index&&inSource(raw,point,origin.input_path)||
+      point.message_index===origin.planner_index&&inSource(raw,point,origin.arguments_path)));
+}
+export function traceComponentOwnsEvidence(raw:{messages:unknown[]},actor:TraceComponentIdentity,evidenceId:string){
+  const point=parseEvidenceCoordinates(evidenceId);if(!point)return false;
+  if(actor.message_indices.includes(point.message_index))return true;
+  if(isGeneratedCallEvidence(raw,actor,evidenceId))return true;
+  if(actor.generation_message_index!==point.message_index)return false;
+  const generated=record(raw.messages[point.message_index]),outputs=Array.isArray(generated.output)?generated.output:[];
+  return outputs.length===1&&typeof record(outputs[0]).content==='string'&&actor.message_indices.some(index=>
+    record(raw.messages[index]).content===record(outputs[0]).content)&&inSource(raw,point,'/output/0/content');
 }
 
 /** These values locate executions; they do not name the actor responsible for them. */
@@ -80,6 +107,9 @@ export function traceComponentIdentities(raw: { messages: unknown[] }, inputId: 
         ? "轨迹未提供真实节点名称及具体职责角色；仅按已采集记录定位，不推测业务节点名或模型型号。"
         : "轨迹未提供真实节点名称；名称仅表达可确认的轨迹角色，原调用标识留在证据导航中。" });
   }
+  const origins=traceCallOrigins(raw.messages);
+  for(const actor of rows){const calls=origins.filter(origin=>actor.message_indices.includes(origin.planner_index)).map(origin=>origin.request_index);
+    if(calls.length)actor.generated_call_indices=calls;}
   const names = new Map<string, TraceComponentIdentity[]>();
   for (const row of rows) names.set(row.component, [...names.get(row.component) ?? [], row]);
   for (const duplicates of names.values()) if (duplicates.length > 1)

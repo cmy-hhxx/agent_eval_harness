@@ -1,10 +1,29 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { traceComponentIdentities, isComponentLocator } from "./component-identity.js";
-import { resolveEvidence } from "./evidence.js";
+import { traceComponentIdentities, isComponentLocator, traceComponentOwnsEvidence } from "./component-identity.js";
+import { resolveEvidence, cite, evidenceSources } from "./evidence.js";
 import { emptyAudit } from "../../../tests/fixtures/comparison.js";
 
 const id = "11111111-1111-4111-8111-111111111111";
+test("generated code belongs to its proven author, while execution returns do not",()=>{
+  const raw={messages:[{type:"llm_turn",name:"llm-call-1",parent_span:"p",output:[{tool_calls:[{function:{name:"shell",arguments:JSON.stringify({command:"x >= date"})}}]}]},
+    {type:"tool_call",name:"shell",parent_span:"p",input:{command:"x >= date"}},
+    {type:"tool_result",name:"shell",output:{stdout:"wrong window"}}]};
+  const actor=traceComponentIdentities(raw,id,9)[0];
+  const proof=(index:number,path:string)=>{const s=evidenceSources(raw.messages[index]).find(s=>s.kind==="text"&&s.path===path)!;return cite(id,index,s,0,s.text.length).evidence_id;};
+  const code=proof(1,"/input/command"),result=proof(2,"/output/stdout");
+  assert.deepEqual(actor.generated_call_indices,[1]);
+  assert(traceComponentOwnsEvidence(raw,actor,code));
+  const serialized=evidenceSources(raw.messages[1]).find(source=>source.kind==='json')!;
+  assert(traceComponentOwnsEvidence(raw,actor,cite(id,1,serialized,0,serialized.text.length).evidence_id));
+  assert(!traceComponentOwnsEvidence(raw,actor,proof(1,'/name')));
+  assert(!traceComponentOwnsEvidence(raw,actor,result));
+  raw.messages[1].parent_span="another";
+  assert(!traceComponentOwnsEvidence(raw,actor,code));
+  raw.messages[1].parent_span="p";
+  raw.messages[1].input!.command="different code";
+  assert(!traceComponentOwnsEvidence(raw,actor,code));
+});
 test('captured reasoning and final delivery retain separate stages of the same generation',()=>{
   const raw={messages:[{type:'llm_turn',name:'llm-call-0',input_messages:[],output:[{role:'assistant',reasoning_content:'引入18.15%，无工具依据。',content:'18.15%，在容差内。'}]},
     {type:'final_answer',content:'18.15%，在容差内。'}]};

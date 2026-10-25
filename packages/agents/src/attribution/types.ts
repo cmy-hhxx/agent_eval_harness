@@ -90,7 +90,7 @@ export interface BusinessChain {
   return_indices: number[];
   planner_index: number | null;
   context_indices: number[];
-  link_basis: "call_id" | "returned_query";
+  link_basis: "call_id" | "returned_query" | "end_time";
   references: string[];
   delivery_changed: boolean | null;
   checkpoints: { step: string; availability: "available" | "not_collected"; evidence: Evidence[]; note: string }[];

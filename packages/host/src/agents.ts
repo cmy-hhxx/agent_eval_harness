@@ -206,6 +206,7 @@ export class AgentRegistry {
       ...(context ? { inspection_context: structuredClone(context) } : {}) };
   }
   resolve(binding: AgentBinding, draft: unknown, audit: ToolAudit): unknown {
+    audit={...audit,traceReads:[...binding.presentedReads??[],...audit.traceReads]};
     const { profile, submission } = this.get(binding);
     if (profile.inspection) {
       if (!audit.inspection) throw new ValidationError([{ category: "decision", code: "inspection_required", path: "/",
@@ -244,6 +245,7 @@ export class AgentRegistry {
     return result;
   }
   validate(binding: AgentBinding, result: unknown, audit: ToolAudit): void {
+    audit={...audit,traceReads:[...binding.presentedReads??[],...audit.traceReads]};
     const { profile, result: resultValidator } = this.get(binding);
     if (!resultValidator(result)) throw new ValidationError(this.feedbackProjection(binding,this.feedback(profile, binding.request, result,
       schemaIssues(resultValidator.errors, result)), audit.evidenceBank ?? []));

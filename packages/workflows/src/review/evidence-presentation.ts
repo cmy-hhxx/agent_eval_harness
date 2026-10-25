@@ -17,6 +17,7 @@ export function presentedMaterialReads(material: JsonObject, candidate: string, 
     for (const child of Object.values(item)) if (child && typeof child === "object") visit(child);
   };
   visit(material.trace_overview);
+  visit(material.review_sections);
   for(const block of (object(material.answer_generation)?.reasoning_blocks??[]) as JsonObject[])
     visit({...block,quote:block.text});
   visit(object(material.citation_inventory)?.references);

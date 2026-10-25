@@ -438,7 +438,7 @@
                     },
                     "steps": {
                       "type": "array",
-                      "minItems": 8,
+                      "minItems": 1,
                       "maxItems": 8,
                       "items": {
                         "type": "object",
@@ -737,7 +737,8 @@
           "type": [
             "boolean",
             "null"
-          ]
+          ],
+          "description": "true 仅表示所选核心要求全部已确认实际完成（met）；核心 partial/unmet 不能判 true，影响核心的事实待核则为 null；非核心附属缺陷不自动否定完成。"
         },
         "reason": {
           "type": "string",

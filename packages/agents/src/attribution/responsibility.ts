@@ -1,6 +1,6 @@
 import { canonical, ValidationError, type AgentRequest, type ValidationIssue } from "@eval/contracts";
 import { attributionTaxonomy } from "@eval/prompts";
-import { isComponentLocator, traceComponentIdentities, type TraceComponentIdentity, answerTurnContexts, evidenceSources, parseEvidenceCoordinates, selectEvidenceSource } from "@eval/tools";
+import { isComponentLocator, traceComponentIdentities,traceComponentOwnsEvidence, type TraceComponentIdentity, answerTurnContexts, evidenceSources, parseEvidenceCoordinates, selectEvidenceSource } from "@eval/tools";
 import type { Evidence, ProblemProposal } from "./types.js";
 import { isChineseAttributionText } from "./language.js";
 
@@ -18,6 +18,10 @@ export function responsibilityChoices(request: AgentRequest): string[] {
 }
 export const responsibilityFunctions = Object.entries(attributionTaxonomy.domains).flatMap(([technical_domain, components]) =>
   components.map(functional_component => ({ technical_domain, functional_component })));
+/** Anonymous names describe the observed business action, not an invented Agent. */
+export function responsibilityComponentName(actor:TraceComponentIdentity|undefined,business:string){
+  return actor?.identity_status==='named'?actor.component:business;
+}
 export function componentCatalogIssues(request: AgentRequest): ValidationIssue[] {
   const raw = request.sources.answer.value as { messages: unknown[] };
   const answer = request.input.answer as { final_message_index: number };
@@ -72,7 +76,7 @@ export function responsibilityIssues(request: AgentRequest, problem: unknown, se
     const actor = Number.isSafeInteger(row.actor_index) ? actors[Number(row.actor_index) - 1] : undefined;
     if (typeof row.component === "string" && isComponentLocator(row.component))
       add("responsibility_actor_locator", `${location}/component`, "调用ID、span ID及UUID只能用于导航，不能作为实际组件名称。", row.component);
-    if (!actor || actor.component !== row.component) add("responsibility_actor", `${location}/actor_index`, "实际组件须选择Workflow登记的具体责任主体，名称由程序原样回填，不能用同名节点互相替代。", row.actor_index);
+    if (!actor || responsibilityComponentName(actor,String(row.business_component??'')) !== row.component) add("responsibility_actor", `${location}/actor_index`, "主体按节点编号和来源定位；真实名称原样保留，匿名主体按具体行为展示，不能用其他节点替代。", row.actor_index);
     const modelActor = actor?.kind === "model";
     if (modelActor && ["工具业务实现", "工具接入与协议"].includes(String(row.technical_domain)))
       add("responsibility_actor_domain", location, "llm_turn是模型节点，不能因有name而认作工具；定位其推断、控制或实际相关技术功能。", row.component);
@@ -89,7 +93,7 @@ export function responsibilityIssues(request: AgentRequest, problem: unknown, se
     if (row.certainty === "confirmed") {
       if (row.evidence_gap !== null) add("responsibility_certainty", `${location}/evidence_gap`, "确证责任的 evidence_gap 为 null；因果关键材料仍缺失时改为 inferred，不改变缺陷确定性。");
       const own = selected.filter((item): item is Evidence => !!item && !item.source && refs.includes(item.evidence_id));
-      if (actor && !own.some(item=>actor.message_indices.includes(item.message_index)))
+      if (actor && !own.some(item=>traceComponentOwnsEvidence(raw,actor,item.evidence_id)))
         add("responsibility_actor_evidence", location, "确证责任须有所选具体节点的实际证据，同名其他节点的材料不能替代。");
       const messages = own.map(item => ({ item, message: object(raw.messages[item.message_index]), point: parseEvidenceCoordinates(item.evidence_id) }));
       const actualTool = actor?.kind === "tool" && messages.some(({ message, item }) => message && toolRecord(message) && actor.message_indices.includes(item.message_index));

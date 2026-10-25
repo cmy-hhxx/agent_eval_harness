@@ -12,19 +12,31 @@ export function businessChains(raw: RawInput, inputId: string, finalIndex: numbe
   const inventory = processSourceInventory(raw, inputId, finalIndex), contexts = answerTurnContexts(raw, finalIndex);
   const actors = traceComponentIdentities(raw, inputId, finalIndex);
   const generation = getAnswerGeneration(raw, inputId, finalIndex);
+  const sourcesByIndex = new Map<number, ReturnType<typeof evidenceSources>>();
+  const sourcesAt = (index: number) => {
+    if (!sourcesByIndex.has(index)) sourcesByIndex.set(index, evidenceSources(raw.messages[index]));
+    return sourcesByIndex.get(index)!;
+  };
   const at = (index: number, path: string, limit = 4800): Evidence[] => {
-    const sources = evidenceSources(raw.messages[index]);
+    const sources = sourcesAt(index);
     let range = selectEvidenceSource(sources, path);
     if (range && range.start === range.end) range = selectEvidenceSource(sources.filter(source => source.kind === "json"), path);
     if (!range) return [];
     return [cite(inputId, index, range.source, range.start, Math.min(range.end, range.start + limit))];
   };
-  const outputs = (index: number): Evidence[] => evidenceSources(raw.messages[index])
+  const outputs = (index: number): Evidence[] => sourcesAt(index)
     .filter(source => source.kind === "text" && /^\/output\/\d+\/content(?:\/|$)/u.test(source.path))
     .flatMap(source => at(index, source.path));
   const goalIndex = raw.messages.findIndex(message => message.type === "user_question" || message.role === "user");
   const goals = goalIndex < 0 ? [] : messageContentSources(raw.messages[goalIndex]).flatMap(source => at(goalIndex, source.path, source.text.length || 4800));
   const exchanges = traceExchanges(raw.messages);
+  const lastContext = contexts.at(-1)?.message_index;
+  const fallbackInput = contexts.filter(context => context.message_index === lastContext).flatMap(context => sourcesAt(context.message_index)
+    .filter(source => source.kind === "text" && source.path.startsWith(context.path + "/") && /\/content(?:\/|$)/u.test(source.path))
+    .flatMap(source => at(context.message_index, source.path, source.text.length || 4800)));
+  const generated = generation ? outputs(generation.message_index) : [];
+  const intermediates = contexts.filter(context => context.message_index !== generation?.message_index)
+    .flatMap(context => outputs(context.message_index));
   return exchanges.map((exchange, index) => {
     const call = object(raw.messages[exchange.request_index]), query = object(call.input ?? call.arguments).query;
     const uniqueQuery = typeof query === "string" && exchanges.filter(other => {
@@ -39,12 +51,16 @@ export function businessChains(raw: RawInput, inputId: string, finalIndex: numbe
     const actual = [...new Map(visible.map(source => [source.evidence_id, source])).values()];
     // When no renderer source envelope exists, expose the captured non-system context leaves.
     // This is navigation only; presence does not certify that a particular source was passed.
-    const fallbackInput = contexts.flatMap(context => evidenceSources(raw.messages[context.message_index])
-      .filter(source => source.kind === "text" && source.path.startsWith(context.path + "/") && /\/content(?:\/|$)/u.test(source.path))
-      .flatMap(source => at(context.message_index, source.path, source.text.length || 4800)));
-    const lastContext = contexts.at(-1)?.message_index;
+    const actionIds = new Set(exchange.return_indices.flatMap(i => {
+      const output = object(object(raw.messages[i]).output ?? object(raw.messages[i]).result);
+      return typeof output.action_id === "string" ? [output.action_id] : [];
+    }));
+    const linkedInput = fallbackInput.filter(item => {
+      try { return actionIds.has(object(JSON.parse(item.quote)).action_id as string); } catch { return false; }
+    });
+    const fallback = linkedInput.length ? linkedInput : fallbackInput;
     const actualInput: Evidence[] = actual.length ? [...actual,
-      ...(!actual.some(source => source.message_index === lastContext) ? fallbackInput.filter(item => item.message_index === lastContext) : [])] : fallbackInput;
+      ...(!actual.some(source => source.message_index === lastContext) ? fallback : [])] : fallback;
     const returns = exchange.return_indices.flatMap(i => {
       const output = object(object(raw.messages[i]).output ?? object(raw.messages[i]).result);
       const prefix = Object.hasOwn(object(raw.messages[i]), "output") ? "/output" : "/result";
@@ -59,9 +75,6 @@ export function businessChains(raw: RawInput, inputId: string, finalIndex: numbe
     });
     const planner = exchange.planner_index === null ? [] : outputs(exchange.planner_index);
     const request = ["/input", "/arguments"].flatMap(path => at(exchange.request_index, path));
-    const generated = generation ? outputs(generation.message_index) : [];
-    const intermediates = contexts.filter(context => context.message_index !== generation?.message_index)
-      .flatMap(context => outputs(context.message_index));
     const finals = references.flatMap(reference => reference.occurrences.map(occurrence => occurrence.context));
     const stepEvidence = [goals, planner, request, returns, [...returns, ...intermediates, ...actualInput], actualInput,
       [...actualInput, ...generated], [...generated, ...finals]];

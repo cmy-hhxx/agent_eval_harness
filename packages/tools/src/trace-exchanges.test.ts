@@ -19,3 +19,11 @@ test("explicit IDs distinguish repeated same-tool queries; a conflicting ID cann
   messages[2].call_id = "unknown";
   assert.deepEqual(traceExchanges(messages), []);
 });
+test("shell returns without IDs require a unique same-tool completion event", () => {
+  const messages = [{type:"llm_turn",parent_span:"p"},
+    {type:"tool_call",name:"shell",parent_span:"p",end:"2026-10-24T06:08:42.893Z",input:{command:"run"}},
+    {type:"tool_result",name:"shell",end:"2026-10-24T06:08:42.893Z",output:{stdout:"done"}}];
+  assert.deepEqual(traceExchanges(messages),[{request_index:1,return_indices:[2],planner_index:0,link_basis:"end_time"}]);
+  messages.splice(2,0,structuredClone(messages[1]));
+  assert.deepEqual(traceExchanges(messages),[]);
+});

@@ -20,6 +20,10 @@ test("presented ranges use actual preview length and exclude raw business fields
     final_answer: JSON.stringify(raw) }, "answer", id), [
     { candidate: "answer", message_index: 2, kind: "text", path: "/output", start: 40, end: 44 },
   ]);
+  assert.deepEqual(presentedMaterialReads({review_sections:[{reference:ref,quote:'正文。'}],
+    business_chains:[{reference:ref,quote:'目录不是已展示原文'}]},'answer',id),[
+    {candidate:'answer',message_index:2,kind:'text',path:'/output',start:40,end:43},
+  ]);
 });
 test("owned material envelopes are selected while original JSON fields and raw source content stay byte-equivalent", () => {
   const original = { evidence_id: "业务来源证据编号", source_input_id: "原始业务字段", nested: { evidence_id: reference.evidence_id } };

@@ -2,9 +2,14 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import type { AgentRequest } from "@eval/contracts";
 import { cite, evidenceSources, traceComponentIdentities } from "@eval/tools";
-import { componentCatalogIssues, resolveProblemSubmission, responsibilityChoices, responsibilityIdentities, responsibilityIssues, responsibilityLabels } from "./responsibility.js";
+import { componentCatalogIssues, resolveProblemSubmission, responsibilityChoices, responsibilityComponentName, responsibilityIdentities, responsibilityIssues, responsibilityLabels } from "./responsibility.js";
 import { responsibilityFixture } from "../../../../tests/fixtures/responsibility.js";
 const id="11111111-1111-4111-8111-111111111111";
+test('anonymous responsibility displays the concrete behavior and retains real component names',()=>{
+ const actors=traceComponentIdentities({messages:[{type:'llm_turn',name:'llm-call-1'},{type:'llm_turn',name:'planner-finquery'}]},id,9);
+ assert.equal(responsibilityComponentName(actors[0],'交易日期规范化与窗口匹配'),'交易日期规范化与窗口匹配');
+ assert.equal(responsibilityComponentName(actors[1],'财务字段选择'),'planner-finquery');
+});
 function causalFixture(recovered=false){
  const messages=[{type:'llm_turn',name:'llm-call-0',input_messages:[],output:[{role:'assistant',reasoning_content:'工具给18.18%/22.81%，另写18.15%/22.75%。',content:recovered?'已修正为18.18%/22.81%。':'18.15%/22.75%，在±1%容差内一致。'}]},
  {type:'final_answer',content:recovered?'已修正为18.18%/22.81%。':'18.15%/22.75%，在±1%容差内一致。'}];
@@ -62,7 +67,7 @@ test('confirmed context loss needs the actual model input, not just an original 
 test('selected actor names retain their source coordinates and forged identities or node links are rejected',()=>{
  const f=fixture(),cause=responsibilityFixture(undefined,{actor_index:2,evidence_ids:[f.final.evidence_id]});
  const problem=resolveProblemSubmission(f.request,{diagnosis:"other",investigation:[],component:[cause],label:'价格口径错误',definition:'ETF份额价混作现货价。'},[f.final],'/problem');
- const actor=responsibilityIdentities(f.request).find(actor=>actor.component===problem.component[0].component)!;
+ const actor=responsibilityIdentities(f.request)[problem.component[0].actor_index-1];
  assert.deepEqual(actor.message_indices,[2,3]);
  assert.deepEqual(responsibilityIssues(f.request,problem,[f.final],'/problem'),[]);
  actor.message_indices=[1];

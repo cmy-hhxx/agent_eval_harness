@@ -244,7 +244,11 @@ export function bindAttributionMaterial(candidate: Candidate, original: RawInput
   };
   const input = { candidate_id: candidate.input_id, task_analysis, material_availability: { public_task: true, final_delivery: true, process_records: raw.messages.some((message,index)=>index!==candidate.final_index && !["user","system","developer"].includes(message.role??"") && message.type!=="private_instruction_omitted"), actual_model_inputs: answerTurnContexts(raw,candidate.final_index).length>0, call_links: traceCatalog(raw).some(row=>row.call_message_index!==undefined) }, ground_truth: { available: reference !== null, value: reference }, answer };
   Object.assign(answer, { norm_directory: attributionNormDirectory({ input, sources }) });
-  const modelInput = { ...input, task_focus: taskFocus({ answer }, input.ground_truth, { answer: raw }), task_analysis: taskAnalysisPresentation(task_analysis, { answer: candidate.input_id }, answer.criterion_instruction_sources),
+  const focus=taskFocus({ answer }, input.ground_truth, { answer: raw });
+  // The complete final remains in answer; the entry point starts from the task,
+  // rather than repeating final prose before the execution material.
+  delete focus.answers.answer.final_answer;
+  const modelInput = { ...input, task_focus: focus, task_analysis: taskAnalysisPresentation(task_analysis, { answer: candidate.input_id }, answer.criterion_instruction_sources),
     answer: modelMaterial(answer, "answer", raw, candidate.input_id, 8000) };
   return { agent: "attribution", profile: "default", request: { input, sources }, modelInput,
     projectModelInput: projectComparisonEvidence, presentedReads: presentedMaterialReads(modelInput.answer, "answer", candidate.input_id) };

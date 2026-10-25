@@ -213,18 +213,18 @@ function validateIndependentRules(request: AgentRequest, draft: unknown, represe
       (assessment.evidence_status === "established" || assessment.evidence_status === "uncertain"));
     if (evidenceStatesValid) {
       if (core.meets_core === true && coreEvidence.some(assessment =>
-        assessment.evidence_status === "established" && assessment.status === "unmet"))
+        assessment.evidence_status === "established" && ["unmet","partial"].includes(String(assessment.status))))
         issue("core_success_unmet", "/core_assessment/meets_core",
-          "已选为核心依据的要求存在已确认 unmet，不能同时声明核心完成。按原要求核对交付与必要限制；保留真实缺口，不靠删掉核心依据或降低确定性消除矛盾。局部仍有用途可记录 strength。",
+          "已选为核心依据的要求存在已确认 partial/unmet，不能同时声明核心完成。部分结果可用、修复容易或补取数据后可重算都不代表核心已实际完成；保留真实缺口，不靠删掉核心依据或降低确定性消除矛盾。非核心附属缺陷独立记录，不自动否定已完成的核心。",
           core.meets_core, { unmet_requirements: input.task_analysis.requirements.flatMap((criterion, requirement_index) =>
-            criterionIds.includes(criterion.id) && assessmentMap.get(criterion.id)?.status === "unmet" &&
+            criterionIds.includes(criterion.id) && ["unmet","partial"].includes(String(assessmentMap.get(criterion.id)?.status)) &&
             assessmentMap.get(criterion.id)?.evidence_status === "established" ? [{ requirement_index, text: criterion.text }] : []) });
       if (core.meets_core === false && !coreEvidence.some((assessment) =>
         assessment.evidence_status === "established" && (assessment.status === "unmet" || assessment.status === "partial")))
         issue("core_failure_unsupported", "/core_assessment", "判核心不可用必须引用适用 requirement 已确认的 unmet 或 partial，不能由疑似问题、加分项或风险标签推定");
-      if (core.meets_core === true && !coreEvidence.some((assessment) =>
-        assessment.evidence_status === "established" && (assessment.status === "met" || assessment.status === "partial")))
-        issue("core_success_unsupported", "/core_assessment", "判核心可用必须引用适用 requirement 已确认的 met 或 partial，并说明仍可用的独立结果");
+      if (core.meets_core === true && (!coreEvidence.length || !coreEvidence.every((assessment) =>
+        assessment.evidence_status === "established" && assessment.status === "met")))
+        issue("core_success_unsupported", "/core_assessment", "判核心完成要求所选核心 requirement 全部已确认 met；核心条件尚未核实时保留 null，不能用其他已完成部分替代。");
     }
   }
   if (typeof core?.reason === "string" && !core.reason.trim())

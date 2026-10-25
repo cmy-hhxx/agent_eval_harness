@@ -337,6 +337,14 @@
               "generation_message_index": {
                 "type": "integer",
                 "minimum": 0
+              },
+              "generated_call_indices": {
+                "type": "array",
+                "items": {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                "uniqueItems": true
               }
             }
           }
@@ -1455,7 +1463,8 @@
           "link_basis": {
             "enum": [
               "call_id",
-              "returned_query"
+              "returned_query",
+              "end_time"
             ]
           },
           "references": {

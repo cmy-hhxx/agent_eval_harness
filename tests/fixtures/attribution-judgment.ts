@@ -1,5 +1,5 @@
 import type { AgentRequest,TaskAnalysis } from "@eval/contracts";
-import { attributionNormDirectory,numericReferenceDirectory,type AttributionResult,type ProblemProposal } from "@eval/agents/attribution";
+import { attributionNormDirectory,numericReferenceDirectory,responsibilityComponentName,type AttributionResult,type ProblemProposal } from "@eval/agents/attribution";
 import { normSelection, setFixtureComponentCatalog } from "./attribution-submission.js";
 type FixtureFinding = Omit<AttributionResult["findings"][number], "finding_id" | "problem" | "evidence" | "assessment"> & {
   norm_index?: number | null;
@@ -24,8 +24,10 @@ export function attributionJudgment(request: AgentRequest, result: AttributionRe
     return { ...strength,
       ...(finding.dimension === "instruction_following" ? { norm_index: normSelection(norms, finding), assessment: observed }
         : { assessment: { ...observed, requirement_index } }),
-      ...(finding.type === "problem" ? { problem: {...structuredClone(finding.problem!),component:finding.problem!.component.map(cause=>({...cause,
-        actor_index:(request.input.answer as {component_catalog:{component:string}[]}).component_catalog.findIndex(actor=>actor.component===cause.component)+1}))} } : {}),
+      ...(finding.type === "problem" ? { problem: {...structuredClone(finding.problem!),component:finding.problem!.component.map(cause=>{
+        const actors=(request.input.answer as {component_catalog:import('@eval/tools').TraceComponentIdentity[]}).component_catalog;
+        const actor_index=Math.max(0,actors.findIndex(actor=>actor.component===cause.component)+1)||cause.actor_index;
+        return {...cause,actor_index,component:responsibilityComponentName(actors[actor_index-1],cause.business_component)};})} } : {}),
       evidence: refs(finding.evidence) };
   };
   const draft = {

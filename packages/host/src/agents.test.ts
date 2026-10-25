@@ -2,6 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { DEFAULT_POLICY, evidenceId, projectEvidenceReferences, ValidationError, type AgentBinding, type AgentProfile, type ValidationIssue } from "@eval/contracts";
 import { AgentRegistry } from "./agents.js";
+import {traceReadCoverage} from "@eval/tools";
 import { emptyAudit } from "../../../tests/fixtures/comparison.js";
 
 const binding: AgentBinding = { agent: "partial", profile: "default", request: { input: {}, sources: {} } };
@@ -248,4 +249,14 @@ test("rejection and recovery mask source identity in suggested quotes without ch
   assert.deepEqual(rendered.recovery.draft, draft);
   assert.deepEqual(recovery, originalRecovery);
   assert.deepEqual({ request: bound.request, draft, audit, originalIssue }, before);
+});
+
+test('initial displayed source and actual read suffix share the validation coverage without changing the audit',()=>{
+ const f=fixture(),target={candidate:'answer',message_index:1,kind:'text' as const,path:'/content',start:0,end:10};
+ f.profile.validateSubmission=(_request,_draft,audit)=>traceReadCoverage(audit,target).covered?[]:[{category:'evidence',code:'unread',path:'/proof',message:'Source not fully shown'}];
+ const draft={value:1,satisfies:true,proof:'source'},audit=emptyAudit();audit.traceReads=[{...target,start:5}];
+ const shown={...binding,presentedReads:[{...target,end:5}]};
+ f.registry.resolve(shown,draft,audit);
+ assert.equal(audit.traceReads.length,1);assert.equal(audit.traceReads[0].start,5);
+ assert.throws(()=>f.registry.resolve(binding,draft,audit),error=>error instanceof ValidationError&&error.issues!.some(issue=>issue.code==='unread'));
 });

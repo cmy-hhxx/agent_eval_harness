@@ -2,15 +2,32 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { parseEvidenceCoordinates, ValidationError } from "@eval/contracts";
 import { AgentRegistry } from "@eval/host";
-import { attributionAgent, type AttributionResult } from "./index.js";
+import { attributionAgent, attributionProfile, type AttributionResult } from "./index.js";
 import { businessChainFixture } from "../../../../tests/fixtures/business-chain.js";
 import { attributionSubmission } from "../../../../tests/fixtures/attribution-submission.js";
 import { businessChainDirectoryIssues, businessChainReads, investigationIssues } from "./investigation.js";
 import { responsibilityIssues } from "./responsibility.js";
+import { validateModelSubmission } from "./submission.js";
 import { bindAttributionMaterial } from "@eval/workflows/review";
 import { cite, evidenceSources, selectEvidenceSource } from "@eval/tools";
 
 const codes = (f: ReturnType<typeof businessChainFixture>) => investigationIssues(f.binding.request, f.problem, f.evidence, f.audit, "/problem").map(issue => issue.code);
+test("shell input navigation follows the actual action ID without copying unrelated history into every chain",()=>{
+  const f=businessChainFixture(),returned={action_id:"actual-run",stdout:"matching result"};
+  const messages=[{type:"user_question",role:"user",content:"检查回测。"},
+    {type:"llm_turn",name:"llm-call-1",parent_span:"p",input_messages:[{role:"user",content:"检查回测。"}],output:[{role:"assistant",content:"此前步骤"}]},
+    {type:"tool_call",name:"shell",parent_span:"p",end:"2026-10-24T06:08:42.893Z",input:{command:"run"}},
+    {type:"tool_result",name:"shell",end:"2026-10-24T06:08:42.893Z",output:returned},
+    {type:"llm_turn",name:"llm-call-2",input_messages:[{role:"assistant",content:"此前步骤"},{role:"tool",content:JSON.stringify(returned)},
+      {role:"tool",content:JSON.stringify({action_id:"other-run",stdout:"unrelated"})}],output:[{role:"assistant",content:"完成"}]},
+    {type:"final_answer",content:"完成"}];
+  const binding=bindAttributionMaterial({...f.candidate,final_index:5},{messages});
+  const chain=(binding.request.input.answer as any).business_chains[0];
+  assert.deepEqual(chain.context_indices,[1,4]);
+  const inputs=chain.checkpoints.find((point:any)=>point.step==="模型实际输入").evidence;
+  assert.equal(inputs.length,1);
+  assert.deepEqual(JSON.parse(inputs[0].quote),returned);
+});
 test("correct tool return followed by wrong interpretation retains the full business location and inferred hidden mechanism", () => {
   const f = businessChainFixture(), registry = new AgentRegistry([attributionAgent]);
   assert.deepEqual(codes(f), []);
@@ -60,12 +77,15 @@ test("readable but unread actual input cannot be called missing, including an un
   assert.throws(() => registry.resolve(f.binding, attributionSubmission(f.binding.request, f.result, f.audit), f.audit),
     error => error instanceof ValidationError && error.issues!.some(issue => issue.code === "investigation_read_required"));
 });
-test("uncited captured chains retain protected input and return reads before a finding is judged", () => {
+test("uncited chains remain navigable without compulsory pre-reading; cited chains still enforce their own evidence", () => {
   const f=businessChainFixture(), before=businessChainReads(f.binding.request);
   f.chain.references=[];
   assert.deepEqual(businessChainReads(f.binding.request),before);
   assert(before.some(read=>read.message_index===f.chain.return_indices[0]));
   assert(before.some(read=>read.message_index===f.chain.context_indices.at(-1)));
+  assert(!attributionProfile.requiredReads!(f.binding.request).some(read=>read.message_index===f.chain.return_indices[0]));
+  f.audit.traceReads=[];
+  assert(codes(f).includes("investigation_read_required"));
 });
 test("complete serialized return coverage proves its real text leaves without requiring an impossible duplicate read", () => {
   const f = businessChainFixture(), message_index = f.chain.return_indices[0];
@@ -95,14 +115,15 @@ test("specific actors, business operation and call coordinates stay distinct and
   const f = businessChainFixture();
   assert.equal(f.chain.request_index, 2); assert.deepEqual(f.chain.return_indices, [3]); assert.equal(f.chain.planner_index, 1);
   assert(!f.problem.component.some(cause => /^llm-call-|^[0-9a-f-]{32,}$/u.test(cause.component)));
-  for (const generic of [f.cause.component, f.cause.chain_step, "工具执行与数据获取", "语义理解", "llm-call-0"]) {
+  const actor = (f.binding.request.input.answer as any).component_catalog[f.cause.actor_index - 1];
+  for (const generic of [actor.component, f.cause.chain_step, "工具执行与数据获取", "语义理解", "llm-call-0"]) {
     f.cause.business_component = generic;
     assert(codes(f).includes("responsibility_business_location"));
   }
   f.cause.chain_index = null;
   assert(codes(f).includes("responsibility_chain"));
   f.problem.investigation = [];
-  assert(codes(f).includes("investigation_incomplete"));
+  assert(!codes(f).includes("investigation_incomplete"));
   f.chain.return_indices = [4];
   assert(businessChainDirectoryIssues(f.binding.request).length);
 });
@@ -226,7 +247,7 @@ test("a whole final JSON reference cannot bypass its cited business chain", () =
   const point = cite(f.candidate.input_id, index, source, 0, source.text.length);
   f.problem.investigation = []; f.cause.chain_index = null;
   const issues = investigationIssues(f.binding.request, f.problem, [point], f.audit, "/problem");
-  assert(issues.some(issue => issue.code === "investigation_incomplete"));
+  assert(!issues.some(issue => issue.code === "investigation_incomplete"));
   assert(issues.some(issue => issue.code === "responsibility_chain"));
 });
 
@@ -256,23 +277,37 @@ test("prose calculations can clear invented field names without allowing entity 
     .find(issue => issue.code === "responsibility_fields")!.expected, undefined);
 });
 
-test("incomplete investigation feedback exposes shared fact fields and durable evidence choices", () => {
-  const f = businessChainFixture(), registry = new AgentRegistry([attributionAgent]);
-  f.problem.investigation = [];
-  const draft = attributionSubmission(f.binding.request, f.result, f.audit);
-  assert.throws(() => registry.resolve(f.binding, draft, f.audit), error => {
+test("missing investigation choices produce structural feedback without cascading reads", () => {
+  const f=businessChainFixture(),registry=new AgentRegistry([attributionAgent]);
+  const draft=attributionSubmission(f.binding.request,f.result,f.audit) as any;
+  delete draft.problems[0].diagnosis;delete draft.problems[0].investigation_fact_indices;
+  draft.problems[0].component[0].actor_index=999;
+  assert.throws(()=>registry.resolve(f.binding,draft,f.audit),error=>{
     assert(error instanceof ValidationError);
-    const expected = error.issues!.find(issue => issue.code === "investigation_incomplete")!.expected as any;
-    assert.equal(expected.submission_shape.type, "array");
-    assert.equal(expected.submission_shape.items.type,"integer");
-    assert.deepEqual(expected.investigation_fact_shape.required, ["chain_index","step_index","field_names","observation","evidence_indices"]);
-    assert.equal(expected.required_chain_index, 1);
-    assert.equal(expected.checkpoints.length, 8);
-    assert(expected.checkpoints.flatMap((point: any) => point.sources).every((source: any) => Number.isInteger(source.reference.evidence_index)));
-    assert(!Object.hasOwn(expected, "value"));
-    assert(!JSON.stringify(expected).includes(`ev_${f.candidate.input_id}_`));
-    return true;
+    assert.equal(error.issues!.filter(issue=>issue.code==='schema_required').length,2);
+    assert(error.issues!.some(issue=>issue.code==='schema_maximum'));
+    assert(!error.issues!.some(issue=>issue.code.startsWith('investigation_')));return true;
   });
+});
+test("sufficient existing evidence and an explicit mechanism gap do not require eight investigation facts",()=>{
+  const f=businessChainFixture(),registry=new AgentRegistry([attributionAgent]);f.problem.investigation=[];
+  const draft=attributionSubmission(f.binding.request,f.result,f.audit);
+  const result=registry.resolve(f.binding,draft,f.audit) as AttributionResult;
+  registry.validate(f.binding,result,f.audit);
+  assert.equal(result.findings[0].problem!.component[0].certainty,'inferred');
+  assert(result.findings[0].problem!.component[0].evidence_gap);
+});
+test('shared missing proof reads are grouped by node across affected problems',()=>{
+  const f=businessChainFixture();f.problem.investigation=[];
+  Object.assign(f.cause,{certainty:'confirmed',mechanism_source:'explicit_process',evidence_gap:null,alternatives:[]});
+  f.result.findings.push(structuredClone(f.result.findings[0]));
+  const draft=attributionSubmission(f.binding.request,f.result,f.audit);
+  const issues=validateModelSubmission(f.binding.request,draft,{...f.audit,traceReads:[]})
+    .filter(issue=>issue.code==='investigation_read_required');
+  const requests=issues.flatMap(issue=>(issue.expected as any).read_requests);
+  assert(issues.length>0);
+  assert.equal(issues.length,new Set(requests.map(read=>read.message_index)).size);
+  assert(issues.some(issue=>(issue.expected as any).affected_fields.length===2));
 });
 
 test("stage repair feedback provides selectable source indices that repair the actual model submission", () => {

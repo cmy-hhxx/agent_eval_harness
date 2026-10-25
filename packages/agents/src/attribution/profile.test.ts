@@ -409,10 +409,10 @@ test("bound judgments cover applicable criteria while the program derives every 
   }
 });
 
-test("core failure requires an established applicable requirement and partial can remain usable", () => {
+test("selected core requirements must be complete while uncertain completion remains pending", () => {
   const result = structuredClone(example.result) as AttributionResult;
   result.criterion_assessments[0]!.status = "partial";
-  attributionProfile.validate!(example.request, result, audit);
+  assert.throws(()=>attributionProfile.validate!(example.request,result,audit),/partial\/unmet/);
   result.core_assessment.meets_core = false;
   result.core_assessment.reason = "缺失部分使唯一所求结果不能使用。";
   attributionProfile.validate!(example.request, result, audit);
@@ -426,7 +426,7 @@ test("core failure requires an established applicable requirement and partial ca
   result.criterion_assessments[0]!.evidence_status = "uncertain";
   attributionProfile.validate!(example.request, result, audit);
   result.core_assessment.meets_core = true;
-  assert.throws(() => attributionProfile.validate!(example.request, result, audit), /核心可用必须引用/);
+  assert.throws(() => attributionProfile.validate!(example.request, result, audit), /判核心完成要求/);
   result.core_assessment.meets_core = false;
   result.core_assessment.criterion_ids = ["s1"];
   assert.throws(() => attributionProfile.validate!(example.request, result, audit), /只能引用.*requirements/);
