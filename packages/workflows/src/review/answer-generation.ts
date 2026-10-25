@@ -38,6 +38,7 @@ export interface AnswerGeneration {
     reference: { evidence_id: string };
     read_request: { message_index: number; path: string; offset: 0; max_chars: 16000 };
   }[];
+  reasoning_blocks?: AnswerGeneration['blocks'];
 }
 
 /** Keep original model generation distinct from the collected final, without inferring UI state or cause. */
@@ -65,6 +66,12 @@ export function getAnswerGeneration(raw: RawInput, inputId: string, finalIndex?:
   });
   if (blocks.some(block => !block) || !blocks.some(block => block!.text.length)) return null;
   const knownBlocks = blocks as AnswerGeneration["blocks"];
+  const reasoning = sources.filter(source=>source.kind==='text'&&!source.path.startsWith('/input')&&
+    /(?:^|\/)(?:reasoning(?:_content)?|analysis|thinking)(?:\/|$)/iu.test(source.path)&&source.text.trim()).map(source=>{
+    const characters=Array.from(source.text),text=characters.slice(0,2400).join(''),evidence=cite(inputId,messageIndex,source,0,Math.min(2400,characters.length));
+    return {path:source.path,total_chars:characters.length,text,reference:{evidence_id:evidence.evidence_id},
+      read_request:{message_index:messageIndex,path:source.path,offset:0 as const,max_chars:16000 as const}};
+  });
   const captured = raw.messages[capturedIndex]!, finalPaths = textPaths(captured.content, "/content");
   const finalSources = evidenceSources(captured);
   const finalBlocks = finalPaths?.map(path => finalSources.find(source => source.kind === "text" && source.path === path)?.text);
@@ -72,6 +79,7 @@ export function getAnswerGeneration(raw: RawInput, inputId: string, finalIndex?:
     ? finalBlocks.length === knownBlocks.length && finalBlocks.every((text, index) => text === knownBlocks[index]!.text) : null;
   return { available: true, message_type: "llm_turn", message_index: messageIndex,
     captured_final_message_index: capturedIndex, matches_captured_final: matches, blocks: knownBlocks,
+    ...(reasoning.length?{reasoning_blocks:reasoning}:{}),
     input_contexts: contexts.map(context => {
       const range = selectEvidenceSource(evidenceSources(raw.messages[context.message_index]), context.path)!;
       return { ...context, total_chars: range.end - range.start,

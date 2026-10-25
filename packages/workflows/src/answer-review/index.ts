@@ -51,7 +51,9 @@ function prepareInputs(raw:Record<string,unknown>,catalog:Candidate[]){
   const result:Record<string,unknown>={};
   for(const candidate of catalog)if(Object.hasOwn(raw,candidate.input_id))Object.defineProperty(result,candidate.input_id,{enumerable:true,get(){
     const source=raw[candidate.input_id] as {raw:RawInput;origin?:Record<string,unknown>;metadata:Record<string,unknown>};
-    const value=attributionTrace(source.raw,candidate.input_id,candidate.final_index);
+    // Raw-source and export metadata access must not build an Attribution view.
+    // Each Agent builds its own public material once when it is actually bound.
+    const value={toJSON:()=>attributionTrace(source.raw,candidate.input_id,candidate.final_index)};
     const original=typeof source.origin?.original_file==='string'?source.origin.original_file:undefined,slash=original?.indexOf('/')??-1;
     const metadata={...source.metadata,trace_id:candidate.trace_id,answer_model:candidate.llm,input_file:candidate.source,input_line:candidate.line,
       source_archive:slash>=0?original!.slice(0,slash):null,source_member:slash>=0?original!.slice(slash+1):null,

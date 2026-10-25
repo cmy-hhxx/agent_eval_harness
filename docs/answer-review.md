@@ -95,3 +95,5 @@ npm run eval -- run --run-id answer-review-run --config configs/host.json --conf
 归因按关键缺口调查、直接提交；评分只使用已接受事实并一次选档。不同样本持续补位，共享总并发。
 
 每日运行目录与增量追加规则见[AIME日常评测](aime-incremental.md#输入结果与运行状态)。恢复状态引用正式JSONL，不重复保存已接受正文；新增取证来源随正式结果保存。输入契约拒绝的多轮或无效记录保留input issues，不截取或拼接成看似成功的评测。
+
+归因按首次引入、传递加工、明确职责下的核验及交付追溯。同一生成调用中的 reasoning 与采集到的最终交付在存在真实推理记录时分别定位，generation_message_index 保留两者的生成关系，不断言存在两个Agent。answer_generation.reasoning_blocks 提供有坐标的短原文及继续读取导航；未确认的内部成因保留断点，恢复的上游错误不自动归责正确交付。复用现有 component、step_index、mechanism 和证据，无新增判断包装。

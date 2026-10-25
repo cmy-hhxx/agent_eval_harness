@@ -2,6 +2,7 @@ import { localFiles, atomicWrite } from "@eval/data";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
 import { inspect } from "node:util";
+import { setImmediate as yieldToIO } from "node:timers/promises";
 import {
   emptyUsage,
   type AttemptSpec,
@@ -961,6 +962,9 @@ export async function runEvaluation(options: RunOptions): Promise<Record<string,
             busy.delete(worker);
           });
         running.set(task.id, promise);
+        // Binding can be CPU-heavy. Let dispatched Workers, permits and checkpoints
+        // make progress before preparing the next task in a large cohort.
+        await yieldToIO();
       }
       if (blocked) await current.save();
       const retryDeadlines = manifest.tasks.filter(task => !executionStopReason(manifest) && dispatchable(task) &&

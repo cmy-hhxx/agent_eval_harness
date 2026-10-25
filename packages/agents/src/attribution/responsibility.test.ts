@@ -5,6 +5,24 @@ import { cite, evidenceSources, traceComponentIdentities } from "@eval/tools";
 import { componentCatalogIssues, resolveProblemSubmission, responsibilityChoices, responsibilityIdentities, responsibilityIssues, responsibilityLabels } from "./responsibility.js";
 import { responsibilityFixture } from "../../../../tests/fixtures/responsibility.js";
 const id="11111111-1111-4111-8111-111111111111";
+function causalFixture(recovered=false){
+ const messages=[{type:'llm_turn',name:'llm-call-0',input_messages:[],output:[{role:'assistant',reasoning_content:'工具给18.18%/22.81%，另写18.15%/22.75%。',content:recovered?'已修正为18.18%/22.81%。':'18.15%/22.75%，在±1%容差内一致。'}]},
+ {type:'final_answer',content:recovered?'已修正为18.18%/22.81%。':'18.15%/22.75%，在±1%容差内一致。'}];
+ const request={input:{answer:{final_message_index:1,component_catalog:traceComponentIdentities({messages},id,1)}},sources:{answer:{id,value:{messages}}}} as unknown as AgentRequest;
+ const quote=(index:number,path:string)=>{const source=evidenceSources(messages[index]).find(s=>s.kind==='text'&&s.path===path)!;return cite(id,index,source,0,Array.from(source.text).length);};
+ const origin=quote(0,'/output/0/reasoning_content'),final=quote(1,'/content');
+ const source=responsibilityFixture('中间推理处理',{actor_index:1,technical_domain:'模型推断与生成',functional_component:'事实关系推导',chain_step:'数据解释与计算',failure_stage:'推理与计算',mechanism_source:'explicit_process',certainty:'confirmed',evidence_gap:null,alternatives:[],mechanism:'推理记录首次引入无依据数字。',evidence_ids:[origin.evidence_id]});
+ const delivery=responsibilityFixture('最终回答组织',{actor_index:2,role:'contributing',mechanism:'最终交付继续沿用错误数字并错误解释容差。',evidence_ids:[origin.evidence_id,final.evidence_id]});
+ return{request,origin,final,source,delivery};
+}
+test('upstream introduction and downstream propagation use their own stage evidence',()=>{
+ const f=causalFixture();assert.deepEqual(responsibilityIssues(f.request,{component:[f.source,f.delivery]},[f.origin,f.final],'/problem'),[]);
+ assert(responsibilityIssues(f.request,{component:[{...f.source,evidence_ids:[f.final.evidence_id]},f.delivery]},[f.origin,f.final],'/problem').some(issue=>issue.code==='responsibility_actor_evidence'));
+});
+test('a recovered upstream error retains its origin without inventing downstream propagation',()=>{
+ const f=causalFixture(true);assert.deepEqual(responsibilityIssues(f.request,{component:[f.source]},[f.origin,f.final],'/problem'),[]);
+ assert.equal(f.final.quote,'已修正为18.18%/22.81%。');assert.equal(f.source.chain_step,'数据解释与计算');
+});
 function fixture(){
  const messages=[{role:"user",content:"分析黄金价格。"},{type:"tool_result",name:"finquery",output:"SPDR Gold Shares，收盘369。"},
   {type:"llm_turn",name:"llm-call-0",input_messages:[{role:"tool",content:"SPDR Gold Shares，收盘369。"}],output:[{role:"assistant",content:"现货黄金3690。"}]},

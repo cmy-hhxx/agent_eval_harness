@@ -5,6 +5,16 @@ import { answerGenerationPresentation, getAnswerGeneration } from "./answer-gene
 import type { RawInput } from "../inputs/types.js";
 
 const evidenceInputId = "7ebfa07b-55d4-4e19-80d0-545eb576289a";
+test('reasoning remains visible and independently cited when generated prose equals final delivery',()=>{
+ const raw=fixture('18.15%','18.15%');
+ (raw.messages[1].output as any[])[0].reasoning_content='工具为18.18%，这里引入18.15%。';
+ const generation=getAnswerGeneration(raw,evidenceInputId)!,shown=answerGenerationPresentation(generation,'answer')!;
+ assert.equal(generation.matches_captured_final,true);
+ assert.equal(shown.reasoning_blocks![0].text,'工具为18.18%，这里引入18.15%。');
+ assert(!Object.hasOwn(shown.blocks[0],'text'));
+ const proof=resolveEvidence(raw,generation.reasoning_blocks![0].reference,'answer',{traceReads:[],viewedImages:[]},'/reasoning',evidenceInputId);
+ assert.equal(proof.quote,shown.reasoning_blocks![0].text);
+});
 
 function fixture(generated: unknown = '回答\n<visual>{"id":"resource"}</visual>', captured: unknown = "回答\n") {
   return { messages: [

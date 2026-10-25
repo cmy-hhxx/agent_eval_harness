@@ -5,6 +5,14 @@ import { resolveEvidence } from "./evidence.js";
 import { emptyAudit } from "../../../tests/fixtures/comparison.js";
 
 const id = "11111111-1111-4111-8111-111111111111";
+test('captured reasoning and final delivery retain separate stages of the same generation',()=>{
+  const raw={messages:[{type:'llm_turn',name:'llm-call-0',input_messages:[],output:[{role:'assistant',reasoning_content:'引入18.15%，无工具依据。',content:'18.15%，在容差内。'}]},
+    {type:'final_answer',content:'18.15%，在容差内。'}]};
+  const actors=traceComponentIdentities(raw,id,1);
+  assert.deepEqual(actors.map(actor=>actor.component),['中间推理处理','最终回答组织']);
+  assert.deepEqual(actors.map(actor=>actor.message_indices),[[0],[1]]);
+  assert.equal((actors[1] as any).generation_message_index,0);
+});
 test("actor identities retain named planners and tools, while the anonymous final call has a proven role", () => {
   const raw = { messages: [
     { type: "llm_turn", name: "planner-search", input_messages: [], output: [] },

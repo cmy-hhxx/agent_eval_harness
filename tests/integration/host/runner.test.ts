@@ -4,6 +4,7 @@ import assert from "node:assert/strict";
 import { readFile, readdir, rm } from "node:fs/promises";
 import path from "node:path";
 import { performance } from "node:perf_hooks";
+import { readFileSync } from "node:fs";
 import type { AgentBackend, AttemptRecord, JsonObject } from "@eval/contracts";
 import { createFileLogger, exists, hasLiveRunOwner, internalPath, readJson, readJsonl, writeJsonl } from "@eval/data";
 import { loadRunInputs } from "@eval/workflows/inputs";
@@ -17,6 +18,27 @@ import { services } from "../../fixtures/services.js";
 import { reportRun } from "@eval/workflows/comparison";
 import { inspectMaterials, inspectFor, fakeEvaluatorVersion, fakeIdentity, fixtureConfig, optionalVerificationTask, raw } from "../../fixtures/comparison.js";
 import type { TaskData } from "@eval/workflows/comparison";
+
+test('expensive admission serves Host control before the whole cohort is prepared',async t=>{
+  const rows=Array.from({length:8},(_,i)=>raw('yield-'+i)),f=await fixtureConfig([rows,[],rows,[]]);
+  t.after(()=>rm(f.directory,{recursive:true,force:true}));
+  const complete=await buildPlan(f.config),plan={...complete,tasks:complete.tasks.filter(task=>task.stage==='criteria')};
+  let started=0,prepared=0,controlServed=false,servedBeforeLast=false;
+  const backend:AgentBackend={identity:fakeIdentity,async createSession(options){return{async run(){started++;const result=await submitFor(options,taskResult(options.spec));assert.notEqual(result.isError,true);},async abort(){},async dispose(){}};}};
+  const workers=await Promise.all(Array.from({length:8},(_,i)=>startWorker(backend,path.join(f.directory,'yield-worker-'+i))));
+  t.after(()=>Promise.all(workers.map(worker=>worker.close())));
+  const taskSource={...services.taskSource,bind(...args:Parameters<typeof services.taskSource.bind>){
+    if(prepared===0){const lock=JSON.parse(readFileSync(path.join(f.config.output.path,'yield-admission/.run-lock'),'utf8'));
+      void fetch(lock.url+'/api/progress',{headers:{'x-run-token':lock.token}}).then(response=>{controlServed=response.ok;}).catch(()=>{});}
+    const until=performance.now()+35;while(performance.now()<until){};
+    if(++prepared===plan.tasks.length)servedBeforeLast=controlServed;
+    return services.taskSource.bind(...args);
+  }};
+  await runEvaluation({...services,taskSource,report:async()=>({}),runId:'yield-admission',output:f.config.output,config:f.config,plan,
+    engine:'pi',identity:fakeIdentity,evaluatorVersion:fakeEvaluatorVersion,modelForStage:f.modelForStage,policy:f.config.execution,
+    concurrency:8,retries:0,retryDelaySeconds:0,workerUrls:workers.map(worker=>worker.url)});
+  assert.equal(started,8);assert(servedBeforeLast,'preparing the cohort must not starve Host HTTP and model admission');
+});
 
 test("a failed checkpoint save during cleanup still releases the Host lock", async () => {
   const { directory, config, modelForStage } = await fixtureConfig([[raw()], [], [raw()], []]);
