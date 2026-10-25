@@ -4,7 +4,7 @@ import { canonical, submissionToolNames, type FailureContext, type JsonObject, t
 export type PromptStage = "criteria" | "attribution" | "comparison" | "rewrite" | "clustering" | "score" | "instruction-review";
 
 const builtinToolNames = [
-  "read_trace", "search_trace", "view_image", "calculate", "calculate_pair", "execute_code",
+  "read_execution", "read_trace", "search_trace", "view_image", "calculate", "calculate_pair", "execute_code",
   "read_artifact", "check_table", "inspect_material", "edit_json", "review_material", "review_calculate", "review_external", "score_material", "score_calculate", "score_external", ...submissionToolNames(false), ...submissionToolNames(true),
 ] as const;
 

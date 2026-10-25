@@ -85,7 +85,7 @@ Adapter 展开本地静态 Schema 引用，拒绝外部、循环和动态引用�
 2. 在 Prompts 添加工具描述，将工具加入 Profile 的 toolNames。
 3. 通过 createRegistry 注册；两种 Adapter 转换为 SDK 工具，不修改调度器。
 
-探索、必读页、保留写稿与内容提交分别计数。重复读取、参数错误及缓存命中仍计探索调用；实际新增必读页不挤占探索额度。细节只由 [RequiredReadBudget](../packages/tools/src/required-reading.ts)、[工具注册器](../packages/tools/src/index.ts)和模型反馈维护。
+探索、必读页、保留写稿与内容提交分别计数。重复读取、参数错误及缓存命中仍计探索调用；实际新增必读页不挤占探索额度。Host 的初始、动态必读登记和读取审计均使用本次任务绑定后的可信来源，与 Worker 实际读取的消息坐标一致，不直接读取适配前的持久输入结构。细节只由 [RequiredReadBudget](../packages/tools/src/required-reading.ts)、[工具注册器](../packages/tools/src/index.ts)和模型反馈维护。
 
 读取结果只在单 attempt 复用；代码执行不缓存、不注入模型凭据，取消和退出回收所属进程组。工作目录不是操作系统沙箱，主动脱离进程组的代码不在清理保证内。
 

@@ -26,13 +26,11 @@ test("a viewed image-only final preserves an unknown formation boundary without 
     const binding = bindAttributionMaterial(candidate, raw);
     const projectedBank: string[] = [];
     const model = binding.projectModelInput!(binding.modelInput!, projectedBank).answer as {
-      transition_evidence: { reference: { evidence_index: number }; view_request?: { candidate: string; message_index: number }; quote?: string; read_request?: unknown }[];
+      final_images: { image_count: number; view_request: { candidate: string; message_index: number } };
     };
-    const imageNavigation = model.transition_evidence.find(item => item.view_request);
-    assert(imageNavigation);
-    assert.deepEqual(imageNavigation.view_request, { candidate: "answer", message_index: 1 });
-    assert(!Object.hasOwn(imageNavigation, "quote"));
-    assert(!Object.hasOwn(imageNavigation, "read_request"), "pixels must not be presented as text reads");
+    assert.deepEqual(model.final_images, { image_count: 1, view_request: { candidate: "answer", message_index: 1 } });
+    assert(!Object.hasOwn(model, "transition_evidence"), "complete evidence navigation stays program-side");
+    assert(!Object.hasOwn(model.final_images, "quote"), "navigation must not invent an image observation");
     const context: ToolContext = { attemptId: "image-transition", workdir, inputs: new Map([["answer", binding.request.sources.answer.value]]),
       inputIds: new Map([["answer", inputId]]), policy: { ...DEFAULT_POLICY, maxToolCalls: 2 },
       audit: { calls: 0, requiredReadCalls: 0, viewedImages: [], traceReads: [], calculations: [], artifacts: [], evidenceBank: [] },

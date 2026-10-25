@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
 import test from "node:test";
+import { Ajv2020 } from "ajv/dist/2020.js";
 import { parseEvidenceCoordinates, type ToolAudit } from "@eval/contracts";
 import { evidenceSources } from "@eval/tools";
 import { bindAttributionMaterial } from "@eval/workflows/review";
@@ -8,6 +9,7 @@ import type { Candidate, RawInput } from "@eval/workflows/inputs";
 import type { AttributionTransition } from "./transitions.js";
 import type { Evidence, ProblemProposal, Responsibility, TransitionCheck } from "./types.js";
 import { investigationIssues } from "./investigation.js";
+import { attributionSubmissionSchema } from "./submission-schema.js";
 
 function nativeFixture(loss = false, unrelated = false) {
   const question = "核对XOM的MA50支撑，并给出结论。";
@@ -153,6 +155,34 @@ test("native gate distinguishes a recovered upstream unit error from later gener
   assert.deepEqual(inspect(f, value), []);
 });
 
+test("shared upstream predecessors are visited once while recovery cuts only its own branch", () => {
+  const original = nativeFixture();
+  const raw = original.binding.request.sources.answer.value as RawInput;
+  const input = raw.messages[4].input_messages as Record<string, unknown>[];
+  input.push(structuredClone(input[1])); // The same real return appears at two distinct actual input positions.
+  const f = material(raw.messages, "核对XOM的MA50支撑，并给出结论。");
+  const generation = f.transitions.find(item => item.kind === "generation")!;
+  const execution = f.transitions.find(item => item.kind === "execution")!;
+  const transfers = f.transitions.filter(item => item.kind === "transfer");
+  assert.equal(transfers.length, 2);
+  assert(transfers.every(item => item.predecessors.includes(execution.transition_index)), "both branches share the same captured execution");
+  const checks = f.transitions.filter(item => item.kind !== "delivery").map(item => check(item, item === generation ? "changed" : "preserved"));
+  const value = problem([cause(generation, checks.find(item => item.transition_index === generation.transition_index)!)], checks);
+  const executionCheck = checks.find(item => item.transition_index === execution.transition_index)!;
+  let visits = 0, outcome: TransitionCheck["outcome"] = "preserved";
+  Object.defineProperty(executionCheck, "outcome", { get: () => { visits++; return outcome; } });
+  assert.deepEqual(inspect(f, value), []);
+  assert.equal(visits, 1, "shared upstream work is evaluated by node, not once per path");
+  outcome = "changed";
+  const transferChecks = transfers.map(item => checks.find(row => row.transition_index === item.transition_index)!);
+  transferChecks[0].outcome = "recovered";
+  assert(inspect(f, value).some(issue => issue.code === "responsibility_generation_formation"), "recovery on one branch cannot hide the other unrecovered path");
+  transferChecks[1].outcome = "recovered";
+  visits = 0;
+  assert.deepEqual(inspect(f, value), []);
+  assert.equal(visits, 0, "all recovered branches stop before the shared earlier defect");
+});
+
 test("native gate closes the relevant source-to-input path instead of stopping at correct original returns", () => {
   const f = nativeFixture(true), generation = f.transitions.find(item => item.kind === "generation")!;
   for (const sourceKinds of [["request_formation"], ["request_formation", "execution"]]) {
@@ -163,5 +193,43 @@ test("native gate closes the relevant source-to-input path instead of stopping a
     const selectedIds = new Set(checks.flatMap(item => [...item.before_evidence_ids, ...item.after_evidence_ids]));
     const issues = inspect(f, problem([cause(generation, row)], checks), f.evidence.filter(item => selectedIds.has(item.evidence_id)));
     assert(issues.some(item => item.code === "responsibility_upstream_required"), "request or correct original MA50 does not prove that MA50 reached actual generation input");
+  }
+});
+
+test("repair feedback pages transition boundaries and predecessors while protected reads retain direct coordinates", () => {
+  const f = nativeFixture(), generation = f.transitions.find(item => item.kind === "generation")!, row = check(generation, "changed");
+  const missingCheck = inspect(f, problem([cause(generation, row)], []))
+    .find(issue => issue.code === "responsibility_check_required")!;
+  assert.deepEqual(missingCheck.expected, { transition_index: generation.transition_index, kind: generation.kind,
+    before: { count: generation.before.length, read_execution: { candidate: "answer", view: "before", transition_index: generation.transition_index, offset: 0 } },
+    after: { count: generation.after.length, read_execution: { candidate: "answer", view: "after", transition_index: generation.transition_index, offset: 0 } } });
+  row.before_evidence_ids = generation.before.filter(item => f.evidence.find(proof => proof.evidence_id === item.evidence_id)?.quote === "核对XOM的MA50支撑，并给出结论。").map(item => item.evidence_id);
+  const selected = f.evidence.filter(item => [...row.before_evidence_ids, ...row.after_evidence_ids].includes(item.evidence_id));
+  const missingUpstream = inspect(f, problem([cause(generation, row)], [row]), selected)
+    .find(issue => issue.code === "responsibility_upstream_required" && issue.expected && Object.hasOwn(issue.expected as object, "upstream_choices"))!;
+  assert.deepEqual(missingUpstream.expected, { transition_index: generation.transition_index,
+    upstream_choices: { count: generation.predecessors.length,
+      read_execution: { candidate: "answer", view: "predecessors", transition_index: generation.transition_index, offset: 0 } } });
+  const unread = investigationIssues(f.binding.request, problem([], [check(generation, "changed")]), f.evidence,
+    { ...f.audit, traceReads: [] }, "/problem").filter(issue => issue.code === "investigation_read_required");
+  assert(unread.length);
+  for (const issue of unread) {
+    const read = issue.expected as { candidate: string; message_index: number; kind: string; path: string; start: number; end: number };
+    assert.deepEqual(Object.keys(read).sort(), ["candidate", "message_index", "kind", "path", "start", "end"].sort());
+    assert.equal(read.candidate, "answer");
+    assert(read.end > read.start);
+  }
+});
+
+test("transition submission IDs retain the exact contiguous legal range without an expanded enum", () => {
+  const f = nativeFixture(), schema = attributionSubmissionSchema(f.binding.request);
+  for (const key of ["checks", "causes"] as const) {
+    const field: { type: string; minimum: number; maximum?: number } = schema.properties.problems.items.properties[key].items.properties.transition_index;
+    assert(!Object.hasOwn(field, "enum"));
+    const validate = new Ajv2020({ strict: false }).compile(field);
+    assert.equal(field.minimum, 1);
+    assert.equal(field.maximum, f.transitions.length);
+    for (const transition of f.transitions) assert(validate(transition.transition_index));
+    for (const invalid of [0, -1, f.transitions.length + 1, 1.5, "1"]) assert(!validate(invalid));
   }
 });

@@ -737,6 +737,33 @@
                 }
               }
             }
+          },
+          "uncertainty": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "claim": {
+                "type": "string",
+                "minLength": 1,
+                "description": "从本项所选本方最终交付证据逐字引用的完整待核主张；允许保留原文语言。"
+              },
+              "missing_evidence": {
+                "type": "string",
+                "minLength": 1,
+                "description": "说明判定此主张仍缺的具体证据；可读材料须实际定向核查，不得把未读称为未采集。"
+              },
+              "impact": {
+                "type": "string",
+                "minLength": 1,
+                "description": "该缺口如何影响本项要求和实际交付的判断。"
+              }
+            },
+            "required": [
+              "claim",
+              "missing_evidence",
+              "impact"
+            ],
+            "description": "unknown 或 uncertain 必填；确定项不得填。claim 必须绑定本项实际交付证据。"
           }
         }
       }

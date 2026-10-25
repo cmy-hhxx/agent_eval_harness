@@ -32,7 +32,7 @@ import { createRunRepository, exists, readJson } from "@eval/data";
 import { object } from "@eval/contracts";
 import { services } from "../../../tests/fixtures/services.js";
 import { attributionAgent } from "@eval/agents/attribution";
-import { traceReadCoverage } from "@eval/tools";
+import { traceReadCoverage, ToolRuntime } from "@eval/tools";
 import { agentPrompt } from "@eval/prompts";
 import { buildPlan, type AttributionResult } from "@eval/workflows/comparison";
 import { AgentRegistry, RunStore, type EvaluationServices } from "@eval/host";
@@ -50,6 +50,7 @@ import {
 } from "../../../tests/fixtures/comparison.js";
 
 interface WorkerHarnessOptions {
+  materialNavigation?: import("@eval/contracts").JsonObject;
   policy?: Partial<typeof DEFAULT_POLICY>;
   dropAck?: boolean;
   material?: string;
@@ -251,7 +252,7 @@ test("raw control characters inside JSON strings are escaped without changing te
 
 async function harness(
   create: AgentBackend["createSession"],
-  { policy = {}, dropAck = false, material, profile, dropInspectionAck = false,
+  { policy = {}, dropAck = false, material, profile, dropInspectionAck = false, materialNavigation,
     revealedInput = { upstream: "hidden conclusion" } }: WorkerHarnessOptions = {},
 ) {
   const { directory, config } = await fixtureConfig([[raw("q", null)], [], [raw("q", null)], []]);
@@ -293,7 +294,7 @@ async function harness(
         id: "material",
         bind(item, inputs) {
           const id = item.inputIds.answer;
-          return { agent: "material", profile: "default", request: { input: {}, sources: { answer: { id, value: inputs[id] } } }, ...(profile?.inspection ? { modelInput: { primary: "original facts" }, inspectionInput: revealedInput } : {}) };
+          return { agent: "material", profile: "default", ...(materialNavigation ? {materialNavigation} : {}), request: { input: {}, sources: { answer: { id, value: inputs[id] } } }, ...(profile?.inspection ? { modelInput: { primary: "original facts" }, inspectionInput: revealedInput } : {}) };
         },
       },
       agents: new AgentRegistry([{ id: "material", profiles: { default: {
@@ -2773,4 +2774,44 @@ test("successful inspection delivers the complete Host context beyond ordinary t
     assert.equal(receipt!.submissionStats!.contentSubmissions, 2);
     assert.equal(receipt!.audit.artifacts.length, 0, "revealed task context does not need an unread delegated artifact");
   } finally { await fixture.close(); }
+});
+
+test("Worker passes program material navigation to tools without changing registered input or prompt",async t=>{
+  const navigation={marker:"program-only-navigation",nodes:[{node_index:7,source:"answer"}]};
+  const execute=ToolRuntime.prototype.execute;
+  let contexts=0;
+  t.mock.method(ToolRuntime.prototype,"execute",function(this:ToolRuntime,...args:Parameters<typeof execute>){
+    if(args[0]==="read_trace"){
+      contexts++;
+      assert.deepEqual(this.context.materialNavigation,navigation);
+      assert.deepEqual(this.context.inputs.get("answer"),{messages:[{content:"original source"},{content:"非必读正文"}]});
+      assert.equal(this.context.inputIds.get("answer"),"11111111-1111-4111-8111-111111111111");
+    }
+    return execute.apply(this,args);
+  });
+  const fixture=await harness(async options=>({async run(){
+    assert.deepEqual(options.spec.evaluation.materialNavigation,navigation);
+    assert(!options.spec.prompt.includes(navigation.marker));
+    const read=await options.execute("read_trace",{candidate:"answer",message_index:0,path:"/content"});
+    assert.equal(read.isError,undefined);
+    assert(JSON.stringify(read).includes("original source"));
+    assert.equal((await options.execute("submit_evaluation",{ok:true})).terminate,true);
+  },async abort(){},async dispose(){}}),{material:"original source",materialNavigation:navigation});
+  try{
+    await fixture.start();assert.equal((await fixture.done()).state,"succeeded");assert.equal(contexts,1);
+    const receipt=(await fixture.store.receipt(fixture.spec.taskId))!;
+    assert(receipt.audit.evidenceBank!.every(id=>id.startsWith("ev_11111111-1111-4111-8111-111111111111_")));
+    assert(!JSON.stringify(receipt.audit).includes(navigation.marker));
+  }finally{await fixture.close();t.mock.restoreAll();}
+});
+
+test("Worker rejects malformed program material navigation before starting a session",async()=>{
+  let sessions=0;
+  const fixture=await harness(async()=>{sessions++;throw new Error("Must not start");},{material:"source"});
+  try{
+    for(const materialNavigation of [null,[],"navigation",5,true])await assert.rejects(
+      request(fixture.worker.url+"/api/attempts","POST",{...fixture.spec,evaluation:{...fixture.spec.evaluation,materialNavigation}}),
+      (error:unknown)=>error instanceof HttpError&&error.status===400&&error.message==="Invalid material navigation");
+    assert.equal(sessions,0);
+  }finally{await fixture.close();}
 });

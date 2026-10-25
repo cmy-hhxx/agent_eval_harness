@@ -50,7 +50,9 @@ test("attribution submits local transition checks and causes without identity or
   for(const key of ["transition_index","function_index","basis"])assert(cause.properties[key]);
   for(const key of ["actor_index","chain_index","step_index","failure_stage_index","evidence_indices","role"])
     assert(!cause.properties[key],key);
-  assert.deepEqual(cause.properties.transition_index.enum,f.transitions.map(edge=>edge.transition_index));
+  assert.equal(cause.properties.transition_index.minimum,1);
+  assert.equal(cause.properties.transition_index.maximum,f.transitions.length);
+  assert(!Object.hasOwn(cause.properties.transition_index,"enum"));
 });
 
 test("each local problem binds its own checks to program-owned actors", () => {

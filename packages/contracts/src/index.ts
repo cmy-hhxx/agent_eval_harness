@@ -31,6 +31,8 @@ export const DEFAULT_POLICY: Policy = {
   maxOutputChars: 16000,
 };
 export interface EvaluationSpec {
+  /** Program-owned navigation for tools; never rendered into the model prompt. */
+  materialNavigation?: JsonObject;
   id: string;
   profile: string;
   systemPrompt: string;
@@ -333,6 +335,8 @@ export interface MaterialInspection {
   contentSubmissions: number;
 }
 export interface ToolContext {
+  /** Trusted navigation supplied by the Host, independent of original source values. */
+  materialNavigation?: JsonObject;
   execution?: { python: string };
   attemptId: string;
   workdir: string;
@@ -465,6 +469,8 @@ export interface AgentDefinition {
   profiles: Record<string, AgentProfile>;
 }
 export interface AgentBinding {
+  /** Workflow-owned navigation passed to tools without entering modelInput or evidence registration. */
+  materialNavigation?: JsonObject;
   agent: string;
   profile: string;
   request: AgentRequest;

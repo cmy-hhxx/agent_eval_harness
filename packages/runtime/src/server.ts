@@ -159,6 +159,7 @@ export async function startWorker(
           inputs,
           inputIds: new Map(spec.inputs.map(ref => [ref.name, ref.id])),
           sourcePresentations: new Map(Object.entries(spec.evaluation.sourcePresentations ?? {})),
+          materialNavigation: spec.evaluation.materialNavigation,
           audit,
           policy: spec.policy,
           requiredReads: spec.evaluation.requiredReads,
@@ -905,6 +906,9 @@ export async function startWorker(
         typeof spec.evaluation.fileSubmission !== "boolean" ||
         typeof spec.evaluation.submissionNudge !== "string" || !spec.evaluation.submissionNudge.trim())
         throw new HttpError(400, "Invalid evaluation spec");
+      if (spec.evaluation.materialNavigation !== undefined && (!spec.evaluation.materialNavigation ||
+        typeof spec.evaluation.materialNavigation !== "object" || Array.isArray(spec.evaluation.materialNavigation)))
+        throw new HttpError(400, "Invalid material navigation");
       if (!Array.isArray(spec.inputs) || spec.inputs.some(ref => !ref || typeof ref.id !== "string" || typeof ref.name !== "string") ||
         new Set(spec.inputs.map(ref => ref.name)).size !== spec.inputs.length)
         throw new HttpError(400, "Invalid input refs");

@@ -20,6 +20,7 @@ import { numericLedgerIssues } from "./numeric-ledger.js";
 import { normDirectoryIssues, findingNormSelectionIssues, attributionNormDirectory, submissionFindingEntries } from "./norm-directory.js";
 import { investigationIssues } from "./investigation.js";
 import { componentCatalogIssues, responsibilityIssues } from "./responsibility.js";
+import { reviewCompletionEvidenceIssues } from "./review-completion.js";
 
 interface Input {
   candidate_id: string;
@@ -149,6 +150,13 @@ function validateCriterionAssessments(request: AgentRequest, draft: unknown, rep
     if (representation === "result" && typeof assessment.status === "string" && statuses.includes(assessment.status) &&
       (assessment.status === "not_applicable") !== !applicable(criterion))
       issue("criterion_applicability_mismatch", `${location}/status`, "只有 applies_to 不包含当前候选时才能且必须填 not_applicable；[] 适用于全部候选", assessment.status, applicable(criterion));
+    const uncertain = assessment.status === "unknown" || assessment.evidence_status === "uncertain";
+    const uncertainty = object(assessment.uncertainty);
+    if (uncertain && (!uncertainty || ["claim", "missing_evidence", "impact"].some(field =>
+      typeof uncertainty[field] !== "string" || !(uncertainty[field] as string).trim())))
+      issue("criterion_uncertainty_required", `${location}/uncertainty`, "未知评审须明确实际交付中的待核原文主张、缺少的具体证据及其影响，不能仅填写 unknown/uncertain 状态。", assessment.uncertainty);
+    if (!uncertain && assessment.uncertainty !== undefined)
+      issue("criterion_uncertainty_unexpected", `${location}/uncertainty`, "确定的评审不填写未知说明。请保持判断与证据状态一致。");
     if (assessment.status === "unknown" && assessment.evidence_status === "established")
       issue("criterion_unknown_established", `${location}/evidence_status`, "unknown 表示证据不足，evidence_status 必须为 uncertain");
     if (representation === "result" && assessment.status === "not_applicable" && assessment.evidence_status !== "established")
@@ -357,6 +365,7 @@ export function validateEvaluation(request: AgentRequest, result: unknown, audit
     ),
   );
   value.criterion_assessments.forEach((assessment, i) => repairErrors.push(
+    ...reviewCompletionEvidenceIssues(request, assessment, assessment.evidence, `/criterion_assessments/${i}`, audit),
     ...validateAttributionEvidence(request, assessment.evidence.map((item, j) => ({
       item, location: `criterion_assessments[${i}].evidence[${j}]`,
     })), audit),

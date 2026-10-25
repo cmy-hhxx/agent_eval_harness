@@ -13,7 +13,7 @@ const target = (item: Pick<Evidence,"evidence_id">): TraceRead | undefined => {
   return point && point.kind !== "image" ? { candidate: "answer", message_index: point.message_index,
     kind: point.kind, path: point.path, start: point.start, end: point.end } : undefined;
 };
-function readCovered(audit: ToolAudit, read: TraceRead, raw: { messages: unknown[] }): boolean {
+export function attributionReadCovered(audit: ToolAudit, read: TraceRead, raw: { messages: unknown[] }): boolean {
   if (traceReadCoverage(audit, read).covered) return true;
   if (read.kind !== "text") return false;
   const sources = evidenceSources(raw.messages[read.message_index]);
@@ -97,13 +97,11 @@ export function investigationIssues(request: AgentRequest, problem: ProblemPropo
   const byId = new Map(transitions.map(item => [item.transition_index, item]));
   const proofById = new Map(selected.map(item => [item.evidence_id, item]));
   const checks = new Map<number, ProblemProposal['investigation'][number]>();
-  const sourceNavigation = (item: TransitionBoundary) => {
-    const read = target(item);
-    return {reference:{evidence_id:item.evidence_id}, ...(read ? {read_request:read} :
-      {view_request:{candidate:'answer',message_index:item.message_index}})};
-  };
+  const executionRead = (transition_index: number, view: 'before' | 'after' | 'predecessors') =>
+    ({ candidate: 'answer', view, transition_index, offset: 0 });
   const navigation = (transition: AttributionTransition) => ({transition_index: transition.transition_index, kind: transition.kind,
-    before: transition.before.map(sourceNavigation), after: transition.after.map(sourceNavigation)});
+    before: {count: transition.before.length, read_execution: executionRead(transition.transition_index, 'before')},
+    after: {count: transition.after.length, read_execution: executionRead(transition.transition_index, 'after')}});
   const matches = (item: Evidence, boundaries: TransitionBoundary[]) => !item.source && boundaries.some(boundary => overlaps(item, boundary, raw));
   for (const [index, check] of problem.investigation.entries()) {
     const location = `${path}/investigation/${index}`, transition = byId.get(check.transition_index);
@@ -128,7 +126,7 @@ export function investigationIssues(request: AgentRequest, problem: ProblemPropo
           add('investigation_image_required', location, '图片边界必须实际view_image，文字引用或目录坐标不代表已查看。',
             {view_request:{candidate:'answer',message_index:point.message_index}});
         const read = target(proof);
-        if (read && !readCovered(audit, read, raw)) add('investigation_read_required', location,
+        if (read && !attributionReadCovered(audit, read, raw)) add('investigation_read_required', location,
           '核查引用的原文尚未实际读取；按受保护必读补齐本段后继续判断。', read);
       }
     }
@@ -185,7 +183,8 @@ export function investigationIssues(request: AgentRequest, problem: ProblemPropo
     // A captured upstream path cannot be bypassed by citing only an unrelated user sentence and the output.
     if (reachable.size && !roots.length)
       add('responsibility_upstream_required', location, '生成调用有已关联上游记录，但本问题尚未定位相关来源或排除它们；先定向核查再归生成主责。',
-        {transition_index:transition.transition_index, upstream_choices:transition.predecessors.map(id=>navigation(byId.get(id)!))});
+        {transition_index:transition.transition_index, upstream_choices:{count:transition.predecessors.length,
+          read_execution:executionRead(transition.transition_index, 'predecessors')}});
     for (const id of required) {
       const upstream = byId.get(id)!;
       if (!checks.has(id)) add('responsibility_upstream_required', location,
@@ -197,15 +196,20 @@ export function investigationIssues(request: AgentRequest, problem: ProblemPropo
       if (!inputProof.some(item => matches(item, incoming.after))) add('responsibility_generation_boundary', location,
         '生成主责的实际输入证据须包含所追查来源进入本调用的对应材料，不能用无关用户问题替代。', navigation(incoming));
     }
-    const unrecovered = (id: number, visited = new Set<number>()): boolean => {
-      if (!required.has(id) || visited.has(id)) return false;
-      visited.add(id);
-      const outcome = checks.get(id)?.outcome;
-      if (outcome === 'recovered') return false;
-      if (outcome === 'changed' || outcome === 'unresolved') return true;
-      return (byId.get(id)?.predecessors ?? []).some(parent => unrecovered(parent, new Set(visited)));
+    const unrecovered = (): boolean => {
+      const visited = new Set<number>(), pending = [...transition.predecessors];
+      while (pending.length) {
+        const id = pending.pop()!;
+        if (!required.has(id) || visited.has(id)) continue;
+        visited.add(id);
+        const outcome = checks.get(id)?.outcome;
+        if (outcome === 'recovered') continue;
+        if (outcome === 'changed' || outcome === 'unresolved') return true;
+        pending.push(...(byId.get(id)?.predecessors ?? []));
+      }
+      return false;
     };
-    if (cause.basis === 'input_deviation' && transition.predecessors.some(id => unrecovered(id)))
+    if (cause.basis === 'input_deviation' && unrecovered())
       add('responsibility_generation_formation', location, '相关上游已存在改变或尚未解决的断点，不能声称完整正确输入后首次偏离。核对因果关系；若生成有独立新增错误，应明确该独立作用和替代解释。');
   }
   issues.push(...validateDerivations(problem.calculations, id => proofById.get(id), path + '/calculations'));

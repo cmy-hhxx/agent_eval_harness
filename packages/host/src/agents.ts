@@ -142,6 +142,7 @@ export class AgentRegistry {
         submissionNudge: profile.submissionNudge,
         requiredReads: profile.requiredReads?.(binding.request) ?? [],
         ...(binding.presentedReads ? { presentedReads: binding.presentedReads } : {}),
+        ...(binding.materialNavigation ? { materialNavigation: structuredClone(binding.materialNavigation) } : {}),
         ...(Object.values(binding.request.sources).some(source => source.presentation) ? { sourcePresentations: Object.fromEntries(
           Object.entries(binding.request.sources).flatMap(([label, source]) => source.presentation ? [[label, structuredClone(source.presentation)]] : [])) } : {}),
       },

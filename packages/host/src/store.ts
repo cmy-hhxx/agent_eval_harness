@@ -45,10 +45,10 @@ function availableRequiredReadCalls(reads: TraceRead[], required: { target: Trac
   return available;
 }
 
-function requiredReadRanges(spec: AttemptSpec, inputs: Record<string, unknown>) {
+function requiredReadRanges(spec: AttemptSpec, sources: ReadonlyMap<string, unknown>) {
   return (spec.evaluation.requiredReads ?? []).flatMap(target => {
     const id = spec.inputs.find(input => input.name === target.candidate)?.id;
-    const raw = id === undefined ? undefined : inputs[id] as { messages?: unknown[] } | undefined;
+    const raw = id === undefined ? undefined : sources.get(id) as { messages?: unknown[] } | undefined;
     const message = raw?.messages?.[target.message_index];
     const text = message === undefined ? undefined : evidenceSources(message).find(source => source.kind === target.kind && source.path === target.path)?.text;
     if (typeof text !== "string") throw new Error("Required trace source is unavailable");
@@ -225,7 +225,7 @@ export class RunStore {
     spec.evaluation = { ...spec.evaluation, requiredReads: [
       ...spec.evaluation.requiredReads ?? [], ...validationRequiredReads(spec.recovery?.errors ?? []),
     ] };
-    spec.evaluation.requiredReads = mergeRequiredReadRanges(requiredReadRanges(spec, this.inputs)).map(range => range.target);
+    spec.evaluation.requiredReads = mergeRequiredReadRanges(requiredReadRanges(spec, sources)).map(range => range.target);
     if (executionStopReason(this.manifest)) return false;
     if (state.attemptId) { this.attempts.delete(state.attemptId); this.evidenceSources.delete(state.attemptId); }
     state.startedAt = state.lastProgressAt = Date.now();
@@ -347,7 +347,7 @@ export class RunStore {
   }
   private validateAudit(spec: AttemptSpec, audit: ToolAudit): void {
     this.validateBank(spec, audit?.evidenceBank);
-    const required = requiredReadRanges(spec, this.inputs);
+    const required = requiredReadRanges(spec, this.evidenceSources.get(spec.attemptId)!);
     if (
       !audit ||
       !Number.isSafeInteger(audit.calls) ||
@@ -422,7 +422,8 @@ export class RunStore {
         const reads = validationRequiredReads(error.issues ?? []);
         if (reads.length) {
           const updated = { ...spec, evaluation: { ...spec.evaluation, requiredReads: reads } };
-          const ranges = extendRequiredReadRanges(requiredReadRanges(spec, this.inputs), requiredReadRanges(updated, this.inputs));
+          const sources = this.evidenceSources.get(spec.attemptId)!;
+          const ranges = extendRequiredReadRanges(requiredReadRanges(spec, sources), requiredReadRanges(updated, sources));
           spec.evaluation = { ...spec.evaluation, requiredReads: ranges.map(range => range.target) };
         }
       }

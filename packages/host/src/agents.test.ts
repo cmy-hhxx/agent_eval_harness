@@ -260,3 +260,21 @@ test('initial displayed source and actual read suffix share the validation cover
  assert.equal(audit.traceReads.length,1);assert.equal(audit.traceReads[0].start,5);
  assert.throws(()=>f.registry.resolve(binding,draft,audit),error=>error instanceof ValidationError&&error.issues!.some(issue=>issue.code==='unread'));
 });
+
+test("program material navigation crosses preparation without entering prompts or source registration",()=>{
+  const {registry,profile}=fixture();
+  profile.renderPrompt=input=>JSON.stringify(input);
+  const source={id:"11111111-1111-4111-8111-111111111111",value:{messages:[{role:"user",content:"original source"}]}};
+  const original={...binding,request:{input:{visible:"shown"},sources:{answer:source}}};
+  const navigation={nodes:[{node_index:7,detail:"program-only-navigation"}],source:"answer"};
+  const wired={...original,materialNavigation:navigation},before=structuredClone(wired);
+  const baseline=registry.prepare(original),prepared=registry.prepare(wired);
+  assert.deepEqual(prepared.evaluation.materialNavigation,navigation);
+  assert.notEqual(prepared.evaluation.materialNavigation,navigation);
+  assert.equal(prepared.prompt,baseline.prompt);
+  assert.equal(prepared.renderAttempt(DEFAULT_POLICY),baseline.renderAttempt(DEFAULT_POLICY));
+  assert(!prepared.prompt.includes("program-only-navigation"));
+  assert.deepEqual(prepared.evidenceBank,baseline.evidenceBank);
+  assert.deepEqual(wired,before);
+  assert(!Object.hasOwn(baseline.evaluation,"materialNavigation"));
+});

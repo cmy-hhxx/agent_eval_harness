@@ -1,3 +1,4 @@
+import { attributionNavigation, initialAttributionMaterial } from "./attribution-navigation.js";
 import { businessChains } from "./business-chains.js";
 import { isToolSpan } from "../inputs/adapters.js";
 import { workflowText } from "@eval/prompts";
@@ -14,7 +15,7 @@ import { traceOverview } from "./trace-overview.js";
 import { citationInventory, citationSourceParts, type CitationContext, type CitationInventory } from "./citations.js";
 import { criterionInstructionSources } from "./instruction-bindings.js";
 import { tableChecksPresentation } from "./attribution-presentation.js";
-import { taskAnalysisPresentation, taskFocus } from "./task-focus.js";
+import { taskAnalysisPresentation } from "./task-focus.js";
 import { getAnswerGeneration, answerGenerationPresentation, type AnswerGeneration } from "./answer-generation.js";
 
 /** Project only generated evidence directories; original message values stay untouched. */
@@ -292,12 +293,12 @@ export function bindAttributionMaterial(candidate: Candidate, original: RawInput
   };
   const input = { candidate_id: candidate.input_id, task_analysis, material_availability: { public_task: true, final_delivery: true, process_records: raw.messages.some((message,index)=>index!==candidate.final_index && !["user","system","developer"].includes(message.role??"") && message.type!=="private_instruction_omitted"), actual_model_inputs: answerTurnContexts(raw,candidate.final_index).length>0, call_links: traceCatalog(raw).some(row=>row.call_message_index!==undefined) }, ground_truth: { available: reference !== null, value: reference }, answer };
   Object.assign(answer, { norm_directory: attributionNormDirectory({ input, sources }) });
-  const focus=taskFocus({ answer }, input.ground_truth, { answer: raw });
-  // The complete final remains in answer; the entry point starts from the task,
-  // rather than repeating final prose before the execution material.
-  delete focus.answers.answer.final_answer;
-  const modelInput = { ...input, task_focus: focus, task_analysis: taskAnalysisPresentation(task_analysis, { answer: candidate.input_id }, answer.criterion_instruction_sources),
-    answer: modelMaterial(answer, "answer", raw, candidate.input_id, 8000) };
+  const navigation = attributionNavigation(answer, raw, candidate.input_id);
+  const modelInput = { candidate_id: input.candidate_id, material_availability: input.material_availability,
+    ground_truth: input.ground_truth,
+    task_analysis: taskAnalysisPresentation(task_analysis, { answer: candidate.input_id }, answer.criterion_instruction_sources),
+    answer: initialAttributionMaterial(answer, raw, navigation) };
   return { agent: "attribution", profile: "default", request: { input, sources }, modelInput,
+    materialNavigation: { answer: navigation },
     projectModelInput: projectComparisonEvidence, presentedReads: presentedMaterialReads(modelInput.answer, "answer", candidate.input_id) };
 }

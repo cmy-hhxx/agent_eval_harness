@@ -4,7 +4,7 @@
 
 从公开原问、task_analysis 与 criterion_checks 确定必须交付什么，保留条件、例外和约束强度。检查点摘要不新增数量、格式、工具使用或穷举义务；工具文档、内部提示词和用户画像不新增公开要求。宽泛概念存在多个合理解释时，按回答声明且与原问相容的口径评审。
 
-读已展示的完整最终内容，按 deferred_final_material 补齐未展示正文；有适用图片规则时查看图片。用 trace_overview、catalog、execution_graph 找到影响交付的规划、请求、代码、返回、实际输入及生成节点。既检查回答主张，也检查已显示的执行异常、错误参数和恢复行为，不能只从最后一句倒找证明。记下每个独立疑点、待区分的解释和已有证据；没有疑点的样本允许没有问题。
+读已展示的完整最终内容，按 deferred_final_material 补齐未展示正文；有适用图片规则时查看图片。初始 execution_overview 只展示真实调用概览的首页。用 read_execution 按调用名称、消息位置或疑点定位节点，再分页展开相关边界；正文用 read_trace，未知位置用 search_trace。完整执行图和来源仍在程序侧，未展开不表示没有记录。既检查回答主张，也检查已显示的执行异常、错误参数和恢复行为，不能只从最后一句倒找证明。记下每个独立疑点、待区分的解释和已有证据；没有疑点的样本允许没有问题。
 
 调用失败、正常零行、摘要、旧来源、长上下文或原句直送都只是线索。核对请求、执行状态、内容和后续影响后再判断故障；HTML预览截断不证明真实输入截断。已恢复故障保留恢复事实，仅按实际残留的交付缺陷或独立过程成本评价。
 
@@ -38,17 +38,17 @@
 
 mechanism_source=explicit_process 须有直接执行证据，例如实际生成的tool_calls参数、对应请求、推理/analysis或计算过程记录。只有输入输出差异时，使用 boundary_comparison + inferred；数值成十倍不证明执行乘十，最终正文中的错误推导也不替代隐藏过程记录。这一规则适用于所有步骤。inferred 填关键 evidence_gap 和已考虑的 alternatives；confirmed 不提交这两字段。缺陷已确立可以保持 established，不能因机制未知一并降级。正文措辞与确定性一致，不把“没看到核验”写成“确认没有核验”。
 
-每个问题是一份独立案卷：checks 保存该问题的相关边界观察，causes 选择造成它的转换，calculations 保存判断所需的复算。execution_graph.nodes 每次真实模型或工具调用只登记一次；boundaries 的 transition_index 编号证据边界，links 表达调用之间的关联。历史输出在后续输入重现只是传递，不是再次执行。主体、来源、目标实际输入位置和前驱由程序固定；before_evidence_indices/after_evidence_indices 引用 transition_evidence 中的集中读取导航。边界编号与证据编号不能混用。function_index 只描述该主体承担的技术功能，business_component 描述具体业务操作。
+每个问题是一份独立案卷：checks 保存该问题的相关边界观察，causes 选择造成它的转换，calculations 保存判断所需的复算。read_execution 的 nodes 每次真实模型或工具调用只登记一次；boundaries 返回真实 transition_index、主体和前后侧数量。before/after 分页返回证据编号与原文读取入口，predecessors/successors 只展开一层关联。历史输出在后续输入重现只是传递，不是再次执行。主体、来源、目标实际输入位置和前驱由程序固定；checks 的 before_evidence_indices/after_evidence_indices 使用导航或读取工具返回的证据编号。导航没有展示正文，不计为原文已读。边界编号与证据编号不能混用。function_index 只描述该主体承担的技术功能，business_component 描述具体业务操作。
 
 核查时用 checks 的 before/after 证据分别对照转换两侧：preserved 表示本问题所关心的对象、字段、单位、期间和执行状态保持正确，changed 表示发生相关偏离，recovered 表示问题已修复，unresolved 表示已知边界仍无法确定。局部字段保持不能声称整个返回完整传递；未读不等于未采集。每项 causes 必须关联自己的核查；第一项为主责，后续仅列独立传播或放大作用，程序绑定身份和证据，不代写机制。
 
-拟归生成主责时，从本问题所用来源和实际输入沿 predecessors 核查相关请求形成、执行、整理/传递。正确材料完整进入后首次偏离，选 input_deviation；上游已改变或缺失，而生成端另行新增无据事实，选 independent_addition 并说明独立作用；处理者未采集，选 unknown_transition。不能引用无关输入绕过上游核查，不能把此前已错而下游仅复述的内容称为独立新增。无需补齐不相关分支；前驱已存在的可读记录必须定向核查。
+拟归生成主责时，从本问题所用来源和实际输入，用 read_execution 的 predecessors 逐层核查相关请求形成、执行、整理/传递。正确材料完整进入后首次偏离，选 input_deviation；上游已改变或缺失，而生成端另行新增无据事实，选 independent_addition 并说明独立作用；处理者未采集，选 unknown_transition。不能引用无关输入绕过上游核查，不能把此前已错而下游仅复述的内容称为独立新增。无需补齐不相关分支；前驱已存在的可读记录必须定向核查。
 
 计算选择实际业务公式：ratio 明确分子、分母及分母角色；relative_change 以 base 为分母；compound_growth 表示累计复利值；annualization 仅为带假设的 run-rate，不能冒充全年指引；其他算术填明确公式。原数必须原样来自对应证据，单位换算写入公式，不在操作数中暗改。结果区间保留上下界，成本分母与市值分母不能混用；数学相等不证明业务口径成立。只提交支撑本问题所必需的计算。
 
 ## 4. 形成一致的判定
 
-按 criterion_checks 顺序提交恰好 criterion_check_count 行。met表示该项所有适用条件已满足；partial/unmet说明已确认缺口；unknown/uncertain说明关键事实待核。条件明确未触发时说明其不适用。已有问题与对应判据的met冲突时，按真实缺口修正判据，low也如此；不删真实问题、不解除有效basis_index或把它改为null逃避校验。
+按 criterion_checks 顺序提交恰好 criterion_check_count 行。每个适用项都须引用实际最终交付，说明交付如何满足、偏离或尚不能确认该义务；只引用原问不构成评审。met表示该项所有适用条件已满足；partial/unmet说明已确认缺口；unknown/uncertain须填写 uncertainty：claim 是所引实际交付中的待核主张原文，missing_evidence 具体说明缺少哪项证据，impact 说明该缺口如何限制本项判断。可读但未读的记录须定向补读，不能称为缺失；确定判断不填 uncertainty。条件明确未触发时说明其不适用。已有问题与对应判据的met冲突时，按真实缺口修正判据，low也如此；不删真实问题、不解除有效basis_index或把它改为null逃避校验。
 
 strengths只保留实质改善结果的优点，正常完成留在检查项；problems记录独立缺陷，同一失误及直接后果合为一项，不为数量或配平凑发现。每条text写具体行为，reason保留完整主张、反证/义务及不相容处，problems的impact写实际影响；strengths禁止impact。basis_index关联其真正影响的公开交付项，无对应才为null。不同数值、期间、解释或过程错误各自保留。
 
@@ -60,7 +60,7 @@ core_requirements只选完成原目标不可缺少的共同要求。meets_core=t
 
 ## 5. 收敛、提交和修复
 
-满足以下条件就提交：完整交付及所有已触发必要材料已读；每个已发现的独立疑点已成立、被反证排除或说明真正证据缺口；责任边界与确定性一致；检查项、问题与核心状态无冲突。没有具体待查关系时，不重新通读、不为缩短引文重读、不反复检索同一事实。没有问题允许problems=[]。
+满足以下条件就提交：完整交付及所有已触发必要材料已读；每个已发现的独立疑点已成立、被反证排除或说明真正证据缺口；责任边界与确定性一致；检查项、问题与核心状态无冲突。没有具体待查关系时，不重新通读、不为缩短引文重读、不反复检索同一事实。没有问题允许problems=[]，但不能绕过实际交付核验；summary、检查说明和core_reason仍须说明本样本的具体交付及判断依据，结构有效不代表完成评审。
 
 合法动态必读与探索使用不同额度。探索耗尽仍按反馈补齐真实必读；material_pending表示只补送原文、尚未校验草稿，不是判词修复失败。按next_offset翻页，不伪造已读、跳过验收或把已有材料改称未采集。连续调用没有补证也没有解决新关系时停止该探索路径；真实预算耗尽或工具失败不能靠原参数无限重试，明确剩余证据缺口，由Host保留有界失败原因。
 

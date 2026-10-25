@@ -502,7 +502,7 @@ export function draftFor(spec: Pick<AttemptSpec, "inputs" | "prompt" | "evidence
       core_requirements:core.criterion_ids.map(id => material.task_analysis.requirements.find(item => item.id === id)!.requirement_index),
       ...(material.ground_truth.available?{is_correct:result.is_correct,correctness_reason:result.correctness_reason,correctness_evidence_indices:correctness}:{}),
       criterion_assessments:(result.criterion_assessments as AttributionResult["criterion_assessments"]).filter(row => row.status !== "not_applicable")
-        .map(row => ({status:row.status,evidence_status:row.evidence_status,summary:row.summary,evidence_indices:selections(row.evidence)})),
+        .map(row => ({status:row.status,evidence_status:row.evidence_status,summary:row.summary,...(row.uncertainty?{uncertainty:structuredClone(row.uncertainty)}:{}),evidence_indices:selections(row.evidence)})),
       numeric_checks:(result.numeric_checks as AttributionResult["numeric_checks"]).map(({expected,matches:_matches,...row}) => ({...row,
         reference_index:references.find(item => item.expected === expected)!.reference_index,evidence_index:correctness[row.evidence_index]})),
       strengths:(result.findings as AttributionResult["findings"]).filter(row=>row.type==="strength").map(observation),

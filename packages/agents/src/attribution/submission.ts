@@ -87,6 +87,7 @@ function bindSubmission(request: AgentRequest, submitted: unknown, audit: ToolAu
       standard_conflict:value.standard_conflict===true} : {}),
     criterion_assessments: list(value.criterion_assessments).map(object).map((row,index) => ({ criterion_id: criteria[index]?.id,
       status: row.status, evidence_status: row.evidence_status, summary: row.summary,
+      ...(row.uncertainty !== undefined ? {uncertainty:structuredClone(row.uncertainty)} : {}),
       evidence: references(row.evidence_indices,`/criterion_assessments/${index}/evidence_indices`) })),
     core_assessment: { meets_core: value.meets_core, reason: value.core_reason,
       requirement_indices: list(value.core_requirements).map(number => typeof number === "number" ? number - 1 : number) },

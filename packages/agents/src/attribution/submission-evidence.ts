@@ -4,6 +4,7 @@ import type { Evidence } from "./types.js";
 import { responsibilityIssues } from "./responsibility.js";
 import { submissionFindingEntries } from "./norm-directory.js";
 import { finalFindingEvidenceIssues } from "./evidence-focus.js";
+import { reviewCompletionEvidenceIssues } from "./review-completion.js";
 
 const object = (value: unknown): Record<string, unknown> | undefined =>
   value !== null && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : undefined;
@@ -34,7 +35,8 @@ export function submissionEvidenceIssues(request: AgentRequest, draft: unknown, 
   for (const field of ["criterion_assessments"] as const) {
     const entries = value[field];
     if (Array.isArray(entries)) entries.forEach((entry, index) => {
-      check(object(entry)?.evidence, `/${field}/${index}/evidence`);
+      const selected = check(object(entry)?.evidence, `/${field}/${index}/evidence`);
+      if (selected) issues.push(...reviewCompletionEvidenceIssues(request, object(entry)!, selected, `/${field}/${index}`, audit));
     });
   }
   for (const { finding, path } of submissionFindingEntries(value)) {

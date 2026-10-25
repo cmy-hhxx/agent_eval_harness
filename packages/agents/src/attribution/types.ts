@@ -32,11 +32,17 @@ export interface Finding {
     impact: string;
   };
 }
+export interface ReviewUncertainty {
+  claim: string;
+  missing_evidence: string;
+  impact: string;
+}
 export interface CriterionAssessment {
   criterion_id: string;
   status: "met" | "partial" | "unmet" | "unknown" | "not_applicable";
   evidence_status: "established" | "uncertain";
   summary: string;
+  uncertainty?: ReviewUncertainty;
   evidence: Evidence[];
   context_evidence?: Evidence[];
 }
@@ -184,6 +190,7 @@ export interface AttributionSubmission {
     status: Exclude<CriterionAssessment["status"], "not_applicable">;
     evidence_status: "established" | "uncertain";
     summary: string;
+    uncertainty?: ReviewUncertainty;
     evidence_indices: number[];
   }[];
   strengths: ObservationSubmission[];

@@ -14,9 +14,9 @@ export function attributionSubmissionSchema(request: AgentRequest) {
   if (issues.length) throw new ValidationError(issues);
   const schema = structuredClone(submissionSchema);
   const transitions = (request.input.answer as {transitions: AttributionTransition[]}).transitions;
-  const transitionChoices = transitions.map(item => item.transition_index);
   for (const field of ["checks", "causes"] as const)
-    Object.assign(schema.properties.problems.items.properties[field].items.properties.transition_index, { enum: transitionChoices });
+    Object.assign(schema.properties.problems.items.properties[field].items.properties.transition_index,
+      { type: "integer", minimum: 1, maximum: transitions.length });
   if (request.input.allow_standard_conflict !== true)
     delete (schema.properties as Record<string, unknown>).standard_conflict;
   Object.assign(schema.properties.problems.items.properties.causes.items.properties.function_index,

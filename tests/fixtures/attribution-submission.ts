@@ -69,7 +69,7 @@ export function attributionSubmission(request: AgentRequest, result: Attribution
     ...(truth.available?{is_correct:result.is_correct,correctness_reason:result.correctness_reason,correctness_evidence_indices:correctness}:{}),
     ...(truth.available && result.standard_conflict === true ? {standard_conflict:true} : {}),
     criterion_assessments:result.criterion_assessments.flatMap(row=>row.status==="not_applicable"?[]:[{
-      status:row.status,evidence_status:row.evidence_status,summary:row.summary,evidence_indices:refs(row.evidence)}]),
+      status:row.status,evidence_status:row.evidence_status,summary:row.summary,...(row.uncertainty?{uncertainty:structuredClone(row.uncertainty)}:{}),evidence_indices:refs(row.evidence)}]),
     strengths:result.findings.filter(row=>row.type==="strength").map(observation),
     problems:result.findings.filter(row=>row.type==="problem").map(row=>{
       const observed=observation(row),problem=structuredClone(row.problem!);

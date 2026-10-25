@@ -2,6 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { canonical, emptyUsage, evidenceId, type JsonObject, type PlannedTask, type SubmissionReceipt } from "@eval/contracts";
 import { parseEvidenceCoordinates, resolveEvidence } from "@eval/tools";
+import { citationSourceParts } from "./citations.js";
 import { presentedMaterialReads, projectComparisonEvidence } from "./evidence-presentation.js";
 import { comparisonWorkflow } from "../comparison/workflow.js";
 import { criteriaResult, emptyAudit } from "../../../../tests/fixtures/comparison.js";
@@ -64,8 +65,8 @@ test("Workflow binding preserves coordinate-shaped business fields in actual ori
     instruction_sources: { content: unknown }[]; final_evidence: { reference: { evidence_index: number } }[];
     norm_directory: { evidence: { reference: { evidence_index: number } }[] }[] };
   assert.deepEqual((input.ground_truth as { value: unknown }).value, business);
-  assert.deepEqual(answer.initial_material, []);
-  assert.deepEqual(answer.instruction_sources, []);
+  assert(!Object.hasOwn(answer,"initial_material"));
+  assert(!Object.hasOwn(answer,"instruction_sources"));
   assert.deepEqual((binding.request.input.answer as typeof answer).instruction_sources, []);
   assert.deepEqual((binding.request.sources.answer!.value as typeof source).messages[1], original.messages[1]);
   assert(!JSON.stringify(binding.request.sources.answer!.value).includes('"system"'));
@@ -91,7 +92,7 @@ function bindMaterial(source: RawInput, initialContextChars: number) {
 
 type InitialMaterial = { message_index: number; value: unknown; evidence: { evidence_id: string; quote: string; message_index: number }[] }[];
 
-test("bound citation previews use original content leaves and preserve usable read offsets", () => {
+test("canonical citation sources preserve read offsets without entering the initial prompt or read proof", () => {
   const body = '标题: 月度统计\n溯源地址: https://example.test/report\n发布时间: 2024-03-04\n摘要: 上月变化-7%。' + "详情。".repeat(100);
   const source: RawInput = { messages: [{ role: "tool", content: [
     { text: "<referencable-result>\nID: 8\n", type: "input_text" },
@@ -99,17 +100,16 @@ test("bound citation previews use original content leaves and preserve usable re
   ] }, { role: "assistant", content: "变化率为7%[^8]。" }] };
   const binding = bindMaterial(source, 8000), bank: string[] = [];
   const projected = binding.projectModelInput!(binding.modelInput!, bank).answer as any;
-  const shown = projected.citation_inventory.references[0].sources;
-  assert.equal(shown.length, 1);
-  assert.equal(shown[0].quote_preview, body.slice(0, 200));
-  assert.equal(shown[0].read_request.path, "/content/1/text");
-  assert.equal(shown[0].read_request.offset, 0);
-  assert.equal(resolveEvidence(source, { evidence_id: bank[shown[0].reference.evidence_index - 1] },
-    "answer", emptyAudit(), "/evidence", id).quote, body);
-  assert(binding.presentedReads!.some(read => read.path === "/content/1/text" && read.start === 0 && read.end >= 200));
+  const sources=(binding.request.input.answer as any).citation_inventory.references[0].sources.flatMap((item:any)=>citationSourceParts(source,id,item));
+  assert.equal(sources.length,1);assert.equal(sources[0].quote,body);
+  assert.equal(sources[0].read_request.path,"/content/1/text");assert.equal(sources[0].read_request.offset,0);
+  assert.equal(resolveEvidence(source,sources[0],"answer",emptyAudit(),"/evidence",id).quote,body);
+  assert(!Object.hasOwn(projected,"citation_inventory"));assert(!JSON.stringify(projected).includes(body));
+  assert(!bank.includes(sources[0].evidence_id),"undisclosed source navigation does not register evidence choices");
+  assert(!binding.presentedReads!.some(read=>read.message_index===0),"unseen source text is not a read receipt");
 });
 
-test("transition projection has one readable evidence directory and owned identities without leaking internal actor choices", () => {
+test("complete execution metadata stays program-side while the initial view contains only a bounded overview", () => {
   const output = { action_id: "query01", stdout: "Q3=249; Q2=199" };
   const source: RawInput = { messages: [
     { role: "user", content: "Review Q3" },
@@ -120,79 +120,65 @@ test("transition projection has one readable evidence directory and owned identi
     { type: "final_answer", content: "Q3=199" },
   ] };
   const binding = bindMaterial(source, 0), bank: string[] = [];
-  const canonical = binding.request.input.answer as any;
+  const canonicalMaterial = binding.request.input.answer as any;
   const shown = binding.projectModelInput!(binding.modelInput!, bank).answer as any;
-  assert(canonical.transitions.length > 0);
-  assert(!Object.hasOwn(shown, "business_chains"));
-  assert.equal(new Set(shown.transition_evidence.map((entry: any) => entry.reference.evidence_index)).size, shown.transition_evidence.length);
-  const navigation = new Map<number, any>(shown.transition_evidence.map((entry: any) => [entry.reference.evidence_index, entry]));
-  assert.equal(shown.execution_graph.nodes.length, 2);
-  assert.equal(canonical.execution_nodes.length, 2);
-  assert(canonical.transitions.every((boundary: any) => [...boundary.before, ...boundary.after].every((ref: any) => !Object.hasOwn(ref, "quote"))));
-  for (const transition of shown.execution_graph.boundaries) {
-    assert(!Object.hasOwn(transition, "actor_index")); assert(!Object.hasOwn(transition, "chain_index"));
-    if (transition.kind === "generation") {
-      const owner = shown.execution_graph.nodes.find((node: any) => node.execution_node_index === transition.execution_node_index);
-      assert.equal(owner.message_index, 3);
-      assert(!owner.component.includes("未命名"));
+  const navigation=binding.materialNavigation!.answer as any;
+  assert.deepEqual(navigation.boundaries,canonicalMaterial.transitions);
+  assert.equal(navigation.nodes.length,canonicalMaterial.execution_nodes.length);assert.equal(navigation.nodes.length,2);
+  assert.equal(shown.execution_overview.execution_nodes,2);assert.equal(shown.execution_overview.entries.length,2);
+  assert.equal(shown.execution_overview.has_more,false);assert.equal(shown.execution_overview.next_request,null);
+  for(const key of ["execution_graph","transition_evidence","business_chains","execution_nodes","transitions"])
+    assert(!Object.hasOwn(shown,key),key);
+  for(const boundary of navigation.boundaries){
+    assert([...boundary.before,...boundary.after].every((ref:any)=>!Object.hasOwn(ref,"quote")));
+    if(boundary.kind==="generation"){
+      const owner=navigation.nodes.find((node:any)=>node.execution_node_index===boundary.execution_node_index);
+      assert.equal(owner.message_index,3);assert(!owner.component.includes("未命名"));
     }
-    for (const evidenceIndex of [...transition.before_evidence_indices, ...transition.after_evidence_indices]) {
-      const entry = navigation.get(evidenceIndex)!;
-      assert(entry); assert(!Object.hasOwn(entry, "quote"));
-      const point = parseEvidenceCoordinates(bank[evidenceIndex - 1])!;
-      assert(point.kind !== "image");
-      assert.deepEqual(entry.read_request, { candidate: "answer", message_index: point.message_index,
-        kind: point.kind, path: point.path, offset: point.start, max_chars: Math.min(16000, point.end - point.start) });
-    }
+    for(const ref of [...boundary.before,...boundary.after])
+      assert.equal(resolveEvidence(source,ref,"answer",emptyAudit(),"/evidence",id).message_index,ref.message_index);
   }
-  assert.deepEqual(presentedMaterialReads({ execution_graph: shown.execution_graph, transition_evidence: shown.transition_evidence }, "answer", id), [],
-    "a navigation reference is not a fabricated read receipt");
+  assert.deepEqual(presentedMaterialReads({execution_overview:shown.execution_overview},"answer",id),[],
+    "node metadata is navigation, never a fabricated read receipt");
+  const before=[...bank];binding.projectModelInput!(binding.modelInput!,bank);assert.deepEqual(bank,before);
 });
 
-test("compact citation navigation does not repeat paragraphs already displayed in the answer", () => {
+test("initial final text occurs once while complete citation links remain canonical", () => {
   const final = '产量变化需要核查。<trace ref="ABC1234"/><trace ref="DEF5678"/>';
   const source: RawInput = { messages: [
     { role: "tool", content: [{ serial_number: "ABC1234", title: "第一期", content: "产量28" },
       { serial_number: "DEF5678", title: "第二期", content: "产量31" }] },
     { role: "assistant", content: final },
   ] };
-  const binding = bindMaterial(source, 8000), bank: string[] = [];
-  const projected = binding.projectModelInput!(binding.modelInput!, bank).answer as any;
-  assert.equal(projected.final_answer, final);
-  for (const reference of projected.citation_inventory.references) for (const occurrence of reference.occurrences) {
-    assert(!Object.hasOwn(occurrence.context, "quote"));
-    assert(!Object.hasOwn(occurrence.context, "quote_preview"));
-    assert(!Object.hasOwn(occurrence.context, "read_request"));
-    assert.equal(occurrence.context.already_shown, true);
-    assert(occurrence.context.reference.evidence_index > 0);
-  }
-  assert(projected.citation_inventory.references.every((item: any) => item.sources.length > 0));
+  const binding=bindMaterial(source,8000),bank:string[]=[];
+  const shown=binding.projectModelInput!(binding.modelInput!,bank).answer as any;
+  assert.equal(shown.final_evidence.map((item:any)=>item.quote).join(""),final);
+  assert(!Object.hasOwn(shown,"final_answer"));assert(!Object.hasOwn(shown,"citation_inventory"));
+  assert((binding.request.input.answer as any).citation_inventory.references.every((item:any)=>item.sources.length>0));
+  assert(binding.presentedReads!.some(read=>read.message_index===1&&read.start===0&&read.end===final.length));
+  assert(!binding.presentedReads!.some(read=>read.message_index===0));
 });
 
-test("Attribution presents each complete answer section beside its sources and keeps rule sections independently addressable", () => {
-  const rule = "# 原则\n普通原则。\n## 署名范围\n报告作者可以列出；转载平台不得署名。\n## 文件交付\n仅在请求下载时交付文件。";
-  const body = "标题: 上期产量\n发布时间: 2024-03-04\n摘要: 2024年2月产量变动为-7%。";
-  const final = "## 数据解释\n\n本期产量增长7%，因此需求改善[^8]。\n\n## 交付\n\n来源：转载平台。";
-  const source: RawInput = { messages: [{ role: "system", content: rule }, { role: "tool", content:
-    `<referencable-result>\nID: 8\n${body}\n</referencable-result>` }, { role: "assistant", content: final }] };
-  const binding = bindMaterial(source, 8000), before = structuredClone(binding.request);
-  const prepared = new AgentRegistry([attributionAgent]).prepare(binding);
-  const prompt = prepared.prompt;
-  const focus = JSON.parse(prompt.slice(prompt.indexOf('{'), prompt.indexOf('\n\n任务材料')));
-  const review = focus.answers.answer.review;
-  const section = review.find((row: any) => row.kind === "answer" && row.quote.includes("需求改善"));
-  assert(section, "the literal conclusion is an addressable investigation item");
-  assert.equal(section.quote, "## 数据解释\n\n本期产量增长7%，因此需求改善[^8]。");
-  assert(review[review.indexOf(section) + 1].quote.includes("变动为-7%"), "original source and inference are adjacent");
-  assert.equal(prompt.split("本期产量增长7%").length - 1, 1, "the full answer is not repeated elsewhere");
-  assert(!focus.rule_sections.some((row: any) => row.title === "## 署名范围"),
-    "a nested rule remains a distinct investigation scope even when a broader block is in the basis directory");
-  const sourceRow = review[review.indexOf(section) + 1];
-  assert.equal(resolveEvidence(source, { evidence_id: prepared.evidenceBank![section.reference.evidence_index - 1] },
-    "answer", emptyAudit(), "/evidence", id).quote, section.quote);
-  assert(sourceRow.reference.evidence_index > 0);
-  assert.deepEqual(binding.request, before, "presentation cannot alter rule bindings, evidence or final judgments");
-  assert(!Object.hasOwn(prepared.evaluation.outputSchema.properties!, "review"), "review is navigation, not a new submission gate");
+test("Attribution exposes one complete final answer and leaves source and rule metadata out of the initial view", () => {
+  const rule="# 原则\n普通原则。\n## 署名范围\n报告作者可以列出；转载平台不得署名。";
+  const body="标题: 上期产量\n发布时间: 2024-03-04\n摘要: 2024年2月产量变动为-7%。";
+  const final="## 数据解释\n\n本期产量增长7%，因此需求改善[^8]。\n\n## 交付\n\n来源：转载平台。";
+  const source:RawInput={messages:[{role:"system",content:rule},{role:"tool",content:
+    `<referencable-result>\nID: 8\n${body}\n</referencable-result>`},{role:"assistant",content:final}]};
+  const binding=bindMaterial(source,8000),before=structuredClone(binding.request);
+  const prepared=new AgentRegistry([attributionAgent]).prepare(binding),bank=prepared.evidenceBank;
+  const shown=binding.projectModelInput!(binding.modelInput!,bank).answer as any;
+  assert.equal(shown.final_evidence.length,1);assert.equal(shown.final_evidence[0].quote,final);
+  assert.equal(prepared.prompt.split("本期产量增长7%").length-1,1);
+  assert(!Object.hasOwn(binding.modelInput!,"task_focus"));assert(!prepared.prompt.includes(body));
+  for(const key of ["initial_material","instruction_sources","citation_inventory","answer_generation","execution_graph"])
+    assert(!Object.hasOwn(shown,key),key);
+  assert.equal(resolveEvidence(source,{evidence_id:bank[shown.final_evidence[0].reference.evidence_index-1]},"answer",emptyAudit(),"/evidence",id).quote,final);
+  const cited=(binding.request.input.answer as any).citation_inventory.references[0].sources[0];
+  assert(resolveEvidence(source,cited,"answer",emptyAudit(),"/evidence",id).quote.includes(body));
+  assert.deepEqual(prepared.evaluation.materialNavigation,binding.materialNavigation);
+  assert.deepEqual(binding.request,before);
+  assert(!Object.hasOwn(prepared.evaluation.outputSchema.properties!,"review"));
 });
 
 test("long instructions do not consume the source-material budget or hide a short tool return", () => {
@@ -247,6 +233,27 @@ test("a cited source inside an oversized return is shown intact with original ev
   assert.equal(resolveEvidence(source, { evidence_id: selected.evidence[0]!.evidence_id }, "answer", emptyAudit(), "/evidence", id).quote, selected.value);
   const bank: string[] = [];
   binding.projectModelInput!(binding.modelInput!, bank);
-  assert(bank.includes(selected.evidence[0]!.evidence_id));
+  assert(!bank.includes(selected.evidence[0]!.evidence_id),"a canonical source remains unread until targeted disclosure");
   assert.deepEqual(source, before);
+});
+
+test("large histories stay out of initial context and expose an eight-node page entry",()=>{
+  const history="历史原文不得进入初始提示词。".repeat(1200);
+  const messages:RawInput["messages"]=[{role:"user",content:"查询当月产量。"}];
+  for(let index=0;index<12;index++)messages.push({type:"llm_turn",name:`分析节点${index+1}`,
+    input_messages:[{role:"user",content:"查询当月产量。"}],output:[{role:"assistant",content:`历史${index+1}：${history}`}]});
+  messages.push({type:"final_answer",role:"assistant",content:"当月产量为25。"});
+  const source:RawInput={messages},before=structuredClone(source),binding=bindMaterial(source,8000);
+  const prepared=new AgentRegistry([attributionAgent]).prepare(binding),shown=binding.projectModelInput!(binding.modelInput!,prepared.evidenceBank).answer as any;
+  const overview=shown.execution_overview,navigation=binding.materialNavigation!.answer as any;
+  assert.equal(overview.total,12);assert.equal(overview.entries.length,8);assert.equal(overview.offset,0);assert.equal(overview.has_more,true);
+  assert.deepEqual(overview.next_request,{candidate:"answer",view:"nodes",offset:8});
+  assert.deepEqual(overview.read_request,{candidate:"answer",view:"nodes",offset:0});
+  assert.deepEqual(overview.entries.map((node:any)=>node.execution_node_index),navigation.nodes.slice(0,8).map((node:any)=>node.execution_node_index));
+  assert.equal(navigation.nodes.length,12);assert.equal(navigation.boundaries.length,(binding.request.input.answer as any).transitions.length);
+  assert(!prepared.prompt.includes(history));assert(!JSON.stringify(binding.modelInput).includes(history));
+  assert(prepared.prompt.length<20000,"initial disclosure is bounded independently of historical body length");
+  assert(prepared.evidenceBank.every(value=>{const point=parseEvidenceCoordinates(value)!;return point.message_index===0||point.message_index===messages.length-1;}));
+  assert(binding.presentedReads!.every(read=>read.message_index===0||read.message_index===messages.length-1));
+  assert.deepEqual(source,before);assert.equal((binding.request.sources.answer.value as RawInput).messages.length,messages.length);
 });

@@ -22,7 +22,7 @@ export { attributionTableChecks, attributionTableReview } from "./table-review.j
 export type { TableReviewConcern } from "./table-review.js";
 // Attribution resolves evidence IDs into source locations before the result is accepted.
 const toolNames = [
-  "read_trace", "search_trace", "view_image", "calculate", "execute_code",
+  "read_execution", "read_trace", "search_trace", "view_image", "calculate", "execute_code",
   "read_artifact",
 ];
 const prompt = agentPrompt("attribution", toolNames, { fileSubmission:false });
@@ -55,7 +55,7 @@ export const attributionProfile: AgentProfile = {
     const tables = answer.table_check_results as { rows: unknown[] }[] | undefined;
     const images = answer.final_images as { image_count: number } | undefined;
     const rules = attributionConditionalRules({ standardAnswer: truth.available, numeric: numeric.length > 0,
-      tableDoubts: tables?.some(table => table.rows.length > 0) ?? false, images: (images?.image_count ?? 0) > 0,
+      tableDoubts: Number(answer.table_check_count ?? 0) > 0 || (tables?.some(table => table.rows.length > 0) ?? false), images: (images?.image_count ?? 0) > 0,
       captureGaps: Array.isArray(answer.capture_gaps) && answer.capture_gaps.length > 0 });
     return (rules ? rules + "\n\n" : "") + prompt.renderPrompt(investigationMaterial({ ...shown,
       numeric_references: numeric.map(item => ({...item,reference_index:item.reference_index+1})),
