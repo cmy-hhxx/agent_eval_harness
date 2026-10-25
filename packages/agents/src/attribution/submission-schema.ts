@@ -6,6 +6,7 @@ import { attributionFindingBasis } from "./finding-basis.js";
 import type { TaskAnalysis } from "@eval/contracts";
 import { componentCatalogIssues, responsibilityIdentities, responsibilityFunctions } from "./responsibility.js";
 import { attributionTaxonomy } from "@eval/prompts";
+import { parseTraceTables, type TableCheckResult } from "@eval/tools";
 
 /** The tool contract and repair feedback share the same request-derived shape. */
 export function attributionSubmissionSchema(request: AgentRequest) {
@@ -28,6 +29,14 @@ export function attributionSubmissionSchema(request: AgentRequest) {
   const indices = attributionFindingBasis(request.input).map(item => item.basis_index);
   for(const field of ["strengths","problems"] as const)
     Object.assign(schema.properties[field].items.properties.basis_index, { enum: [...indices, null] });
+  const checks = (request.input.answer as { table_check_results?: TableCheckResult[] }).table_check_results ?? [];
+  const tables = checks.length ? parseTraceTables(request.sources.answer.value as { messages: unknown[] }, request.sources.answer.id) : [];
+  const choices = checks.filter(check => check.rows.length).map(check => ({
+    properties: { table_index: { const: tables.findIndex(table => table.table_id === check.answer_table_id) + 1 },
+      row_index: { enum: check.rows.map(row => row.row_index) } },
+  }));
+  if (choices.length) Object.assign(schema.properties.table_resolutions.items, { anyOf: choices });
+  else schema.properties.table_resolutions.maxItems = 0;
   const groundTruth = request.input.ground_truth as { available: boolean; value: unknown };
   if (!groundTruth.available) {
     for (const field of ["is_correct", "correctness_reason", "correctness_evidence_indices"] as const)

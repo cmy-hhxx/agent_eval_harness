@@ -1,5 +1,5 @@
-import { instructionSources, parseEvidenceCoordinates, resolveEvidence } from "@eval/tools";
-import { ValidationError, type ToolAudit } from "@eval/contracts";
+import { evidenceSources, instructionSources, parseEvidenceCoordinates, resolveEvidence } from "@eval/tools";
+import { ValidationError, type ToolAudit, type ValidationIssue } from "@eval/contracts";
 import type { RawInput } from "../inputs/types.js";
 
 /** Task-local view: preserve message positions and factual leaf paths while excluding private instructions. */
@@ -33,7 +33,19 @@ export function attributionTrace(raw: RawInput, inputId: string, finalIndex: num
 }
 
 /** Privacy projection cannot turn a changed JSON parent into an original-source quote. */
-export function validateOriginalAttributionEvidence(value: unknown, originals: Record<string, RawInput>, audit: ToolAudit): void {
+export function validateOriginalAttributionEvidence(value: unknown, originals: Record<string, RawInput>, audit: ToolAudit, submission?: unknown): void {
+  const issues = new Map<string, ValidationIssue>();
+  const addressed = (entry: unknown, index: number, path = ""): string[] => {
+    if (Array.isArray(entry)) return entry.flatMap((child, i) => addressed(child, index, `${path}/${i}`));
+    if (!entry || typeof entry !== "object") return [];
+    return Object.entries(entry).flatMap(([key, child]) => {
+      const location = `${path}/${key}`;
+      if (key.endsWith("evidence_indices") && Array.isArray(child))
+        return child.flatMap((number, i) => number === index ? [`${location}/${i}`] : []);
+      if (key === "evidence_index" && child === index) return [location];
+      return addressed(child, index, location);
+    });
+  };
   const visit = (entry: unknown, path: string) => {
     if (!entry || typeof entry !== "object") return;
     if (Array.isArray(entry)) { entry.forEach((child, index) => visit(child, `${path}/${index}`)); return; }
@@ -45,12 +57,33 @@ export function validateOriginalAttributionEvidence(value: unknown, originals: R
       let matches = false;
       try { matches = !!original && resolveEvidence(original, { evidence_id: row.evidence_id }, String(row.source ?? "answer"), audit, path, point.input_id).quote === row.quote; }
       catch { /* Original private text must never enter model-facing repair details. */ }
-      if (!matches)
-        throw new ValidationError([{ category: "evidence", code: "evidence_original_scope", path,
-          message: "证据须与原始数据源完全一致；含内部规范的父级 JSON 已被裁去私密内容，请改选未改写的具体事实叶子。" }]);
+      if (!matches) {
+        const index = (audit.evidenceBank ?? []).indexOf(row.evidence_id) + 1;
+        const paths = index ? addressed(submission, index) : [];
+        const view = original && attributionTrace(original, point.input_id, original.messages.length - 1);
+        const originalLeaves = original ? evidenceSources(original.messages[point.message_index]) : [];
+        const safe = view ? evidenceSources(view.messages[point.message_index]).filter(source => source.kind === "text" &&
+          source.text.length && originalLeaves.some(leaf => leaf.kind === "text" && leaf.path === source.path && leaf.text === source.text)) : [];
+        const available = (audit.evidenceBank ?? []).flatMap((id, i) => {
+          const selected = parseEvidenceCoordinates(id);
+          return selected?.kind === "text" && selected.input_id === point.input_id && selected.message_index === point.message_index &&
+            safe.some(source => source.path === selected.path && selected.end > selected.start && selected.end <= source.text.length) ? [i + 1] : [];
+        });
+        for (const location of paths.length ? paths : [path]) issues.set(location, {
+          category: "evidence", code: "evidence_original_scope", path: location,
+          message: "该编号来自经过私密规范裁剪的材料，与原始数据源原文不一致。改选同一消息未改写的事实叶子，不要重复提交原编号。",
+          ...(index ? { actual: index } : {}), expected: {
+            evidence_indices: available,
+            read_requests: safe.slice(0, 8).map(source => ({ candidate: String(row.source ?? "answer"),
+              message_index: point.message_index, path: source.path, offset: 0, max_chars: Math.min(16000, source.text.length) })),
+            repair_action: "替换本字段的证据编号；已有叶子编号不足时按 read_requests 读取，保持私密规范隔离和原文一致性校验。",
+          },
+        });
+      }
       return;
     }
     for (const [key, child] of Object.entries(row)) visit(child, `${path}/${key}`);
   };
   visit(value, "");
+  if (issues.size) throw new ValidationError([...issues.values()]);
 }

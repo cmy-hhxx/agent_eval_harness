@@ -536,7 +536,7 @@ test("resume skips accepted cases after edits and evaluates only unfinished and 
   }
 });
 
-test("skip-failed resume streams healthy comparisons and rewrites before the attribution backlog drains", async () => {
+test("skip-failed resume streams healthy comparisons and defers rewrites until primary work drains", async () => {
   const rows = ["failed", "first", "last"].map((id) => raw(id, null));
   const { directory, config, modelForStage } = await fixtureConfig([rows, [], rows, []], true);
   config.rewrite.attribution = false;
@@ -571,7 +571,7 @@ test("skip-failed resume streams healthy comparisons and rewrites before the att
     const after = await readRunState(run);
     assert.deepEqual(after.manifest.states[failed.id], saved.manifest.states[failed.id]);
     assert(started.findIndex((task) => task.stage === "comparison") < started.findLastIndex((task) => task.stage === "attribution"));
-    assert(started.findIndex((task) => task.stage === "rewrite") < started.findLastIndex((task) => task.stage === "comparison"));
+    assert(started.findIndex((task) => task.stage === "rewrite") > started.findLastIndex((task) => task.stage === "comparison"));
     assert.equal(after.manifest.tasks.filter((task) => task.stage === "rewrite" && after.receipts[task.id]).length, 2);
   } finally {
     await worker.close();

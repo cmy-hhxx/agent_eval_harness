@@ -142,8 +142,9 @@ export function attributionTableReview(request: AgentRequest, result: Attributio
   const inputId = request.sources.answer.id;
   const finalIndex = (request.input.answer as { final_message_index: number }).final_message_index;
   const plans = attributionTablePlan(raw, inputId, finalIndex);
-  const fullChecks = plans.map(plan => compareTraceTableRows(raw, plan, inputId));
   const material = attributionTableChecks(raw, inputId, finalIndex);
+  const plannedChecks = new Map(plans.map(plan => [plan.answer_table_id, compareTraceTableRows(raw, plan, inputId)]));
+  const fullChecks = material.map(check => plannedChecks.get(check.answer_table_id) ?? check);
   const errors: ValidationIssue[] = [], concerns: TableReviewConcern[] = [];
   const provided = (request.input.answer as { table_check_results?: unknown }).table_check_results;
   if (!Array.isArray(provided) || canonical(provided) !== canonical(material)) {
@@ -156,23 +157,28 @@ export function attributionTableReview(request: AgentRequest, result: Attributio
     ownEvidence(item) && item.message_index === target.message_index && item.quote.includes(target.quote));
   for (const [index, resolution] of (result.table_resolutions ?? []).entries()) {
     const key = `${resolution.table_id}:${resolution.row_index}`;
-    const planIndex = plans.findIndex(plan => plan.answer_table_id === resolution.table_id);
-    const row = fullChecks[planIndex]?.rows.find(row => row.row_index === resolution.row_index);
+    const plan = plans.find(plan => plan.answer_table_id === resolution.table_id);
+    const checked = fullChecks.find(check => check.answer_table_id === resolution.table_id);
+    const row = checked?.rows.find(row => row.row_index === resolution.row_index);
     if (!resolution.reason.trim() || resolutions.has(key) ||
-      !row || rowStatus(row, plans[planIndex]) === "matched") {
+      !row || (plan ? rowStatus(row, plan) : row.status) === "matched") {
       errors.push({ category: "evidence", code: "table_resolution_invalid", path: `/table_resolutions/${index}`,
-        message: "只能提交已有疑点行的核验结论，每行一次，须解释并引用原始证据。" });
+        message: "只能提交已有疑点行的核验结论，每行一次，须解释并引用原始证据。",
+        actual: { row_index: resolution.row_index }, expected: {
+          row_indices: (material.find(check => check.answer_table_id === resolution.table_id)?.rows ?? []).map(row => row.row_index),
+          repair_action: "只选本表列出的疑点行；没有可选行时删除该项，不对已匹配行重复提交核验结论。",
+        } });
       continue;
     }
     resolutions.set(key, resolution);
   }
-  for (const [planIndex, plan] of plans.entries()) {
-    const checked = fullChecks[planIndex];
+  for (const checked of fullChecks) {
+    const plan = plans.find(plan => plan.answer_table_id === checked.answer_table_id);
     for (const row of checked.rows) {
-      const status = rowStatus(row, plan);
+      const status = plan ? rowStatus(row, plan) : row.status;
       if (status === "matched") continue;
       const location = `消息${row.answer.evidence.message_index}表格第${row.row_index + 1}行`;
-      const resolution = resolutions.get(`${plan.answer_table_id}:${row.row_index}`);
+      const resolution = resolutions.get(`${checked.answer_table_id}:${row.row_index}`);
       let resolved = false;
       if (resolution) {
         // Keep every compared row; do not decide aliases or source meaning with a text pattern.
@@ -188,14 +194,16 @@ export function attributionTableReview(request: AgentRequest, result: Attributio
         });
         const completeEvidence = hasEvidence(resolution.evidence, row.answer.evidence) &&
           row.sources.every(source => hasEvidence(resolution.evidence, source.evidence));
-        const supportedProblem = result.findings.some(finding => finding.type === "problem" &&
+        const supportedProblem = !!plan && result.findings.some(finding => finding.type === "problem" &&
           finding.assessment.evidence_status === "established" && supports(finding.evidence, row, plan, raw, inputId));
         resolved = completeEvidence && !!resolution.reason.trim() &&
           (resolution.outcome === "supported" ? originalSupport : supportedProblem);
         if (!resolved) errors.push({ category: "evidence", code: "table_resolution_unsupported", path: "/table_resolutions",
-          message: `${location}的独立结论缺少最终行、全部已知反证或对应原始来源；不能仅以解释文字解除疑点。` });
+          message: `${location}的独立结论缺少最终行、全部已知反证或对应原始来源；不能仅以解释文字解除疑点。`,
+          expected: { row_index: row.row_index, repair_action: "引用完整最终行及全部既有来源行，并引用独立原始返回；执行代码的 stdout 不能自证。没有独立证明时删除该 resolution，保留尚未核实的判断。" } });
         if (resolved && resolution.outcome === "supported") continue;
       }
+      if (!plan) continue;
       if (status === "unverified") {
         // A textual placeholder does not assert an identifier. Whether an unknown
         // value satisfies the task remains a criterion judgment, not a source mismatch.

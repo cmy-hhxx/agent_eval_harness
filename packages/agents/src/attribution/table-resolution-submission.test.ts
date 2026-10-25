@@ -67,6 +67,21 @@ test("public Attribution submission accepts complete long final and source rows 
   assert.equal(f.audit.calls, 0, "program-owned table evidence requires no repair tool call");
 });
 
+test("a displayed unverified row can be resolved from an independent non-table return", () => {
+  const f = fixture();
+  f.raw.messages[1].content = "原始查询返回：基金代码588000.SH，基金名称华夏上证科创板50成份ETF。";
+  const checks = attributionTableChecks(f.raw, f.request.sources.answer.id, 2);
+  Object.assign(f.request.input.answer as object, { table_check_results: checks });
+  const row = checks[0].rows[0];
+  const resolution = f.draft.table_resolutions![0];
+  resolution.table_index = 1;
+  resolution.evidence_indices = [f.choose(row.answer.evidence), f.choose(f.excerpt(1, 0, f.raw.messages[1].content.length))];
+  const result = f.resolve();
+  assert.deepEqual(attributionTableReview(f.request, result).errors, []);
+  resolution.evidence_indices = [resolution.evidence_indices[0], resolution.evidence_indices[0]];
+  rejects(f.resolve, "table_resolution_unsupported");
+});
+
 test("public Attribution submission accepts all required source rows even when their group exceeds 2400 characters", () => {
   const f = fixture(4, 650), evidence = [f.row.answer.evidence, ...f.row.sources.map(source => source.evidence)];
   assert(evidence.every(item => item.quote.length <= 800));
