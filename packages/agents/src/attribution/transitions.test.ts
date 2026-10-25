@@ -125,3 +125,32 @@ test("captured process fields are generation evidence while input reasoning stay
     assert(generation.before.some(item => item.quote?.includes("Input:")));
   }
 });
+
+test("shared assistant transfer is one physical boundary across chains while distinct outputs remain distinct", () => {
+  for (const shared of [true, false]) {
+    const outputs = shared ? [{ role: "assistant", content: "Alpha and Beta summary" }]
+      : [{ role: "assistant", content: "Alpha summary" }, { role: "assistant", content: "Beta summary" }];
+    const raw = { messages: [{ role: "user", content: "Compare" },
+      { type: "tool_call", name: "lookup", call_id: "a", input: { query: "Alpha" } },
+      { type: "tool_result", name: "lookup", call_id: "a", output: "Alpha return" },
+      { type: "tool_call", name: "lookup", call_id: "b", input: { query: "Beta" } },
+      { type: "tool_result", name: "lookup", call_id: "b", output: "Beta return" },
+      { type: "llm_turn", input_messages: [{ role: "tool", content: "Alpha return" }, { role: "tool", content: "Beta return" }], output: outputs },
+      { type: "llm_turn", input_messages: outputs, output: [{ role: "assistant", content: "Compared" }] },
+      { type: "final_answer", content: "Compared" }] };
+    const chains = [chain(raw, 1, 1, 2, [[5, "/input_messages/0/content"], [6, "/input_messages/0/content"]]),
+      chain(raw, 2, 3, 4, [[5, "/input_messages/1/content"], [6, `/input_messages/${shared ? 0 : 1}/content`]])];
+    const { transitions } = build(raw, chains);
+    const transferred = transitions.filter(event => event.kind === "transfer" && event.after.some(item => item.message_index === 6));
+    assert.equal(transferred.length, shared ? 1 : 2);
+    assert.deepEqual(transferred.map(event => event.chain_index).sort(), shared ? [null] : [1, 2]);
+    assert.deepEqual(new Set(transferred.flatMap(event => event.before.map(item => item.evidence_id))),
+      new Set(outputs.map((_, index) => proof(raw, 5, `/output/${index}/content`).evidence_id)));
+    assert.deepEqual(new Set(transferred.flatMap(event => event.after.map(item => item.evidence_id))),
+      new Set(outputs.map((_, index) => proof(raw, 6, `/input_messages/${index}/content`).evidence_id)));
+    const generation = transitions.find(event => event.kind === "generation" && event.after.some(item => item.message_index === 5))!;
+    assert(transferred.every(event => event.predecessors.includes(generation.transition_index)));
+    assert.equal(transitions.filter(event => event.kind === "execution").length, 2);
+    assert.equal(transitions.filter(event => event.kind === "transfer" && event.after.some(item => item.message_index === 5)).length, 2);
+  }
+});

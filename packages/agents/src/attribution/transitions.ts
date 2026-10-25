@@ -93,15 +93,22 @@ export function buildAttributionTransitions({ raw, inputId, finalIndex, actors, 
       before: model.input, after: model.prose, previous: [], relation: "captured" });
   }
   const outputEvents = [...pending];
-  const covers = (container: TransitionBoundary, item: TransitionBoundary) => container.message_index === item.message_index &&
-    evidenceCovers(raw, inputId, container.evidence_id, item.evidence_id, sources(container.message_index), selectionCache);
+  const coverageCache = new Map<string, Map<string, boolean>>();
+  const covers = (container: TransitionBoundary, item: TransitionBoundary) => {
+    if (container.message_index !== item.message_index) return false;
+    let covered = coverageCache.get(container.evidence_id);
+    if (!covered) { covered = new Map(); coverageCache.set(container.evidence_id, covered); }
+    if (!covered.has(item.evidence_id)) covered.set(item.evidence_id,
+      evidenceCovers(raw, inputId, container.evidence_id, item.evidence_id, sources(container.message_index), selectionCache));
+    return covered.get(item.evidence_id)!;
+  };
+  const transfers = new Map<string, Pending>();
   for (const chain of chains) {
-    const transfers = new Map<string, Pending>();
     for (const evidence of chain.checkpoints[5].evidence) {
       const model = models.find(model => model.index === evidence.message_index);
       if (!model) continue;
       const entry = model.entries.find(entry => entry.evidence.some(whole => covers(whole, evidence)));
-      let before = chain.checkpoints[3].evidence, previous = [`execution:${chain.chain_index}`], source = "return";
+      let before = chain.checkpoints[3].evidence, previous = [`execution:${chain.chain_index}`], source = `return:${chain.request_index}`;
       if (entry?.value.role === "assistant") {
         const matches = models.filter(other => other.index < model.index).flatMap(other => other.output.flatMap((output, i) =>
           assistantKey(output) === assistantKey(entry.value) ? [{ model: other, output: i }] : []));
@@ -110,16 +117,21 @@ export function buildAttributionTransitions({ raw, inputId, finalIndex, actors, 
         before = [...at(match.model.index, `/output/${match.output}/content`), ...at(match.model.index, `/output/${match.output}/tool_calls`)];
         previous = outputEvents.filter(event => event.target === match.model.index && event.after.some(after => before.some(item =>
           covers(item, after) || covers(after, item)))).map(event => event.key);
-        source = `model:${match.model.index}`;
+        source = `model:${match.model.index}:${match.output}`;
       }
-      const key = `transfer:${chain.chain_index}:${model.index}:${source}`;
+      const key = `transfer:${model.index}:${source}`;
       const existing = transfers.get(key);
-      if (existing) existing.after.push(evidence);
+      if (existing) {
+        existing.before = unique([...existing.before, ...before]);
+        existing.after.push(evidence);
+        existing.previous = [...new Set([...existing.previous, ...previous])];
+        if (existing.chain_index !== chain.chain_index) existing.chain_index = null;
+      }
       else transfers.set(key, { key, target: model.index, order: 0, kind: "transfer", actor_index: null,
         chain_index: chain.chain_index, before, after: [evidence], previous, relation: "unresolved" });
     }
-    for (const event of transfers.values()) add(event);
   }
+  for (const event of transfers.values()) add(event);
   for (const event of pending) {
     if (event.kind !== "request_formation" && event.kind !== "generation") continue;
     event.previous = pending.filter(other => other.kind === "transfer" && other.target === event.target).map(other => other.key);
