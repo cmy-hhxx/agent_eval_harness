@@ -70,7 +70,12 @@ function profile(id:string,promptName:string,submissionSchema:AgentProfile['subm
       return prompt.renderPrompt({...input,score_directory:directory},policy,failure);
     },resolve,validate};
 }
-const evidenceProfile=profile('evidence','evidence',evidenceSchema,['score_material','score_calculate','score_external','read_artifact'],(request,draft,audit)=>{
+/** The disjoint marker selects validation errors; model-facing alternatives remain explicit. */
+function submissionBranch(schema:AgentProfile['submissionSchema'],marker:string):AgentProfile['submissionSchema']{
+  const {oneOf,...base}=schema as {oneOf:unknown[]};
+  return {...base,if:{required:[marker]},then:oneOf[1],else:oneOf[0]} as AgentProfile['submissionSchema'];
+}
+const evidenceProfile=profile('evidence','evidence',submissionBranch(evidenceSchema,'assessment_status'),['score_material','score_calculate','score_external','read_artifact'],(request,draft,audit)=>{
   const proof=scoreAudit(request,audit),value=draft as Omit<ScoreEvidence,'changed_item_ids'>|Omit<ScoreException,'case_id'>;
   if('assessment_status' in value){const result={...value,case_id:material(request).case_id};validateScore(request,result,audit);return result;}
   const previous=(request.sources.score.value as unknown as ScoreContext).previous_evidence;
@@ -113,12 +118,13 @@ function withException(schema:AgentProfile['submissionSchema'],exception:unknown
   const {$defs,...normal}=schema as { $defs?:Record<string,unknown> };
   return {$defs:{...$defs,exception},oneOf:[normal,{$ref:'#/$defs/exception'}]} as AgentProfile['submissionSchema'];
 }
-const dimensionsProfile=profile('dimensions','dimensions',withException(axisSchema,evidenceSchema.$defs.exception),judgmentTools,(request,draft,audit)=>{
+const dimensionsProfile=profile('dimensions','dimensions',submissionBranch(withException(axisSchema,evidenceSchema.$defs.exception),'assessment_status'),judgmentTools,(request,draft,audit)=>{
   const value='assessment_status' in (draft as object)?{...draft as ScoreException,case_id:material(request).case_id}:resolveJudgments(request,draft,audit);
   validateDimensions(request,value,audit);return value;
 },(request,value,audit)=>validateDimensions(request,value as ScoreAxisResult|ScoreException,audit));
 dimensionsProfile.resultSchema=withException(axisResultSchema,evidenceResultSchema.$defs.exception);
 evidenceProfile.resultSchema=evidenceResultSchema;
+evidenceProfile.modelSubmissionSchema=()=>evidenceSchema;
 function scopedJudgments(axes:ScoreAxis[]){
     const schema=structuredClone(axisSchema),units=axes.flatMap(axis=>[axis+'1',axis+'2']),diagnostics=Object.keys(scoreDirectory.diagnostics).filter(id=>axes.includes(id[0] as ScoreAxis));
     Object.assign(schema.properties.evaluations,{minItems:units.length,maxItems:units.length});Object.assign(schema.properties.diagnostics,{minItems:diagnostics.length,maxItems:diagnostics.length});
@@ -131,7 +137,7 @@ dimensionsProfile.modelSubmissionSchema=request=>withException(scopedJudgments(d
 for(const axis of scoreAxes){const p=axisProfiles['axis-'+axis.toLowerCase()];p.resultSchema=axisResultSchema;
   p.modelSubmissionSchema=()=>scopedJudgments([axis]);
 }
-export const scoreProfile=profile('default','default',finalSchema,['score_material','read_artifact'],(request,draft,audit)=>{
+export const scoreProfile=profile('default','default',submissionBranch(finalSchema,'action'),['score_material','read_artifact'],(request,draft,audit)=>{
   const context=request.sources.score.value as unknown as ScoreContext,value=draft as ScoreRepair|{final_answer_score:ScoreResult['final_answer_score'];finding_groups:string[][];explicit_probability:number|null;probability_evidence_ids:string[]};
   if('action' in value){
     if(!value.axis_ids.length&&!value.verification_requests.length)fail('/axis_ids','修正请求必须定位具体轴或证据缺口。');
