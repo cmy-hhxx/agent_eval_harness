@@ -10,6 +10,7 @@ export function findingIssueContext(request: AgentRequest, _value: unknown, issu
     let parent=schema;
     for(const part of parts)parent=/^\d+$/u.test(part)?parent?.items:parent?.properties?.[part];
     if(parent?.properties)return {target:{path},object_path:'/'+parts.join('/'),remove_field:field,
+      ...(path==='/candidate'?{repair_action:'删除 /candidate，保留其余判断字段和证据编号，重新提交完整判断；无需重新调查或重写其他归因。'}:{}),
       allowed_fields:Object.keys(parent.properties),required_fields:parent.required??[],additionalProperties:false};
   }
   let current = schema;

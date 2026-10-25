@@ -44,6 +44,7 @@ test("an extra candidate wrapper receives the allowed and required submission fi
   const issue=error.issues!.find(item=>item.code==='schema_additionalProperties'&&item.path==='/candidate')!;
   const expected=issue.expected as any;
   assert.equal(expected.remove_field,'candidate');
+  assert.equal(expected.repair_action,'删除 /candidate，保留其余判断字段和证据编号，重新提交完整判断；无需重新调查或重写其他归因。');
   assert(expected.allowed_fields.includes('investigation_facts'));
   assert(!expected.allowed_fields.includes('candidate'));
   assert(expected.required_fields.includes('summary'));

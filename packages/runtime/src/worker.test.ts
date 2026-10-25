@@ -109,6 +109,30 @@ test("saved flat findings survive later drafting and repair without extra call a
   } finally { await fixture.close(); }
 });
 
+test("registered Attribution submission rejects candidate and repairs only that field",async()=>{
+  const fixture=await harness(async options=>({async run(){
+    const submit=options.tools.find(tool=>tool.name==='submit_evaluation')!;
+    const read=options.tools.find(tool=>tool.name==='read_trace')!;
+    const schema=submit.inputSchema as {additionalProperties:boolean;properties:Record<string,unknown>};
+    assert.equal(schema.additionalProperties,false);assert(!Object.hasOwn(schema.properties,'candidate'));
+    assert(Object.hasOwn((read.inputSchema as {properties:Record<string,unknown>}).properties,'candidate'));
+    assert(submit.description.includes('/candidate'));
+    const draft={...draftFor(options.spec,taskResult(options.spec)) as object,candidate:'answer'},before=structuredClone(draft);
+    const rejected=await options.execute('submit_evaluation',draft);
+    assert.equal(rejected.isError,true);
+    const response=JSON.parse(rejected.content[0].text!);
+    const issue=response.errors.find((e:ValidationIssue)=>e.code==='schema_additionalProperties'&&e.path==='/candidate');
+    assert(issue);assert.match(issue.expected.repair_action,/删除 \/candidate，保留其余判断/);
+    assert.deepEqual(draft,before,'rejection must not silently strip candidate');
+    Reflect.deleteProperty(draft,'candidate');
+    assert.equal((await options.execute('submit_evaluation',draft)).terminate,true);
+  },async abort(){},async dispose(){}}));
+  try{await fixture.start();assert.equal((await fixture.done()).state,'succeeded');
+    const receipt=await fixture.store.receipt(fixture.spec.taskId);
+    assert.equal(receipt!.submissionStats!.contentSubmissions,2);assert(!Object.hasOwn(receipt!.submitted as object,'candidate'));
+  }finally{await fixture.close();}
+});
+
 test("JSON text submission preserves nested rows, empty arrays and markup without a model-written file", async()=>{
   const original={summary:'中文 "引号" </summary>',problems:[{text:"记录保留原样",component:[]}],values:[false,null,0]};
   const fixture=await harness(async options=>({async run(){
