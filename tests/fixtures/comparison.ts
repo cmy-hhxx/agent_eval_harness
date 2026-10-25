@@ -383,6 +383,7 @@ export async function inspectFor(options: Parameters<AgentBackend["createSession
 export function draftFor(spec: Pick<AttemptSpec, "inputs" | "prompt" | "evidenceBank">, value: unknown, revealed?: unknown): unknown {
   const result = structuredClone(value) as Record<string, unknown>;
   if (!result || typeof result !== "object") return result;
+  if(spec.prompt.startsWith('{')&&JSON.parse(spec.prompt).initial_result)return result;
   const material = materialOf(spec, revealed);
   const verification = verificationMaterial(spec, revealed);
   if (verification) {
