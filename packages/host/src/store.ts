@@ -1,4 +1,4 @@
-import { ValidationError, HttpError, canonical, safeId, evidenceSources, requiredReadCallLimit, mergeRequiredReadRanges, toolBudgetMetadataChars, validateEvidenceBank, validateEvidenceBankSources, type EvidenceBankUpdate, type EvidenceBank } from "@eval/contracts";
+import { ValidationError, HttpError, canonical, safeId, evidenceSources, requiredReadCallLimit, mergeRequiredReadRanges, extendRequiredReadRanges, toolBudgetMetadataChars, validationRequiredReads, validateEvidenceBank, validateEvidenceBankSources, type EvidenceBankUpdate, type EvidenceBank } from "@eval/contracts";
 import { internalPath, writeJson } from "@eval/data";
 import type {
   AttemptSpec,
@@ -46,15 +46,15 @@ function availableRequiredReadCalls(reads: TraceRead[], required: { target: Trac
 }
 
 function requiredReadRanges(spec: AttemptSpec, inputs: Record<string, unknown>) {
-  return mergeRequiredReadRanges((spec.evaluation.requiredReads ?? []).map(target => {
+  return (spec.evaluation.requiredReads ?? []).flatMap(target => {
     const id = spec.inputs.find(input => input.name === target.candidate)?.id;
     const raw = id === undefined ? undefined : inputs[id] as { messages?: unknown[] } | undefined;
     const message = raw?.messages?.[target.message_index];
     const text = message === undefined ? undefined : evidenceSources(message).find(source => source.kind === target.kind && source.path === target.path)?.text;
     if (typeof text !== "string") throw new Error("Required trace source is unavailable");
     if (!id) throw new Error("Required trace input identity is unavailable");
-    return { target, inputId: id, text };
-  }));
+    return mergeRequiredReadRanges([{ target, inputId: id, text }]);
+  });
 }
 
 function recordWithKeys(value: unknown, keys: string[]): value is Record<string, unknown> {
@@ -222,6 +222,10 @@ export class RunStore {
       return [input.id, source.value] as const;
     }));
     this.validateBank(spec, spec.evidenceBank, state.failure?.evidenceBank ?? [], sources);
+    spec.evaluation = { ...spec.evaluation, requiredReads: [
+      ...spec.evaluation.requiredReads ?? [], ...validationRequiredReads(spec.recovery?.errors ?? []),
+    ] };
+    spec.evaluation.requiredReads = mergeRequiredReadRanges(requiredReadRanges(spec, this.inputs)).map(range => range.target);
     if (executionStopReason(this.manifest)) return false;
     if (state.attemptId) { this.attempts.delete(state.attemptId); this.evidenceSources.delete(state.attemptId); }
     state.startedAt = state.lastProgressAt = Date.now();
@@ -351,7 +355,7 @@ export class RunStore {
       !Number.isSafeInteger(audit.requiredReadCalls) || audit.requiredReadCalls < 0 ||
       audit.requiredReadCalls > audit.calls ||
       audit.requiredReadCalls > availableRequiredReadCalls(audit.traceReads, required) ||
-      audit.requiredReadCalls > requiredReadCallLimit(required, spec.policy.maxOutputChars, toolBudgetMetadataChars(spec.evaluation.toolNames)) ||
+      audit.requiredReadCalls > required.reduce((sum, range) => sum + requiredReadCallLimit([range], spec.policy.maxOutputChars, toolBudgetMetadataChars(spec.evaluation.toolNames)), 0) ||
       audit.calls - audit.requiredReadCalls > spec.policy.maxToolCalls + 3 * spec.policy.repairAttempts +
         Number(spec.evaluation.fileSubmission || Boolean(spec.evaluation.inspectionSchema)) * (1 + spec.policy.repairAttempts) ||
       !Array.isArray(audit.viewedImages) ||
@@ -414,6 +418,14 @@ export class RunStore {
       evaluation = this.services.agents.resolve(binding, value.evaluation, value.audit);
       this.services.agents.validate(binding, evaluation, value.audit);
     } catch (error) {
+      if (error instanceof ValidationError) {
+        const reads = validationRequiredReads(error.issues ?? []);
+        if (reads.length) {
+          const updated = { ...spec, evaluation: { ...spec.evaluation, requiredReads: reads } };
+          const ranges = extendRequiredReadRanges(requiredReadRanges(spec, this.inputs), requiredReadRanges(updated, this.inputs));
+          spec.evaluation = { ...spec.evaluation, requiredReads: ranges.map(range => range.target) };
+        }
+      }
       if (error instanceof HttpError) throw error;
       throw new HttpError(422, error instanceof Error ? error.message : String(error));
     }

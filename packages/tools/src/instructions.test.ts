@@ -111,6 +111,29 @@ test("a collected answer still links its actual context when visual resource tag
   assert.deepEqual(instructionSources(raw, INPUT_ID).map(source => source.message_index), [1]);
 });
 
+test("a rendered vis-html image retains the exact generation and its actual input history", () => {
+  const call={role:'assistant',content:null,tool_calls:[{id:'chart',type:'function',function:{name:'shell',arguments:'{"command":"render"}'}}]};
+  const raw={messages:[
+    {type:'llm_turn',input_messages:[],output:[call]},
+    {type:'llm_turn',input_messages:{messages:[call,{role:'tool',content:'{"type":"vis-html","id":"html-chart"}'}]},
+      output:[{role:'assistant',content:'估值比较\n<vis-html ref="html-chart" />\n风险说明'}]},
+    {type:'final_answer',content:[{type:'output_text',text:'估值比较\n'},{type:'output_image',image_url:'data:image/png;base64,AA=='},{type:'output_text',text:'\n风险说明'}]},
+  ]};
+  const before=structuredClone(raw);
+  assert.deepEqual(answerTurnContexts(raw,2),[{message_index:0,path:'/input_messages'},{message_index:1,path:'/input_messages/messages'}]);
+  assert.deepEqual(raw,before);
+  raw.messages[1].output![0].content='估值比较\n<vis-html ref="html-chart" />\n另一个风险';
+  assert.deepEqual(answerTurnContexts(raw,2),[]);
+});
+
+test("vis-html rendering does not guess among multiple matching generations or remove arbitrary tags",()=>{
+  const turn=(content:string)=>({type:'llm_turn',input_messages:[],output:[{role:'assistant',content}]});
+  const final={type:'final_answer',content:[{type:'output_text',text:'比较 完成'},{type:'output_image',image_url:'data:image/png;base64,AA=='}]};
+  assert.deepEqual(answerTurnContexts({messages:[turn('比较 <vis-html ref="html-a" /> 完成'),turn('比较 <vis-html ref="html-b" /> 完成'),final]},2),[]);
+  assert.deepEqual(answerTurnContexts({messages:[turn('比较 <other ref="html-a" /> 完成'),final]},1),[]);
+  assert.deepEqual(answerTurnContexts({messages:[turn('比较 <vis-html ref="html-a" /> 完成'),{type:'final_answer',content:'比较 完成'}]},1),[]);
+});
+
 const skill = '<skill_content name="stock-analysis">\n# 用户适配\n持仓未知时分别说明未持有与已持有；只查询数据时无需行动建议。\n</skill_content>';
 const skillCall = () => ({ type: "tool_call", name: "view_skill", input: { name: "stock-analysis" } });
 const skillResult = () => ({ type: "tool_result", name: "view_skill", output: skill });

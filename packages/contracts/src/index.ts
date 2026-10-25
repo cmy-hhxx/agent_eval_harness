@@ -4,7 +4,7 @@ export { presentSource, type SourcePresentation } from "./source-presentation.js
 export type Engine = "pi" | "prime";
 export { evidenceId, evidenceSources, messageContentSources, evidenceImageAvailable, imagePlaceholder, overlapsImagePlaceholder, parseEvidenceCoordinates, type EvidenceCoordinates } from "./evidence.js";
 export * from "./evidence-selection.js";
-export { mergeRequiredReadRanges, requiredReadCallLimit, toolBudgetMetadataChars } from "./required-reading.js";
+export { mergeRequiredReadRanges, extendRequiredReadRanges, requiredReadCallLimit, toolBudgetMetadataChars, validationRequiredReads } from "./required-reading.js";
 export * from "./automations.js";
 export type * from "./criteria.js";
 export type * from "./publication.js";

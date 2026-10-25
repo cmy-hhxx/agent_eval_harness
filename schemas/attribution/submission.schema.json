@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "description": "只提交本对象 properties 定义的判断字段，required 字段必须全部填写；candidate 是读取工具参数，禁止作为提交字段，也不附加 case_id、findings 等导出包装。",
+  "description": "只提交本对象 properties 定义的判断字段，required 字段必须全部填写；candidate 是读取工具参数，禁止作为提交字段，也不附加 case_id、findings 等导出包装。 所有点评字段使用简体中文，专有名词和证据原文保留原语言。",
   "type": "object",
   "additionalProperties": false,
   "properties": {
@@ -280,7 +280,8 @@
           "evidence_indices",
           "basis_index"
         ]
-      }
+      },
+      "description": "优点仅提交本项 Schema 允许的字段，不允许 impact；impact 仅属于 problems。"
     },
     "problems": {
       "type": "array",
@@ -372,7 +373,10 @@
               ],
               "properties": {
                 "actor_index": {
-                  "type": "integer",
+                  "type": [
+                    "integer",
+                    "null"
+                  ],
                   "minimum": 1
                 },
                 "function_index": {
@@ -397,7 +401,8 @@
                 },
                 "failure_stage_index": {
                   "type": "integer",
-                  "minimum": 1
+                  "minimum": 1,
+                  "description": "必填；选择 responsibility_stages 的1起始编号，与 investigation_steps 的 step_index 分别填写。"
                 },
                 "field_names": {
                   "description": "可省略，程序组装为空数组；填写时须来自所引原文或坐标，不新增判断。",

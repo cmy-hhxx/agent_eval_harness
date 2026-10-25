@@ -533,7 +533,10 @@
                         ]
                       },
                       "actor_index": {
-                        "type": "integer",
+                        "type": [
+                          "integer",
+                          "null"
+                        ],
                         "minimum": 1
                       }
                     }

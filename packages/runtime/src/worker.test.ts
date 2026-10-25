@@ -1698,17 +1698,24 @@ test("a repeated dynamic read gap after actual coverage stops without spending a
   }finally{await fixture.close();}
 });
 
-test("dynamic investigation reads cannot exceed the existing read budget",async()=>{
+test("dynamic investigation reads retain protected pages after exploration is exhausted",async()=>{
   const targets:TraceRead[]=[{candidate:'answer',message_index:0,kind:'text',path:'/content',start:0,end:3},
     {candidate:'answer',message_index:1,kind:'text',path:'/content',start:0,end:5}];
-  const fixture=await harness(async options=>({async run(){await submitFor(options,{ok:true});},async abort(){},async dispose(){}}),
+  const fixture=await harness(async options=>({async run(){
+    assert.equal((await options.execute('calculate',{operation:'add',operands:['1','1']})).isError,undefined);
+    for(let i=0;i<3;i++){const response=await submitFor(options,{ok:true});if(response.terminate)return;
+      assert.equal(response.isError,undefined,JSON.stringify(response));}
+    assert.fail('dynamic reads must converge within the two source pages');
+  },async abort(){},async dispose(){}}),
     {material:'abc',policy:{repairAttempts:0,maxToolCalls:1},profile:{requiredReads:()=>[],validateSubmission(_request,_value,audit){
       const missing=targets.filter(target=>!traceReadCoverage(audit,target).covered);
       return missing.length?[{category:'evidence',code:'investigation_read_required',path:'/proof',message:'补读。',expected:{read_requests:missing}}]:[];
     }}});
-  try{await fixture.start();const status=await fixture.done();assert.notEqual(status.state,'succeeded');
-    assert.equal(status.failure?.contentSubmissions,0);assert.match(status.error??'',/budget|预算/u);
-    assert.equal(await fixture.store.receipt(fixture.spec.taskId),undefined);
+  try{await fixture.start();const status=await fixture.done();assert.equal(status.state,'succeeded',status.error);
+    const receipt=(await fixture.store.receipt(fixture.spec.taskId))!;
+    assert.equal(receipt.submissionStats!.contentSubmissions,1);
+    assert.equal(receipt.audit.requiredReadCalls,2);assert.equal(receipt.audit.calls,3);
+    assert(targets.every(target=>traceReadCoverage(receipt.audit,target).covered));
   }finally{await fixture.close();}
 });
 test("a verdict with other errors still spends its repair while dynamic pages do not",async()=>{

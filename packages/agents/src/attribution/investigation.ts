@@ -54,7 +54,7 @@ function explicitModelProcess(request: AgentRequest, actor: { message_indices: n
   const raw = request.sources.answer.value as { messages: unknown[] };
   return proof.some(item => !item.source && (isGeneratedCallEvidence(raw,actor,item.evidence_id)||actor.message_indices.includes(item.message_index) &&
     evidenceSources(raw.messages[item.message_index]).some(source => source.kind === "text" && source.text.length > 0 &&
-      !source.path.startsWith("/input_messages/") && /\/(?:reasoning_content|reasoning|thinking|calculation(?:s|_steps)?)(?:\/|$)/u.test(source.path) &&
+      !source.path.startsWith("/input_messages/") && /\/(?:reasoning_content|reasoning|analysis|thinking|calculation(?:s|_steps)?)(?:\/|$)/u.test(source.path) &&
       overlaps(item, cite(request.sources.answer.id, item.message_index, source, 0, source.text.length), raw))));
 }
 
@@ -98,7 +98,7 @@ export function investigationIssues(request: AgentRequest, problem: ProblemPropo
     const chain=chains.find(chain=>chain.chain_index===entry.chain_index);
     if(!chain){add("responsibility_chain",path+"/investigation","调查事实须关联实际调用。");continue;}
     const seen=new Set<string>();
-    const nodes=new Set(problem.component.flatMap(cause=>actors[cause.actor_index-1]?.message_indices??[]));
+    const nodes=new Set(problem.component.flatMap(cause=>actors[Number(cause.actor_index)-1]?.message_indices??[]));
     const finalContext=chain.context_indices.at(-1);
     const allInputs=chain.checkpoints.find(point=>point.step==="模型实际输入")!.evidence;
     const inputs=allInputs.filter(item=>item.message_index===finalContext||nodes.has(item.message_index));
@@ -146,32 +146,39 @@ export function investigationIssues(request: AgentRequest, problem: ProblemPropo
     if (cause.chain_index !== null && !chain) add("responsibility_chain", location, "责任须关联实际登记的业务调用链路。特定调用不能填写空关联。");
     if (related.length && !chain) add("responsibility_chain", location, "本问题已有相关业务链路，责任不能只落在通用最终节点；选择故障形成、传播或恢复所在的调用和业务步骤。",
       { chain_index_choices: related.map(chain => chain.chain_index) });
-    if (isComponentLocator(cause.business_component) || [(request.input.answer as {component_catalog:{component:string}[]}).component_catalog[cause.actor_index-1]?.component, ...Object.keys(attributionTaxonomy.domains),
+    if (isComponentLocator(cause.business_component) || [(request.input.answer as {component_catalog:{component:string}[]}).component_catalog[Number(cause.actor_index)-1]?.component, ...Object.keys(attributionTaxonomy.domains),
       ...Object.values(attributionTaxonomy.domains).flat(), ...attributionTaxonomy.stages, ...attributionTaxonomy.investigation_steps,
       "模型推理错误", "最终作答节点", "回答模型"].includes(cause.business_component))
       add("responsibility_business_location", location, "business_component 须说明具体业务处理位置，不能复述主体名称或技术分类。");
     const proof = selected.filter(item => cause.evidence_ids.includes(item.evidence_id));
-    if(cause.certainty==='confirmed'&&actors[cause.actor_index-1]&&proof.some(item=>!item.source&&traceComponentOwnsEvidence(raw,actors[cause.actor_index-1],item.evidence_id)))
+    if(cause.certainty==='confirmed'&&actors[Number(cause.actor_index)-1]&&proof.some(item=>!item.source&&traceComponentOwnsEvidence(raw,actors[Number(cause.actor_index)-1],item.evidence_id)))
       for(const item of proof.filter(item=>!item.source)) {const read=target(item);if(read&&!readCovered(audit,read,raw))
         add('investigation_read_required',location,'确证责任所引用的材料尚未完整展示；补读本段，或撤回依赖该材料的确证。',read);}
     if (chain) {
       const actor = (request.input.answer as { component_catalog: { kind: string; component: string; message_indices: number[] }[] })
-        .component_catalog[cause.actor_index - 1];
+        .component_catalog[Number(cause.actor_index) - 1];
       const nodes = cause.chain_step === "查询规划与标的选择" ? [chain.planner_index]
         : cause.chain_step === "工具请求参数" ? [chain.planner_index, chain.request_index]
         : cause.chain_step === "原始返回及字段含义" ? chain.return_indices
         : cause.chain_step === "核验与最终交付" ? [...chain.context_indices, (request.input.answer as {final_message_index:number}).final_message_index]
         : [...chain.context_indices, chain.planner_index];
-      if (!actor?.message_indices.some(index => nodes.includes(index)))
+      if (cause.actor_index !== null && !actor?.message_indices.some(index => nodes.includes(index)))
         add("responsibility_chain_actor", location + "/actor_index", "执行主体与所选业务环节没有实际节点关联；核对真实节点后选择，不按其他目录的顺序猜编号。", {
           chain_index: chain.chain_index, step: cause.chain_step, actor_index_choices:
             (request.input.answer as { component_catalog: { component: string; message_indices: number[] }[] }).component_catalog
               .flatMap((item, i) => item.message_indices.some(index => nodes.includes(index))
                 ? [{ actor_index: i + 1, component: item.component, message_indices: item.message_indices }] : []),
         });
-      if (actor?.kind === "model" && cause.chain_step === "数据解释与计算" && cause.mechanism_source === "explicit_process" &&
-        !explicitModelProcess(request, actor, proof))
-        add("responsibility_mechanism_source", location, "所选证据只有输入、生成或交付边界，没有该模型的推理、计算或转换过程记录。mechanism_source 应为 boundary_comparison，责任机制标 inferred 并列缺口及替代解释；缺陷仍可 established。数值成十倍或其他资料中的价位不能证明内部执行了乘法。");
+
+    }
+    const selectedActor=actors[Number(cause.actor_index)-1];
+    if (selectedActor?.kind === 'model' && cause.mechanism_source === 'explicit_process' && !explicitModelProcess(request,selectedActor,proof))
+      add('responsibility_mechanism_source',location,'所选证据只有输入、生成或交付边界，没有该模型执行所述动作的直接过程记录；使用 boundary_comparison + inferred，填写缺口和替代解释，缺陷仍可 established。');
+    if(cause.actor_index===null && cause.technical_domain==='上下文工程') {
+      const returned=chain?.checkpoints.find(point=>point.step==='原始返回及字段含义')?.evidence??[];
+      const actual=chain?.checkpoints.find(point=>point.step==='模型实际输入')?.evidence??[];
+      if(!chain||![returned,actual].every(group=>group.some(boundary=>proof.some(item=>overlaps(item,boundary,raw)))))
+        add('responsibility_unknown_boundary',location,'未采集的整理或传递主体须引用同一业务链路的原始返回和模型实际输入，不能只从最终错误推定上游字段丢失。');
     }
     const fields = cause.field_names.filter(field => proof.some(item => item.quote.includes(field) || (() => {
       const point = parseEvidenceCoordinates(item.evidence_id); return point && point.kind !== "image" && point.path.includes(field);
@@ -182,11 +189,11 @@ export function investigationIssues(request: AgentRequest, problem: ProblemPropo
       add("responsibility_mechanism_inferred", location, "输入输出边界可确证缺陷，但不能确证隐藏计算或转换机制；标 inferred 并给出缺口及替代解释。");
     if (chain?.delivery_changed === false && cause.role === "primary" && ["核验与最终交付"].includes(cause.chain_step) && problem.diagnosis === "entity_or_unit")
       add("responsibility_formation", location, "模型生成已包含相同错误，交付没有改变该内容；主责应定位此前形成标的或价格口径错误的步骤。");
-    if (chain && cause.technical_domain === "上下文工程" && cause.certainty === "confirmed") {
+    if (chain && cause.technical_domain === "上下文工程" && cause.actor_index !== null) {
       const actor = (request.input.answer as { component_catalog: { component: string; message_indices: number[] }[] })
-        .component_catalog[cause.actor_index - 1];
+        .component_catalog[Number(cause.actor_index) - 1];
       if (!actor?.message_indices.some(index => chain.context_indices.includes(index) && index !== chain.context_indices.at(-1)))
-        add("responsibility_transfer_actor", location, "接收输入的最终节点本身不能确证为上游整理者；须有实际处理者的输入输出记录，否则责任及机制保留推断并说明缺口。");
+        add("responsibility_transfer_actor", location, "接收输入的最终节点不能替代上游整理者；须选择有输入输出记录的实际处理者，处理者未采集时 actor_index=null，保留已知边界与机制缺口。");
     }
   }
   if (problem.diagnosis === "source_absence") {

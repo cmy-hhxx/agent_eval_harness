@@ -59,7 +59,7 @@ export interface ProblemProposal {
 }
 export interface Responsibility {
   /** One-based source-directory selection; identical display names remain distinct. */
-  actor_index: number;
+  actor_index: number | null;
   role: "primary" | "contributing";
   technical_domain: string;
   functional_component: string;
@@ -97,7 +97,7 @@ export interface BusinessChain {
   final_evidence: Evidence[];
 }
 export interface ResponsibilitySubmission {
-  actor_index: number;
+  actor_index: number | null;
   function_index: number;
   business_component: string;
   chain_index: number | null;

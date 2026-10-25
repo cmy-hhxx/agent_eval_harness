@@ -6,7 +6,7 @@ import { attributionAgent, attributionProfile, type AttributionResult } from "./
 import { businessChainFixture } from "../../../../tests/fixtures/business-chain.js";
 import { attributionSubmission } from "../../../../tests/fixtures/attribution-submission.js";
 import { businessChainDirectoryIssues, businessChainReads, investigationIssues } from "./investigation.js";
-import { responsibilityIssues } from "./responsibility.js";
+import { responsibilityIssues,responsibilityComponentName } from "./responsibility.js";
 import { validateModelSubmission } from "./submission.js";
 import { bindAttributionMaterial } from "@eval/workflows/review";
 import { cite, evidenceSources, selectEvidenceSource } from "@eval/tools";
@@ -65,7 +65,7 @@ test("a prose term-expansion defect does not invent structured fields from its d
   const selected=([ [3,'/output/content'],[4,'/input_messages/0/content'],[4,'/output/0/content'],[5,'/content'] ] as const)
     .map(([index,path])=>{const source=evidenceSources(messages[index]).find(s=>s.kind==='text'&&s.path===path)!;
       return cite(seed.candidate.input_id,index,source,0,source.text.length);});
-  const cause={...seed.cause,actor_index:3,component:'未命名终稿生成调用（消息 4、5）',field_names:[],
+  const cause={...seed.cause,actor_index:3,component:'回答生成：正文术语缩写展开（消息 4、5）',field_names:[],
     business_component:'正文术语缩写展开',mechanism:'实际输入只保留缩写，生成输出的释义与原始返回不同；具体补写过程未记录。',
     evidence_ids:selected.map(item=>item.evidence_id)};
   const problem={...seed.problem,component:[cause],investigation:[]};
@@ -108,6 +108,11 @@ test("a wrong target selected by the planner points back to that planner and exa
   f.cause.chain_step = "查询规划与标的选择"; f.cause.field_names = ["query"];
   f.cause.mechanism_source = "explicit_process"; f.cause.certainty = "confirmed"; f.cause.evidence_gap = null; f.cause.alternatives = [];
   f.cause.mechanism = "公开任务明确要求现货时仍计划查询ETF标的；工具依照该计划执行。";
+  assert(codes(f).includes("responsibility_mechanism_source"));
+  // A parent span links the invocation, but only emitted arguments show this planner formed the request.
+  (f.raw.messages[1].output as Record<string,unknown>[])[0].tool_calls=[{id:'query-call',type:'function',
+    function:{name:'finquery',arguments:JSON.stringify(f.raw.messages[2].input)}}];
+  f.binding=bindAttributionMaterial(f.candidate,f.raw);
   assert.deepEqual(codes(f), []);
   f.cause.component = "最终回答组织"; f.cause.actor_index=(f.binding.request.input.answer as any).component_catalog.findIndex((actor:any)=>actor.component===f.cause.component)+1;
   assert(codes(f).includes("responsibility_chain_actor"));
@@ -121,8 +126,8 @@ test("captured context preparation can own identity and unit loss; the receiving
   assert.deepEqual(f.chain.context_indices, [4, 5]);
   f.problem.diagnosis = "context_loss";
   Object.assign(f.cause, { actor_index:(f.binding.request.input.answer as any).component_catalog.findIndex((actor:any)=>actor.component==="结果整理 Agent")+1, component: "结果整理 Agent", technical_domain: "上下文工程", functional_component: "压缩摘要",
-    business_component: "finquery 返回的身份与单位整理", chain_step: "返回整理与上下文传递", certainty: "confirmed", mechanism_source: "explicit_process",
-    evidence_gap: null, alternatives: [], mechanism: "整理前含ETF身份和美元单位，整理输出只保留price，最终输入沿用该输出。" });
+    business_component: "finquery 返回的身份与单位整理", chain_step: "返回整理与上下文传递", certainty: "inferred", mechanism_source: "boundary_comparison",
+    evidence_gap: "仅采集整理输入输出，未记录内部转换。", alternatives: ["字段选择或序列化规则导致遗漏。"], mechanism: "整理前含ETF身份和美元单位，整理输出只保留price，最终输入沿用该输出。" });
   assert.deepEqual(codes(f), []);
   f.cause.component = "最终回答组织"; f.cause.actor_index=(f.binding.request.input.answer as any).component_catalog.findIndex((actor:any)=>actor.component===f.cause.component)+1;
   assert(codes(f).includes("responsibility_transfer_actor"));
@@ -178,7 +183,7 @@ test("specific actors, business operation and call coordinates stay distinct and
   const f = businessChainFixture();
   assert.equal(f.chain.request_index, 2); assert.deepEqual(f.chain.return_indices, [3]); assert.equal(f.chain.planner_index, 1);
   assert(!f.problem.component.some(cause => /^llm-call-|^[0-9a-f-]{32,}$/u.test(cause.component)));
-  const actor = (f.binding.request.input.answer as any).component_catalog[f.cause.actor_index - 1];
+  const actor = (f.binding.request.input.answer as any).component_catalog[Number(f.cause.actor_index) - 1];
   for (const generic of [actor.component, f.cause.chain_step, "工具执行与数据获取", "语义理解", "llm-call-0"]) {
     f.cause.business_component = generic;
     assert(codes(f).includes("responsibility_business_location"));
@@ -269,14 +274,14 @@ test("reading all materials does not let an actual-input quote impersonate the r
   }
   assert.deepEqual(codes(f), []);
 });
-test("a tenfold boundary relation cannot self-declare an explicit confirmed process, while recorded calculation can", () => {
+for(const processField of ["reasoning_content","analysis"]) test(`a tenfold boundary relation needs recorded ${processField} to confirm the process`, () => {
   const f = businessChainFixture();
   Object.assign(f.cause, { mechanism_source: "explicit_process", certainty: "confirmed", evidence_gap: null, alternatives: [] });
   assert(codes(f).includes("responsibility_mechanism_source"));
   const index = f.raw.messages.length - 2;
-  f.raw.messages[index].reasoning_content = "将369乘10得到3690，再写为XAU/USD。";
+  f.raw.messages[index][processField] = "将369乘10得到3690，再写为XAU/USD。";
   f.binding = bindAttributionMaterial(f.candidate, f.raw);
-  const source = evidenceSources(f.raw.messages[index]).find(source => source.path === "/reasoning_content")!;
+  const source = evidenceSources(f.raw.messages[index]).find(source => source.path === "/"+processField)!;
   const point = cite(f.candidate.input_id, index, source, 0, source.text.length);
   f.evidence.push(point); f.cause.evidence_ids.push(point.evidence_id);
   const read=parseEvidenceCoordinates(point.evidence_id)!;
@@ -289,8 +294,8 @@ test("an earlier preparer's complete source never substitutes for the final mode
   const f = businessChainFixture(true, undefined, true), last = f.chain.context_indices.at(-1)!;
   f.problem.diagnosis = "context_loss";
   Object.assign(f.cause, { actor_index:(f.binding.request.input.answer as any).component_catalog.findIndex((actor:any)=>actor.component==="结果整理 Agent")+1, component: "结果整理 Agent", technical_domain: "上下文工程", functional_component: "压缩摘要",
-    business_component: "finquery 返回整理时删除身份与单位", chain_step: "返回整理与上下文传递", certainty: "confirmed", mechanism_source: "explicit_process",
-    evidence_gap: null, alternatives: [], mechanism: "整理前含ETF身份和美元单位，整理输出仅保留price且最后实际输入没有恢复身份与单位。" });
+    business_component: "finquery 返回整理时删除身份与单位", chain_step: "返回整理与上下文传递", certainty: "inferred", mechanism_source: "boundary_comparison",
+    evidence_gap: "仅采集整理输入输出，未记录内部转换。", alternatives: ["字段选择或序列化规则导致遗漏。"], mechanism: "整理前含ETF身份和美元单位，整理输出仅保留price且最后实际输入没有恢复身份与单位。" });
   assert(f.chain.references.includes("pfJtupL"));
   assert.equal((f.binding.request.input.answer as any).citation_inventory.references[0].status, "unknown");
   const inputs = f.chain.checkpoints.find(point => point.step === "模型实际输入")!.evidence;
@@ -402,4 +407,47 @@ test("stage repair feedback provides selectable source indices that repair the a
   });
   const accepted = registry.resolve(f.binding, draft, f.audit) as AttributionResult;
   registry.validate(f.binding, accepted, f.audit);
+});
+
+test('unknown field transfer and independent answer invention have distinct responsibility without blaming a correct tool',()=>{
+ const f=businessChainFixture(true);
+ // Remove the captured preparer: raw return and receiving input remain observable.
+ f.raw.messages.splice(4,1);f.candidate.final_index--;
+ f.binding=bindAttributionMaterial(f.candidate,f.raw);
+ const chain=(f.binding.request.input.answer as {business_chains:typeof f.chains}).business_chains[0];
+ const evidence=[...new Map([...chain.checkpoints.flatMap(point=>point.evidence),...chain.final_evidence].map(item=>[item.evidence_id,item])).values()];
+ const audit={...f.audit,traceReads:evidence.flatMap(item=>{const p=parseEvidenceCoordinates(item.evidence_id)!;return p.kind==='image'?[]:
+  [{candidate:'answer',message_index:p.message_index,kind:p.kind,path:p.path,start:p.start,end:p.end}];})};
+ const unknown={...f.cause,actor_index:null,technical_domain:'上下文工程',functional_component:'实际输入传递',business_component:'工具返回身份字段进入回答输入前的传递',
+  component:'处理者未采集：工具返回身份字段进入回答输入前的传递',chain_step:'返回整理与上下文传递',evidence_ids:evidence.map(item=>item.evidence_id)};
+ const actors=(f.binding.request.input.answer as {component_catalog:import('@eval/tools').TraceComponentIdentity[]}).component_catalog;
+ const finalActor=actors.findIndex(actor=>actor.role==='final_answer')+1;
+ const generated={...f.cause,actor_index:finalActor,role:'contributing' as const,evidence_ids:evidence.map(item=>item.evidence_id),
+  component:responsibilityComponentName(actors[finalActor-1],f.cause.business_component)};
+ const problem={...f.problem,investigation:[],component:[unknown,generated]};
+ assert.deepEqual(investigationIssues(f.binding.request,problem,evidence,audit,'/problem'),[]);
+ assert.deepEqual(responsibilityIssues(f.binding.request,problem,evidence,'/problem'),[]);
+ assert(problem.component.every(cause=>cause.actor_index===null||actors[cause.actor_index-1].component!=='finquery'));
+ const registry=new AgentRegistry([attributionAgent]);
+ const result={...f.result,criterion_assessments:f.result.criterion_assessments.map(row=>({...row,evidence})),findings:[{...f.result.findings[0],evidence,problem}]};
+ const draft=attributionSubmission(f.binding.request,result,audit);
+ const accepted=registry.resolve(f.binding,draft,audit) as AttributionResult;
+ registry.validate(f.binding,accepted,audit);
+ assert.equal(accepted.findings[0].problem!.component[0].actor_index,null);
+ assert.equal(accepted.findings[0].problem!.component[1].actor_index,finalActor);
+ const receiver={...unknown,actor_index:finalActor};
+ assert(investigationIssues(f.binding.request,{...problem,component:[receiver]},evidence,audit,'/problem').some(issue=>issue.code==='responsibility_transfer_actor'));
+ unknown.evidence_ids=chain.final_evidence.map(item=>item.evidence_id);
+ assert(investigationIssues(f.binding.request,problem,evidence,audit,'/problem').some(issue=>issue.code==='responsibility_unknown_boundary'));
+});
+test('input and output differences cannot prove model actions at any step or without a selected tool chain',()=>{
+ const f=businessChainFixture();f.problem.investigation=[];f.cause.chain_index=null;
+ const actor=(f.binding.request.input.answer as {component_catalog:import('@eval/tools').TraceComponentIdentity[]}).component_catalog[Number(f.cause.actor_index)-1];
+ const final=f.evidence.filter(item=>actor.message_indices.includes(item.message_index));
+ f.cause.field_names=[];f.cause.evidence_ids=final.map(item=>item.evidence_id);
+ f.cause.mechanism_source='explicit_process';f.cause.certainty='confirmed';
+ for(const step of ['查询规划与标的选择','返回整理与上下文传递','核验与最终交付']){
+  f.cause.chain_step=step;
+  assert(investigationIssues(f.binding.request,f.problem,final,f.audit,'/problem').some(issue=>issue.code==='responsibility_mechanism_source'));
+ }
 });

@@ -208,7 +208,7 @@ test("new clustering plans isolate responsibility buckets and preserve each mode
       else { const bucket = new Set(input.items.map(item => item.component)); assert.equal(bucket.size, 1);
         components.add([...bucket][0]); assert.equal(input.budget.max_new_classes, 3); }
     }
-    assert.deepEqual(components, new Set(["FinQuery / 数据解释与计算 / 结果完整性", "未命名终稿生成调用（消息 1） / 数据解释与计算 / 事实关系推导"]));
+    assert.deepEqual(components, new Set(["FinQuery / 数据解释与计算 / 结果完整性", "回答生成：本题事实关系推导与结果使用（消息 1） / 数据解释与计算 / 事实关系推导"]));
   }
 });
 
@@ -229,7 +229,7 @@ test("bucket requests omit unrelated class examples while keeping model-wide cap
   f.config.clustering.maxCasesPerTask = 100;
   const { plan } = await prepareClusteringJob(f.runs, f.config);
   const material = plan.inputs.a_fast as { library: ProblemProjection; config: { clustering: { maxClassesPerModel: number } } };
-  material.library = { components: ["未命名终稿生成调用（消息 1） / 数据解释与计算 / 事实关系推导", "查询工具", "未涉及工具"].map((label, index) => ({
+  material.library = { components: ["回答生成：本题事实关系推导与结果使用（消息 1） / 数据解释与计算 / 事实关系推导", "查询工具", "未涉及工具"].map((label, index) => ({
     id: randomUUID(), label, definition: "组件职责", aliases: index === 1 ? [" FinQuery / 数据解释与计算 / 结果完整性 "] : [],
     classes: [{ id: randomUUID(), label: "具体问题" + index, definition: "问题边界", aliases: [], occurrences: 1,
       examples: [{ input_id: randomUUID(), batch_id: "2026-10-01", case_id: "case", finding_id: "f0", evidence_status: "established",
@@ -245,7 +245,7 @@ test("bucket requests omit unrelated class examples while keeping model-wide cap
   assert.equal(input.budget.max_new_classes, 0); assert.equal(input.budget.max_new_components, 0);
   const mixed = { ...ordinary, data: { model: "a_fast", itemIds: own.slice(0, 2).flatMap(task => (task.data as { itemIds: string[] }).itemIds) } };
   const mixedInput = clusteringJobWorkflow.bind(mixed, plan.inputs, {}, { tasks: plan.tasks }).request.input as { library: ProblemProjection };
-  assert.deepEqual(mixedInput.library.components.map(component => component.label), ["未命名终稿生成调用（消息 1） / 数据解释与计算 / 事实关系推导", "查询工具"]);
+  assert.deepEqual(mixedInput.library.components.map(component => component.label), ["回答生成：本题事实关系推导与结果使用（消息 1） / 数据解释与计算 / 事实关系推导", "查询工具"]);
   const finalInput = clusteringJobWorkflow.bind(own[2], plan.inputs, {}, { tasks: plan.tasks }).request.input as { library: ProblemProjection };
   assert.equal(finalInput.library, material.library); assert.equal(finalInput.library.components.length, 3);
   assert.equal(JSON.stringify(finalInput).includes("UNRELATED_EXAMPLE"), true);

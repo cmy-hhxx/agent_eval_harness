@@ -19,10 +19,10 @@ export function responsibilityChoices(request: AgentRequest): string[] {
 export const responsibilityFunctions = Object.entries(attributionTaxonomy.domains).flatMap(([technical_domain, components]) =>
   components.map(functional_component => ({ technical_domain, functional_component })));
 /** Names identify captured actors; the business position never becomes an invented component. */
-export function responsibilityComponentName(actor:TraceComponentIdentity|undefined){
-  if(!actor)return '';
-  const role={model_call:'模型调用',final_answer:'终稿生成调用',tool:'工具调用',unknown:'处理节点'}[actor.role];
-  return actor.identity_status==='named'?actor.component:`未命名${role}（消息 ${actor.message_indices.join('、')}）`;
+export function responsibilityComponentName(actor:TraceComponentIdentity|undefined,businessComponent?:string){
+  if(!actor)return businessComponent?`处理者未采集：${businessComponent}`:'';
+  const role={model_call:'规划与推理',final_answer:'回答生成',tool:'工具执行',unknown:'流程处理'}[actor.role];
+  return actor.identity_status==='named'?actor.component:`${role}${businessComponent?`：${businessComponent}`:''}（消息 ${actor.message_indices.join('、')}）`;
 }
 export function componentCatalogIssues(request: AgentRequest): ValidationIssue[] {
   const raw = request.sources.answer.value as { messages: unknown[] };
@@ -42,7 +42,7 @@ export function responsibilitySchema(evidenceField: "evidence_ids" | "evidence_i
     type: "object", additionalProperties: false,
     required: ["actor_index", "role", "technical_domain", "functional_component", "component", "business_component", "chain_index", "chain_step", "field_names", "mechanism_source", "failure_stage", "mechanism", "certainty", "reason", evidenceField, "evidence_gap", "alternatives"],
     properties: {
-      actor_index: { type: "integer", minimum: 1 },
+      actor_index: { type: ["integer", "null"], minimum: 1 },
       role: { enum: ["primary", "contributing"] }, technical_domain: text, functional_component: text, component: { ...text },
       business_component: text, chain_index: { type: ["integer", "null"], minimum: 1 },
       chain_step: { enum: attributionTaxonomy.investigation_steps }, field_names: { type: "array", uniqueItems: true, items: text },
@@ -78,7 +78,12 @@ export function responsibilityIssues(request: AgentRequest, problem: unknown, se
     const actor = Number.isSafeInteger(row.actor_index) ? actors[Number(row.actor_index) - 1] : undefined;
     if (typeof row.component === "string" && isComponentLocator(row.component))
       add("responsibility_actor_locator", `${location}/component`, "调用ID、span ID及UUID只能用于导航，不能作为实际组件名称。", row.component);
-    if (!actor || responsibilityComponentName(actor) !== row.component) add("responsibility_actor", `${location}/actor_index`, "主体按节点编号和来源定位；真实名称原样保留，匿名主体保留角色、未命名状态和消息坐标；业务位置不能冒充组件名称。", row.actor_index);
+    if ((row.actor_index !== null && !actor) || responsibilityComponentName(actor,String(row.business_component??'')) !== row.component)
+      add("responsibility_actor", `${location}/actor_index`, "主体按真实节点编号和来源定位；名称原样保留，无名称时展示具体业务操作及消息坐标；处理者未采集时 actor_index=null，不得替换成接收材料的节点。", row.actor_index);
+    if (row.actor_index === null && (row.certainty !== 'inferred' || row.mechanism_source !== 'boundary_comparison'))
+      add('responsibility_unknown_actor',location,'处理者未采集时只能使用 boundary_comparison + inferred，保留可观察边界、身份缺口和替代解释。');
+    if (actor?.kind === 'model' && row.functional_component === '图表渲染')
+      add('responsibility_render_actor',location,'图片附在回答中不能证明该模型执行了图表渲染；选择实际渲染执行主体，未采集时 actor_index=null 并保留边界推断。');
     const modelActor = actor?.kind === "model";
     if (modelActor && ["工具业务实现", "工具接入与协议"].includes(String(row.technical_domain)))
       add("responsibility_actor_domain", location, "llm_turn是模型节点，不能因有name而认作工具；定位其推断、控制或实际相关技术功能。", row.component);

@@ -759,6 +759,9 @@ export class ToolRuntime {
   clearDraftWrite(): void {
     this.draftWriteRemaining = 0;
   }
+  registerRequiredReads(reads: readonly import("@eval/contracts").TraceRead[]): void {
+    this.required.register(reads);
+  }
   budget(maxCalls = this.context.policy.maxToolCalls) {
     const used = this.context.audit.calls - this.context.audit.requiredReadCalls - this.draftWriteCalls;
     const withinLimit = this.context.draftWriteInCallLimit;

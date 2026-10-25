@@ -10,6 +10,7 @@ import {
   SUBMISSION_FILE_SCHEMA,
   SUBMISSION_JSON_SCHEMA,
   submissionToolNames,
+  validationRequiredReads,
   type AgentBackend,
   type AgentSession,
   type AttemptSpec,
@@ -279,17 +280,9 @@ export async function startWorker(
         };
       };
       const materialSources = new Map<string, ReturnType<typeof evidenceSources>>();
-      const investigationReads = (errors:ValidationIssue[]):TraceRead[] => errors
-        .filter(issue=>issue.code==='investigation_read_required').flatMap(issue=>{
-          const expected=issue.expected as {read_requests?:unknown[]}|undefined;
-          return (expected?.read_requests??[issue.expected]).filter((value):value is TraceRead=>{
-            const read=value as TraceRead|undefined;
-            return !!read&&inputs.has(read.candidate)&&Number.isSafeInteger(read.message_index)&&read.message_index>=0&&
-              ['text','json'].includes(read.kind)&&typeof read.path==='string'&&Number.isSafeInteger(read.start)&&
-              Number.isSafeInteger(read.end)&&read.start>=0&&read.end>read.start;
-          });
-        });
+      const investigationReads = validationRequiredReads;
       const supplyRequiredMaterial = async (dynamic:TraceRead[] = []) => {
+        runtime.registerRequiredReads(dynamic);
         const content: ReturnType<typeof textResult>["content"] = [];
         const read_requests: {candidate:string;message_index:number;path:string;offset:number;max_chars:number}[] = [];
         let used = 0;

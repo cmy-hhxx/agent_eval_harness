@@ -24,10 +24,11 @@ const contentPaths = (value: unknown, path: string): string[] => typeof value ==
 // Collected assistant messages omit renderer-only visual resource tags from the LLM output.
 const answerText = (value: unknown) => contentText(value).replace(/<visual>\s*\{[^{}]*\}\s*<\/visual>/gu, "")
   .replace(/\s+/gu, " ").trim();
-const assistantKey = (value: unknown): string | undefined => {
+const assistantKey = (value: unknown, renderedHtml = false): string | undefined => {
   const message = object(value);
   if (!message || message.role !== "assistant" && !(message.role === undefined && message.type === "final_answer")) return undefined;
-  const text = answerText(message.content), calls = message.tool_calls ?? [];
+  const content = renderedHtml ? contentText(message.content).replace(/<vis-html\s+ref=(['"])[^'"<>]+\1\s*\/>/gu, "") : message.content;
+  const text = answerText(content), calls = message.tool_calls ?? [];
   if (!text && (!Array.isArray(calls) || !calls.length)) return undefined;
   return canonical({ text, tool_calls: calls });
 };
@@ -54,13 +55,21 @@ export function answerTurnContexts(raw: { messages: unknown[] }, finalMessageInd
     if (value?.type !== "llm_turn") return [];
     const context = contextOf(value);
     if (!context || !Array.isArray(value.output)) return [];
-    return [{ index, context, outputs: value.output.flatMap(output => {
+    return [{ index, context, originalOutputs: value.output, outputs: value.output.flatMap(output => {
       const key = assistantKey(output);
       return key ? [key] : [];
     }) }];
   });
   const answerTurns = new Set<number>();
-  const anchor = finalKey && turns.findLast(turn => turn.outputs.includes(finalKey));
+  let anchor = finalKey ? turns.findLast(turn => turn.outputs.includes(finalKey)) : undefined;
+  // A captured image replaces this renderer tag, not the generated prose. Match the
+  // complete remaining text and require a unique generation; proximity is not proof.
+  const finalContent = object(raw.messages[finalIndex])?.content;
+  if (!anchor && finalKey && Array.isArray(finalContent) && finalContent.some(block => object(block)?.type === "output_image")) {
+    const matches = turns.filter(turn => turn.originalOutputs.some(output =>
+      /<vis-html\s+ref=(['"])[^'"<>]+\1\s*\/>/u.test(contentText(object(output)?.content)) && assistantKey(output, true) === finalKey));
+    if (matches.length === 1) anchor = matches[0];
+  }
   const visit = (turn: typeof turns[number]) => {
     if (answerTurns.has(turn.index)) return;
     answerTurns.add(turn.index);

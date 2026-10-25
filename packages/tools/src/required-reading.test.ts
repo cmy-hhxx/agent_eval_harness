@@ -82,6 +82,37 @@ test("required quota remains finite even if a caller reports tiny new ranges", (
   assert.equal(budget.charge(argumentsFor(2), target(2, 3), audit), false);
 });
 
+test("dynamic ranges union without replenishing spent pages and reject nonexistent sources", () => {
+  const budget = new RequiredReadBudget(inputs(), new Map([["answer", INPUT_ID]]), [], 4096, metadataChars);
+  budget.register([target(0, 4)]);
+  const limit = budget.limit;
+  assert.equal(budget.charge(argumentsFor(), target(0, 1), { traceReads: [] }), true);
+  budget.register([target(0, 4), target(1, 3)]);
+  assert.equal(budget.limit, limit);
+  assert.equal(budget.used, 1);
+  assert.equal(budget.charge(argumentsFor(1), target(1, 2), { traceReads: [] }), true);
+  budget.register([target(0, 4)]);
+  assert.equal(budget.remaining, 0);
+  assert.equal(budget.isRequired(argumentsFor(2), { traceReads: [] }), false);
+  assert.throws(() => budget.register([target(0, 9)]), /outside/);
+  assert.throws(() => budget.register([target(0, 4, '/missing')]), /outside/);
+  assert.equal(budget.remaining, 0);
+});
+
+test("new adjacent dynamic ranges retain the pages already spent on earlier requests", () => {
+  const budget = new RequiredReadBudget(inputs(), new Map([["answer", INPUT_ID]]), [], 4096, metadataChars);
+  for (let offset = 0; offset < 8; offset++) {
+    budget.register([target(0, offset + 1)]);
+    assert.equal(budget.isRequired({ ...argumentsFor(offset), max_chars: 1 }, { traceReads: [] }), true);
+    assert.equal(budget.charge({ ...argumentsFor(offset), max_chars: 1 }, target(offset, offset + 1), { traceReads: [] }), true);
+  }
+  const limit = budget.limit;
+  budget.register([target(0, 8)]);
+  assert.equal(budget.limit, limit);
+  assert.equal(budget.used, 8);
+  assert.equal(budget.isRequired(argumentsFor(7), { traceReads: [] }), false);
+});
+
 test("an exact JSON field uses mandatory quota with no exploration and preserves its JSON coordinates", async () => {
   const workdir = await mkdtemp(path.join(os.tmpdir(), "eval-required-json-"));
   try {

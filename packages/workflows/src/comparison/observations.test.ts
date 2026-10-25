@@ -52,7 +52,7 @@ test("joint responsibility expands by component while preserving one finding ide
   const finding = problem("f1", "FinQuery", "口径冲突", "返回值冲突且模型忽略冲突");
   finding.problem!.component.push(responsibilityFixture("最终回答组织",{role:"contributing"}));
   const observations = groupObservations([source("in-1", "case-1", [finding])]);
-  assert.deepEqual(observations.map((item) => item.component).sort(), ["FinQuery / 数据解释与计算 / 结果完整性", "未命名终稿生成调用（消息 1） / 数据解释与计算 / 事实关系推导"]);
+  assert.deepEqual(observations.map((item) => item.component).sort(), ["FinQuery / 数据解释与计算 / 结果完整性", "回答生成：本题事实关系推导与结果使用（消息 1） / 数据解释与计算 / 事实关系推导"]);
   assert(observations.every((item) => item.count === 1 && item.refs[0]!.finding_id === "f1"));
   assert.deepEqual(observations[0]!.refs, observations[1]!.refs);
   for (const item of observations) {

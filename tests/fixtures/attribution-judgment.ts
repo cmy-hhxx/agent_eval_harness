@@ -26,8 +26,8 @@ export function attributionJudgment(request: AgentRequest, result: AttributionRe
         : { assessment: { ...observed, requirement_index } }),
       ...(finding.type === "problem" ? { problem: {...structuredClone(finding.problem!),component:finding.problem!.component.map(cause=>{
         const actors=(request.input.answer as {component_catalog:import('@eval/tools').TraceComponentIdentity[]}).component_catalog;
-        const actor_index=Math.max(0,actors.findIndex(actor=>actor.component===cause.component)+1)||cause.actor_index;
-        return {...cause,actor_index,component:responsibilityComponentName(actors[actor_index-1])};})} } : {}),
+        const actor_index=cause.actor_index===null?null:Math.max(0,actors.findIndex(actor=>actor.component===cause.component)+1)||cause.actor_index;
+        return {...cause,actor_index,component:responsibilityComponentName(actors[Number(actor_index)-1],cause.business_component)};})} } : {}),
       evidence: refs(finding.evidence) };
   };
   const draft = {

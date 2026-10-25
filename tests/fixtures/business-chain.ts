@@ -53,7 +53,7 @@ export function businessChainFixture(loss = false, question = "Gold prediction f
       assessment: { requirement_index: 0, observation: "标的及价格口径错配已确认。", evidence_status: "established", impact: "预测收益与阈值基准不可直接使用。" }, problem }] };
   const audit = emptyAudit();
   cause.component=responsibilityComponentName((binding.request.input.answer as {component_catalog:import('@eval/tools').TraceComponentIdentity[]})
-    .component_catalog[cause.actor_index-1]);
+    .component_catalog[Number(cause.actor_index)-1],cause.business_component);
   audit.traceReads = evidence.flatMap(item => {
     const point=parseEvidenceCoordinates(item.evidence_id)!;
     return point.kind==='image'?[]:[{candidate:'answer',message_index:point.message_index,kind:point.kind,path:point.path,start:point.start,end:point.end}];

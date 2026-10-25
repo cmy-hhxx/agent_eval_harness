@@ -1,5 +1,21 @@
-import type { TraceRead } from "./primitives.js";
+import type { TraceRead, ValidationIssue } from "./primitives.js";
 import { evidenceId } from "./evidence.js";
+
+/** Only validator-issued ranges can extend the protected source-reading budget. */
+export function validationRequiredReads(issues: readonly ValidationIssue[]): TraceRead[] {
+  return issues.filter(issue => issue.code === "investigation_read_required").flatMap(issue => {
+    const expected = issue.expected as { read_requests?: unknown[] } | undefined;
+    return (expected?.read_requests ?? [issue.expected]).map(value => {
+      const read = value as TraceRead;
+      if (!read || typeof read.candidate !== "string" || !read.candidate ||
+        !Number.isSafeInteger(read.message_index) || read.message_index < 0 || !["text", "json"].includes(read.kind) ||
+        typeof read.path !== "string" || read.kind === "json" && read.path !== "" ||
+        !Number.isSafeInteger(read.start) || !Number.isSafeInteger(read.end) || read.start < 0 || read.end <= read.start)
+        throw new RangeError("Invalid validator-required trace range");
+      return { ...read };
+    });
+  });
+}
 
 const MAX_PAGE_CHARS = 16000;
 const SURROGATE_BOUNDARY_CHARS = 10;
@@ -7,6 +23,24 @@ interface RequiredRange {
   target: TraceRead;
   inputId: string;
   text: string;
+}
+
+/** Retain earlier page allowances; only previously unregistered source characters add pages. */
+export function extendRequiredReadRanges(current: readonly RequiredRange[], added: readonly RequiredRange[]): RequiredRange[] {
+  const known = mergeRequiredReadRanges(current), fresh: RequiredRange[] = [];
+  for (const range of mergeRequiredReadRanges(added)) {
+    let cursor = range.target.start;
+    for (const prior of known.filter(prior => prior.inputId === range.inputId &&
+      prior.target.candidate === range.target.candidate && prior.target.message_index === range.target.message_index &&
+      prior.target.kind === range.target.kind && prior.target.path === range.target.path)) {
+      if (prior.text !== range.text) throw new RangeError("Required trace ranges disagree on their source text");
+      if (prior.target.end <= cursor || prior.target.start >= range.target.end) continue;
+      if (prior.target.start > cursor) fresh.push({ ...range, target: { ...range.target, start: cursor, end: prior.target.start } });
+      cursor = Math.max(cursor, prior.target.end);
+    }
+    if (cursor < range.target.end) fresh.push({ ...range, target: { ...range.target, start: cursor } });
+  }
+  return [...current, ...fresh];
 }
 
 /** Validate and union trusted ranges without changing the supplied records. */

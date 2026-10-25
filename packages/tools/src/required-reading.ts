@@ -1,5 +1,5 @@
 import type { ToolAudit, TraceRead } from "@eval/contracts";
-import { mergeRequiredReadRanges, requiredReadCallLimit } from "@eval/contracts";
+import { extendRequiredReadRanges, requiredReadCallLimit } from "@eval/contracts";
 import { evidenceSources } from "./evidence.js";
 import { traceReadCoverage } from "./trace-audit.js";
 
@@ -37,29 +37,36 @@ function readArguments(value: unknown): ReadArguments | undefined {
 
 /** A finite allowance for new pages of trusted source ranges; exploration keeps its own budget. */
 export class RequiredReadBudget {
-  readonly limit: number;
+  limit = 0;
   private count = 0;
-  private readonly ranges: RequiredRange[];
+  private ranges: RequiredRange[] = [];
   private readonly chargedReads: TraceRead[] = [];
 
-  constructor(inputs: ReadonlyMap<string, unknown>, inputIds: ReadonlyMap<string, string>, requiredReads: readonly TraceRead[] | undefined, maxOutputChars: number, budgetMetadataChars: number) {
+  constructor(private readonly inputs: ReadonlyMap<string, unknown>, private readonly inputIds: ReadonlyMap<string, string>, requiredReads: readonly TraceRead[] | undefined, private readonly maxOutputChars: number, private readonly budgetMetadataChars: number) {
+    this.register(requiredReads ?? []);
+  }
+
+  /** Union new trusted ranges; duplicates never refund spent calls or grow the allowance. */
+  register(requiredReads: readonly TraceRead[]): void {
     const ranges: RequiredRange[] = [];
     for (const read of requiredReads ?? []) {
       if (!read || !["text", "json"].includes(read.kind) || typeof read.candidate !== "string" || !read.candidate ||
         typeof read.path !== "string" || read.kind === "json" && read.path !== "" || !Number.isSafeInteger(read.message_index) || read.message_index < 0 ||
         !Number.isSafeInteger(read.start) || !Number.isSafeInteger(read.end) || read.start < 0 || read.end < read.start)
         throw new RangeError("Invalid required trace range");
-      const input = inputs.get(read.candidate) as { messages?: unknown[] } | undefined;
+      const input = this.inputs.get(read.candidate) as { messages?: unknown[] } | undefined;
       if (!input || !Array.isArray(input.messages) || read.message_index >= input.messages.length)
         throw new RangeError("Required trace source is unavailable");
       const source = evidenceSources(input.messages[read.message_index]).find((item) => item.kind === read.kind && item.path === read.path);
       if (!source || read.end > source.text.length) throw new RangeError("Required trace range is outside its source");
-      const inputId = inputIds.get(read.candidate);
+      const inputId = this.inputIds.get(read.candidate);
       if (!inputId) throw new RangeError("Required trace input identity is unavailable");
       ranges.push({ target: { ...read }, inputId, text: source.text });
     }
-    this.ranges = mergeRequiredReadRanges(ranges);
-    this.limit = requiredReadCallLimit(this.ranges, maxOutputChars, budgetMetadataChars);
+    const merged = extendRequiredReadRanges(this.ranges, ranges);
+    const limit = merged.reduce((sum, range) => sum + requiredReadCallLimit([range], this.maxOutputChars, this.budgetMetadataChars), 0);
+    this.ranges = merged;
+    this.limit = limit;
   }
 
   get used(): number { return this.count; }

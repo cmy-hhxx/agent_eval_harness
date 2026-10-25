@@ -52,7 +52,7 @@ function fixture() {
     type: "problem", dimension: "correctness", stage: "final_answer", importance: "high",
     text: "UTC日期错误", reason: "原请求UTC日期为12日，实际回答为13日。", evidence: [ownRef, peerRef],
     assessment: { requirement_index: 0, observation: "UTC日期相差一天", evidence_status: "established", impact: "核心日期不可用" },
-    problem: { diagnosis: "other" as const, investigation: [], component: [responsibilityFixture("最终回答组织",{component:responsibilityComponentName((request.input.answer as any).component_catalog[0]),evidence_ids:[ownRef.evidence_id]})], label: "日期错误", definition: "最终日期与原请求UTC日期不一致。" },
+    problem: { diagnosis: "other" as const, investigation: [], component: [responsibilityFixture("最终回答组织",{component:responsibilityComponentName((request.input.answer as any).component_catalog[0],"本题事实关系推导与结果使用"),evidence_ids:[ownRef.evidence_id]})], label: "日期错误", definition: "最终日期与原请求UTC日期不一致。" },
   }], criterion_assessments: [{ criterion_id: "r1", status: "unmet", evidence_status: "established",
     summary: "回答日期与原请求UTC日期不一致。", evidence: [ownRef, peerRef] }],
     core_assessment: { meets_core: false, reason: "日期错误。", requirement_indices: [0] } };

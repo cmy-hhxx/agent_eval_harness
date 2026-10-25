@@ -7,7 +7,7 @@ import { responsibilityFixture } from "../../../../tests/fixtures/responsibility
 const id="11111111-1111-4111-8111-111111111111";
 test('anonymous responsibility keeps a distinct physical node instead of borrowing the business issue name',()=>{
  const actors=traceComponentIdentities({messages:[{type:'llm_turn',name:'llm-call-1'},{type:'llm_turn',name:'planner-finquery'}]},id,9);
- assert.equal(responsibilityComponentName(actors[0]),'未命名模型调用（消息 0）');
+ assert.equal(responsibilityComponentName(actors[0]),'规划与推理（消息 0）');
  assert.equal(responsibilityComponentName(actors[1]),'planner-finquery');
 });
 test('generic model labels cannot terminate a responsibility mechanism',()=>{
@@ -22,9 +22,9 @@ test('generic model labels cannot terminate a responsibility mechanism',()=>{
 test('anonymous calls with different physical coordinates remain distinct responsibility components',()=>{
  const actors=traceComponentIdentities({messages:[{type:'llm_turn',name:'llm-call-0'},
   {type:'llm_turn',name:'llm-call-1'},{role:'assistant',content:'结果'}]},id,2);
- const names=actors.map(responsibilityComponentName);
+ const names=actors.map(actor=>responsibilityComponentName(actor));
  assert.equal(names.length,new Set(names).size);
- assert(names.every(name=>name.includes('未命名')&&name.includes('消息')));
+ assert(names.every(name=>!name.includes('未命名')&&name.includes('消息')));
 });
 function causalFixture(recovered=false){
  const messages=[{type:'llm_turn',name:'llm-call-0',input_messages:[],output:[{role:'assistant',reasoning_content:'工具给18.18%/22.81%，另写18.15%/22.75%。',content:recovered?'已修正为18.18%/22.81%。':'18.15%/22.75%，在±1%容差内一致。'}]},
@@ -34,8 +34,8 @@ function causalFixture(recovered=false){
  const origin=quote(0,'/output/0/reasoning_content'),final=quote(1,'/content');
  const source=responsibilityFixture('中间推理处理',{actor_index:1,technical_domain:'模型推断与生成',functional_component:'事实关系推导',chain_step:'数据解释与计算',failure_stage:'推理与计算',mechanism_source:'explicit_process',certainty:'confirmed',evidence_gap:null,alternatives:[],mechanism:'推理记录首次引入无依据数字。',evidence_ids:[origin.evidence_id]});
  const delivery=responsibilityFixture('最终回答组织',{actor_index:2,role:'contributing',mechanism:'最终交付继续沿用错误数字并错误解释容差。',evidence_ids:[origin.evidence_id,final.evidence_id]});
- source.component=responsibilityComponentName(responsibilityIdentities(request)[0]);
- delivery.component=responsibilityComponentName(responsibilityIdentities(request)[1]);
+ source.component=responsibilityComponentName(responsibilityIdentities(request)[0],source.business_component);
+ delivery.component=responsibilityComponentName(responsibilityIdentities(request)[1],delivery.business_component);
  return{request,origin,final,source,delivery};
 }
 test('upstream introduction and downstream propagation use their own stage evidence',()=>{
@@ -54,7 +54,7 @@ function fixture(){
  const quote=(index:number,path:string)=>{const leaf=evidenceSources(messages[index]).find(s=>s.kind==='text'&&s.path===path)!;return cite(id,index,leaf,0,leaf.text.length);};
  const cause=(component='最终回答组织',patch:Parameters<typeof responsibilityFixture>[1]={})=>{
   const actors=responsibilityIdentities(request),actor_index=patch.actor_index??actors.findIndex(actor=>actor.component===component)+1;
-  return responsibilityFixture(component,{...patch,actor_index,component:responsibilityComponentName(actors[actor_index-1])});
+  return responsibilityFixture(component,{...patch,actor_index,component:responsibilityComponentName(actors[actor_index-1],patch.business_component??"本题事实关系推导与结果使用")});
  };
  return {request,cause,tool:quote(1,'/output'),input:quote(2,'/input_messages/0/content'),final:quote(3,'/content')};
 }
@@ -64,7 +64,7 @@ test('each problem requires exactly one primary cause and valid function taxonom
  assert.deepEqual(check([cause]),[]);assert(check([]).some(x=>x.code==='responsibility_primary'));
  assert(check([cause,{...cause,mechanism:'另一失误。'}]).some(x=>x.code==='responsibility_primary'));
  assert(check([{...cause,functional_component:'网络'}]).some(x=>x.code==='responsibility_taxonomy'));
- assert.deepEqual(responsibilityLabels({component:[cause]}),['未命名终稿生成调用（消息 2、3） / 数据解释与计算 / 事实关系推导']);
+ assert.deepEqual(responsibilityLabels({component:[cause]}),['回答生成：本题事实关系推导与结果使用（消息 2、3） / 数据解释与计算 / 事实关系推导']);
 });
 test('inference needs explicit missing evidence and alternative explanations, while the defect can stay established',()=>{
  const f=fixture(),cause=f.cause('最终回答组织',{actor_index:2,evidence_ids:[f.final.evidence_id]});
@@ -89,7 +89,7 @@ test('confirmed context loss needs the actual model input, not just an original 
 test('selected actor names retain their source coordinates and forged identities or node links are rejected',()=>{
  const f=fixture(),cause=f.cause(undefined,{actor_index:2,evidence_ids:[f.final.evidence_id]});
  const problem=resolveProblemSubmission(f.request,{diagnosis:"other",investigation:[],component:[cause],label:'价格口径错误',definition:'ETF份额价混作现货价。'},[f.final],'/problem');
- const actor=responsibilityIdentities(f.request)[problem.component[0].actor_index-1];
+ const actor=responsibilityIdentities(f.request)[Number(problem.component[0].actor_index)-1];
  assert.deepEqual(actor.message_indices,[2,3]);
  assert.deepEqual(responsibilityIssues(f.request,problem,[f.final],'/problem'),[]);
  actor.message_indices=[1];
@@ -116,4 +116,16 @@ test('same-name actors keep their real name and cannot borrow another record to 
  cause.actor_index=2;
  assert(responsibilityIssues(request,{component:[cause]},[evidence],'/problem').some(issue=>issue.code==='responsibility_actor_evidence'));
  assert.deepEqual(actors.slice(0,2).map(actor=>actor.component),['Planner','Planner']);
+});
+
+test('an unrecorded renderer remains unknown instead of assigning an attached image to answer generation',()=>{
+ const f=fixture(),business_component='图表标题与绘制序列的绑定';
+ const cause={...f.cause(),actor_index:null,technical_domain:'交付与呈现',functional_component:'图表渲染',business_component,
+  component:responsibilityComponentName(undefined,business_component),evidence_ids:[f.final.evidence_id]};
+ assert.deepEqual(responsibilityIssues(f.request,{component:[cause]},[f.final],'/problem'),[]);
+ assert(responsibilityIssues(f.request,{component:[{...cause,certainty:'confirmed',mechanism_source:'explicit_process'}]},[f.final],'/problem')
+  .some(issue=>issue.code==='responsibility_unknown_actor'));
+ assert(responsibilityIssues(f.request,{component:[{...cause,actor_index:2,component:responsibilityComponentName(responsibilityIdentities(f.request)[1],business_component)}]},[f.final],'/problem')
+  .some(issue=>issue.code==='responsibility_render_actor'));
+ assert(!cause.component.includes('未命名'));
 });
