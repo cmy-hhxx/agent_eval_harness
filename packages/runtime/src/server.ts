@@ -874,7 +874,7 @@ export async function startWorker(
         const prompt=JSON.stringify(projectEvidenceReferences(material,audit.evidenceBank!));
         await runtime.context.persistEvidenceBank?.([...audit.evidenceBank!]);
         const reviewSpec={...spec,prompt,recovery:undefined,evaluation:{...spec.evaluation,
-          systemPrompt:spec.evaluation.completionReview!}};
+          systemPrompt:spec.evaluation.completionReview!,completionReviewActive:true}};
         attempt.session=await createSession(reviewSpec);
         audit.traceReads.push(...(read_requests as unknown as TraceRead[]??[]));
         const started=performance.now();
@@ -960,6 +960,7 @@ export async function startWorker(
         if (audit.review) record.failure.review = structuredClone(audit.review);
         record.failure.evidenceBank = [...audit.evidenceBank!];
         record.failure.contentSubmissions = (spec.recovery?.contentSubmissions || 0) + submissions;
+        if(reviewing){record.failure.stopped=true;attempt.status.retryable=false;}
         attempt.status.failure = record.failure;
       }
       record.evidenceBank = [...audit.evidenceBank!];

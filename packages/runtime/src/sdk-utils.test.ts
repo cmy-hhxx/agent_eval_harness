@@ -18,7 +18,8 @@ test("initial and restored checkpoints select the current content tool without a
   }
 });
 
-test("completion review exposes confirmation and correction only after a candidate is prepared", () => {
+test("independent review exposes revised submission and incomplete exit", () => {
+  assert.equal(contentToolName({fileSubmission:false,completionReviewActive:true},false),'confirm_evaluation');
   const names = ['read_trace','submit_evaluation','confirm_evaluation'];
   assert.deepEqual(activeToolNames({content:[]},names,'submit_evaluation'),['read_trace','submit_evaluation']);
   assert.deepEqual(activeToolNames({content:[],details:{budget:{exploration:{remaining:0}}}},names,'confirm_evaluation'),

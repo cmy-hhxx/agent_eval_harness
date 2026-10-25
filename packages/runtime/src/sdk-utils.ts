@@ -174,8 +174,8 @@ export function sdkContent(content: ToolContent[]) {
         },
   );
 }
-export function contentToolName(evaluation: Pick<EvaluationSpec, "inspectionSchema" | "fileSubmission">, inspected: boolean): string {
-  return evaluation.inspectionSchema && !inspected ? "inspect_material"
+export function contentToolName(evaluation: Pick<EvaluationSpec, "inspectionSchema" | "fileSubmission" | "completionReviewActive">, inspected: boolean): string {
+  return evaluation.completionReviewActive ? "confirm_evaluation" : evaluation.inspectionSchema && !inspected ? "inspect_material"
     : evaluation.fileSubmission ? "submit_evaluation_file" : "submit_evaluation";
 }
 

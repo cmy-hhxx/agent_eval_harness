@@ -42,6 +42,8 @@ export interface EvaluationSpec {
   inspectionSchema?: JsonSchema;
   /** One independent session revises the initial candidate before acceptance. */
   completionReview?: string;
+  /** Worker-local phase for a fresh review session's initial tool selection. */
+  completionReviewActive?: boolean;
   toolNames: string[];
   /** Whether this profile explicitly submits existing workspace JSON files instead of JSON values. */
   fileSubmission: boolean;
