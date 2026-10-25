@@ -45,10 +45,16 @@ export function finalResponsibilityReview(request:AgentRequest,draft:unknown,res
       const t=answer.transitions.find(t=>'boundary:'+t.transition_index===r.responsibility_boundary);return t?[t]:[];
     });
     // A broad reference to the entire input must not select every historical chain.
-    const chains=answer.business_chains.filter(c=>selected.some(t=>t.kind!=='generation'&&t.chain_indices.includes(c.chain_index))||
+    const directChains=answer.business_chains.filter(c=>selected.some(t=>t.kind!=='generation'&&t.chain_indices.includes(c.chain_index))||
       proof.some(e=>[c.request_index,...c.return_indices].includes(e.message_index)||
         c.checkpoints[5].evidence.some(entry=>covers(entry,e))));
     const generations=selected.filter(t=>t.kind==='generation'||t.kind==='request_formation');
+    const generationMessages=generations.flatMap(t=>answer.execution_nodes.filter(n=>n.execution_node_index===t.execution_node_index).map(n=>n.message_index));
+    // If the selected return has no captured propagation, disambiguate it from
+    // same-tool records actually present in this input. Do not follow ancestors
+    // or claim that one invocation's empty result belongs to another invocation.
+    const missingTools=new Set(directChains.filter(c=>!c.context_indices.some(i=>generationMessages.includes(i))).map(c=>c.tool_component));
+    const chains=answer.business_chains.filter(c=>directChains.includes(c)||missingTools.has(c.tool_component)&&c.context_indices.some(i=>generationMessages.includes(i)));
     const inputs=chains.flatMap(c=>c.checkpoints[5].evidence).filter(e=>generations.some(t=>t.before.some(b=>covers(b,e))));
     const selectedInputs=proof.filter(e=>generations.some(t=>t.before.some(b=>covers(b,e))));
     // For an unsupported assertion with no linked source, the captured input of

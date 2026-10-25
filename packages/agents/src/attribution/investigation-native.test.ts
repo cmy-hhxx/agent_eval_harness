@@ -89,3 +89,21 @@ test('empty Problem also receives actual input/output review without forbidding 
  assert((ctx.read_requests as any[]).some(r=>r.path.startsWith('/input_messages')));
  assert((ctx.read_requests as any[]).some(r=>r.path.startsWith('/output')));
 });
+
+test('an unpropagated failed query is compared with the distinct zero-row query actually in the input',()=>{
+ const first='Leveraged ETF that has holding of PMI',second='ETF: Leveraged ETFs; Full Holdings contains PMI';
+ const f=material([
+  {role:'user',type:'user_question',content:first},
+  {type:'tool_call',name:'finquery',call_id:'one',input:{query:first}},
+  {type:'tool_result',name:'finquery',call_id:'one',output:{query:first,status_code:0,row_count:0}},
+  {type:'tool_call',name:'finquery',call_id:'two',input:{query:second}},
+  {type:'tool_result',name:'finquery',call_id:'two',output:{query:second,status_code:-2601,status_msg:'SQL取数异常'}},
+  {type:'llm_turn',name:'llm-call-0',input_messages:[{role:'user',content:'Financial data you fetched:\n'+JSON.stringify({serial_number:'abc1234',query:first,row_count:0})}],output:[{role:'assistant',content:'没有任何产品。'}]},
+  {type:'final_answer',role:'assistant',content:'没有任何产品。'},
+ ],first);
+ const edge=f.transitions.find(t=>responsibilityDisplay(f.binding.request,t.transition_index).component==='终稿生成轮')!;
+ const problem={text:'把有限筛选写成不存在',responsibility_boundary:'boundary:'+edge.transition_index};
+ const ctx=finalResponsibilityReview(f.binding.request,{Problem:[problem]},{Problem:[{component:'终稿生成轮',evidence:f.evidence.filter(e=>e.message_index===4)}]},f.audit)!;
+ const messages=(ctx.read_requests as any[]).map(r=>r.message_index);
+ assert(messages.includes(2));assert(messages.includes(4));assert(messages.includes(5));
+});
