@@ -10,6 +10,7 @@ import type { AttributionTransition } from "./transitions.js";
 import { responsibilityDisplay } from "./responsibility.js";
 import { attributionSubmissionSchema } from "./submission-schema.js";
 import { responsibilityBindingIssues, finalResponsibilityReview } from './responsibility-binding.js';
+import { validateCompletion } from './validate.js';
 
 function nativeFixture(loss = false, unrelated = false) {
   const question = "核对XOM的MA50支撑，并给出结论。";
@@ -31,6 +32,12 @@ function nativeFixture(loss = false, unrelated = false) {
   );
   return material(messages, question);
 }
+
+test('unfinished review summaries fail while quoted answer defects remain valid',()=>{
+ const request=nativeFixture().binding.request;
+ for(const summary of ['待补充','暂缓','本次复核尚未完成'])assert.throws(()=>validateCompletion(request,{summary}),/未完成/);
+ assert.doesNotThrow(()=>validateCompletion(request,{summary:'回答以“待补充”代替所需数据，未满足交付要求。'}));
+});
 function material(messages: RawInput["messages"], question: string) {
   const candidate: Candidate = { batch_id: "native", case_id: "native", version: "aime", name: "aime", input_id: randomUUID(), trace_id: null,
     source: "test", line: 1, question, answer_timing: { first_token_seconds: null, first_answer_seconds: null, finish_seconds: null, source_unit: "s", source_values: {}, source_fields: {} },
@@ -62,7 +69,7 @@ test('final responsibility recall reads the existing Problem and offers only cap
  const f=nativeFixture(true,true),edge=f.transitions.find(t=>responsibilityDisplay(f.binding.request,t.transition_index).component==='终稿生成轮')!;
  const problem={text:'均线支撑无依据',reason:'原始返回有均线，实际输入丢失。',attribution_reason:'材料传递中丢失均线字段。',responsibility_boundary:'boundary:'+edge.transition_index};
  const context=finalResponsibilityReview(f.binding.request,{Problem:[problem]},{Problem:[{component:'终稿生成轮',evidence:f.evidence.filter(e=>e.message_index===6)}]},f.audit)!;
- assert.deepEqual((context.problems as any[])[0].Problem,problem);
+ assert((context.initial_result as any).Problem[0].component==='终稿生成轮');
  const reads=context.read_requests as any[];
  assert(reads?.some(r=>r.message_index===6),'the actual finquery return is mandatory, not the attribution explanation');
  const original=(f.binding.request.sources.answer.value as RawInput).messages;
@@ -70,7 +77,7 @@ test('final responsibility recall reads the existing Problem and offers only cap
  assert(!reads.some(r=>[1,2,3].includes(r.message_index)),'unrelated weather ancestors stay outside the review');
  assert((context.choices as any[]).some(c=>c.component==='finquery 取数服务'));
  assert(!(context.choices as any[]).some(c=>c.component.includes('web_fetch')));
- assert.equal(finalResponsibilityReview(f.binding.request,{Problem:[problem]},{Problem:[{component:'finquery 取数服务'}]},f.audit),undefined);
+ assert(finalResponsibilityReview(f.binding.request,{Problem:[problem]},{Problem:[{component:'finquery 取数服务'}]},f.audit));
  assert(responsibilityBindingIssues(f.binding.request,null,f.evidence,f.audit,'/Problem/0').some(i=>i.code==='responsibility_unresolved'));
 });
 test('responsibility identifiers cannot be confused with valid numeric node indices',()=>{
@@ -85,7 +92,7 @@ test('responsibility identifiers cannot be confused with valid numeric node indi
 test('empty Problem also receives actual input/output review without forbidding an empty assessment',()=>{
  const f=nativeFixture();
  const ctx=finalResponsibilityReview(f.binding.request,{summary:'待完成原文核对',Problem:[]},{Problem:[]},f.audit)!;
- assert.equal(ctx.summary,'待完成原文核对');assert.deepEqual(ctx.problems,[]);
+ assert.equal((ctx.initial_result as any).Problem.length,0);assert.deepEqual(ctx.problems,[]);
  assert((ctx.read_requests as any[]).some(r=>r.path.startsWith('/input_messages')));
  assert((ctx.read_requests as any[]).some(r=>r.path.startsWith('/output')));
 });

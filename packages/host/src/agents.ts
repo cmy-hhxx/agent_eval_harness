@@ -251,13 +251,14 @@ export class AgentRegistry {
     const {profile}=this.get(binding);
     return profile.completionReviewContext?.(binding.request,draft,result,{...audit,traceReads:[...binding.presentedReads??[],...audit.traceReads]});
   }
-  validate(binding: AgentBinding, result: unknown, audit: ToolAudit): void {
+  validate(binding: AgentBinding, result: unknown, audit: ToolAudit, completed = true): void {
     audit={...audit,traceReads:[...binding.presentedReads??[],...audit.traceReads]};
     const { profile, result: resultValidator } = this.get(binding);
     if (!resultValidator(result)) throw new ValidationError(this.feedbackProjection(binding,this.feedback(profile, binding.request, result,
       schemaIssues(resultValidator.errors, result)), audit.evidenceBank ?? []));
     try {
       profile.validate?.(binding.request, result, audit);
+      if(completed)profile.validateCompletion?.(binding.request,result,audit);
     } catch (error) {
       if (!(error instanceof ValidationError) || (!profile.validationIssueContext && !profile.evidenceSelections)) throw error;
       throw new ValidationError(this.feedbackProjection(binding,this.feedback(profile, binding.request, result, error.issues!), audit.evidenceBank ?? []));

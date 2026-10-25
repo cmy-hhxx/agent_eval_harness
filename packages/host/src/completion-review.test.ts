@@ -44,69 +44,43 @@ async function fixture(focused=false, required=false) {
   return {store,state,spec,submission,validations:()=>validations,bindings:()=>bindings,rejectBusiness:()=>{rejectBusiness=true;}};
 }
 
-test('targeted review passes existing problems, allows one correction and prevents looping',async()=>{
+test('initial candidate is provisional and one independent revision becomes final',async()=>{
  const f=await fixture(true);
  await assert.rejects(f.store.accept(f.submission),reviewRequired);
- assert(f.state.manifest.states[f.spec.taskId].failure?.completionCandidate?.focusedReview);
- const corrected={...f.submission,submissionId:'corrected'};
- await assert.rejects(f.store.accept(corrected),reviewRequired);
- await assert.rejects(f.store.accept({...corrected,submissionId:'third'}),
-   (e:unknown)=>e instanceof HttpError&&e.issues?.some(i=>i.code==='completion_review_incomplete')===true);
- // The rejected third draft supersedes the candidate, so use a separate run to verify successful completion.
- const g=await fixture(true);await assert.rejects(g.store.accept(g.submission),reviewRequired);
- await assert.rejects(g.store.accept({...g.submission,submissionId:'corrected'}),reviewRequired);
- const receipt=await g.store.accept({...g.submission,submissionId:'confirmed',completionReview:{candidateId:'corrected',reason:'依据原始返回与实际输入，已修正责任。'}});
- assert.equal(receipt.status,'succeeded');
-});
-
-test('Exxon summary with missing Problem records is provisional, never a successful receipt', async()=>{
-  const f=await fixture();
-  const exxon={summary:'存在一处期间错配：把2026-07-24关于截至2026年6月季度的14.72%下修，写成Q3共识过去30天下修14.7%；另有一处未被检索结果支持的50日均线支撑位表述。',Problem:[]};
-  await assert.rejects(f.store.accept({...f.submission,evaluation:exxon}),reviewRequired);
-  assert.equal(await f.store.receipt(f.spec.taskId),undefined);
-  assert.equal(f.state.manifest.states[f.spec.taskId].status,'running');
-  assert.deepEqual(f.state.manifest.states[f.spec.taskId].failure?.draft,exxon);
-  // The same reviewer must register the actual defects, then explicitly review this latest candidate.
-  const corrected={...exxon,Problem:[{text:'EPS期间错配',reason:'来源为截至6月季度，交付将其当作Q3预期。'},
-    {text:'MA50支撑无据',reason:'相关来源没有支持该均线数值。'}]};
-  await assert.rejects(f.store.accept({...f.submission,submissionId:'corrected',evaluation:corrected}),reviewRequired);
-  const receipt=await f.store.accept({...f.submission,submissionId:'confirmed',evaluation:corrected,
-    completionReview:{candidateId:'corrected',reason:'摘要两项缺陷均已登记，并分别保留对应来源及限定。'}});
-  assert.deepEqual(receipt.evaluation,corrected);
-  assert.equal(f.validations(),3);
-  assert.equal(f.bindings(),1, 'one attempt reuses material while each submission is fully validated');
-});
-
-test('an actually reviewed empty Problem remains acceptable without a minimum problem count',async()=>{
-  const f=await fixture();
-  await assert.rejects(f.store.accept(f.submission),reviewRequired);
-  const receipt=await f.store.accept({...f.submission,submissionId:'confirmed',
-    completionReview:{candidateId:'first',reason:'已核查实际交付及来源，结论保持原文范围，未形成缺陷。'}});
-  assert.equal(receipt.status,'succeeded');
-  assert.deepEqual((receipt.evaluation as {Problem:unknown[]}).Problem,[]);
-  assert.equal(f.validations(),2);
-});
-
-test('a repaired candidate invalidates the earlier review and confirmation reruns business validation',async()=>{
-  const f=await fixture();
-  await assert.rejects(f.store.accept(f.submission),reviewRequired);
-  const invalid={...f.submission,submissionId:'invalid',evaluation:{summary:7,Problem:[]}};
-  await assert.rejects(f.store.accept(invalid));
-  await assert.rejects(f.store.accept({...f.submission,submissionId:'stale',
-    completionReview:{candidateId:'first',reason:'Cannot confirm an older candidate.'}}),/current candidate/);
-  const repaired={...f.submission,submissionId:'repaired'};
-  await assert.rejects(f.store.accept(repaired),reviewRequired);
-  assert.deepEqual(f.state.manifest.states[f.spec.taskId].failure?.completionCandidate?.previous,f.submission.evaluation);
-  f.rejectBusiness();
-  await assert.rejects(f.store.accept({...repaired,submissionId:'confirmed',
-    completionReview:{candidateId:'repaired',reason:'Reviewed the repaired candidate.'}}),/Evidence incomplete/);
-  assert.equal(await f.store.receipt(f.spec.taskId),undefined);
-});
-
- test('focused responsibility review cannot confirm unread originals even through the Host API',async()=>{
- const f=await fixture(true,true);await assert.rejects(f.store.accept(f.submission),reviewRequired);
- await assert.rejects(f.store.accept({...f.submission,submissionId:'confirm',completionReview:{candidateId:'first',reason:'已核对。'}}),
- (e:unknown)=>e instanceof HttpError&&e.issues?.some(i=>i.code==='completion_review_incomplete')===true);
  assert.equal(await f.store.receipt(f.spec.taskId),undefined);
  assert.deepEqual(f.state.manifest.states[f.spec.taskId].failure?.draft,f.submission.evaluation);
- });
+ await assert.rejects(f.store.accept({...f.submission,submissionId:'same-session'}),
+   (e:unknown)=>e instanceof HttpError&&e.issues?.some(i=>i.code==='completion_review_incomplete')===true);
+ const revised={summary:'核对原始返回后修正组件。',Problem:[{component:'finquery 取数服务'}]};
+ const receipt=await f.store.accept({...f.submission,submissionId:'reviewed',evaluation:revised,
+   completionReview:{candidateId:'first',reason:'独立复核'}});
+ assert.deepEqual(receipt.evaluation,revised);assert.equal(f.validations(),2);assert.equal(f.bindings(),1);
+});
+
+test('an independently reviewed empty Problem is acceptable without a component quota',async()=>{
+ const f=await fixture();await assert.rejects(f.store.accept(f.submission),reviewRequired);
+ const receipt=await f.store.accept({...f.submission,submissionId:'reviewed',completionReview:{candidateId:'first',reason:'独立复核'}});
+ assert.deepEqual((receipt.evaluation as {Problem:unknown[]}).Problem,[]);
+});
+
+test('a failed independent revision cannot be repaired or revive the initial candidate',async()=>{
+ const f=await fixture();await assert.rejects(f.store.accept(f.submission),reviewRequired);
+ await assert.rejects(f.store.accept({...f.submission,submissionId:'invalid',evaluation:{summary:7,Problem:[]},
+   completionReview:{candidateId:'first',reason:'独立复核'}}));
+ await assert.rejects(f.store.accept({...f.submission,submissionId:'again',
+   completionReview:{candidateId:'first',reason:'再试'}}),/current candidate/);
+ assert.equal(await f.store.receipt(f.spec.taskId),undefined);
+});
+
+test('independent revision reruns business validation',async()=>{
+ const f=await fixture();await assert.rejects(f.store.accept(f.submission),reviewRequired);f.rejectBusiness();
+ await assert.rejects(f.store.accept({...f.submission,submissionId:'reviewed',
+   completionReview:{candidateId:'first',reason:'独立复核'}}),/Evidence incomplete/);
+});
+
+test('independent review cannot accept originals that were not delivered',async()=>{
+ const f=await fixture(true,true);await assert.rejects(f.store.accept(f.submission),reviewRequired);
+ await assert.rejects(f.store.accept({...f.submission,submissionId:'reviewed',completionReview:{candidateId:'first',reason:'独立复核'}}),
+ (e:unknown)=>e instanceof HttpError&&e.issues?.some(i=>i.code==='completion_review_incomplete')===true);
+ assert.equal(await f.store.receipt(f.spec.taskId),undefined);
+});

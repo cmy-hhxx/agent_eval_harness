@@ -15,8 +15,6 @@ export function responsibilityBindingIssues(request:AgentRequest,index:number|nu
 /** Direct source/input/output comparison; never follow the transitive ancestor graph. */
 export function finalResponsibilityReview(request:AgentRequest,draft:unknown,result:unknown,_audit:ToolAudit):JsonObject|undefined{
   const submitted=draft as AttributionSubmission,value=result as AttributionResult;
-  const indices=value.Problem.flatMap((p,i)=>p.component==='终稿生成轮'||p.related_responsibilities?.some(r=>r.component==='终稿生成轮')?[i]:[]);
-  if(!indices.length&&value.Problem.length)return undefined;
   const answer=request.input.answer as unknown as ResponsibilityMaterial,raw=request.sources.answer.value as {messages:Record<string,unknown>[]};
   const choices=answer.transitions.filter(t=>t.execution_node_index!==null).flatMap(t=>{
     const component=responsibilityDisplay(request,t.transition_index).component;
@@ -60,7 +58,7 @@ export function finalResponsibilityReview(request:AgentRequest,draft:unknown,res
     // For an unsupported assertion with no linked source, the captured input of
     // this invocation is the boundary. It is never expanded to its ancestors.
     const actualInputs=inputs.length||selectedInputs.length?[...inputs,...selectedInputs]:generations.flatMap(t=>t.before);
-    return {problem_index:i,current_component:value.Problem[i].component,Problem:problem,
+    return {problem_index:i,
       source_comparison:{
         calls:chains.map(c=>({tool:c.tool_component,request:add(c.checkpoints[2].evidence),
           original_return:add(c.checkpoints[3].evidence),
@@ -78,5 +76,19 @@ export function finalResponsibilityReview(request:AgentRequest,draft:unknown,res
   const required=[...reads.values()].filter((r,i,all)=>!all.some((other,j)=>j!==i&&other.message_index===r.message_index&&other.kind===r.kind&&other.path===r.path&&other.start<=r.start&&other.end>=r.end));
   if(required.reduce((n,r)=>n+r.end-r.start,0)>240000)throw new ValidationError([{category:'decision',code:'completion_review_incomplete',path:'/Problem',
     message:'本问题相关原文超过单轮复核材料预算，不能截断证据或直接确认；保留草稿为未完成。'}]);
-  return {summary:submitted.summary,problems,choices,...(emptyReview?{empty_review:emptyReview}:{}),read_requests:required} as unknown as JsonObject;
+  const originals=required.map(read=>{
+    const source=evidenceSources(raw.messages[read.message_index]).find(s=>s.kind===read.kind&&s.path===read.path);
+    if(!source)throw new Error('复核原始材料不存在');
+    const id=[...reads].find(([,r])=>r===read)![0];
+    return {reference:{evidence_id:id},message_index:read.message_index,path:read.path,quote:source.text.slice(read.start,read.end)};
+  });
+  return {question:(request.input.answer as JsonObject).question,
+    answer:(request.input.answer as JsonObject).final_answer,
+    originals,problems,choices,...(emptyReview?{empty_review:emptyReview}:{}),read_requests:required,
+    initial_result:value,
+    submission_bindings:submitted.Problem.map((p,i)=>({problem_id:value.Problem[i].problem_id,
+      responsibility_boundary:p.responsibility_boundary,evidence:p.evidence,
+      ...(p.related_responsibilities?{related_responsibilities:p.related_responsibilities}:{}),
+      ...(p.calculations?{calculations:p.calculations}:{})})),
+  } as unknown as JsonObject;
 }

@@ -11,8 +11,8 @@ import {body,json,listen,request} from './http.js';
 import {startWorker} from './server.js';
 import {waitForTestState} from '../../../tests/fixtures/wait.js';
 
-for (const mode of ['confirm','unconfirmed','replace','budget'] as const) test('same-session completion review '+mode,async()=>{
-  const confirm=mode==='confirm'||mode==='budget';
+for (const mode of ['revised','unsubmitted','invalid','budget'] as const) test('independent completion review '+mode,async()=>{
+  const confirm=mode==='revised'||mode==='budget';
   const id='11111111-1111-4111-8111-111111111111',source={messages:[{content:'实际交付与来源'}]};
   const binding:AgentBinding={agent:'review',profile:'default',request:{input:{},sources:{answer:{id,value:source}}}};
   const profile:AgentProfile={id:'default',requestSchema:{type:'object'},submissionSchema:{type:'object'},
@@ -32,34 +32,35 @@ for (const mode of ['confirm','unconfirmed','replace','budget'] as const) test('
     if(url.pathname==='/api/evidence-bank')return json(res,await store.registerEvidenceBank(await body(req) as unknown as EvidenceBankUpdate));
     if(url.pathname==='/api/submissions')return json(res,await store.accept(await body(req) as unknown as Submission));
     if(url.pathname.startsWith('/api/submissions/'))return json(res,await store.findSubmission(url.pathname.split('/').at(-1)!));
-    if(mode==='confirm')await new Promise(resolve=>setTimeout(resolve,1100));
+    if(mode==='revised')await new Promise(resolve=>setTimeout(resolve,1100));
     return json(res,source);
   });
   const directory=await mkdtemp(path.join(tmpdir(),'completion-review-'));
-  let runs=0;
-  const worker=await startWorker({identity:engine,async createSession(options){return {async run(){
-    if(runs++)return;
-    if(mode==='budget'){
-      for(let i=0;i<4;i++) assert(!(await options.execute('read_trace',{candidate:'answer',message_index:0,path:'/content'})).isError);
-    }
-    const candidate={summary:'已核查实际交付及来源，未发现成立缺陷。',Problem:[]};
-    const pending=await options.execute('submit_evaluation',candidate);
-    assert.equal(pending.terminate,undefined);
-    assert.equal((pending.details as {review_pending:boolean}).review_pending,true);
-    assert.equal((pending.details as {next_tool:string}).next_tool,'confirm_evaluation');
-    assert.equal(await store.receipt('task'),undefined);
-    if(mode==='replace'){
-      const replacement=await options.execute('submit_evaluation',{summary:'修正后的实际结论',Problem:[]});
-      assert.equal(replacement.isError,true);
-      await assert.rejects(()=>options.execute('confirm_evaluation',{decision:'确认',reason:'Cannot use the old candidate after an exhausted replacement.'}));
-      return;
-    }
-    if(mode==='budget') assert.equal((await options.execute('read_trace',{candidate:'answer',message_index:0,path:'/content'})).isError,true,'submitting a candidate does not earn extra reads');
-    if(confirm){
-      const result=await options.execute('confirm_evaluation',{decision:'确认',reason:'已将摘要与本次交付逐项核对，无已成立而未登记的问题。'});
-      assert.equal(result.terminate,true);
-    }
-  },async abort(){},async dispose(){}};}},directory);
+  let sessions=0,runs=0;
+  const candidate={summary:'初次归因。',Problem:[]};
+  const revised={summary:'独立复核完成。',Problem:[]};
+  const worker=await startWorker({identity:engine,async createSession(options){
+    const session=++sessions;
+    return {async run(prompt){
+      runs++;
+      if(session===1){
+        assert.equal(options.spec.evaluation.systemPrompt,'Review.');
+        if(mode==='budget')for(let i=0;i<4;i++)assert(!(await options.execute('read_trace',{candidate:'answer',message_index:0,path:'/content'})).isError);
+        const pending=await options.execute('submit_evaluation',candidate);
+        assert.equal(pending.terminate,true);assert.equal(await store.receipt('task'),undefined);
+        return;
+      }
+      assert.equal(session,2);assert.equal(options.spec.evaluation.systemPrompt,profile.completionReview);
+      assert.deepEqual(JSON.parse(prompt),{initial_result:candidate});
+      assert.equal(options.spec.recovery,undefined);
+      if(mode==='unsubmitted')return;
+      if(mode==='budget')assert.equal((await options.execute('read_trace',{candidate:'answer',message_index:0,path:'/content'})).isError,true);
+      if(mode==='invalid'){
+        await options.execute('confirm_evaluation',{decision:'未完成',reason:'材料处理主体未采集。'});return;
+      }
+      assert.equal((await options.execute('submit_evaluation',revised)).terminate,true);
+    },async abort(){},async dispose(){}};
+  }},directory);
   const prepared=agents.prepare(binding),spec:AttemptSpec={runId:'test',taskId:'task',attemptId:'attempt',inputRevision:1,engine,
     evaluation:prepared.evaluation,policy:{...DEFAULT_POLICY,repairAttempts:mode==='budget'?1:0,maxToolCalls:1,idleTimeoutSeconds:1},prompt:'Review.',evidenceBank:[],
     inputs:[{id,name:'answer'}],hostUrl:host.url,deadline:Date.now()+10000,
@@ -69,7 +70,8 @@ for (const mode of ['confirm','unconfirmed','replace','budget'] as const) test('
     const status=await waitForTestState(()=>request<AttemptStatus>(worker.url+'/api/attempts/attempt'),value=>value.state!=='running','completion review did not finish');
     assert.equal(status.state,confirm?'succeeded':'failed',status.error);
     const receipt=await store.receipt('task');
-    if(confirm){assert.equal(receipt?.submissionStats?.contentSubmissions,1);assert(receipt?.completionReview?.reason);}
-    else {assert.equal(receipt,undefined);assert.equal(status.failure?.errors.some(e=>e.code==='completion_review_required'),true);}
+    assert.equal(sessions,2);assert.equal(runs,2);
+    if(confirm){assert.equal(receipt?.submissionStats?.contentSubmissions,1);assert(receipt?.completionReview?.reason);assert.deepEqual(receipt?.evaluation,revised);}
+    else {assert.equal(receipt,undefined);assert.equal(status.failure?.errors.some(e=>e.code==='completion_review_incomplete'),true);}
   }finally{await worker.close();await host.close();await rm(directory,{recursive:true,force:true});}
 });

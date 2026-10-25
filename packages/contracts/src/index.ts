@@ -40,7 +40,7 @@ export interface EvaluationSpec {
   outputSchema: JsonSchema;
   /** Optional structured material inspection, sharing the final submission content budget. */
   inspectionSchema?: JsonSchema;
-  /** A same-session semantic review of the latest validated candidate before acceptance. */
+  /** One independent session revises the initial candidate before acceptance. */
   completionReview?: string;
   toolNames: string[];
   /** Whether this profile explicitly submits existing workspace JSON files instead of JSON values. */
@@ -143,13 +143,10 @@ export interface ToolAudit {
 }
 export type { ReviewCase, ReviewQuote, ReviewAudit } from "./review.js";
 export interface CompletionCandidate {
-  focusedReview?: boolean;
   id: string;
   superseded?: boolean;
   attemptId: string;
   evaluation: unknown;
-  /** Earlier validated judgments remain visible for any explicit withdrawal explanation. */
-  previous?: unknown;
 }
 export interface Submission {
   completionReview?: { candidateId: string; reason: string };
@@ -459,9 +456,9 @@ export interface AgentProfile {
   };
   /** Schema for the accepted result after optional submission resolution. */
   resultSchema?: JsonSchema;
-  /** Prompt-owned instructions for a short same-session review; not a semantic correctness proof. */
+  /** Prompt-owned instructions for one independent review, without a confirmation turn. */
   completionReview?: string;
-  /** Program-selected context for one bounded same-session review/correction round. */
+  /** Direct originals and the complete initial result for the independent review. */
   completionReviewContext?(request:AgentRequest,draft:unknown,result:unknown,audit:ToolAudit):JsonObject|undefined;
   systemPrompt: string;
   instructions: string;
@@ -480,6 +477,8 @@ export interface AgentProfile {
   validationIssueContext?(request: AgentRequest, value: unknown, issue: ValidationIssue): JsonObject | undefined;
   resolve?(request: AgentRequest, draft: unknown, audit: ToolAudit): unknown;
   validate?(request: AgentRequest, result: unknown, audit: ToolAudit): void;
+  /** Final acceptance checks; an initial review candidate may still need correction. */
+  validateCompletion?(request: AgentRequest, result: unknown, audit: ToolAudit): void;
 }
 export interface AgentDefinition {
   id: string;

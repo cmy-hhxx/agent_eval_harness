@@ -23,13 +23,13 @@ AIME 使用 workflow: answer-review。每条回答先完成 Attribution，通过
 
 公共 Runtime 保留动态必读受保护预算和无进展停止；归因已关闭证据业务门，改由模型核查完成性及真实样本抽审。模型判断尚未完成时不得确认，未确认或预算耗尽由 state 保留失败原因。结构检查不能证明任意自然语言判断的语义完整性，真实样本仍须抽审；技术接收数与有效评审数分别报告。
 
-运行进度以活动 Host 的 `/api/progress` 为准：`updated_at` 是实时观测时间，`checkpoint.savedAt` 是最后落盘时间。queued 等待派发，preparing 等待材料组装或派发确认，running 已派发执行（含首次完成性确认），repairing 是有实际拒收的内容修复，accepted 和 failed 分别为正式收据与终止失败；这些计数互不重复。preparing 仅存在内存，不新增持久化任务状态。Host 不在线时，state 是恢复快照，不能据其 running 宣称模型仍在执行。
+运行进度以活动 Host 的 `/api/progress` 为准：`updated_at` 是实时观测时间，`checkpoint.savedAt` 是最后落盘时间。queued 等待派发，preparing 等待材料组装或派发确认，running 已派发执行（含一次独立复核），repairing 是有实际拒收的内容修复，accepted 和 failed 分别为正式收据与终止失败；这些计数互不重复。preparing 仅存在内存，不新增持久化任务状态。Host 不在线时，state 是恢复快照，不能据其 running 宣称模型仍在执行。
 
 同次尝试复用已组装材料，证据路径索引只在一次组装内存在；提交和确认仍重新执行结构、程序身份及计算验收，不缓存通过结论。统一 runtime.log 中的 task_prepared、submission_wait、submission_validation、attempt_metrics 分别记录排队、材料/目录/准备 CPU、激活/派发、提交锁等待、验收和 Worker 耗时。materialMs 包含 directoryMs；requiredReadMs 是 submissionMs 内的受保护补读子集，不重复相加。modelMs 是 SDK assistant 消息开始至结束的观测时长，工具、Host 材料 IO 和提交分别计时。输入等待不算模型空闲，但总任务 deadline 始终有效，额度和重试上限不增加。
 
 边界覆盖先按已解析路径和范围排除不可能覆盖的组合，再对剩余组合执行原始来源校验；部分引用仍须落在真实原文范围，不用同文内容替代坐标。该索引不跨尝试保存。
 
-替换候选的意图一旦提交，旧候选立即失效，包括新稿因额度耗尽、文件或 JSON 错误而未送达 Host 的情况。确认不能复活旧稿，也不能把最终结论放入确认 reason 来替代正式 summary/Problem；额度耗尽继续按既有失败机制收尾。
+初稿进入一次独立上下文复核，复用当前模型、工具与原有任务预算，直接提供相关原始请求、返回及实际生成输入输出、真实组件选项和完整六字段初稿。重点核对事实与责任形成位置，不主动展开漏报调查，不按组件配额改归责。复核直接提交修订稿，正确内容原样保留；没有成功确认轮或复核修复循环。复核失败保留草稿为未完成，不能复活初稿；“待补充／暂缓”不正式接收。
 
 Rewrite 只接收 summary、问题和理由文本槽位，不接触证据，不改变原归因或评分。可选改写记录放在 `meta.rewritten`，保持正式顶层六字段。
 
@@ -71,7 +71,7 @@ npm run eval -- run --stage attribution --run-id answer-review-run --config conf
 
 模型常规提交只有 summary 和 Problem；每条问题必填 text、reason、evidence_status、evidence、responsibility_boundary、attribution_reason。有标准答案才额外提交 is_correct、correct_reason；正式六字段始终保留，meta 与 has_standard_answer 完全由程序填写。判断和说明为简洁中文，真实工具名与引文不翻译。
 
-程序验证结构、实际边界身份、证据坐标与读取记录、相关输入输出覆盖和计算一致性。程序不能可靠证明摘要没有漏项、机制文字没有过度推断、关联责任确有独立作用，或正文是否漏交必要计算；同会话确认只是自检，仍须真实样本抽审。规则信号不能直接当作缺陷：零行、旧来源、原句直送及恢复后的工具失败均须结合具体任务和影响判断。
+程序验证结构、实际边界身份、证据坐标与读取记录、相关输入输出覆盖和计算一致性。程序不能可靠证明摘要没有漏项、机制文字没有过度推断、关联责任确有独立作用，或正文是否漏交必要计算；独立复核仍可能复现误判，仍须真实样本抽审。规则信号不能直接当作缺陷：零行、旧来源、原句直送及恢复后的工具失败均须结合具体任务和影响判断。
 
 归因接收口径：证据业务硬校验已关闭，不再因必读覆盖、边界前后匹配、上游来源追查或原数证据匹配触发内容修复。保留 Schema、稳定编号与来源坐标解析、程序身份一致性及计算复算。技术接收不证明评审有效，证据相关性、缺陷成立与语义完成性须真实样本抽审。公共 Runtime 的动态必读受保护预算及无进展停止仍保留，归因不再注册强制必读门。
 

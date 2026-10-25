@@ -446,12 +446,14 @@ export class RunStore {
     if (spec.evaluation.completionReview && value.completionReview) {
       const review = value.completionReview;
       if (!previousCandidate || previousCandidate.superseded || previousCandidate.attemptId !== value.attemptId || review.candidateId !== previousCandidate.id ||
-        canonical(previousCandidate.evaluation) !== canonical(value.evaluation) || typeof review.reason !== 'string' || !review.reason.trim())
+        typeof review.reason !== 'string' || !review.reason.trim())
         throw new ValidationError([{ category: 'decision', code: 'completion_review_stale', path: '/',
           message: 'Completion review must explain and confirm the current candidate in this attempt.' }]);
     }
-    if (spec.evaluation.completionReview && !value.completionReview && state.failure?.completionCandidate) {
-      state.failure.completionCandidate.superseded = true;
+    if (spec.evaluation.completionReview && previousCandidate) {
+      if (!value.completionReview) throw new ValidationError([{category:'decision',code:'completion_review_incomplete',path:'/',
+        message:'初稿只能进入一次独立复核，不能在原会话继续改稿或确认。'}]);
+      previousCandidate.superseded = true;
       await this.save();
     }
     let evaluation: unknown;
@@ -459,7 +461,7 @@ export class RunStore {
     try {
       const binding = this.bindings.get(spec.attemptId)!;
       evaluation = this.services.agents.resolve(binding, value.evaluation, value.audit);
-      this.services.agents.validate(binding, evaluation, value.audit);
+      this.services.agents.validate(binding, evaluation, value.audit, !spec.evaluation.completionReview || Boolean(value.completionReview));
     } catch (error) {
       this.registerValidationReads(spec, error);
       if (error instanceof HttpError) throw error;
@@ -471,20 +473,12 @@ export class RunStore {
         message: value.submissionId,
         validationMs: performance.now() - validationStarted, validationCpuMs: (cpu.user + cpu.system) / 1000 });
     }
-    const reviewContext=!value.completionReview&&!previousCandidate?.focusedReview
-      ?this.services.agents.completionReviewContext(this.bindings.get(spec.attemptId)!,value.evaluation,evaluation,value.audit):undefined;
-    const focusedReview=previousCandidate?.focusedReview||reviewContext!==undefined;
-    if(focusedReview&&!value.completionReview&&previousCandidate?.focusedReview&&previousCandidate.previous!==undefined)
-      throw new ValidationError([{category:'decision',code:'completion_review_incomplete',path:'/',
-        message:'定向归因复核仅允许一次修正；不能再次循环改稿，本次保留草稿为未完成。'}]);
     if (spec.evaluation.completionReview && !value.completionReview) {
-      const candidate = { id: value.submissionId, attemptId: value.attemptId, evaluation: structuredClone(value.evaluation),
-        ...(focusedReview?{focusedReview:true}:{}),
-        ...(previousCandidate ? { previous: structuredClone(previousCandidate.evaluation) } : {}) };
+      const reviewContext=this.services.agents.completionReviewContext(this.bindings.get(spec.attemptId)!,value.evaluation,evaluation,value.audit);
+      const candidate = { id: value.submissionId, attemptId: value.attemptId, evaluation: structuredClone(value.evaluation) };
       const errors = [{ category: 'decision' as const, code: 'completion_review_required', path: '/',
-        message: spec.evaluation.completionReview, expected: { candidate_id: candidate.id, next_tool: 'confirm_evaluation',
-          ...(focusedReview?{focused_review:{...reviewContext,correction_remaining:previousCandidate?.focusedReview?0:1}}:{}),
-          ...(candidate.previous ? { previous_candidate: candidate.previous } : {}) } }];
+        message: spec.evaluation.completionReview, expected: { candidate_id: candidate.id,
+          focused_review:reviewContext??{initial_result:evaluation} } }];
       this.registerValidationReads(spec,new ValidationError(errors));
       state.failure = { ...state.failure, draft: structuredClone(value.evaluation), completionCandidate: candidate, errors,
         evidenceBank: [...value.audit.evidenceBank ?? []], contentSubmissions: value.submissionStats?.contentSubmissions ?? 1,
@@ -492,7 +486,7 @@ export class RunStore {
       await this.save();
       throw new ValidationError(errors);
     }
-    if(value.completionReview&&previousCandidate?.focusedReview){
+    if(value.completionReview){
       const reads=[...this.bindings.get(spec.attemptId)!.presentedReads??[],...value.audit.traceReads];
       const unread=(spec.evaluation.requiredReads??[]).some(target=>{
         let end=target.start;
@@ -502,7 +496,7 @@ export class RunStore {
         return end<target.end;
       });
       if(unread)throw new ValidationError([{category:'decision',code:'completion_review_incomplete',path:'/Problem',
-        message:'责任后处理的相关原始返回、实际输入或输出尚未读完，禁止确认成功。'}]);
+        message:'独立复核尚未获得相关原始返回、实际输入或输出，保留草稿为未完成。'}]);
     }
     const receipt: SubmissionReceipt = {
       ...value,

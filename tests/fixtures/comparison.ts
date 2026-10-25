@@ -154,6 +154,16 @@ export function attributionResult(correct=true,answer='2+2=4',available=true,inp
 
 /** Task result; Criteria uses its source-selection submission, other stages use resolved results. */
 export function taskResult(spec: Pick<AttemptSpec, "evaluation" | "prompt" | "inputs">, revealed?: unknown): unknown {
+  if(spec.prompt.startsWith('{')){
+    const review=JSON.parse(spec.prompt);
+    if(review.initial_result){
+      const value=review.initial_result;
+      return {summary:value.summary,Problem:value.Problem.map((p:any,i:number)=>({text:p.text,reason:p.reason,
+        evidence_status:p.evidence_status,attribution_reason:p.attribution_reason,...review.submission_bindings[i],
+        ...(p.uncertainties?{uncertainties:p.uncertainties}:{})})).map(({problem_id:_id,...p}:any)=>p),
+        ...(value.has_standard_answer?{is_correct:value.is_correct,correct_reason:value.correct_reason}:{})};
+    }
+  }
   const properties =
     (spec.evaluation.outputSchema as { properties?: Record<string, unknown> }).properties || {};
   if (spec.evaluation.id === "instruction-review") return {summary:"内部指令检查独立完成。",checks:[]};
@@ -346,8 +356,6 @@ export async function submitFor(options: Parameters<AgentBackend["createSession"
     await writeJson(path.join(options.workdir, file), value);
     submitted = await options.execute("submit_evaluation_file", { path: file });
   }
-  if ((submitted.details as {review_pending?:boolean}|undefined)?.review_pending)
-    return options.execute("confirm_evaluation", {reason:"已复核受控测试的实际交付、摘要与问题记录；不存在已成立而未登记的缺陷。"});
   return submitted;
 }
 
