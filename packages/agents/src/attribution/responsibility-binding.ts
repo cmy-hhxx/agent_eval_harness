@@ -16,7 +16,7 @@ export function responsibilityBindingIssues(request:AgentRequest,index:number|nu
 export function finalResponsibilityReview(request:AgentRequest,draft:unknown,result:unknown,_audit:ToolAudit):JsonObject|undefined{
   const submitted=draft as AttributionSubmission,value=result as AttributionResult;
   const indices=value.Problem.flatMap((p,i)=>p.component==='终稿生成轮'||p.related_responsibilities?.some(r=>r.component==='终稿生成轮')?[i]:[]);
-  if(!indices.length)return undefined;
+  if(!indices.length&&value.Problem.length)return undefined;
   const answer=request.input.answer as unknown as ResponsibilityMaterial,raw=request.sources.answer.value as {messages:Record<string,unknown>[]};
   const choices=answer.transitions.filter(t=>t.execution_node_index!==null).flatMap(t=>{
     const component=responsibilityDisplay(request,t.transition_index).component;
@@ -64,9 +64,13 @@ export function finalResponsibilityReview(request:AgentRequest,draft:unknown,res
         actual_input:add(actualInputs),actual_output:add(generations.flatMap(t=>t.after)),existing_evidence:add(proof),
       }};
   });
+  const emptyReview=value.Problem.length?undefined:answer.transitions.filter(t=>t.kind==='generation'&&
+    responsibilityDisplay(request,t.transition_index).component==='终稿生成轮').map(t=>({
+      actual_input:add(t.before),actual_output:add(t.after),
+    }));
   // Remove only ranges fully represented by a wider range in the same source.
   const required=[...reads.values()].filter((r,i,all)=>!all.some((other,j)=>j!==i&&other.message_index===r.message_index&&other.kind===r.kind&&other.path===r.path&&other.start<=r.start&&other.end>=r.end));
   if(required.reduce((n,r)=>n+r.end-r.start,0)>240000)throw new ValidationError([{category:'decision',code:'completion_review_incomplete',path:'/Problem',
     message:'本问题相关原文超过单轮复核材料预算，不能截断证据或直接确认；保留草稿为未完成。'}]);
-  return {problems,choices,read_requests:required} as unknown as JsonObject;
+  return {summary:submitted.summary,problems,choices,...(emptyReview?{empty_review:emptyReview}:{}),read_requests:required} as unknown as JsonObject;
 }

@@ -81,3 +81,11 @@ test('responsibility identifiers cannot be confused with valid numeric node indi
  const validate=new Ajv2020({strict:false}).compile(s);
  assert(!validate({summary:'检查完成。',Problem:[{text:'问题',reason:'依据',evidence_status:'已确认',evidence:[{index:1,purposes:['问题']}],responsibility_boundary:f.transitions.length+1,attribution_reason:'定位依据'}]}));
 });
+
+test('empty Problem also receives actual input/output review without forbidding an empty assessment',()=>{
+ const f=nativeFixture();
+ const ctx=finalResponsibilityReview(f.binding.request,{summary:'待完成原文核对',Problem:[]},{Problem:[]},f.audit)!;
+ assert.equal(ctx.summary,'待完成原文核对');assert.deepEqual(ctx.problems,[]);
+ assert((ctx.read_requests as any[]).some(r=>r.path.startsWith('/input_messages')));
+ assert((ctx.read_requests as any[]).some(r=>r.path.startsWith('/output')));
+});
