@@ -12,6 +12,54 @@ import { bindAttributionMaterial } from "@eval/workflows/review";
 import { cite, evidenceSources, selectEvidenceSource } from "@eval/tools";
 
 const codes = (f: ReturnType<typeof businessChainFixture>) => investigationIssues(f.binding.request, f.problem, f.evidence, f.audit, "/problem").map(issue => issue.code);
+test("a read original return leaf beyond the directory preview stays in its actual boundary",()=>{
+  const seed=businessChainFixture(),question='查找 MU 的杠杆 ETF。',title='MULL - Leveraged Micron Technology ETF';
+  const messages=[{type:'user_question',role:'user',content:question},
+    {type:'llm_turn',name:'planner-search',parent_span:'plan',input_messages:[{role:'user',content:question}],output:[{role:'assistant',content:'搜索 MU 杠杆 ETF。'}]},
+    {type:'tool_call',name:'web_search',parent_span:'plan',call_id:'search',input:{query:'MU leveraged ETF'}},
+    {type:'tool_result',name:'web_search',call_id:'search',output:{items:[{content:'前一条结果正文。'.repeat(10000)},{title,content:'Privacy Policy'}]}},
+    {type:'llm_turn',name:'llm-call-0',input_messages:[{role:'user',content:title}],output:[{role:'assistant',content:'仅有 MUU。'}]},
+    {type:'final_answer',content:'仅有 MUU。'}];
+  const binding=bindAttributionMaterial({...seed.candidate,question,final_index:5},{messages});
+  const source=evidenceSources(messages[3]).find(s=>s.kind==='text'&&s.path==='/output/items/1/title')!;
+  const proof=cite(seed.candidate.input_id,3,source,0,source.text.length);
+  const chain=(binding.request.input.answer as any).business_chains[0];
+  const preview=parseEvidenceCoordinates(chain.checkpoints[3].evidence[0].evidence_id)!;
+  assert(preview.kind!=='image'&&preview.end<
+    selectEvidenceSource(evidenceSources(messages[3]).filter(s=>s.kind==='json'),source.path)!.start);
+  const problem={...seed.problem,component:[],investigation:[{chain_index:1,steps:[{step:'原始返回及字段含义',status:'checked' as const,
+    observation:'返回的产品标题为 MULL，正文为隐私政策。',evidence_ids:[proof.evidence_id]}]}]};
+  const audit={...seed.audit,traceReads:[{candidate:'answer',message_index:3,kind:'text' as const,path:source.path,start:0,end:source.text.length}]};
+  assert.deepEqual(investigationIssues(binding.request,problem,[proof],audit,'/problem'),[]);
+  assert(investigationIssues(binding.request,problem,[proof],{...audit,traceReads:[]},'/problem')
+    .some(issue=>issue.code==='investigation_read_required'));
+  for(const [index,path]of [[4,'/input_messages/0/content'],[3,'/name'],[2,'/input/query']] as const){
+    const wrongSource=evidenceSources(messages[index]).find(s=>s.kind==='text'&&s.path===path)!;
+    const wrong=cite(seed.candidate.input_id,index,wrongSource,0,wrongSource.text.length);
+    problem.investigation[0].steps[0].evidence_ids=[wrong.evidence_id];
+    const read={candidate:'answer',message_index:index,kind:'text' as const,path,start:0,end:wrongSource.text.length};
+    assert(investigationIssues(binding.request,problem,[wrong],{...audit,traceReads:[read]},'/problem')
+      .some(issue=>issue.code==='investigation_stage_evidence'));
+  }
+});
+test("a prose term-expansion defect does not invent structured fields from its diagnosis",()=>{
+  const seed=businessChainFixture(),question='解释 IEC-HS。',correct='immune effector cell-associated hemophagocytic syndrome';
+  const messages=[{type:'user_question',role:'user',content:question},
+    {type:'llm_turn',name:'planner-search',parent_span:'plan',input_messages:[{role:'user',content:question}],output:[{role:'assistant',content:'搜索 IEC-HS 释义。'}]},
+    {type:'tool_call',name:'web_search',parent_span:'plan',call_id:'search',input:{query:'IEC-HS'}},
+    {type:'tool_result',name:'web_search',call_id:'search',output:{content:correct}},
+    {type:'llm_turn',name:'llm-call-0',input_messages:[{role:'user',content:'记录提到 IEC-HS。'}],output:[{role:'assistant',content:'IEC-HS 是细胞因子释放综合征。'}]},
+    {type:'final_answer',content:'IEC-HS 是细胞因子释放综合征。'}];
+  const binding=bindAttributionMaterial({...seed.candidate,question,final_index:5},{messages});
+  const selected=([ [3,'/output/content'],[4,'/input_messages/0/content'],[4,'/output/0/content'],[5,'/content'] ] as const)
+    .map(([index,path])=>{const source=evidenceSources(messages[index]).find(s=>s.kind==='text'&&s.path===path)!;
+      return cite(seed.candidate.input_id,index,source,0,source.text.length);});
+  const cause={...seed.cause,actor_index:3,component:'未命名终稿生成调用（消息 4、5）',field_names:[],
+    business_component:'正文术语缩写展开',mechanism:'实际输入只保留缩写，生成输出的释义与原始返回不同；具体补写过程未记录。',
+    evidence_ids:selected.map(item=>item.evidence_id)};
+  const problem={...seed.problem,component:[cause],investigation:[]};
+  assert.deepEqual(investigationIssues(binding.request,problem,selected,seed.audit,'/problem'),[]);
+});
 test("shell input navigation follows the actual action ID without copying unrelated history into every chain",()=>{
   const f=businessChainFixture(),returned={action_id:"actual-run",stdout:"matching result"};
   const messages=[{type:"user_question",role:"user",content:"检查回测。"},
@@ -267,7 +315,7 @@ test("field repair feedback lists actual selected names without silently rewriti
   assert.deepEqual(codes(f), []);
 });
 
-test("prose calculations can clear invented field names without allowing entity or unit investigations to lose their fields", () => {
+test("prose investigations clear invented field names regardless of diagnostic category", () => {
   const f = businessChainFixture();
   f.problem.diagnosis = "other"; f.cause.field_names = ["target price", "spot price"];
   const issue = investigationIssues(f.binding.request, f.problem, f.evidence, f.audit, "/problem")
@@ -276,10 +324,10 @@ test("prose calculations can clear invented field names without allowing entity 
   f.cause.field_names = issue.expected as string[];
   assert.deepEqual(codes(f), []);
   f.problem.diagnosis = "entity_or_unit";
-  assert(codes(f).includes("responsibility_fields"));
+  assert.deepEqual(codes(f), []);
   f.cause.field_names = ["target price"];
-  assert.equal(investigationIssues(f.binding.request, f.problem, f.evidence, f.audit, "/problem")
-    .find(issue => issue.code === "responsibility_fields")!.expected, undefined);
+  assert.deepEqual(investigationIssues(f.binding.request, f.problem, f.evidence, f.audit, "/problem")
+    .find(issue => issue.code === "responsibility_fields")!.expected, []);
 });
 
 test("missing investigation choices produce structural feedback without cascading reads", () => {

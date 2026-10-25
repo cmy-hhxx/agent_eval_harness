@@ -37,6 +37,18 @@ const overlaps = (a: Evidence, b: Evidence, raw: { messages: unknown[] }) => {
   return !!range && json.path === range.source.path && json.start < range.end && range.start < json.end;
 };
 
+/** A directory preview is not the end of the captured invocation's actual output. */
+function inCapturedReturn(item:Evidence,chain:BusinessChain,raw:{messages:unknown[]},inputId:string):boolean{
+  const point=parseEvidenceCoordinates(item.evidence_id);
+  if(!point||point.kind==='image'||point.input_id!==inputId||!chain.return_indices.includes(point.message_index))return false;
+  const message=raw.messages[point.message_index] as Record<string,unknown>;
+  const path=Object.hasOwn(message,'output')?'/output':Object.hasOwn(message,'result')?'/result':'/content';
+  const range=selectEvidenceSource(evidenceSources(message).filter(source=>source.kind==='json'),path);
+  if(!range)return false;
+  return point.kind==='text'?(point.path===path||point.path.startsWith(path+'/')):
+    point.path===range.source.path&&point.start>=range.start&&point.end<=range.end;
+}
+
 /** A quoted boundary is not an intermediate calculation, even when two values have a simple ratio. */
 function explicitModelProcess(request: AgentRequest, actor: { message_indices: number[] }, proof: readonly Evidence[]): boolean {
   const raw = request.sources.answer.value as { messages: unknown[] };
@@ -118,7 +130,8 @@ export function investigationIssues(request: AgentRequest, problem: ProblemPropo
         :step.step==="数据解释与计算"?[inputs,generated.length?generated:chain.final_evidence]
         :step.step==="核验与最终交付"?(chain.delivery_changed===false?[[...generated,...delivered]]:[generated,delivered])
         :step.step==="模型实际输入"?[finalInputs.length?finalInputs:inputs]:[checkpoint.evidence];
-      for(const group of groups.filter(group=>group.length))if(!group.some(point=>selected.some(item=>!item.source&&step.evidence_ids.includes(item.evidence_id)&&overlaps(item,point,raw))))
+      for(const group of groups.filter(group=>group.length))if(!group.some(point=>selected.some(item=>!item.source&&step.evidence_ids.includes(item.evidence_id)&&
+        (overlaps(item,point,raw)||group===returned&&inCapturedReturn(item,chain,raw,request.sources.answer.id)))))
         add("investigation_stage_evidence",path+"/investigation",step.step+" 的事实须有对应边界证据，不能用其他阶段替代。",{chain_index:chain.chain_index,step:step.step,
           required_sources:group.map(item=>{
             const point=parseEvidenceCoordinates(item.evidence_id)!;
@@ -137,8 +150,6 @@ export function investigationIssues(request: AgentRequest, problem: ProblemPropo
       ...Object.values(attributionTaxonomy.domains).flat(), ...attributionTaxonomy.stages, ...attributionTaxonomy.investigation_steps,
       "模型推理错误", "最终作答节点", "回答模型"].includes(cause.business_component))
       add("responsibility_business_location", location, "business_component 须说明具体业务处理位置，不能复述主体名称或技术分类。");
-    if (chain && !cause.field_names.length && ["entity_or_unit", "context_loss"].includes(problem.diagnosis))
-      add("responsibility_fields", location, "标的、单位或上下文问题须列明受影响的实际字段。");
     const proof = selected.filter(item => cause.evidence_ids.includes(item.evidence_id));
     if(cause.certainty==='confirmed'&&actors[cause.actor_index-1]&&proof.some(item=>!item.source&&traceComponentOwnsEvidence(raw,actors[cause.actor_index-1],item.evidence_id)))
       for(const item of proof.filter(item=>!item.source)) {const read=target(item);if(read&&!readCovered(audit,read,raw))
@@ -161,8 +172,7 @@ export function investigationIssues(request: AgentRequest, problem: ProblemPropo
       const point = parseEvidenceCoordinates(item.evidence_id); return point && point.kind !== "image" && point.path.includes(field);
     })()));
     if (fields.length !== cause.field_names.length)
-      add("responsibility_fields", `${location}/field_names`, "field_names 只保留该责任证据原文或坐标中的实际字段名，不自造概念别名。正文主张或自列计算没有结构化字段时填 []；标的、单位或上下文问题仍须读取并选择实际字段。",
-        fields.length || !chain || !["entity_or_unit", "context_loss"].includes(problem.diagnosis) ? fields : undefined);
+      add("responsibility_fields", `${location}/field_names`, "field_names 只保留该责任证据原文或坐标中的实际字段名，不自造概念别名。有实际结构化字段时选择原文字段；纯正文没有结构化字段时填 []，诊断类别本身不产生字段。", fields);
     if (cause.mechanism_source === "boundary_comparison" && cause.certainty !== "inferred")
       add("responsibility_mechanism_inferred", location, "输入输出边界可确证缺陷，但不能确证隐藏计算或转换机制；标 inferred 并给出缺口及替代解释。");
     if (chain?.delivery_changed === false && cause.role === "primary" && ["核验与最终交付"].includes(cause.chain_step) && problem.diagnosis === "entity_or_unit")
