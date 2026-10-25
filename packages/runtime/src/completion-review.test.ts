@@ -11,7 +11,8 @@ import {body,json,listen,request} from './http.js';
 import {startWorker} from './server.js';
 import {waitForTestState} from '../../../tests/fixtures/wait.js';
 
-for (const confirm of [true,false]) test('same-session completion review '+(confirm?'accepts a reviewed empty result':'leaves unreviewed draft incomplete'),async()=>{
+for (const mode of ['confirm','unconfirmed','replace'] as const) test('same-session completion review '+mode,async()=>{
+  const confirm=mode==='confirm';
   const id='11111111-1111-4111-8111-111111111111',source={messages:[{content:'实际交付与来源'}]};
   const binding:AgentBinding={agent:'review',profile:'default',request:{input:{},sources:{answer:{id,value:source}}}};
   const profile:AgentProfile={id:'default',requestSchema:{type:'object'},submissionSchema:{type:'object'},
@@ -43,6 +44,12 @@ for (const confirm of [true,false]) test('same-session completion review '+(conf
     assert.equal((pending.details as {review_pending:boolean}).review_pending,true);
     assert.equal((pending.details as {next_tool:string}).next_tool,'confirm_evaluation');
     assert.equal(await store.receipt('task'),undefined);
+    if(mode==='replace'){
+      const replacement=await options.execute('submit_evaluation',{summary:'修正后的实际结论',Problem:[]});
+      assert.equal(replacement.isError,true);
+      await assert.rejects(()=>options.execute('confirm_evaluation',{reason:'Cannot use the old candidate after an exhausted replacement.'}));
+      return;
+    }
     if(confirm){
       const result=await options.execute('confirm_evaluation',{reason:'已将摘要与本次交付逐项核对，无已成立而未登记的问题。'});
       assert.equal(result.terminate,true);

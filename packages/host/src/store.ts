@@ -284,7 +284,8 @@ export class RunStore {
     return this.exclusive(value.taskId, () => {
       const commit = this.commits.then(() => {
         void this.services.logger?.event?.("submission_wait", { component: "host", run_id: this.manifest.runId,
-          task_id: value.taskId, attempt_id: value.attemptId, lockWaitMs: performance.now() - queuedAt });
+          task_id: value.taskId, attempt_id: value.attemptId, message: value.submissionId,
+          lockWaitMs: performance.now() - queuedAt });
         return this.acceptExclusive(value);
       });
       this.commits = commit.then(() => {}, () => {});
@@ -467,6 +468,7 @@ export class RunStore {
       const cpu = process.cpuUsage(validationCpu);
       void this.services.logger?.event?.("submission_validation", { component: "host", run_id: this.manifest.runId,
         task_id: value.taskId, attempt_id: value.attemptId, submission_id: value.submissionId,
+        message: value.submissionId,
         validationMs: performance.now() - validationStarted, validationCpuMs: (cpu.user + cpu.system) / 1000 });
     }
     if (spec.evaluation.completionReview && !value.completionReview) {

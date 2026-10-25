@@ -366,6 +366,9 @@ export async function startWorker(
             terminate: true,
           };
         controller.signal.throwIfAborted();
+        // Replacement intent supersedes the old candidate even if loading or the
+        // content budget rejects it. Confirmation cannot revive an unfinished draft.
+        if (!completionReview) completionCandidate = undefined;
         const material = await supplyRequiredMaterial(investigationReads(failure.errors));
         if (material) return material;
         if (!completionReview && submissions >= 1 + spec.policy.repairAttempts) throw new Error("提交修正次数已耗尽");
@@ -379,7 +382,7 @@ export async function startWorker(
           }
           return rejectedFile(error);
         }
-        if (!completionReview) { submissions++; completionCandidate = undefined; }
+        if (!completionReview) submissions++;
         runtime.clearDraftWrite();
         const emitLoaded = () => emit(attempt, "submission", { accepted: false, content_loaded: !completionReview, evaluation: result,
           contentSubmissions: (spec.recovery?.contentSubmissions || 0) + submissions,
@@ -787,6 +790,7 @@ export async function startWorker(
           emit(attempt, "tool_start", { name: tool.name, malformed_arguments: true, argument_object_available: false });
           if (content) {
             await enqueueContent(async () => {
+              if (tool.name !== 'confirm_evaluation') completionCandidate = undefined;
               if (!completionCandidate && submissions >= 1 + spec.policy.repairAttempts) throw new Error("Submission repair budget exhausted");
               // Count and persist the failed call without manufacturing an object or a receipt.
               return rejectedLoad(errors);
