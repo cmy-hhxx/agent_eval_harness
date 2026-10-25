@@ -75,14 +75,16 @@ export function businessChains(raw: RawInput, inputId: string, finalIndex: numbe
     const returns = exchange.return_indices.flatMap(i => {
       const output = object(object(raw.messages[i]).output ?? object(raw.messages[i]).result);
       const prefix = Object.hasOwn(object(raw.messages[i]), "output") ? "/output" : "/result";
+      const execution = ["status_code", "status_msg", "row_count", "model_sql", "data_sql"]
+        .filter(field => Object.hasOwn(output, field)).flatMap(field => at(i, `${prefix}/${field}`, 1600));
       // Financial row identity, field units and values stay at their own original coordinates.
       if (Array.isArray(output.columns) && Array.isArray(output.datas)) {
         const fields = output.columns.slice(0, 3).flatMap(column => typeof object(column).key === "string" ? [String(object(column).key)] : []);
-        return [...output.columns.slice(0, 3).flatMap((_, c) => at(i, `${prefix}/columns/${c}`)),
+        return [...execution, ...output.columns.slice(0, 3).flatMap((_, c) => at(i, `${prefix}/columns/${c}`)),
           ...(fields.length ? fields.flatMap(field => at(i, `${prefix}/datas/0/${field.replaceAll("~", "~0").replaceAll("/", "~1")}`))
             : at(i, `${prefix}/datas/0`, 2400)), ...at(i, `${prefix}/query`)];
       }
-      return ["/output", "/result", "/content"].flatMap(path => at(i, path));
+      return [...execution, ...["/output", "/result", "/content"].flatMap(path => at(i, path))];
     });
     const planner = exchange.planner_index === null ? [] : outputs(exchange.planner_index);
     const request = ["/input", "/arguments"].flatMap(path => at(exchange.request_index, path));
@@ -97,7 +99,8 @@ export function businessChains(raw: RawInput, inputId: string, finalIndex: numbe
         availability: stepEvidence[i].length ? "available" as const : "not_collected" as const,
         evidence: [...new Map(stepEvidence[i].map(item => [item.evidence_id, { evidence_id: item.evidence_id, message_index: item.message_index, quote: item.quote }])).values()],
         note: i === 1 ? "分别核对谁选择了标的及选择依据；若计划没有解释代理标的理由，在观察中明确说明未记录，不编造上游责任。"
-          : i === 4 ? "登记已捕获的返回、整理节点输出与最后实际输入；只按已查关键字段描述保留或丢失，不把局部一致写成整个返回原样传入。未记录的规则不能由相邻顺序推断。"
+          : i === 3 ? "分别核对数据载荷、执行状态和实际 SQL；零行不等于正常执行，失败状态也不自动证明请求正确或工具实现有错。"
+          : i === 4 ? "对照相关原始返回与最后实际输入，分别检查关键事实和错误状态的保留或丢失。边界变化不证明中间处理者已采集；未捕获整理输出时明确处理节点未知，不能把接收输入的终稿调用当成整理者。只记录本问题有关变化，不把局部一致写成整个返回原样传入。"
           : i === 6 ? "同时核对实际输入和生成；只有边界差异不能确证内部乘法、换算或转换步骤。"
           : i === 7 ? "核对生成与交付；未记录独立核验不等于已执行核验，也不自动构成关联责任。" : "材料存在须读取后判断；目录关联不证明因果。",
       })), final_evidence: finals.map(({ evidence_id, message_index, quote }) => ({ evidence_id, message_index, quote })) };

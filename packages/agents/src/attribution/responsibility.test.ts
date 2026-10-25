@@ -12,7 +12,8 @@ test('anonymous responsibility keeps a distinct physical node instead of borrowi
 });
 test('generic model labels cannot terminate a responsibility mechanism',()=>{
  const f=fixture();
- for(const mechanism of ['模型推理问题','模型能力不足','模型推断与生成','模型理解错误']){
+ for(const mechanism of ['模型推理问题','模型能力不足','模型推断与生成','模型理解错误',
+  '终稿调用','终稿有问题','终稿理解错误','终稿生成错误','终稿输出错误','终稿调用输出了错误答案']){
   const cause=f.cause('最终回答组织',{mechanism,evidence_ids:[f.final.evidence_id]});
   assert(responsibilityIssues(f.request,{component:[cause]},[f.final],'/problem')
    .some(issue=>issue.code==='responsibility_mechanism_generic'));

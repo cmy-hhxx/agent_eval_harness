@@ -88,10 +88,11 @@ export function responsibilityIssues(request: AgentRequest, problem: unknown, se
     const refs = Array.isArray(row.evidence_ids) ? row.evidence_ids : [];
     if (typeof row.mechanism === "string" && !isChineseAttributionText(row.mechanism))
       add("responsibility_mechanism_language", `${location}/mechanism`, "具体失误机制须用中文短文说明本次错误动作，保留必要的专有名词。");
-    if(typeof row.mechanism==='string'&&['模型推理问题','模型能力不足','模型推断与生成','模型理解错误','模型推理错误','模型生成错误']
+    if(typeof row.mechanism==='string'&&['模型推理问题','模型能力不足','模型推断与生成','模型理解错误','模型推理错误','模型生成错误',
+      '终稿调用','终稿有问题','终稿理解错误','终稿生成错误','终稿输出错误','终稿调用输出了错误答案']
       .includes(row.mechanism.replace(/[\s。！!；;，,：:]/gu,'')))
       add('responsibility_mechanism_generic',`${location}/mechanism`,
-        '不能用模型推理或能力标签结束归因。说明所选节点对哪个实际输入，在参数构造、证据取舍、口径、计算、引用或交付中做了什么错误处理，并引用该边界；隐藏动作保留推断、缺口及替代解释。',row.mechanism);
+        '节点输出了错误答案只是位置，不能用模型推理、能力或终稿调用标签结束归因。指出哪个具体事实、字段、来源或计算，在所选节点的哪个处理动作上发生偏离，并引用相关输入输出边界；未知上游处理者明确留缺口，隐藏机制保留推断。',row.mechanism);
     if (!refs.length || refs.some(id => !selectedIds.has(String(id))))
       add("responsibility_evidence", `${location}/evidence_ids`, "每个责任分别引用本条 finding 已选择的真实证据，不能编造编号。");
     if (row.certainty === "inferred" && (typeof row.evidence_gap !== "string" || !row.evidence_gap.trim() || !Array.isArray(row.alternatives) || !row.alternatives.length))
