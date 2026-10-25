@@ -43,3 +43,23 @@ test("shared chain facts preserve each problem's fields and reject fields borrow
   assert.throws(()=>registry.resolve(f.binding,draft,f.audit),error=>error instanceof ValidationError&&
     error.issues!.some(issue=>issue.code==="investigation_fact_fields"));
 });
+
+test("a rejected shared fact identifies its own invalid fields and evidence choices", () => {
+  const f=businessChainFixture(),registry=new AgentRegistry([attributionAgent]);
+  const draft=attributionSubmission(f.binding.request,f.result,f.audit);
+  const index=draft.investigation_facts.findIndex(fact=>fact.step_index===1);
+  draft.investigation_facts[index].field_names=["invented_field"];
+  assert.throws(()=>registry.resolve(f.binding,draft,f.audit),error=>{
+    assert(error instanceof ValidationError);
+    const issue=error.issues!.find(issue=>issue.code==="investigation_fact_fields")!;
+    const expected=issue.expected as any;
+    assert.deepEqual(expected.invalid_fields,["invented_field"]);
+    assert.deepEqual(expected.retained_fields,[]);
+    assert.equal(expected.fact_index,index+1);
+    assert.deepEqual(expected.evidence_indices,draft.investigation_facts[index].evidence_indices);
+    return true;
+  });
+  draft.investigation_facts[index].field_names=[];
+  const accepted=registry.resolve(f.binding,draft,f.audit) as AttributionResult;
+  registry.validate(f.binding,accepted,f.audit);
+});

@@ -80,13 +80,17 @@ function bindSubmission(request: AgentRequest, submitted: unknown, audit: ToolAu
     if (!chain || !step || checkpoint?.availability !== "available")
       issues.push({category:"evidence",code:"investigation_fact_boundary",path,
         message:"调查事实只能关联本方已采集的真实链路边界；未采集环节由程序说明，不用其他环节替代。"});
-    if (list(fact.field_names).some(field => !proofs.some(proof => {
+    const fields = list(fact.field_names).filter(field => proofs.some(proof => {
       const point = parseEvidenceCoordinates(proof.evidence_id);
       return !proof.source && checkpoint?.evidence.some(boundary=>boundary.message_index===proof.message_index) &&
         (proof.quote.includes(field) || point && point.kind !== "image" && point.path.includes(field));
-    })))
+    }));
+    if (fields.length !== list(fact.field_names).length)
       issues.push({category:"evidence",code:"investigation_fact_fields",path:`${path}/field_names`,
-        message:"共享事实的字段必须分别出现在本事实引用的原文或坐标中，不能借用另一事实的字段。"});
+        actual:fact.field_names,expected:{fact_index:index+1,chain_index:fact.chain_index,step_index:fact.step_index,
+          invalid_fields:list(fact.field_names).filter(field=>!fields.includes(field)),retained_fields:fields,
+          evidence_indices:fact.evidence_indices,required_sources:checkpoint?.evidence.map(item=>({message_index:item.message_index,reference:{evidence_id:item.evidence_id}}))??[]},
+        message:"本事实字段须来自所选 chain_index/step_index 边界的所引原文或路径。先核对证据是否属于该边界，再保留实际字段；普通正文没有结构化字段时填 []，不能借用其他事实或用清空字段掩盖边界错配。"});
     return {...fact, chain_index:fact.chain_index,field_names:fact.field_names,observation:fact.observation,
       source_proofs:proofs.filter(proof=>!proof.source&&checkpoint?.evidence.some(boundary=>boundary.message_index===proof.message_index)),
       evidence_indices:fact.evidence_indices,step,evidence_ids:evidence.map(ref=>ref.evidence_id)};
@@ -154,7 +158,16 @@ function bindSubmission(request: AgentRequest, submitted: unknown, audit: ToolAu
         const selected:Evidence[]=evidence.flatMap(ref=>{try{return [resolveAttributionEvidence(request,ref,audit,path)];}
           catch(error){if(!(error instanceof ValidationError))throw error;issues.push(...error.issues!);return [];}});
         issues.push(...investigationIssues(request,{component,diagnosis:row.diagnosis,investigation,label:row.label,definition:row.reason} as ProblemProposal,selected,audit,path)
-          .map(issue=>({...issue,path:issue.path.replace(/\/investigation(?:\/.*)?$/u,"/investigation_fact_indices")})));
+          .map(issue=>{
+            const expected=object(issue.expected);
+            const indices=list(row.investigation_fact_indices).filter(number=>{
+              const fact=facts[Number(number)-1];
+              return fact&&fact.chain_index===expected.chain_index&&fact.step===expected.step;
+            });
+            return {...issue,...(indices.length?{expected:{...expected,fact_indices:indices,
+              repair_paths:indices.map(number=>`/investigation_facts/${Number(number)-1}/evidence_indices`)}}:{}),
+              path:issue.path.replace(/\/investigation(?:\/.*)?$/u,"/investigation_fact_indices")};
+          }));
       }
       return { type, dimension: row.dimension, stage: row.stage, importance: row.importance, text: row.text, reason: row.reason, evidence,
         ...(ruleBound ? {norm_index:selected?.norm_index ?? null} : {}),

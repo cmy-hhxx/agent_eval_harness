@@ -37,3 +37,16 @@ test("a malformed numeric row returns structural feedback without crashing indep
  });
  assert.deepEqual(draft,before);
 });
+test("an extra candidate wrapper receives the allowed and required submission fields",()=>{
+ const f=fixture(),draft={...f.draft,candidate:"answer"};
+ assert.throws(()=>f.registry.resolve(f.binding,draft,f.audit),error=>{
+  assert(error instanceof ValidationError);
+  const issue=error.issues!.find(item=>item.code==='schema_additionalProperties'&&item.path==='/candidate')!;
+  const expected=issue.expected as any;
+  assert.equal(expected.remove_field,'candidate');
+  assert(expected.allowed_fields.includes('investigation_facts'));
+  assert(!expected.allowed_fields.includes('candidate'));
+  assert(expected.required_fields.includes('summary'));
+  return true;
+ });
+});

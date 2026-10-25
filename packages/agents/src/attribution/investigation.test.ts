@@ -325,6 +325,11 @@ test("stage repair feedback provides selectable source indices that repair the a
     const expected = error.issues!.find(issue => issue.code === "investigation_stage_evidence")!.expected as any;
     assert.equal(expected.chain_index, 1);
     assert.equal(expected.step, "返回整理与上下文传递");
+    const factIndex=draft.investigation_facts.findIndex(fact=>fact.step_index===5);
+    assert.deepEqual(expected.fact_indices,[factIndex+1]);
+    assert.deepEqual(expected.repair_paths,[`/investigation_facts/${factIndex}/evidence_indices`]);
+    assert(expected.required_sources.every((source:any)=>source.read_request?.candidate==='answer'&&
+      typeof source.read_request.path==='string'&&source.end_offset>source.read_request.offset));
     const indices = expected.required_sources.map((source: any) => source.reference.evidence_index);
     assert(indices.every((index: number) => Number.isInteger(index) && index > 0));
     assert(!JSON.stringify(expected).includes(`ev_${f.candidate.input_id}_`));

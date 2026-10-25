@@ -1,5 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "只提交本对象 properties 定义的判断字段，required 字段必须全部填写；candidate 是读取工具参数，禁止作为提交字段，也不附加 case_id、findings 等导出包装。",
   "type": "object",
   "additionalProperties": false,
   "properties": {
@@ -510,6 +511,7 @@
       }
     },
     "investigation_facts": {
+      "description": "只填写已核实且与问题有关的边界，不补八步空模板。每行必须完整提交 chain_index、step_index、field_names、observation、evidence_indices，禁止额外字段；相同事实可供多个问题引用。",
       "type": "array",
       "items": {
         "type": "object",
@@ -532,6 +534,7 @@
             "maximum": 8
           },
           "field_names": {
+            "description": "仅列本事实所选链路/环节的所引原文或路径中实际存在的字段；纯正文分析填 []，不能借用父对象未引用的字段或其他边界字段。",
             "type": "array",
             "uniqueItems": true,
             "items": {

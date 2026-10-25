@@ -120,7 +120,12 @@ export function investigationIssues(request: AgentRequest, problem: ProblemPropo
         :step.step==="模型实际输入"?[finalInputs.length?finalInputs:inputs]:[checkpoint.evidence];
       for(const group of groups.filter(group=>group.length))if(!group.some(point=>selected.some(item=>!item.source&&step.evidence_ids.includes(item.evidence_id)&&overlaps(item,point,raw))))
         add("investigation_stage_evidence",path+"/investigation",step.step+" 的事实须有对应边界证据，不能用其他阶段替代。",{chain_index:chain.chain_index,step:step.step,
-          required_sources:group.map(item=>({message_index:item.message_index,reference:{evidence_id:item.evidence_id}}))});
+          required_sources:group.map(item=>{
+            const point=parseEvidenceCoordinates(item.evidence_id)!;
+            return {message_index:item.message_index,reference:{evidence_id:item.evidence_id},
+              ...(point.kind!=="image"?{read_request:{candidate:"answer",message_index:point.message_index,kind:point.kind,
+                path:point.path,offset:point.start,max_chars:Math.min(16000,point.end-point.start)},end_offset:point.end}:{})};
+          })});
     }
   }
   for (const [index, cause] of problem.component.entries()) {
