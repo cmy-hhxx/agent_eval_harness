@@ -126,22 +126,26 @@ test("transition projection has one readable evidence directory and owned identi
   assert(!Object.hasOwn(shown, "business_chains"));
   assert.equal(new Set(shown.transition_evidence.map((entry: any) => entry.reference.evidence_index)).size, shown.transition_evidence.length);
   const navigation = new Map<number, any>(shown.transition_evidence.map((entry: any) => [entry.reference.evidence_index, entry]));
-  for (const transition of shown.transitions) {
+  assert.equal(shown.execution_graph.nodes.length, 2);
+  assert.equal(canonical.execution_nodes.length, 2);
+  assert(canonical.transitions.every((boundary: any) => [...boundary.before, ...boundary.after].every((ref: any) => !Object.hasOwn(ref, "quote"))));
+  for (const transition of shown.execution_graph.boundaries) {
     assert(!Object.hasOwn(transition, "actor_index")); assert(!Object.hasOwn(transition, "chain_index"));
     if (transition.kind === "generation") {
-      assert(transition.owner.message_indices.includes(3));
-      assert(!transition.owner.component.includes("未命名"));
+      const owner = shown.execution_graph.nodes.find((node: any) => node.execution_node_index === transition.execution_node_index);
+      assert.equal(owner.message_index, 3);
+      assert(!owner.component.includes("未命名"));
     }
-    for (const boundary of [...transition.before, ...transition.after]) {
-      const entry = navigation.get(boundary.reference.evidence_index)!;
+    for (const evidenceIndex of [...transition.before_evidence_indices, ...transition.after_evidence_indices]) {
+      const entry = navigation.get(evidenceIndex)!;
       assert(entry); assert(!Object.hasOwn(entry, "quote"));
-      const point = parseEvidenceCoordinates(bank[boundary.reference.evidence_index - 1])!;
+      const point = parseEvidenceCoordinates(bank[evidenceIndex - 1])!;
       assert(point.kind !== "image");
       assert.deepEqual(entry.read_request, { candidate: "answer", message_index: point.message_index,
         kind: point.kind, path: point.path, offset: point.start, max_chars: Math.min(16000, point.end - point.start) });
     }
   }
-  assert.deepEqual(presentedMaterialReads({ transitions: shown.transitions, transition_evidence: shown.transition_evidence }, "answer", id), [],
+  assert.deepEqual(presentedMaterialReads({ execution_graph: shown.execution_graph, transition_evidence: shown.transition_evidence }, "answer", id), [],
     "a navigation reference is not a fabricated read receipt");
 });
 

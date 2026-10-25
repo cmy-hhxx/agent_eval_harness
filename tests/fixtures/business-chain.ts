@@ -3,7 +3,7 @@ import { bindAttributionMaterial } from "@eval/workflows/review";
 import { type Candidate, type RawInput } from "@eval/workflows/inputs";
 import type { AttributionResult, BusinessChain, ProblemProposal, AttributionTransition, Evidence } from "@eval/agents/attribution";
 import { responsibilityComponentName } from "@eval/agents/attribution";
-import { parseEvidenceCoordinates } from "@eval/tools";
+import { parseEvidenceCoordinates, resolveEvidence } from "@eval/tools";
 import { emptyAudit } from "./comparison.js";
 import { responsibilityFixture } from "./responsibility.js";
 
@@ -34,7 +34,7 @@ export function businessChainFixture(loss = false, question = "Gold prediction f
   const chains = (binding.request.input.answer as { business_chains: BusinessChain[] }).business_chains;
   const transitions = (binding.request.input.answer as {transitions: AttributionTransition[]}).transitions;
   const generated = transitions.find(edge=>edge.kind === "generation" && edge.after.some(item=>item.message_index===messages.length-2))!;
-  const chain = chains[0], evidence = [...new Map([...chain.checkpoints.flatMap(point => point.evidence), ...chain.final_evidence, ...transitions.flatMap(edge=>[...edge.before,...edge.after])]
+  const chain = chains[0], evidence = [...new Map([...chain.checkpoints.flatMap(point => point.evidence), ...chain.final_evidence, ...transitions.flatMap(edge=>[...edge.before,...edge.after]).map(boundary=>resolveEvidence({messages},boundary,"answer",emptyAudit(),"/fixture",id))]
     .filter((item): item is Evidence => typeof item.quote === "string")
     .map(item => [item.evidence_id, item])).values()];
   const cause = responsibilityFixture(undefined, { transition_index:generated.transition_index,actor_index:(binding.request.input.answer as {component_catalog:{component:string}[]}).component_catalog.findIndex(actor=>actor.component==='最终回答组织')+1,

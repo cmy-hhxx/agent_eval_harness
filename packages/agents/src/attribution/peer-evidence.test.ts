@@ -8,7 +8,7 @@ import { AgentRegistry } from "@eval/host";
 import { prepareFixtureEvidence } from "../../../../tests/fixtures/evidence.js";
 import { parseEvidenceCoordinates, ValidationError, type AgentBinding, type AgentRequest, type EvidenceReference, type ToolAudit } from "@eval/contracts";
 import { cite, evidenceSources, selectEvidenceSource, traceComponentIdentities } from "@eval/tools";
-import { attributionAgent, attributionTableChecks, attributionTableReview, buildAttributionTransitions } from "./index.js";
+import { attributionAgent, attributionTableChecks, attributionTableReview, buildAttributionTransitions, buildAttributionExecutionNodes } from "./index.js";
 import { businessChains } from "@eval/workflows/review";
 import type { RawInput } from "@eval/workflows/inputs";
 import type { AttributionResult } from "./types.js";
@@ -26,7 +26,7 @@ function setPeerTransitions(request: AgentRequest) {
   const material=(request.input.reference_materials as Record<string,any>).B;
   const finalIndex=material.final_message_index;
   const actors=traceComponentIdentities(peer,peerId,finalIndex),chains=businessChains(peer,peerId,finalIndex);
-  Object.assign(material,{business_chains:chains,transitions:buildAttributionTransitions({raw:peer,inputId:peerId,finalIndex,actors,chains})});
+  Object.assign(material,{business_chains:chains,execution_nodes:buildAttributionExecutionNodes(peer,actors),transitions:buildAttributionTransitions({raw:peer,inputId:peerId,finalIndex,actors,chains})});
 }
 const registry = new AgentRegistry([attributionAgent]);
 function fixture() {

@@ -355,10 +355,12 @@ for (const entireAnswer of [false, true]) test(`oversized final-answer blocks pr
           { candidate: label, message_index: 1, path: chartPath, offset: 0, max_chars: 16000 });
         const source = bound.request.sources[label].value as RawInput;
         assert.equal(entireAnswer ? source.messages[1].content : (source.messages[1].content as any[])[1].text, chart);
-        for (const evidence of [...material.final_evidence,...(material.transitions??[]).flatMap((edge:any)=>[...edge.before,...edge.after])])
+        for (const evidence of material.final_evidence)
           assert.equal(resolveEvidence(source, evidence, label, emptyAudit(), "/evidence", task.inputIds[label]).quote, evidence.quote);
-        if(material.transitions)assert(material.transitions.some((edge:any)=>edge.after.some((evidence:any)=>evidence.quote===chart)),
-          "server transition evidence retains the entire original chart while model navigation defers its read");
+        const boundaries=(material.transitions??[]).flatMap((edge:any)=>[...edge.before,...edge.after]);
+        for(const boundary of boundaries)assert(!Object.hasOwn(boundary,"quote"),"transition boundaries locate source text without duplicating it");
+        if(material.transitions)assert(boundaries.some((boundary:any)=>resolveEvidence(source,boundary,label,emptyAudit(),"/transition",task.inputIds[label]).quote===chart),
+          "transition coordinates resolve the entire original chart while model navigation defers its read");
       }
     }
   } finally { await rm(directory, { recursive: true, force: true }); }

@@ -1,8 +1,8 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { validateEvidenceBankSources } from "@eval/contracts";
-import { cite, evidenceSources, selectEvidenceSource, traceComponentIdentities } from "@eval/tools";
-import { buildAttributionTransitions } from "./transitions.js";
+import { cite, evidenceSources, parseEvidenceCoordinates, selectEvidenceSource, traceComponentIdentities } from "@eval/tools";
+import { buildAttributionExecutionNodes, buildAttributionTransitions, type TransitionBoundary } from "./transitions.js";
 import type { BusinessChain } from "./types.js";
 
 const inputId = "11ff7f2a-382f-442c-8903-fce0b57e4c63";
@@ -10,6 +10,12 @@ type Raw = { messages: unknown[] };
 const proof = (raw: Raw, index: number, path: string) => {
   const selected = selectEvidenceSource(evidenceSources(raw.messages[index]), path)!;
   return cite(inputId, index, selected.source, selected.start, selected.end);
+};
+const originalText = (raw: Raw, boundary: TransitionBoundary) => {
+  const point = parseEvidenceCoordinates(boundary.evidence_id)!;
+  assert(point.kind !== "image");
+  return evidenceSources(raw.messages[point.message_index]).find(source => source.kind === point.kind && source.path === point.path)!
+    .text.slice(point.start, point.end);
 };
 function chain(raw: Raw, index: number, request: number, returned: number, consumed: [number, string][]): BusinessChain {
   return { chain_index: index, tool_component: "lookup", request_index: request, return_indices: [returned], planner_index: null,
@@ -44,14 +50,14 @@ test("BE quarterly mislabelling belongs to captured code formation before correc
   const { actors, transitions } = build(raw, chains);
   const formation = transitions.find(event => event.kind === "request_formation")!;
   assert.deepEqual(actors[formation.actor_index! - 1].message_indices, [3]);
-  assert(formation.before.some(item => item.quote?.includes("248976000")));
-  assert(formation.after.some(item => item.message_index === 3 && item.quote?.includes("q3_ni")));
+  assert(formation.before.some(item => originalText(raw, item).includes("248976000")));
+  assert(formation.after.some(item => item.message_index === 3 && originalText(raw, item).includes("q3_ni")));
   const execution = transitions.find(event => event.kind === "execution" && event.chain_index === 2)!;
   assert.equal(actors[execution.actor_index! - 1].kind, "tool");
   assert(execution.predecessors.includes(formation.transition_index));
   const final = transitions.find(event => event.kind === "generation" && event.after.some(item => item.message_index === 6))!;
-  assert(final.before.some(item => item.quote?.includes("248976000")));
-  assert(final.before.some(item => item.quote?.includes("q3_ni 198856000")));
+  assert(final.before.some(item => originalText(raw, item).includes("248976000")));
+  assert(final.before.some(item => originalText(raw, item).includes("q3_ni 198856000")));
   assert(final.predecessors.some(index => transitions[index - 1].before.some(item => item.message_index === 5)));
   const propagated = transitions.find(event => event.kind === "transfer" && event.after.some(item => item.evidence_id.endsWith("/input_messages/1/tool_calls")))
     ?? transitions.find(event => event.kind === "transfer" && event.before.some(item => item.message_index === 3));
@@ -85,6 +91,7 @@ test("chart parameters, rendering execution, model generation and final delivery
   assert.equal(delivery.actor_index, null, "the final capture does not identify a renderer");
   assert.deepEqual(delivery.predecessors, [generation.transition_index]);
   assert(transitions.filter(event => event.kind === "transfer").every(event => event.actor_index === null));
+  assert(transitions.every(event => [...event.before, ...event.after].every(item => !Object.hasOwn(item, "quote"))));
 });
 
 test("field-loss transfer stays unknown while actual generation is separately owned", () => {
@@ -97,8 +104,9 @@ test("field-loss transfer stays unknown while actual generation is separately ow
   const { transitions } = build(raw, [chain(raw, 1, 1, 2, [[3, "/input_messages/0/content"]])]);
   const transfer = transitions.find(event => event.kind === "transfer")!;
   assert.equal(transfer.actor_index, null); assert.equal(transfer.relation, "unresolved");
-  assert(transfer.before.some(item => item.quote?.includes("165.7899")));
-  assert(transfer.after.every(item => !item.quote?.includes("165.7899")));
+  assert(transfer.before.some(item => originalText(raw, item).includes("165.7899")));
+  assert(transfer.after.every(item => !originalText(raw, item).includes("165.7899")));
+  assert.equal(transfer.input_path, "/input_messages/0");
   assert.notEqual(transitions.find(event => event.kind === "generation")?.actor_index, null);
 });
 
@@ -120,9 +128,9 @@ test("captured process fields are generation evidence while input reasoning stay
       { type: "final_answer", content: "Growth is 20%" }] };
     const { transitions } = build(raw, []);
     const generation = transitions.find(event => event.kind === "generation")!;
-    assert(generation.after.some(item => item.quote === "(110-100)/100=0.2"), field);
-    assert(generation.after.every(item => !item.quote?.includes("Input:")));
-    assert(generation.before.some(item => item.quote?.includes("Input:")));
+    assert(generation.after.some(item => originalText(raw, item) === "(110-100)/100=0.2"), field);
+    assert(generation.after.every(item => !originalText(raw, item).includes("Input:")));
+    assert(generation.before.some(item => originalText(raw, item).includes("Input:")));
   }
 });
 
@@ -144,6 +152,7 @@ test("shared assistant transfer is one physical boundary across chains while dis
     const transferred = transitions.filter(event => event.kind === "transfer" && event.after.some(item => item.message_index === 6));
     assert.equal(transferred.length, shared ? 1 : 2);
     assert.deepEqual(transferred.map(event => event.chain_index).sort(), shared ? [null] : [1, 2]);
+    assert.deepEqual(transferred.map(event => event.chain_indices), shared ? [[1, 2]] : [[1], [2]]);
     assert.deepEqual(new Set(transferred.flatMap(event => event.before.map(item => item.evidence_id))),
       new Set(outputs.map((_, index) => proof(raw, 5, `/output/${index}/content`).evidence_id)));
     assert.deepEqual(new Set(transferred.flatMap(event => event.after.map(item => item.evidence_id))),
@@ -153,4 +162,45 @@ test("shared assistant transfer is one physical boundary across chains while dis
     assert.equal(transitions.filter(event => event.kind === "execution").length, 2);
     assert.equal(transitions.filter(event => event.kind === "transfer" && event.after.some(item => item.message_index === 5)).length, 2);
   }
+});
+
+test("execution nodes count actual calls once regardless of copied history, generated requests or returns", () => {
+  const messages: unknown[] = [];
+  for (let i = 0; i < 45; i++) {
+    if (i < 34) messages.push({ type: "llm_turn", input_messages: [{ role: "assistant", tool_calls: [{ id: `history-${i}` }] }],
+      output: [{ role: "assistant", content: "", tool_calls: [{ id: `call-${i}` }] }] });
+    messages.push({ type: "tool_call", name: "lookup", call_id: `call-${i}`, input: {} },
+      { type: "tool_result", name: "lookup", call_id: `call-${i}`, output: "returned" });
+  }
+  messages.push({ type: "final_answer", content: "Delivered" });
+  const nodes = buildAttributionExecutionNodes({ messages }, []);
+  assert.equal(nodes.length, 79);
+  assert.equal(nodes.filter(node => node.kind === "model").length, 34);
+  assert.equal(nodes.filter(node => node.kind === "tool").length, 45);
+  assert.deepEqual(nodes.map(node => node.execution_node_index), Array.from({ length: 79 }, (_, i) => i + 1));
+  assert(nodes.every(node => ["llm_turn", "tool_call"].includes((messages[node.message_index] as { type: string }).type)));
+  const spans = { messages: [{ type: "tool_call", name: "tool-render", call_id: "a", input: {} },
+    { type: "span", name: "tool-render", call_id: "a", output: "paired return" },
+    { type: "span", name: "tool-standalone", output: "captured execution" },
+    { type: "tool_call", name: "pending", call_id: "no-return", input: {} },
+    { type: "tool_result", name: "orphan-return", output: "unknown request" }] };
+  assert.deepEqual(buildAttributionExecutionNodes(spans, []).map(node => node.message_index), [0, 2, 3]);
+});
+
+test("the same output consumed twice in one actual input has two positions and no new execution", () => {
+  const summary = { role: "assistant", content: "Original summary" };
+  const raw = { messages: [{ role: "user", content: "Check" },
+    { type: "tool_call", name: "lookup", call_id: "q", input: {} },
+    { type: "tool_result", name: "lookup", call_id: "q", output: "Original source" },
+    { type: "llm_turn", input_messages: [{ role: "tool", content: "Original source" }], output: [summary] },
+    { type: "llm_turn", input_messages: [summary, summary], output: [{ role: "assistant", content: "Done" }] },
+    { type: "final_answer", content: "Done" }] };
+  const { actors, transitions } = build(raw, [chain(raw, 1, 1, 2,
+    [[3, "/input_messages/0/content"], [4, "/input_messages/0/content"], [4, "/input_messages/1/content"]])]);
+  const nodes = buildAttributionExecutionNodes(raw, actors), transfers = transitions.filter(event => event.kind === "transfer" && event.after.some(item => item.message_index === 4));
+  assert.equal(nodes.length, 3); assert.equal(transfers.length, 2);
+  assert.deepEqual(transfers.map(event => event.input_path), ["/input_messages/0", "/input_messages/1"]);
+  assert(transfers.every(event => event.execution_node_index === null && event.source_node_index === nodes[1].execution_node_index && event.target_node_index === nodes[2].execution_node_index));
+  assert.deepEqual(transfers[0].before, transfers[1].before);
+  assert.notDeepEqual(transfers[0].after, transfers[1].after);
 });

@@ -13,7 +13,7 @@ import { attributionFindingBasis } from "./finding-basis.js";
 import { investigationMaterial } from "./investigation-material.js";
 import { responsibilityFunctions } from "./responsibility.js";
 export { attributionFindingBasis } from "./finding-basis.js";
-export { buildAttributionTransitions, type AttributionTransition, type TransitionKind, type TransitionBoundary } from "./transitions.js";
+export { buildAttributionExecutionNodes, buildAttributionTransitions, type AttributionExecutionNode, type AttributionTransition, type TransitionKind, type TransitionBoundary } from "./transitions.js";
 export { attributionNormDirectory, type AttributionNorm } from "./norm-directory.js";
 export { numericReferenceDirectory } from "./units.js";
 export * from "./types.js";

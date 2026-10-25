@@ -1,5 +1,5 @@
 import { selectEvidence, type AgentRequest, type TaskAnalysis, type ToolAudit } from "@eval/contracts";
-import { attributionNormDirectory, attributionFindingBasis, numericReferenceDirectory, buildAttributionTransitions, type AttributionResult, type AttributionSubmission } from "@eval/agents/attribution";
+import { attributionNormDirectory, attributionFindingBasis, numericReferenceDirectory, buildAttributionTransitions, buildAttributionExecutionNodes, type AttributionResult, type AttributionSubmission } from "@eval/agents/attribution";
 import { parseEvidenceCoordinates, traceComponentIdentities } from "@eval/tools";
 import { businessChains } from "@eval/workflows/review";
 import { responsibilitySubmissionFixture } from "./responsibility.js";
@@ -16,7 +16,7 @@ export function setFixtureComponentCatalog(request: AgentRequest) {
   const raw = request.sources.answer.value as import("@eval/workflows/inputs").RawInput;
   const chains = businessChains(raw, request.sources.answer.id, answer.final_message_index);
   const actors = traceComponentIdentities(raw, request.sources.answer.id, answer.final_message_index);
-  Object.assign(answer, {business_chains:chains,component_catalog:actors,transitions:buildAttributionTransitions({
+  Object.assign(answer, {business_chains:chains,component_catalog:actors,execution_nodes:buildAttributionExecutionNodes(raw,actors),transitions:buildAttributionTransitions({
     raw,inputId:request.sources.answer.id,finalIndex:answer.final_message_index,actors,chains})});
 }
 

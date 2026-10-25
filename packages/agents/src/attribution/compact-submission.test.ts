@@ -1,4 +1,6 @@
 import test from "node:test";
+import { Ajv2020 } from "ajv/dist/2020.js";
+import requestSchema from "../../../../schemas/attribution/request.schema.json" with { type: "json" };
 import assert from "node:assert/strict";
 import { attributionProfile } from "./index.js";
 import example from "./fixtures/example.json" with { type: "json" };
@@ -100,4 +102,29 @@ test("user device facts do not acquire private-rule scope, while system rules re
   finding.evidence = [cite(request.sources.answer.id, 1, userSource, 0, userSource.text.length)];
   assert(instructionEvidenceIssues(request, result).some(issue => issue.code === "instruction_private_basis"),
     "an explicitly registered own rule still cannot borrow a common requirement");
+});
+
+test("request separates execution nodes from locator-only boundaries for own and peer materials",()=>{
+  const ajv=new Ajv2020({strict:false});
+  ajv.compile(requestSchema);
+  const validator=(name:string)=>ajv.compile({$defs:requestSchema.$defs,$ref:"#/$defs/"+name});
+  const boundary=validator("transitionBoundary"),nodes=validator("executionNodes"),edges=validator("transitions");
+  const prefix="ev_11111111-1111-4111-8111-111111111111_1_";
+  for(const kind of ["image","text_0_4_/content","json_0_4_"]){
+    const locator={evidence_id:prefix+kind,message_index:1};
+    assert(boundary(locator));
+    assert(!boundary({...locator,quote:"copied source"}),"boundary catalogs never duplicate source text or invent image observations");
+  }
+  assert(nodes([{execution_node_index:1,kind:"model",actor_index:1,message_index:0},
+    {execution_node_index:2,kind:"tool",actor_index:null,message_index:1}]));
+  const edge={transition_index:1,kind:"transfer",actor_index:null,chain_index:null,before:[],after:[],predecessors:[],
+    relation:"unresolved",execution_node_index:null,source_node_index:2,target_node_index:1,input_path:"/input_messages/0/content",chain_indices:[1,2]};
+  assert(edges([edge]));
+  for(const field of ["execution_node_index","source_node_index","target_node_index","input_path","chain_indices"]){
+    const missing:Record<string,unknown>={...edge};delete missing[field];assert(!edges([missing]),field);
+  }
+  for(const material of [requestSchema.properties.answer,requestSchema.$defs.reference_material]){
+    assert(material.required.includes("execution_nodes"));
+    assert.equal(material.properties.execution_nodes.$ref,"#/$defs/executionNodes");
+  }
 });

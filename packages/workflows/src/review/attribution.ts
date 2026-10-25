@@ -7,8 +7,8 @@ import { presentedMaterialReads, projectComparisonEvidence } from "./evidence-pr
 import { contentText } from "../inputs/records.js";
 import type { RawInput, Candidate } from "../inputs/types.js";
 import { attributionTrace } from "./public-trace.js";
-import { attributionNormDirectory, attributionTableChecks, buildAttributionTransitions, responsibilityComponentName,
-  type AttributionTransition } from "@eval/agents/attribution";
+import { attributionNormDirectory, attributionTableChecks, buildAttributionTransitions, buildAttributionExecutionNodes, responsibilityComponentName,
+  type AttributionTransition, type AttributionExecutionNode } from "@eval/agents/attribution";
 import { traceCatalog } from "./catalog.js";
 import { traceOverview } from "./trace-overview.js";
 import { citationInventory, citationSourceParts, type CitationContext, type CitationInventory } from "./citations.js";
@@ -20,7 +20,7 @@ import { getAnswerGeneration, answerGenerationPresentation, type AnswerGeneratio
 /** Project only generated evidence directories; original message values stay untouched. */
 export function modelMaterial(material: Record<string, unknown>, candidate: string, raw: RawInput, inputId: string, compactChars?: number) {
   const compact = compactChars !== undefined;
-  const { identity: _identity, business_chains: _chains, transitions: _transitions, ...anonymous } = material;
+  const { identity: _identity, business_chains: _chains, transitions: _transitions, execution_nodes: _nodes, ...anonymous } = material;
   const shown = <T extends { evidence_id: string }>(value: T) => displayEvidence(value);
   const finalEvidence = material.final_evidence as ReturnType<typeof cite>[];
   const initial = material.initial_material as { message_index: number; value: unknown; evidence: ReturnType<typeof cite>[] }[];
@@ -106,15 +106,37 @@ export function modelMaterial(material: Record<string, unknown>, candidate: stri
       identity_evidence: actor.identity_evidence.map(shown),
     })) } : {}),
     ...(transitions ? {
-      transitions: transitions.map(transition => {
-        const actor = transition.actor_index === null ? undefined : (material.component_catalog as TraceComponentIdentity[])[transition.actor_index - 1];
-        return { transition_index: transition.transition_index, kind: transition.kind,
-          predecessors: transition.predecessors, relation: transition.relation,
-          owner: actor ? { component: responsibilityComponentName(actor), kind: actor.kind, role: actor.role, message_indices: actor.message_indices } : null,
-          before: transition.before.map(evidence => ({ reference: { evidence_id: evidence.evidence_id } })),
-          after: transition.after.map(evidence => ({ reference: { evidence_id: evidence.evidence_id } })),
+      execution_graph: (() => {
+        const nodes = material.execution_nodes as AttributionExecutionNode[];
+        const links = new Map<string, { source_node_index: number; target_node_index: number; transition_indices: number[] }>();
+        const link = (source: number | null, target: number | null, boundary: number) => {
+          if (source === null || target === null || source === target) return;
+          const key = source + ":" + target;
+          let edge = links.get(key);
+          if (!edge) { edge = { source_node_index: source, target_node_index: target, transition_indices: [] }; links.set(key, edge); }
+          if (!edge.transition_indices.includes(boundary)) edge.transition_indices.push(boundary);
         };
-      }),
+        for (const boundary of transitions) {
+          link(boundary.source_node_index, boundary.target_node_index, boundary.transition_index);
+          for (const predecessor of boundary.predecessors)
+            link(transitions[predecessor - 1]!.execution_node_index, boundary.execution_node_index, boundary.transition_index);
+        }
+        return {
+          nodes: nodes.map(node => {
+            const actor = node.actor_index === null ? undefined : (material.component_catalog as TraceComponentIdentity[])[node.actor_index - 1];
+            return { execution_node_index: node.execution_node_index, kind: node.kind, message_index: node.message_index,
+              component: actor ? responsibilityComponentName(actor) : null };
+          }),
+          boundaries: transitions.map(transition => ({ transition_index: transition.transition_index, kind: transition.kind,
+            execution_node_index: transition.execution_node_index, source_node_index: transition.source_node_index,
+            target_node_index: transition.target_node_index, input_path: transition.input_path,
+            chain_indices: transition.chain_indices, predecessors: transition.predecessors, relation: transition.relation,
+            before: transition.before.map(evidence => ({ reference: { evidence_id: evidence.evidence_id } })),
+            after: transition.after.map(evidence => ({ reference: { evidence_id: evidence.evidence_id } })),
+          })),
+          links: [...links.values()],
+        };
+      })(),
       transition_evidence: [...transitionEvidence.values()].map(evidence => {
         const point = parseEvidenceCoordinates(evidence.evidence_id)!;
         if (point.kind === "image") return { message_index: evidence.message_index, reference: { evidence_id: evidence.evidence_id },
@@ -260,6 +282,7 @@ export function bindAttributionMaterial(candidate: Candidate, original: RawInput
     deferred_final_material: deferred.map(source => ({ message_index: candidate.final_index, path: source.path, total_chars: source.text.length })),
     initial_material: initial, instruction_sources: [], citation_inventory: citationInventory(raw, candidate.input_id, candidate.final_index),
     business_chains: chains,
+    execution_nodes: buildAttributionExecutionNodes(raw, actors),
     transitions: buildAttributionTransitions({ raw, inputId: candidate.input_id, finalIndex: candidate.final_index, actors, chains }),
     catalog: traceCatalog(raw), component_catalog: actors,
     input_file: "inputs/answer.json", original_answer_timing: { finish_seconds: candidate.answer_timing.finish_seconds },

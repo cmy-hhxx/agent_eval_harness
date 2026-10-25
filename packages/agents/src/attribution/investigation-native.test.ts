@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
 import test from "node:test";
 import { parseEvidenceCoordinates, type ToolAudit } from "@eval/contracts";
+import { evidenceSources } from "@eval/tools";
 import { bindAttributionMaterial } from "@eval/workflows/review";
 import type { Candidate, RawInput } from "@eval/workflows/inputs";
 import type { AttributionTransition } from "./transitions.js";
@@ -35,7 +36,12 @@ function material(messages: RawInput["messages"], question: string) {
   const binding = bindAttributionMaterial(candidate, { messages });
   const transitions = (binding.request.input.answer as { transitions: AttributionTransition[] }).transitions;
   const evidence = [...new Map(transitions.flatMap(item => [...item.before, ...item.after])
-    .filter((item): item is Evidence => typeof item.quote === "string").map(item => [item.evidence_id, item])).values()];
+    .flatMap(item => {
+      const point = parseEvidenceCoordinates(item.evidence_id)!;
+      if (point.kind === "image") return [];
+      const source = evidenceSources(messages[point.message_index]).find(source => source.kind === point.kind && source.path === point.path)!;
+      return [{ ...item, quote: source.text.slice(point.start, point.end) }];
+    }).map(item => [item.evidence_id, item])).values()];
   const audit: ToolAudit = { calls: 0, requiredReadCalls: 0, viewedImages: [], calculations: [], artifacts: [], traceReads: evidence.flatMap(item => {
     const coordinate = parseEvidenceCoordinates(item.evidence_id)!;
     return coordinate.kind === "image" ? [] : [{ candidate: "answer", message_index: coordinate.message_index, kind: coordinate.kind,
@@ -123,7 +129,7 @@ test("native gate cannot discharge relevant XOM upstream checks using unrelated 
   const irrelevant = f.transitions.filter(item => item.chain_index === 1 && ["request_formation", "execution"].includes(item.kind));
   assert.equal(irrelevant.length, 2);
   const row = check(generation, "changed");
-  row.before_evidence_ids = generation.before.filter(item => item.quote === "核对XOM的MA50支撑，并给出结论。").map(item => item.evidence_id);
+  row.before_evidence_ids = generation.before.filter(item => f.evidence.find(source => source.evidence_id === item.evidence_id)?.quote === "核对XOM的MA50支撑，并给出结论。").map(item => item.evidence_id);
   assert.equal(row.before_evidence_ids.length, 1);
   const checks = [...irrelevant.map(item => check(item)), row];
   const selectedIds = new Set(checks.flatMap(item => [...item.before_evidence_ids, ...item.after_evidence_ids]));
@@ -152,7 +158,7 @@ test("native gate closes the relevant source-to-input path instead of stopping a
   for (const sourceKinds of [["request_formation"], ["request_formation", "execution"]]) {
     const sources = f.transitions.filter(item => sourceKinds.includes(item.kind));
     const row = check(generation, "changed");
-    row.before_evidence_ids = generation.before.filter(item => item.quote === "核对XOM的MA50支撑，并给出结论。").map(item => item.evidence_id);
+    row.before_evidence_ids = generation.before.filter(item => f.evidence.find(source => source.evidence_id === item.evidence_id)?.quote === "核对XOM的MA50支撑，并给出结论。").map(item => item.evidence_id);
     const checks = [...sources.map(item => check(item)), row];
     const selectedIds = new Set(checks.flatMap(item => [...item.before_evidence_ids, ...item.after_evidence_ids]));
     const issues = inspect(f, problem([cause(generation, row)], checks), f.evidence.filter(item => selectedIds.has(item.evidence_id)));

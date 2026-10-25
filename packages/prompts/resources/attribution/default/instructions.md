@@ -4,7 +4,7 @@
 
 从公开原问、task_analysis 与 criterion_checks 确定必须交付什么，保留条件、例外和约束强度。检查点摘要不新增数量、格式、工具使用或穷举义务；工具文档、内部提示词和用户画像不新增公开要求。宽泛概念存在多个合理解释时，按回答声明且与原问相容的口径评审。
 
-读已展示的完整最终内容，按 deferred_final_material 补齐未展示正文；有适用图片规则时查看图片。用 trace_overview、catalog、transitions 找到影响交付的规划、请求、代码、返回、实际输入及生成节点。既检查回答主张，也检查已显示的执行异常、错误参数和恢复行为，不能只从最后一句倒找证明。记下每个独立疑点、待区分的解释和已有证据；没有疑点的样本允许没有问题。
+读已展示的完整最终内容，按 deferred_final_material 补齐未展示正文；有适用图片规则时查看图片。用 trace_overview、catalog、execution_graph 找到影响交付的规划、请求、代码、返回、实际输入及生成节点。既检查回答主张，也检查已显示的执行异常、错误参数和恢复行为，不能只从最后一句倒找证明。记下每个独立疑点、待区分的解释和已有证据；没有疑点的样本允许没有问题。
 
 调用失败、正常零行、摘要、旧来源、长上下文或原句直送都只是线索。核对请求、执行状态、内容和后续影响后再判断故障；HTML预览截断不证明真实输入截断。已恢复故障保留恢复事实，仅按实际残留的交付缺陷或独立过程成本评价。
 
@@ -38,7 +38,7 @@
 
 mechanism_source=explicit_process 须有直接执行证据，例如实际生成的tool_calls参数、对应请求、推理/analysis或计算过程记录。只有输入输出差异时，使用 boundary_comparison + inferred；数值成十倍不证明执行乘十，最终正文中的错误推导也不替代隐藏过程记录。这一规则适用于所有步骤。inferred 填关键 evidence_gap 和已考虑的 alternatives；confirmed 不提交这两字段。缺陷已确立可以保持 established，不能因机制未知一并降级。正文措辞与确定性一致，不把“没看到核验”写成“确认没有核验”。
 
-每个问题是一份独立案卷：checks 保存该问题的相关边界观察，causes 选择造成它的转换，calculations 保存判断所需的复算。transition_index 是执行转换编号；其真实主体、前后记录和前驱已由程序固定，不再选择 actor、chain 或步骤编号。transition_evidence 提供去重后的读取导航；转换编号与证据编号不能混用。function_index 只描述该主体承担的技术功能，business_component 描述具体业务操作。
+每个问题是一份独立案卷：checks 保存该问题的相关边界观察，causes 选择造成它的转换，calculations 保存判断所需的复算。execution_graph.nodes 每次真实模型或工具调用只登记一次；boundaries 的 transition_index 编号证据边界，links 表达调用之间的关联。历史输出在后续输入重现只是传递，不是再次执行。主体、来源、目标实际输入位置和前驱由程序固定；before_evidence_indices/after_evidence_indices 引用 transition_evidence 中的集中读取导航。边界编号与证据编号不能混用。function_index 只描述该主体承担的技术功能，business_component 描述具体业务操作。
 
 核查时用 checks 的 before/after 证据分别对照转换两侧：preserved 表示本问题所关心的对象、字段、单位、期间和执行状态保持正确，changed 表示发生相关偏离，recovered 表示问题已修复，unresolved 表示已知边界仍无法确定。局部字段保持不能声称整个返回完整传递；未读不等于未采集。每项 causes 必须关联自己的核查；第一项为主责，后续仅列独立传播或放大作用，程序绑定身份和证据，不代写机制。
 

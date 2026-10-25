@@ -42,7 +42,8 @@
         "norm_directory",
         "component_catalog",
         "business_chains",
-        "transitions"
+        "transitions",
+        "execution_nodes"
       ],
       "properties": {
         "identity": {
@@ -355,6 +356,9 @@
         },
         "transitions": {
           "$ref": "#/$defs/transitions"
+        },
+        "execution_nodes": {
+          "$ref": "#/$defs/executionNodes"
         }
       }
     },
@@ -938,7 +942,8 @@
         "original_user_timestamp",
         "grader_only",
         "business_chains",
-        "transitions"
+        "transitions",
+        "execution_nodes"
       ],
       "properties": {
         "identity": {
@@ -1139,6 +1144,9 @@
         },
         "transitions": {
           "$ref": "#/$defs/transitions"
+        },
+        "execution_nodes": {
+          "$ref": "#/$defs/executionNodes"
         }
       }
     },
@@ -1555,7 +1563,12 @@
           "before",
           "after",
           "predecessors",
-          "relation"
+          "relation",
+          "execution_node_index",
+          "source_node_index",
+          "target_node_index",
+          "input_path",
+          "chain_indices"
         ],
         "properties": {
           "transition_index": {
@@ -1610,45 +1623,99 @@
               "captured",
               "unresolved"
             ]
+          },
+          "execution_node_index": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "minimum": 1
+          },
+          "source_node_index": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "minimum": 1
+          },
+          "target_node_index": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "minimum": 1
+          },
+          "input_path": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "minLength": 1
+          },
+          "chain_indices": {
+            "type": "array",
+            "uniqueItems": true,
+            "items": {
+              "type": "integer",
+              "minimum": 1
+            }
           }
         }
       }
     },
     "transitionBoundary": {
-      "oneOf": [
-        {
-          "allOf": [
-            {
-              "$ref": "#/$defs/evidence"
-            },
-            {
-              "properties": {
-                "evidence_id": {
-                  "pattern": "^ev_[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}_(?:0|[1-9][0-9]*)_(?:text|json)_(?:0|[1-9][0-9]*)_(?:0|[1-9][0-9]*)_[\\s\\S]*$"
-                }
-              }
-            }
-          ]
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "evidence_id",
+        "message_index"
+      ],
+      "properties": {
+        "evidence_id": {
+          "type": "string",
+          "pattern": "^ev_[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}_(?:0|[1-9][0-9]*)_(?:image|(?:text|json)_(?:0|[1-9][0-9]*)_(?:0|[1-9][0-9]*)_[\\s\\S]*)$"
         },
-        {
-          "type": "object",
-          "additionalProperties": false,
-          "required": [
-            "evidence_id",
-            "message_index"
-          ],
-          "properties": {
-            "evidence_id": {
-              "type": "string",
-              "pattern": "^ev_[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}_(?:0|[1-9][0-9]*)_image$"
-            },
-            "message_index": {
-              "type": "integer",
-              "minimum": 0
-            }
+        "message_index": {
+          "type": "integer",
+          "minimum": 0
+        }
+      }
+    },
+    "executionNodes": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "execution_node_index",
+          "kind",
+          "actor_index",
+          "message_index"
+        ],
+        "properties": {
+          "execution_node_index": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "kind": {
+            "enum": [
+              "model",
+              "tool"
+            ]
+          },
+          "actor_index": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "minimum": 1
+          },
+          "message_index": {
+            "type": "integer",
+            "minimum": 0
           }
         }
-      ]
+      }
     }
   }
 }

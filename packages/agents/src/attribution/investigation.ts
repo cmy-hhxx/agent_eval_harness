@@ -2,7 +2,7 @@ import { canonical, type AgentRequest, type ToolAudit, type TraceRead, type Vali
 import { attributionTaxonomy } from "@eval/prompts";
 import { cite, evidenceSources,isGeneratedCallEvidence, isComponentLocator, parseEvidenceCoordinates, selectEvidenceSource, traceCallOrigins, traceExchanges, traceReadCoverage } from "@eval/tools";
 import type { BusinessChain, Evidence, ProblemProposal } from "./types.js";
-import { buildAttributionTransitions, type AttributionTransition, type TransitionBoundary } from "./transitions.js";
+import { buildAttributionTransitions, buildAttributionExecutionNodes, type AttributionTransition, type TransitionBoundary } from "./transitions.js";
 import { validateDerivations } from "./derivations.js";
 
 export const businessChainDirectory = (request: AgentRequest): BusinessChain[] =>
@@ -80,14 +80,20 @@ export function businessChainDirectoryIssues(request: AgentRequest): ValidationI
 export function investigationIssues(request: AgentRequest, problem: ProblemProposal, selected: readonly Evidence[], audit: ToolAudit, path: string): ValidationIssue[] {
   const issues = businessChainDirectoryIssues(request);
   const raw = request.sources.answer.value as { messages: unknown[] };
-  const answer = request.input.answer as { transitions: AttributionTransition[]; component_catalog: import('@eval/tools').TraceComponentIdentity[]; final_message_index: number };
+  const answer = request.input.answer as { transitions: AttributionTransition[]; execution_nodes: import('./transitions.js').AttributionExecutionNode[]; component_catalog: import('@eval/tools').TraceComponentIdentity[]; final_message_index: number };
   const transitions = answer.transitions;
   const expected = buildAttributionTransitions({ raw, inputId: request.sources.answer.id, finalIndex: answer.final_message_index,
     actors: answer.component_catalog, chains: businessChainDirectory(request) });
-  if (canonical(transitions) !== canonical(expected)) return [...issues, {category: 'evidence', code: 'transition_directory',
+  if (canonical(transitions) !== canonical(expected) || canonical(answer.execution_nodes) !== canonical(buildAttributionExecutionNodes(raw, answer.component_catalog))) return [...issues, {category: 'evidence', code: 'transition_directory',
     path: '/answer/transitions', message: '执行转换须由真实请求、返回与实际输入重新构建，不能改写主体或传递关系。'}];
   const add = (code: string, location: string, message: string, expected?: unknown) =>
     issues.push({ category: 'evidence', code, path: location, message, ...(expected === undefined ? {} : { expected }) });
+  const boundaryText = (boundary: TransitionBoundary) => {
+    const point = parseEvidenceCoordinates(boundary.evidence_id);
+    if (!point || point.kind === 'image') return undefined;
+    return evidenceSources(raw.messages[point.message_index]).find(source => source.kind === point.kind && source.path === point.path)
+      ?.text.slice(point.start, point.end);
+  };
   const byId = new Map(transitions.map(item => [item.transition_index, item]));
   const proofById = new Map(selected.map(item => [item.evidence_id, item]));
   const checks = new Map<number, ProblemProposal['investigation'][number]>();
@@ -162,7 +168,7 @@ export function investigationIssues(request: AgentRequest, problem: ProblemPropo
       add('responsibility_mechanism_source', location, '该模型的输入输出差异不是直接过程记录；没有实际参数、推理或计算动作记录时使用boundary_comparison + inferred。');
     if (isComponentLocator(cause.business_component) || Object.values(attributionTaxonomy.domains).flat().includes(cause.business_component))
       add('responsibility_business_location', location, '业务位置须说明本问题的具体操作，不能只复述调用ID或功能分类。');
-    if (transition.kind === 'delivery' && cause.role === 'primary' && transition.before.some(before => transition.after.some(after => before.quote !== undefined && before.quote === after.quote)))
+    if (transition.kind === 'delivery' && cause.role === 'primary' && transition.before.some(before => transition.after.some(after => boundaryText(before) !== undefined && boundaryText(before) === boundaryText(after))))
       add('responsibility_formation', location, '实际生成与交付内容相同，不能把已存在的错误归为交付时形成。');
     if (cause.role !== 'primary' || transition.kind !== 'generation') continue;
     if (!check.before_evidence_ids.length || !check.after_evidence_ids.length || !['input_deviation','independent_addition'].includes(cause.basis))

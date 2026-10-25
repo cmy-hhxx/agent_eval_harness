@@ -32,9 +32,20 @@ function materialEvidence(value: unknown, bank: EvidenceBank): unknown {
   if (!material) return value;
   const project = <T>(value: T) => projectEvidenceReferences(value, bank);
   const array = (value: unknown) => Array.isArray(value) ? value : [];
-  const generated = ["transitions", "transition_evidence", "final_evidence", "question_evidence", "answer_generation", "criterion_instruction_sources", "trace_overview", "review_sections"];
+  const generated = ["execution_graph", "transition_evidence", "final_evidence", "question_evidence", "answer_generation", "criterion_instruction_sources", "trace_overview", "review_sections"];
   const result = { ...material };
   for (const field of generated) if (Object.hasOwn(material, field)) result[field] = project(material[field]);
+  const graph = object(result.execution_graph);
+  if (graph) result.execution_graph = { ...graph, boundaries: array(graph.boundaries).map(value => {
+    const boundary = object(value)!;
+    const indices = (values: unknown) => array(values).map(value => {
+      const index = object(object(value)?.reference)?.evidence_index;
+      if (!Number.isInteger(index)) throw new Error("Execution boundary evidence was not registered");
+      return index;
+    });
+    const { before, after, ...identity } = boundary;
+    return { ...identity, before_evidence_indices: indices(before), after_evidence_indices: indices(after) };
+  }) };
   if (Array.isArray(material.norm_directory)) result.norm_directory = material.norm_directory.map(entry => {
     const original = object(entry)!;
     return { ...original, evidence: project(original.evidence) };
