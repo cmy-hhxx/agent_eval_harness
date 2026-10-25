@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { readFileSync, readdirSync } from "node:fs";
 import { DEFAULT_POLICY } from "@eval/contracts";
 import { builtinTools } from "@eval/tools";
-import { agentPrompt, erisPrompt, sharedPromptResources, type PromptStage } from "./index.js";
+import { agentPrompt, attributionConditionalRules, erisPrompt, sharedPromptResources, type PromptStage } from "./index.js";
 
 const submissionToolNames = ["submit_evaluation", "submit_evaluation_file"];
 
@@ -18,11 +18,13 @@ test("all stage texts come from one resource tree; tool descriptions are complet
     const prompt = agentPrompt(stage, tools.filter((name) => !submissionToolNames.includes(name)), { fileSubmission: false });
     for (const key of ["system", "instructions"] as const)
       assert.equal(prompt[key === "system" ? "systemPrompt" : key], readFileSync(new URL(`${stage}/default/${key}.md`, resources), "utf8").trim() +
-        (key === "system" ? "\n\n" + readFileSync(new URL("shared/commentary.md", resources), "utf8").trim() +
+        (key === "system" ? stage === "attribution" ? "\n\n" + prompt.instructions :
+          "\n\n" + readFileSync(new URL("shared/commentary.md", resources), "utf8").trim() +
           "\n\n" + prompt.instructions + "\n" + readFileSync(new URL("shared/evidence.md", resources), "utf8").trim() + "\n" : ""));
     assert.deepEqual(Object.keys(prompt.toolDescriptions).sort(), tools.filter(name => name !== (prompt.fileSubmission ? "submit_evaluation" : "submit_evaluation_file")).sort());
     for (const [name, text] of Object.entries(prompt.toolDescriptions))
-      assert.equal(text, readFileSync(new URL(`tools/${name}.md`, resources), "utf8").trim());
+      assert.equal(text, readFileSync(new URL(stage === "attribution" && name === "execute_code"
+        ? "attribution/default/execute_code.md" : `tools/${name}.md`, resources), "utf8").trim());
   }
   assert.throws(() => agentPrompt("rewrite", ["unknown_tool"], { fileSubmission: false }), /Missing tool description/);
   assert.throws(() => agentPrompt("rewrite", ["submit_evaluation"], { fileSubmission: false }), /Duplicate prompt tool/);
@@ -135,4 +137,24 @@ test("a workflow task focus is shown before full material without losing or rewr
  assert(text.includes('"instruction_sources"'));
  assert(!text.includes('"task_focus"'),"focus is a distinct data section, not repeated inside the canonical full view");
  assert.deepEqual(input,before);
+});
+
+test("attribution sends only applicable rule resources and does not repeat shared decision text",()=>{
+  const none={standardAnswer:false,numeric:false,tableDoubts:false,images:false,captureGaps:false};
+  assert.equal(attributionConditionalRules(none),'');
+  assert.equal(attributionConditionalRules({...none,numeric:true}),'');
+  const choices=[['standardAnswer','standard-answer'],['tableDoubts','table-doubts'],['images','images'],['captureGaps','capture-gaps']] as const;
+  for(const [key,file] of choices)assert.equal(attributionConditionalRules({...none,[key]:true}),
+    readFileSync(new URL(`../resources/attribution/conditional/${file}.md`,import.meta.url),'utf8').trim());
+  const standard=attributionConditionalRules({...none,standardAnswer:true});
+  assert.equal(attributionConditionalRules({...none,standardAnswer:true,numeric:true}),standard+'\n\n'+
+    readFileSync(new URL('../resources/attribution/conditional/numeric.md',import.meta.url),'utf8').trim());
+  const prompt=agentPrompt('attribution',['read_trace','execute_code'],{fileSubmission:false});
+  for(const source of ['commentary','evidence'])assert(!prompt.systemPrompt.includes(
+    readFileSync(new URL(`../resources/shared/${source}.md`,import.meta.url),'utf8').trim()));
+  assert(!prompt.systemPrompt.includes(standard));
+  assert.equal(prompt.systemPrompt.split(prompt.instructions).length,2);
+  assert(!prompt.toolDescriptions.execute_code.includes('edit_json'));
+  const focused=prompt.renderPrompt({task_focus:{question:'核查实际交付。'}});
+  assert(!focused.includes('候选私有规范'));
 });

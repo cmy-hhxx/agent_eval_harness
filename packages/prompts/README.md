@@ -14,13 +14,14 @@
 | `resources/<stage>/default/` | Criteria、Attribution、Comparison、Rewrite、Clustering 规则 |
 | `resources/comparison/verification/` | 独立首查与揭示后核验 |
 | `resources/attribution/standard-*.md` | 显式开启标准答案复核时的规则 |
+| `resources/attribution/conditional/` | 按本次材料发送的标准答案、数值、表格疑点与视觉规则 |
 | `resources/workflow/` | Workflow 材料说明与改写语义约束 |
 | `resources/tools/` | 评测工具描述 |
 | `resources/shared/` | 材料边界、读者表达、焦点、预算和恢复 |
 | `resources/eris/` | Eris 系统、预测、核对及工具规则 |
 | [src/index.ts](src/index.ts) | 加载、渲染与公开入口 |
 
-固定规则在系统提示词中发送一次；任务消息只放焦点、材料、预算和恢复信息。可信请求与模型展示投影分开，展示精简不改变业务校验或证据。
+固定规则在系统提示词中发送一次。Attribution 将需要的点评和证据原则合并进五步流程，不再次叠加共享文案；任务消息只追加本次适用的条件规则、焦点、材料、预算和恢复信息。可信请求与模型展示投影分开，展示精简不改变业务校验或证据。装配与规则归属见[归因提示词](../../docs/attribution-prompt.md)。
 
 Agent Profile 向 `agentPrompt` 显式传入 `fileSubmission`、`draftWriteInCallLimit` 与可选 `profile`；本模块据此渲染工具和预算，不根据阶段名称决定运行策略。
 

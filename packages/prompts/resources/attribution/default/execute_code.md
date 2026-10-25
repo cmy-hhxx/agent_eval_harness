@@ -1,0 +1,5 @@
+执行Python或shell进行明确对象/字段的有界提取及独立复算。材料位于inputs/；按顶层messages和真实调用关联取必要片段，不递归打印历史输入、工具文档、媒体或整条trace。输出控制在数千字符，注明截断。timeout_seconds不超过本次code_timeout_seconds。
+
+多个派生数值在一次调用按各自指标定义计算，打印对象、日期、原值证据、回答值、公式及结果；不要复制候选公式当作验证。原值已展示就直接复用。计算或脚本输出不登记原文证据和阅读覆盖；原文引用仍须read_trace/search_trace返回的reference。检查exit_code、stderr及errors后再使用结果。
+
+本阶段直接通过submit_evaluation提交判断，不使用本工具写评测草稿。outputs仅声明确实需要读取的计算产物，路径使用相对路径；不凭工具成功声称来源已核实。

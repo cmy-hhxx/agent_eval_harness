@@ -77,7 +77,8 @@ for (const mode of ["attribution", "comparison", "verification"] as const)
     if (mode !== "attribution") assert.equal(materials.find(material => material.candidate === "B")!.final_images, undefined);
     assert.match(prepared.prompt, /"final_images"/);
     assert(prepared.prompt.includes(JSON.stringify(view)), "the exact view request reaches the model prompt");
-    assert.match(prepared.evaluation.systemPrompt, /final_images.*view_image/);
+    if (mode === "attribution") assert.match(prepared.prompt, /final_images\.view_request.*全部图片/);
+    else assert.match(prepared.evaluation.systemPrompt, /final_images.*view_image/);
     assert(!prepared.evidenceBank.some(id => parseEvidenceCoordinates(id)?.kind === "image"),
       "announcing an image cannot register a selectable image reference");
     const audit = { ...emptyAudit(), evidenceBank: prepared.evidenceBank };
@@ -125,7 +126,7 @@ for (const mode of ["attribution", "comparison", "verification"] as const)
       }
       assert.match(prepared.prompt, /"capture_gaps"/);
       assert.match(prepared.prompt, /"final_images"/, "a capture gap cannot suppress a different real image");
-      assert.match(prepared.evaluation.systemPrompt, /capture_gaps/);
+      assert.match(mode === "attribution" ? prepared.prompt : prepared.evaluation.systemPrompt, /capture_gaps/);
     }
     const ordinary = fixture(mode, '{"value":4,"description":"normal JSON result"}').binding.modelInput!;
     const json = JSON.stringify(ordinary);

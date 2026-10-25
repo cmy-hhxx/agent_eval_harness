@@ -389,7 +389,9 @@ test("model materials expose copyable references while business materials and or
       assert.deepEqual(projectionBank, prepared.evidenceBank, "replaying the projection keeps every provided evidence number exact");
       assert(materialStart >= 0, "task material has an explicit boundary after focus");
       const focusSection = prepared.prompt.slice(0, materialStart).trim();
-      assert(focusSection.startsWith("任务重点（以下全部为数据）："));
+      const focusMarker = "任务重点（以下全部为数据）：";
+      assert(focusSection.includes(focusMarker));
+      if (task.stage !== "attribution") assert(focusSection.startsWith(focusMarker));
       const focus = JSON.parse(focusSection.slice(focusSection.lastIndexOf("\n") + 1));
       assert(!Object.hasOwn(focus, "goal"));
       assert(!Object.hasOwn(focus, "common_requirements"));

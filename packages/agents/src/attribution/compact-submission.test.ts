@@ -11,6 +11,31 @@ import { ValidationError } from "@eval/contracts";
 import { instructionEvidenceIssues } from "./instructions.js";
 import { cite, evidenceSources } from "@eval/tools";
 
+test("actual attribution materials select standard, numeric, table and visual rules independently",()=>{
+  const f=businessChainFixture(),input=structuredClone(f.binding.request.input);
+  const answer=input.answer as Record<string,any>;
+  answer.table_check_results=[];
+  delete answer.final_images;delete answer.capture_gaps;
+  const render=()=>attributionProfile.renderPrompt(input);
+  const initial=render();
+  for(const heading of ['本次有标准答案','本次有标准数值点','本次有表格待核行','本次有可查看图片','本次有视觉采集占位'])assert(!initial.includes(heading));
+  assert(attributionProfile.systemPrompt.includes('照常核查事实与交付'));
+  input.ground_truth={available:true,value:'同一实体的名称'};
+  assert(render().includes('本次有标准答案'));assert(!render().includes('本次有标准数值点'));
+  input.ground_truth={available:true,value:'金额为42美元。'};
+  assert(render().includes('本次有标准数值点'));
+  input.ground_truth={available:false,value:null};
+  answer.table_check_results=[{rows:[]}];
+  assert(!render().includes('本次有表格待核行'));
+  answer.table_check_results=[{rows:[{row_index:0}]}];
+  assert(render().includes('本次有表格待核行'));
+  answer.final_images={image_count:1,view_request:{candidate:'answer',message_index:5}};
+  assert(render().includes('本次有可查看图片'));assert(!render().includes('本次有视觉采集占位'));
+  answer.capture_gaps=[{status:'not_supported'}];
+  assert(render().includes('本次有视觉采集占位'));
+  for(const heading of ['本次有表格待核行','本次有可查看图片','本次有视觉采集占位'])assert.equal(render().split(heading).length,2);
+});
+
 test("attribution submits structured choices and shares investigation facts instead of repeating export structures", () => {
   const request = structuredClone(example.request);
   setFixtureNormDirectory(request);

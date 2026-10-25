@@ -1,5 +1,5 @@
 export {checkAttributionLanguage,type AttributionLanguageField,type AttributionLanguageStatus} from './language.js';
-import { agentPrompt, attributionTaxonomy, standardConflictInstructions } from "@eval/prompts";
+import { agentPrompt, attributionConditionalRules, attributionTaxonomy, standardConflictInstructions } from "@eval/prompts";
 import { type AgentDefinition, type AgentProfile } from "@eval/contracts";
 import requestSchema from "../../../../schemas/attribution/request.schema.json" with { type: "json" };
 import submissionSchema from "../../../../schemas/attribution/submission.schema.json" with { type: "json" };
@@ -59,7 +59,12 @@ export const attributionProfile: AgentProfile = {
     };
     const truth = input.ground_truth as { available: boolean; value: unknown };
     const numeric = truth.available ? numericReferenceDirectory(truth.value) : [];
-    return prompt.renderPrompt(investigationMaterial({ ...shown,
+    const tables = answer.table_check_results as { rows: unknown[] }[] | undefined;
+    const images = answer.final_images as { image_count: number } | undefined;
+    const rules = attributionConditionalRules({ standardAnswer: truth.available, numeric: numeric.length > 0,
+      tableDoubts: tables?.some(table => table.rows.length > 0) ?? false, images: (images?.image_count ?? 0) > 0,
+      captureGaps: Array.isArray(answer.capture_gaps) && answer.capture_gaps.length > 0 });
+    return (rules ? rules + "\n\n" : "") + prompt.renderPrompt(investigationMaterial({ ...shown,
       numeric_references: numeric.map(item => ({...item,reference_index:item.reference_index+1})),
     }), policy, failure);
   },

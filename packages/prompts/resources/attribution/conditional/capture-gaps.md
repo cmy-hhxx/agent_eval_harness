@@ -1,0 +1,3 @@
+### 本次有视觉采集占位
+
+capture_gaps的status只说明本次采集跳过或不支持对象；user_visible_rendering=unknown不证明原用户看不到图。占位文本不能单独证明模型输出JSON、图表损坏或交付失败。其他正文及可查看图片仍独立核验。

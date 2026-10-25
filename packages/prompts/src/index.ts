@@ -27,6 +27,17 @@ export function workflowText(name: "attribution-material" | "core-rewrite" | "cr
   return resource(`workflow/${name}.md`);
 }
 export const attributionNotApplicableText = resource("attribution/default/not_applicable.md");
+const attributionRules = Object.fromEntries(["standard-answer", "numeric", "table-doubts", "images", "capture-gaps"]
+  .map(name => [name, resource(`attribution/conditional/${name}.md`)]));
+/** Only applicable procedural rules accompany this request; fixed decisions remain in the system prompt. */
+export function attributionConditionalRules(options: {
+  standardAnswer: boolean; numeric: boolean; tableDoubts: boolean; images: boolean; captureGaps: boolean;
+}): string {
+  return [options.standardAnswer && attributionRules["standard-answer"],
+    options.standardAnswer && options.numeric && attributionRules.numeric,
+    options.tableDoubts && attributionRules["table-doubts"], options.images && attributionRules.images,
+    options.captureGaps && attributionRules["capture-gaps"]].filter(Boolean).join("\n\n");
+}
 export const attributionTaxonomy = JSON.parse(resource("attribution/taxonomy.json")) as {
   domains: Record<string, string[]>;
   stages: string[];
@@ -64,13 +75,14 @@ export function agentPrompt(stage: PromptStage, toolNames: string[], options: Ag
   if (!/^[a-z][a-z0-9_-]*$/.test(profile)) throw new Error(`Invalid prompt profile: ${profile}`);
   const resourceProfile=profile;
   const instructions = resource(`${stage}/${resourceProfile}/instructions.md`) + (stage === "score" ? '\n\n'+scoreRules(profile) : "");
-  const evidenceGuide = toolNames.some(name => ["read_trace", "search_trace", "view_image", "check_table"].includes(name))
+  const evidenceGuide = stage !== "attribution" && toolNames.some(name => ["read_trace", "search_trace", "view_image", "check_table"].includes(name))
     ? `\n${evidence}\n` : "";
-  const systemPrompt = resource(`${stage}/${resourceProfile}/system.md`) + "\n\n" + (stage === "score" ? "" : commentary + "\n\n") + instructions + evidenceGuide;
+  const systemPrompt = resource(`${stage}/${resourceProfile}/system.md`) + "\n\n" + (["score", "attribution"].includes(stage) ? "" : commentary + "\n\n") + instructions + evidenceGuide;
   const names = [...toolNames, ...submissionToolNames(fileSubmission)];
   if (new Set(names).size !== names.length) throw new Error(`Duplicate prompt tool in ${stage}`);
   const toolDescriptions = Object.fromEntries(names.map((name) => {
-    const description = descriptions.get(name);
+    const description = stage === "attribution" && !fileSubmission && name === "execute_code"
+      ? resource("attribution/default/execute_code.md") : descriptions.get(name);
     if (!description) throw new Error(`Missing tool description: ${name}`);
     return [name, description];
   }));
@@ -84,7 +96,7 @@ export function agentPrompt(stage: PromptStage, toolNames: string[], options: Ag
     renderPrompt(input: JsonObject, policy?: Policy, failure?: FailureContext): string {
       if (failure && !policy) throw new Error("Recovery requires an execution policy");
       const { task_focus, ...complete } = input;
-      const focus = task_focus === undefined ? "" : `${taskFocus}\n${JSON.stringify(task_focus)}\n\n`;
+      const focus = task_focus === undefined ? "" : `${stage === "attribution" ? resource("attribution/default/task-focus.md") : taskFocus}\n${JSON.stringify(task_focus)}\n\n`;
       const limits = policy ? {
         content_call_limit: 1 + policy.repairAttempts,
         ...(toolNames.some(name => name !== "inspect_material") ? {
