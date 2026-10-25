@@ -1,5 +1,5 @@
-import { parseEvidenceCoordinates, ValidationError, type AgentRequest, type ToolAudit, type ValidationIssue, type JsonObject, type TraceRead } from '@eval/contracts';
-import { evidenceCovers, evidenceSources, type EvidenceSelectionCache } from '@eval/tools';
+import { parseEvidenceCoordinates, type AgentRequest, type ToolAudit, type ValidationIssue, type JsonObject, type TraceRead } from '@eval/contracts';
+import { evidenceCovers, evidenceSources, evidenceId, type EvidenceSelectionCache } from '@eval/tools';
 import { responsibilityDisplay, type ResponsibilityMaterial } from './responsibility.js';
 import type { Evidence, AttributionSubmission, AttributionResult } from './types.js';
 
@@ -56,7 +56,22 @@ export function finalResponsibilityReview(request:AgentRequest,draft:unknown,res
     // Select counterevidence from original requests/returns as well as initial citations.
     // Identifiers only retrieve material; they never assign blame or decide a defect.
     const identifiers=[...new Set((problem.text+' '+problem.reason).match(/\b[A-Z][A-Z0-9.]{1,9}\b/g)??[])]
-      .filter(s=>!['ETF','ETFS','USD','EPS','TTM','CEO','SQL','PE','PB','YTD','Q1','Q2','Q3','Q4'].includes(s));
+      .filter(s=>!['ETF','ETFS','US','UK','EU','USD','EPS','TTM','CEO','SQL','SELECT','FROM','WHERE','AND','OR','PE','PB','YTD','AUM','NAV','Q1','Q2','Q3','Q4'].includes(s));
+    const pattern=identifiers.length?new RegExp('\\b(?:'+identifiers.map(id=>id.replace(/\./g,'\\.')).join('|')+')\\b','gi'):undefined;
+    const webReturn=(items:{evidence_id:string}[])=>items.flatMap(item=>{
+      const p=parseEvidenceCoordinates(item.evidence_id);if(!p)return [item];
+      const leaves=evidenceSources(raw.messages[p.message_index]).filter(s=>s.kind==='text'&&s.quotable!==false&&
+        covers(item,{evidence_id:evidenceId(request.sources.answer.id,p.message_index,s.kind,s.path,0,s.text.length)}));
+      if(!leaves.length)return [item];
+      return leaves.flatMap(s=>{
+        // Preserve metadata and short bodies. Long pages supply exact relevant
+        // passages plus their opening, not repeated privacy policies/navigation.
+        const ranges=s.text.length<=8000?[[0,s.text.length]]:[[0,1200],...(pattern?[...s.text.matchAll(pattern)].map(m=>[Math.max(0,m.index!-600),Math.min(s.text.length,m.index!+m[0].length+600)]):[])];
+        const merged:number[][]=[];
+        for(const range of ranges.sort((a,b)=>a[0]-b[0])){const last=merged.at(-1);if(last&&range[0]<=last[1])last[1]=Math.max(last[1],range[1]);else merged.push([...range]);}
+        return merged.filter(([start,end])=>end>start).map(([start,end])=>({evidence_id:evidenceId(request.sources.answer.id,p.message_index,s.kind,s.path,start,end)}));
+      });
+    });
     const relevant=(c:typeof answer.business_chains[number])=>{
       const text=original([...c.checkpoints[2].evidence,...c.checkpoints[3].evidence]);
       return identifiers.some(id=>new RegExp('(^|[^a-z0-9])'+id.replace(/\./g,'\\.')+'([^a-z0-9]|$)','i').test(text));
@@ -80,7 +95,8 @@ export function finalResponsibilityReview(request:AgentRequest,draft:unknown,res
     return {problem_index:i,
       source_comparison:{
         calls:chains.map(c=>({tool:c.tool_component,request:add(c.checkpoints[2].evidence),
-          original_return:add(c.checkpoints[3].evidence),
+          original_return:add(c.tool_component==='web_search'?webReturn(c.checkpoints[3].evidence):c.checkpoints[3].evidence),
+          ...(c.tool_component==='web_search'?{return_scope:'网页元数据、短正文及长正文相关原文片段；片段没有展示某事实不等于完整返回不存在该事实。'}:{}),
           actual_input:add(c.checkpoints[5].evidence.filter(e=>generations.some(t=>t.before.some(b=>covers(b,e))))),
           // An observed difference is not an observed material processor.
           transfer_actor_captured:answer.transitions.some(t=>t.kind==='transfer'&&t.chain_indices.includes(c.chain_index)&&t.execution_node_index!==null)})),
@@ -91,17 +107,24 @@ export function finalResponsibilityReview(request:AgentRequest,draft:unknown,res
     responsibilityDisplay(request,t.transition_index).component==='终稿生成轮').map(t=>({
       actual_input:add(t.before),actual_output:add(t.after),
     }));
-  // Remove only ranges fully represented by a wider range in the same source.
-  const required=[...reads.values()].filter((r,i,all)=>!all.some((other,j)=>j!==i&&other.message_index===r.message_index&&other.kind===r.kind&&other.path===r.path&&other.start<=r.start&&other.end>=r.end));
-  if(required.reduce((n,r)=>n+r.end-r.start,0)>240000)throw new ValidationError([{category:'decision',code:'review_material_too_large',path:'/Problem',
-    message:'本问题相关原文超过单轮复核材料预算，不能截断证据或直接确认；保留草稿为未完成。'}]);
+  // JSON containers and their text leaves can cover the same original material.
+  // Keep one covering range; character count is not a model context limit.
+  const required=[...reads].filter(([id],i,all)=>!all.some(([other],j)=>j!==i&&covers({evidence_id:other},{evidence_id:id})&&
+    (!covers({evidence_id:id},{evidence_id:other})||j<i))).map(([,read])=>read);
   const initialEvidence=value.Problem.flatMap(p=>p.evidence??[]);
-  const originals=required.map(read=>{
+  const originalRanges=required.map(read=>{
     const source=evidenceSources(raw.messages[read.message_index]).find(s=>s.kind===read.kind&&s.path===read.path);
     if(!source)throw new Error('复核原始材料不存在');
     const id=[...reads].find(([,r])=>r===read)![0];
     return {reference:{evidence_id:id},message_index:read.message_index,path:read.path,quote:source.text.slice(read.start,read.end)};
   }).filter(item=>!initialEvidence.some(e=>covers(e,item.reference)));
+  const uniqueOriginals=new Map<string,typeof originalRanges[number]&{also_at?:Omit<typeof originalRanges[number],'quote'>[]}>();
+  for(const item of originalRanges){
+    const existing=uniqueOriginals.get(item.quote);
+    if(existing){const {quote:_quote,...location}=item;(existing.also_at??=[]).push(location);}
+    else uniqueOriginals.set(item.quote,item);
+  }
+  const originals=[...uniqueOriginals.values()];
   return {question:(request.input.answer as JsonObject).question,
     answer:(request.input.answer as JsonObject).final_answer,
     originals,problems:submitted.Problem.length?comparisons:[],choices:[...choices,...transferChoices].filter(c=>reviewBoundaries.has(c.responsibility_boundary)),

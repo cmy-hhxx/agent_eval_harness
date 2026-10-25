@@ -84,3 +84,7 @@ npm run eval -- run --stage attribution --run-id answer-review-run --config conf
 责任链节点由模型选择现有 boundary 并写 state/evidence_indices，程序解析 component、stage、message_index、evidence_ids 与 primary/related/context。component 始终是独立主责组件，related_responsibilities 仅登记成立的关联责任；链中的正常返回、零行、历史页面不计责任。未采集处理调用的 transfer 节点 component 为 null，页面显示“输入材料变化（处理调用未采集）”；没有独立上游调用时显示“已采集输入”。终稿责任同时呈现上游状态与具体生成错误，不把整条链当作健康度组件。stats.json 与 report.md 分别统计主责问题数、关联责任数。
 
 复核以现有问题的实体标识匹配直接原始请求/返回，补入初稿未引用的相关反证，并与实际生成输入输出对照；标识只检索材料，不决定错误或责任，不沿历史祖先展开。已有问题中若不同缺陷的形成位置不同则分别登记，不拓展漏报调查。
+
+原文去重覆盖 JSON 父子范围和文本叶子；跨坐标完全相同的原文只保留一次 quote，also_at 保留全部真实坐标。不再按固定24万字符提前拒收；不改写所选原文，真实模型上下文和请求失败仍由运行时明确报告。Responses 的 off 显式发送 reasoning.effort=none，避免网关因字段缺省继续推理。
+
+网页返回按原始字段保留元数据、短正文，以及长正文的开头和问题标识附近的原文范围；相同正文跨坐标复用。范围始终带真实证据坐标，并标明是片段，不将未展示推断为原始返回不存在。工具执行状态、查询和结构化取数返回不做这种网页正文摘取。

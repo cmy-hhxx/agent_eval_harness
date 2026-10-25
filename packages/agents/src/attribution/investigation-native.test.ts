@@ -140,3 +140,19 @@ test('review includes uncited direct counterevidence rather than anchoring to th
  const ctx=finalResponsibilityReview(f.binding.request,{Problem:[p]},{Problem:[{component:'终稿生成轮',evidence:f.evidence.filter(e=>e.message_index===2)}]},f.audit)!;
  assert((ctx.originals as any[]).some(e=>e.message_index===4&&e.quote.includes('52.47')));
 });
+
+test('review selects original web fields and reuses repeated policy text without sending the whole response',()=>{
+ const privacy='Effective date: 2025. Privacy policy. '+'Policy text. '.repeat(16000);
+ const f=material([{role:'user',content:'XOM MA50'},
+ {type:'tool_call',name:'web_search',call_id:'web',input:{query:'XOM MA50'}},
+ {type:'tool_result',name:'web_search',call_id:'web',output:{items:[{title:'XOM page',publish_time:'2026-10-23',summary:privacy,content:privacy},{title:'XOM facts',content:'XOM MA50 165.7899'}]}},
+ {type:'llm_turn',name:'llm-call-0',input_messages:[{role:'tool',tool_call_id:'web',content:'XOM MA50 165.7899'}],output:[{role:'assistant',content:'XOM MA50 170–172'}]},
+ {type:'final_answer',role:'assistant',content:'XOM MA50 170–172'}],'XOM MA50');
+ const edge=f.transitions.find(t=>responsibilityDisplay(f.binding.request,t.transition_index).component==='终稿生成轮')!;
+ const ctx=finalResponsibilityReview(f.binding.request,{Problem:[{text:'XOM MA50数值错误',reason:'与原数不符',responsibility_boundary:'boundary:'+edge.transition_index}]},{Problem:[{evidence:[]}]},f.audit)!;
+ const originals=ctx.originals as any[];
+ assert(originals.reduce((n,r)=>n+r.quote.length,0)<20000);
+ assert(originals.some(r=>r.quote.includes('165.7899')));
+ assert(originals.some(r=>r.also_at?.length),'same text retains each original coordinate without repeating its body');
+ assert((ctx.problems as any[])[0].source_comparison.calls[0].return_scope);
+});
