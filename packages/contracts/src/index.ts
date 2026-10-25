@@ -42,8 +42,6 @@ export interface EvaluationSpec {
   inspectionSchema?: JsonSchema;
   /** One independent session revises the initial candidate before acceptance. */
   completionReview?: string;
-  /** Worker-local phase for a fresh review session's initial tool selection. */
-  completionReviewActive?: boolean;
   toolNames: string[];
   /** Whether this profile explicitly submits existing workspace JSON files instead of JSON values. */
   fileSubmission: boolean;
@@ -66,8 +64,8 @@ export interface InputRef {
   id: string;
   name: string;
 }
-export function submissionToolNames(fileSubmission: boolean, completionReview = false): string[] {
-  return [...(fileSubmission ? ["submit_evaluation_file"] : ["submit_evaluation"]), ...(completionReview ? ["confirm_evaluation"] : [])];
+export function submissionToolNames(fileSubmission: boolean): string[] {
+  return fileSubmission ? ["submit_evaluation_file"] : ["submit_evaluation"];
 }
 /** Native arguments for both a JSON file submission and a file-backed material inspection. */
 export const SUBMISSION_FILE_SCHEMA: JsonSchema = {
@@ -479,8 +477,6 @@ export interface AgentProfile {
   validationIssueContext?(request: AgentRequest, value: unknown, issue: ValidationIssue): JsonObject | undefined;
   resolve?(request: AgentRequest, draft: unknown, audit: ToolAudit): unknown;
   validate?(request: AgentRequest, result: unknown, audit: ToolAudit): void;
-  /** Final acceptance checks; an initial review candidate may still need correction. */
-  validateCompletion?(request: AgentRequest, result: unknown, audit: ToolAudit): void;
 }
 export interface AgentDefinition {
   id: string;

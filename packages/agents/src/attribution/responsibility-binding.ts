@@ -74,7 +74,7 @@ export function finalResponsibilityReview(request:AgentRequest,draft:unknown,res
     }));
   // Remove only ranges fully represented by a wider range in the same source.
   const required=[...reads.values()].filter((r,i,all)=>!all.some((other,j)=>j!==i&&other.message_index===r.message_index&&other.kind===r.kind&&other.path===r.path&&other.start<=r.start&&other.end>=r.end));
-  if(required.reduce((n,r)=>n+r.end-r.start,0)>240000)throw new ValidationError([{category:'decision',code:'completion_review_incomplete',path:'/Problem',
+  if(required.reduce((n,r)=>n+r.end-r.start,0)>240000)throw new ValidationError([{category:'decision',code:'review_material_too_large',path:'/Problem',
     message:'本问题相关原文超过单轮复核材料预算，不能截断证据或直接确认；保留草稿为未完成。'}]);
   const originals=required.map(read=>{
     const source=evidenceSources(raw.messages[read.message_index]).find(s=>s.kind===read.kind&&s.path===read.path);

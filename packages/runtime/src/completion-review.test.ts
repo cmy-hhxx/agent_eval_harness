@@ -15,7 +15,7 @@ for (const mode of ['revised','unsubmitted','invalid','budget'] as const) test('
   const confirm=mode==='revised'||mode==='budget';
   const id='11111111-1111-4111-8111-111111111111',source={messages:[{content:'实际交付与来源'}]};
   const binding:AgentBinding={agent:'review',profile:'default',request:{input:{},sources:{answer:{id,value:source}}}};
-  const profile:AgentProfile={id:'default',requestSchema:{type:'object'},submissionSchema:{type:'object'},
+  const profile:AgentProfile={id:'default',requestSchema:{type:'object'},submissionSchema:{type:'object',required:['summary'],properties:{summary:{type:'string'}}},
     fileSubmission:false,toolNames:['read_trace'],toolDescriptions:{read_trace:'Read source.',submit_evaluation:'Submit.'},
     systemPrompt:'Review.',instructions:'Review.',submissionNudge:'Finish review.',renderPrompt:()=> 'Review.',
     completionReview:'Check summary against registered problems and actual sources. Explain before confirming.'};
@@ -56,7 +56,7 @@ for (const mode of ['revised','unsubmitted','invalid','budget'] as const) test('
       if(mode==='unsubmitted')return;
       if(mode==='budget')assert.equal((await options.execute('read_trace',{candidate:'answer',message_index:0,path:'/content'})).isError,true);
       if(mode==='invalid'){
-        await options.execute('confirm_evaluation',{decision:'未完成',reason:'材料处理主体未采集。'});return;
+        await options.execute('submit_evaluation',{summary:7});return;
       }
       assert.equal((await options.execute('submit_evaluation',revised)).terminate,true);
     },async abort(){},async dispose(){}};
@@ -72,6 +72,6 @@ for (const mode of ['revised','unsubmitted','invalid','budget'] as const) test('
     const receipt=await store.receipt('task');
     assert.equal(sessions,2);assert.equal(runs,2);
     if(confirm){assert.equal(receipt?.submissionStats?.contentSubmissions,1);assert(receipt?.completionReview?.reason);assert.deepEqual(receipt?.evaluation,revised);}
-    else {assert.equal(receipt,undefined);assert.equal(status.failure?.errors.some(e=>e.code==='completion_review_incomplete'),true);}
+    else {assert.equal(receipt,undefined);assert(status.failure?.errors.length);assert(!status.failure?.errors.some(e=>e.code==='completion_review_incomplete'));}
   }finally{await worker.close();await host.close();await rm(directory,{recursive:true,force:true});}
 });

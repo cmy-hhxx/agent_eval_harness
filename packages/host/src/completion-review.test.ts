@@ -50,7 +50,7 @@ test('initial candidate is provisional and one independent revision becomes fina
  assert.equal(await f.store.receipt(f.spec.taskId),undefined);
  assert.deepEqual(f.state.manifest.states[f.spec.taskId].failure?.draft,f.submission.evaluation);
  await assert.rejects(f.store.accept({...f.submission,submissionId:'same-session'}),
-   (e:unknown)=>e instanceof HttpError&&e.issues?.some(i=>i.code==='completion_review_incomplete')===true);
+   (e:unknown)=>e instanceof HttpError&&e.issues?.some(i=>i.code==='completion_review_stale')===true);
  const revised={summary:'核对原始返回后修正组件。',Problem:[{component:'finquery 取数服务'}]};
  const receipt=await f.store.accept({...f.submission,submissionId:'reviewed',evaluation:revised,
    completionReview:{candidateId:'first',reason:'独立复核'}});
@@ -81,6 +81,6 @@ test('independent revision reruns business validation',async()=>{
 test('independent review cannot accept originals that were not delivered',async()=>{
  const f=await fixture(true,true);await assert.rejects(f.store.accept(f.submission),reviewRequired);
  await assert.rejects(f.store.accept({...f.submission,submissionId:'reviewed',completionReview:{candidateId:'first',reason:'独立复核'}}),
- (e:unknown)=>e instanceof HttpError&&e.issues?.some(i=>i.code==='completion_review_incomplete')===true);
+ (e:unknown)=>e instanceof HttpError&&e.issues?.some(i=>i.code==='investigation_read_required')===true);
  assert.equal(await f.store.receipt(f.spec.taskId),undefined);
 });

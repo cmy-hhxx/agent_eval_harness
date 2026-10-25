@@ -11,4 +11,4 @@
 
 完成时直接调用 submit_evaluation，一次提交完整修订稿。沿用初稿正确文本；按现有工具 schema 填 summary、Problem，有标准答案才填 is_correct、correct_reason。程序继续填写 meta、has_standard_answer、问题编号、组件名称和坐标，正式结果仍为六字段。每条问题使用 choices 的 responsibility_boundary 和原文的 evidence.index/purposes；关联责任只保留有独立传播或放大证据的项，不按组件配额改归责。
 
-真实主体不能定位、必要事实仍未核清，或摘要只能写“待补充／暂缓”时，保留问题草稿并以未完成结束。已有问题需修改为主体未知时仍提交完整草稿、responsibility_boundary=null，程序保留为失败；初稿不需修改但无法完成时用 confirm_evaluation(decision="未完成",reason=具体缺口)。没有成功确认步骤，不能在确认说明中另写判词。复核最多一次，失败不循环重试，不删缺陷、不编造身份。
+复核必须一次交回完整归因，不输出“待补充／暂缓”，没有确认或未完成工具。没有充分证据推翻初稿时原样保留，不能因为笼统“不确定”撤回已有归因；仅修正原文能证实的错误。若原文已经证实初稿主体错误、且真实形成主体确实未采集，仍交回完整问题草稿并用 responsibility_boundary=null 及 uncertainties 说明具体断点，程序按既有真实身份要求处理；不能编造组件或删除缺陷。复核最多一次，不循环重试。

@@ -226,7 +226,7 @@ export async function startWorker(
       let completionCandidate: Submission | undefined;
       let pendingReview: JsonObject | undefined;
       let reviewSubmitted = false;
-      const nextContentTool = () => completionCandidate ? "confirm_evaluation" : contentToolName(spec.evaluation, Boolean(audit.inspection));
+      const nextContentTool = () => contentToolName(spec.evaluation, Boolean(audit.inspection));
       const reserveFileDraft = () => {
         if (spec.evaluation.fileSubmission && submissions < 1 + spec.policy.repairAttempts)
           runtime.reserveDraftWrite();
@@ -456,7 +456,7 @@ export async function startWorker(
                 failure.stopped=true;record.failure=failure;await saveRecord();
                 controller.abort(new Error(errors.map(e=>e.message).join('; ')));void attempt.session?.abort();return response;
               }
-              if(errors.some(e=>['completion_review_incomplete','responsibility_unresolved'].includes(e.code))){
+              if(errors.some(e=>['responsibility_unresolved','submission_unfinished'].includes(e.code))){
                 const response=await rejected(errors,result,false,false);
                 failure.stopped=true;record.failure=failure;await saveRecord();
                 controller.abort(new Error(errors.map(e=>e.message).join('; ')));void attempt.session?.abort();return response;
@@ -651,24 +651,7 @@ export async function startWorker(
         execute: (_context, value) =>
           submitResult(() => loadFileContent(value)),
       };
-      const confirmSchema = { type: 'object', additionalProperties: false, required: ['decision','reason'],
-        properties: { decision:{type:'string',enum:['未完成']}, reason: { type: 'string', minLength: 1 } } };
-      const validateConfirmation = ajv.compile(confirmSchema);
-      const confirm: ExecutableTool = { name: 'confirm_evaluation', inputSchema: confirmSchema,
-        execute: (_context, value) => enqueueContent(async () => {
-          if (!validateConfirmation(value) || !(value as { reason: string }).reason.trim())
-            return rejectedLoad([{ category: 'structure', code: 'completion_review_reason_required', path: '/reason',
-              message: 'Explain the review of the current candidate before confirming it.' }]);
-          if (!completionCandidate) throw new Error('No current candidate is available for completion review');
-          if((value as {decision:string}).decision==='未完成'){
-            const response=await rejected([{category:'decision',code:'completion_review_incomplete',path:'/',message:(value as {reason:string}).reason}],completionCandidate.evaluation,false,false);
-            failure.stopped=true;record.failure=failure;await saveRecord();
-            controller.abort(new Error((value as {reason:string}).reason));void attempt.session?.abort();return response;
-          }
-          throw new Error('Independent review must submit its revised result');
-        }) };
-      const submissionTools = [...(spec.evaluation.fileSubmission ? [submitFile] : [submit]),
-        ...(spec.evaluation.completionReview ? [confirm] : [])];
+      const submissionTools = spec.evaluation.fileSubmission ? [submitFile] : [submit];
       emit(attempt, "started", {
         engine: backend.identity,
         policy: spec.policy,
@@ -819,7 +802,7 @@ export async function startWorker(
           emit(attempt, "tool_start", { name: tool.name, malformed_arguments: true, argument_object_available: false });
           if (content) {
             await enqueueContent(async () => {
-              if (tool.name !== 'confirm_evaluation') completionCandidate = undefined;
+              completionCandidate = undefined;
               if (!completionCandidate && submissions >= 1 + spec.policy.repairAttempts) throw new Error("Submission repair budget exhausted");
               // Count and persist the failed call without manufacturing an object or a receipt.
               return rejectedLoad(errors);
@@ -874,7 +857,7 @@ export async function startWorker(
         const prompt=JSON.stringify(projectEvidenceReferences(material,audit.evidenceBank!));
         await runtime.context.persistEvidenceBank?.([...audit.evidenceBank!]);
         const reviewSpec={...spec,prompt,recovery:undefined,evaluation:{...spec.evaluation,
-          systemPrompt:spec.evaluation.completionReview!,completionReviewActive:true}};
+          systemPrompt:spec.evaluation.completionReview!}};
         attempt.session=await createSession(reviewSpec);
         audit.traceReads.push(...(read_requests as unknown as TraceRead[]??[]));
         const started=performance.now();
@@ -882,8 +865,8 @@ export async function startWorker(
         await runModel(prompt);
         emit(attempt,'model',{type:'independent_review_end',elapsedMs:performance.now()-started,submitted:reviewSubmitted});
         if(!accepted&&!controller.signal.aborted){
-          await rejected([{category:'decision',code:'completion_review_incomplete',path:'/',
-            message:modelError||'独立复核未提交完成结果，保留初稿。'}],failure.draft,false,false);
+          await rejected([{category:'decision',code:'submission_missing',path:'/',
+            message:modelError||'模型未返回归因结果，保留初稿。'}],failure.draft,false,false);
           failure.stopped=true;record.failure=failure;await saveRecord();
         }
       }
@@ -1025,7 +1008,7 @@ export async function startWorker(
           !Number.isSafeInteger(read.start) || !Number.isSafeInteger(read.end) || read.start < 0 || read.end <= read.start) ||
         (spec.evaluation.requiredReads.length > 0 && !spec.evaluation.toolNames.includes("read_trace"))))
         throw new HttpError(400, "Invalid required material ranges");
-      const names = [...spec.evaluation.toolNames, ...submissionToolNames(spec.evaluation.fileSubmission, Boolean(spec.evaluation.completionReview))];
+      const names = [...spec.evaluation.toolNames, ...submissionToolNames(spec.evaluation.fileSubmission)];
       const descriptions = spec.evaluation.toolDescriptions;
       if (!descriptions || typeof descriptions !== "object" || Array.isArray(descriptions) ||
         new Set(names).size !== names.length || Object.keys(descriptions).length !== names.length ||

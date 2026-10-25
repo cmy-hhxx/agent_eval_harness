@@ -2885,10 +2885,10 @@ test("an unfinished independent review preserves the draft and never creates a r
   let sessions=0;
   const fixture=await harness(async options=>{const session=++sessions;return {async run(){
     if(session===1)await options.execute('submit_evaluation',{ok:true});
-    else await options.execute('confirm_evaluation',{decision:'未完成',reason:'原始返回有均线，实际输入丢失；材料处理主体未采集。'});
+    else return;
   },async abort(){},async dispose(){}};},{material:'original',profile:{requiredReads:()=>[],completionReview:'Confirm or stop.'}});
   try{await fixture.start();const status=await fixture.done();assert.equal(status.state,'failed');
     assert.equal(await fixture.store.receipt(fixture.spec.taskId),undefined);
-    assert.deepEqual(status.failure?.draft,{ok:true});assert(status.failure?.errors.some(e=>e.code==='completion_review_incomplete'));
+    assert.deepEqual(status.failure?.draft,{ok:true});assert(status.failure?.errors.some(e=>e.code==='submission_missing'));
   }finally{await fixture.close();}
 });

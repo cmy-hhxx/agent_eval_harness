@@ -10,7 +10,6 @@ import type { AttributionTransition } from "./transitions.js";
 import { responsibilityDisplay } from "./responsibility.js";
 import { attributionSubmissionSchema } from "./submission-schema.js";
 import { responsibilityBindingIssues, finalResponsibilityReview } from './responsibility-binding.js';
-import { validateCompletion } from './validate.js';
 
 function nativeFixture(loss = false, unrelated = false) {
   const question = "核对XOM的MA50支撑，并给出结论。";
@@ -33,11 +32,7 @@ function nativeFixture(loss = false, unrelated = false) {
   return material(messages, question);
 }
 
-test('unfinished review summaries fail while quoted answer defects remain valid',()=>{
- const request=nativeFixture().binding.request;
- for(const summary of ['待补充','暂缓','本次复核尚未完成'])assert.throws(()=>validateCompletion(request,{summary}),/未完成/);
- assert.doesNotThrow(()=>validateCompletion(request,{summary:'回答以“待补充”代替所需数据，未满足交付要求。'}));
-});
+
 function material(messages: RawInput["messages"], question: string) {
   const candidate: Candidate = { batch_id: "native", case_id: "native", version: "aime", name: "aime", input_id: randomUUID(), trace_id: null,
     source: "test", line: 1, question, answer_timing: { first_token_seconds: null, first_answer_seconds: null, finish_seconds: null, source_unit: "s", source_values: {}, source_fields: {} },

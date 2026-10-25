@@ -4,7 +4,7 @@ import { type AgentDefinition, type AgentProfile } from "@eval/contracts";
 import requestSchema from "../../../../schemas/attribution/request.schema.json" with { type: "json" };
 import submissionSchema from "../../../../schemas/attribution/submission.schema.json" with { type: "json" };
 import resultSchema from "../../../../schemas/attribution/result.schema.json" with { type: "json" };
-import { validateEvaluation, validateCompletion } from "./validate.js";
+import { validateEvaluation } from "./validate.js";
 import { resolveModelSubmission, validateModelSubmission } from "./submission.js";
 import { numericReferenceDirectory } from "./units.js";
 import { finalResponsibilityReview } from './responsibility-binding.js';
@@ -61,7 +61,6 @@ export const attributionProfile: AgentProfile = {
   },
   toolNames,
   validate: validateEvaluation,
-  validateCompletion,
   validateSubmission: validateModelSubmission,
   validationIssueContext: findingIssueContext,
 

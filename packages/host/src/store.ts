@@ -451,7 +451,7 @@ export class RunStore {
           message: 'Completion review must explain and confirm the current candidate in this attempt.' }]);
     }
     if (spec.evaluation.completionReview && previousCandidate) {
-      if (!value.completionReview) throw new ValidationError([{category:'decision',code:'completion_review_incomplete',path:'/',
+      if (!value.completionReview) throw new ValidationError([{category:'decision',code:'completion_review_stale',path:'/',
         message:'初稿只能进入一次独立复核，不能在原会话继续改稿或确认。'}]);
       previousCandidate.superseded = true;
       await this.save();
@@ -461,7 +461,7 @@ export class RunStore {
     try {
       const binding = this.bindings.get(spec.attemptId)!;
       evaluation = this.services.agents.resolve(binding, value.evaluation, value.audit);
-      this.services.agents.validate(binding, evaluation, value.audit, !spec.evaluation.completionReview || Boolean(value.completionReview));
+      this.services.agents.validate(binding, evaluation, value.audit);
     } catch (error) {
       this.registerValidationReads(spec, error);
       if (error instanceof HttpError) throw error;
@@ -495,7 +495,7 @@ export class RunStore {
         }
         return end<target.end;
       });
-      if(unread)throw new ValidationError([{category:'decision',code:'completion_review_incomplete',path:'/Problem',
+      if(unread)throw new ValidationError([{category:'decision',code:'investigation_read_required',path:'/Problem',
         message:'独立复核尚未获得相关原始返回、实际输入或输出，保留草稿为未完成。'}]);
     }
     const receipt: SubmissionReceipt = {

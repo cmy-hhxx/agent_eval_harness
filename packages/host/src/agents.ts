@@ -111,8 +111,8 @@ export class AgentRegistry {
     const modelInput = binding.modelInput ?? binding.request.input;
     if (profile.inspection && (!binding.modelInput || !binding.inspectionInput || !profile.toolNames.includes("inspect_material")))
       throw new Error(`Inspection requires separate primary and secondary material: ${binding.agent}/${binding.profile}`);
-    const names = [...profile.toolNames, ...submissionToolNames(profile.fileSubmission, Boolean(profile.completionReview))];
-    const descriptions: Record<string, string> = { ...profile.toolDescriptions, ...(profile.completionReview ? { confirm_evaluation: profile.completionReview } : {}) };
+    const names = [...profile.toolNames, ...submissionToolNames(profile.fileSubmission)];
+    const descriptions: Record<string, string> = { ...profile.toolDescriptions };
     if (typeof profile.fileSubmission !== "boolean" || new Set(names).size !== names.length ||
       Object.keys(descriptions).length !== names.length ||
       names.some((name) => !descriptions[name]?.trim()))
@@ -251,14 +251,13 @@ export class AgentRegistry {
     const {profile}=this.get(binding);
     return profile.completionReviewContext?.(binding.request,draft,result,{...audit,traceReads:[...binding.presentedReads??[],...audit.traceReads]});
   }
-  validate(binding: AgentBinding, result: unknown, audit: ToolAudit, completed = true): void {
+  validate(binding: AgentBinding, result: unknown, audit: ToolAudit): void {
     audit={...audit,traceReads:[...binding.presentedReads??[],...audit.traceReads]};
     const { profile, result: resultValidator } = this.get(binding);
     if (!resultValidator(result)) throw new ValidationError(this.feedbackProjection(binding,this.feedback(profile, binding.request, result,
       schemaIssues(resultValidator.errors, result)), audit.evidenceBank ?? []));
     try {
       profile.validate?.(binding.request, result, audit);
-      if(completed)profile.validateCompletion?.(binding.request,result,audit);
     } catch (error) {
       if (!(error instanceof ValidationError) || (!profile.validationIssueContext && !profile.evidenceSelections)) throw error;
       throw new ValidationError(this.feedbackProjection(binding,this.feedback(profile, binding.request, result, error.issues!), audit.evidenceBank ?? []));

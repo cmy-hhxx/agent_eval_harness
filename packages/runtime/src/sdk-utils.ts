@@ -174,8 +174,8 @@ export function sdkContent(content: ToolContent[]) {
         },
   );
 }
-export function contentToolName(evaluation: Pick<EvaluationSpec, "inspectionSchema" | "fileSubmission" | "completionReviewActive">, inspected: boolean): string {
-  return evaluation.completionReviewActive ? "confirm_evaluation" : evaluation.inspectionSchema && !inspected ? "inspect_material"
+export function contentToolName(evaluation: Pick<EvaluationSpec, "inspectionSchema" | "fileSubmission">, inspected: boolean): string {
+  return evaluation.inspectionSchema && !inspected ? "inspect_material"
     : evaluation.fileSubmission ? "submit_evaluation_file" : "submit_evaluation";
 }
 
@@ -184,11 +184,9 @@ export function activeToolNames(result: ToolResult, names: string[], nextTool: s
     exploration?: { remaining?: number }; required_reads?: { covered?: boolean };
     draft_writes?: { remaining: number; tools: string[] };
   } } | undefined)?.budget;
-  const current = names.filter(name => !["inspect_material", "submit_evaluation", "submit_evaluation_file", "confirm_evaluation"].includes(name) || name === nextTool ||
-    nextTool === "confirm_evaluation" && ["submit_evaluation", "submit_evaluation_file"].includes(name));
+  const current = names.filter(name => !["inspect_material", "submit_evaluation", "submit_evaluation_file"].includes(name) || name === nextTool);
   if (budget?.exploration?.remaining !== 0) return current;
   return current.filter((name) => name === nextTool ||
-    nextTool === "confirm_evaluation" && ["submit_evaluation", "submit_evaluation_file"].includes(name) ||
     (name === "read_trace" && budget.required_reads?.covered === false) ||
     (budget.draft_writes !== undefined && budget.draft_writes.remaining > 0 && budget.draft_writes.tools.includes(name)));
 }

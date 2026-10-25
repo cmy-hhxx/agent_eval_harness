@@ -18,12 +18,9 @@ test("initial and restored checkpoints select the current content tool without a
   }
 });
 
-test("independent review exposes revised submission and incomplete exit", () => {
-  assert.equal(contentToolName({fileSubmission:false,completionReviewActive:true},false),'confirm_evaluation');
-  const names = ['read_trace','submit_evaluation','confirm_evaluation'];
-  assert.deepEqual(activeToolNames({content:[]},names,'submit_evaluation'),['read_trace','submit_evaluation']);
-  assert.deepEqual(activeToolNames({content:[],details:{budget:{exploration:{remaining:0}}}},names,'confirm_evaluation'),
-    ['submit_evaluation','confirm_evaluation']);
+test("independent review uses the same submission tool without a confirmation questionnaire",()=>{
+ assert.equal(contentToolName({fileSubmission:false},false),'submit_evaluation');
+ assert.deepEqual(activeToolNames({content:[],details:{budget:{exploration:{remaining:0}}}},['read_trace','submit_evaluation'],'submit_evaluation'),['submit_evaluation']);
 });
 
 test("published tools intersect the current content phase with exploration and reserved budgets", () => {

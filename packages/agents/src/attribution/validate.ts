@@ -6,12 +6,6 @@ import {responsibilityIssues} from './responsibility.js';
 import {validateDerivations} from './derivations.js';
 const validator=new Ajv2020({allErrors:true,strict:false}).compile(schema);
 
-export function validateCompletion(_request:AgentRequest,result:unknown):void{
-  const {summary}=result as AttributionResult;
-  if(/^(?:本次(?:评审|归因|复核)?[：:，, ]*)?(?:待补充|暂缓)|^(?:评审|归因|复核|本次评审|本次归因|本次复核).{0,10}(?:尚未完成|未完成|仍需核[对查实])/u.test(summary.trim()))
-    throw new ValidationError([{category:'decision',code:'completion_review_incomplete',path:'/summary',
-      message:'评审摘要仍声明未完成，保留草稿，不接收正式结果。'}]);
-}
 
 /** Final shape checks. Submission additionally checks call binding and final-generation material. */
 export function validateEvaluation(request:AgentRequest,result:unknown,_audit:ToolAudit):void{
