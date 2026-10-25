@@ -1,4 +1,4 @@
-import { canonical } from "@eval/contracts";
+import { canonical, parseEvidenceCoordinates } from "@eval/contracts";
 import { answerTurnContexts, cite, evidenceCovers, evidenceId, evidenceSources, images, messageContentSources, overlapsImagePlaceholder,
   selectEvidenceSource, traceCallOrigins, traceExchanges, type EvidenceSelectionCache, type TraceComponentIdentity } from "@eval/tools";
 import type { BusinessChain, Evidence, TransitionKind } from "./types.js";
@@ -160,8 +160,25 @@ export function buildAttributionTransitions({ raw, inputId, finalIndex, actors, 
   }
   const outputEvents = [...pending];
   const coverageCache = new Map<string, Map<string, boolean>>();
+  const coordinateCache = new Map<string, ReturnType<typeof parseEvidenceCoordinates>>();
+  const coordinate = (id: string) => {
+    if (!coordinateCache.has(id)) coordinateCache.set(id, parseEvidenceCoordinates(id));
+    return coordinateCache.get(id);
+  };
   const covers = (container: TransitionBoundary, item: TransitionBoundary) => {
     if (container.message_index !== item.message_index) return false;
+    const outer = coordinate(container.evidence_id), inner = coordinate(item.evidence_id);
+    if (!outer || !inner || outer.kind === "image" || inner.kind === "image") return false;
+    // Reject impossible coordinate pairs before resolving either source. The full
+    // source/range check below still decides every potentially covering pair.
+    if (outer.kind === inner.kind) {
+      if (outer.path !== inner.path || outer.start > inner.start || outer.end < inner.end) return false;
+    } else {
+      if (outer.kind !== "json" || inner.kind !== "text") return false;
+      const leaf = selectEvidenceSource(pathIndices.get(container.message_index)?.json ??
+        sources(container.message_index).filter(source => source.kind === "json"), inner.path, selectionCache);
+      if (!leaf || outer.path !== leaf.source.path || outer.start > leaf.start || outer.end < leaf.end) return false;
+    }
     let covered = coverageCache.get(container.evidence_id);
     if (!covered) { covered = new Map(); coverageCache.set(container.evidence_id, covered); }
     if (!covered.has(item.evidence_id)) covered.set(item.evidence_id,

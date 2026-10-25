@@ -41,6 +41,21 @@ test("large captured histories index structured content without repeated whole-s
   assert(elapsed < 3000, `structured history assembly took ${Math.round(elapsed)} ms`);
 });
 
+test("many partial input citations reject unrelated paths before resolving coverage", () => {
+  const raw = { messages: [
+    { type: 'tool_call', name: 'lookup', call_id: 'q', input: {} },
+    { type: 'tool_result', name: 'lookup', call_id: 'q', output: 'source' },
+    { type: 'llm_turn', input_messages: Array.from({ length: 2500 }, (_, i) => ({ role: 'tool', content: `source-${i}-observed` })),
+      output: [{ role: 'assistant', content: 'Reviewed' }] }, { type: 'final_answer', content: 'Reviewed' },
+  ] };
+  const item = chain(raw, 1, 0, 1, []), sources = evidenceSources(raw.messages[2]);
+  item.checkpoints[5].evidence = sources.filter(source => source.kind === 'text' && source.path.endsWith('/content')).slice(-500)
+    .map(source => cite(inputId, 2, source, 1, source.text.length - 1));
+  const started = performance.now(), { transitions } = build(raw, [item]);
+  assert.equal(transitions.filter(event => event.kind === 'transfer').length, 500);
+  assert(performance.now() - started < 3000, 'partial citations must not rescan every source for unrelated paths');
+});
+
 test("captured tool_call_id links a truncated actual input without content matching or invented actors", () => {
   const args = { command: "fetch SPY and RSP" }, call = { id: "captured-call", type: "function", function: { name: "shell", arguments: JSON.stringify(args) } };
   const capturedInput = { role: "tool", name: "shell", tool_call_id: "captured-call", content: '{"stdout":"SPY=-0.183256;RSP=-0.582027\n…[earlier tool output truncated to save context]' };

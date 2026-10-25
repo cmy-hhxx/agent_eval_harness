@@ -27,6 +27,8 @@ AIME 使用 workflow: answer-review。每条回答先完成 Attribution，通过
 
 同次尝试复用已组装材料，证据路径索引只在一次组装内存在；提交和确认仍重新执行结构、证据和业务验收，不缓存通过结论。统一 runtime.log 中的 task_prepared、submission_wait、submission_validation、attempt_metrics 分别记录排队、材料/目录/准备 CPU、激活/派发、提交锁等待、验收和 Worker 耗时。materialMs 包含 directoryMs；requiredReadMs 是 submissionMs 内的受保护补读子集，不重复相加。modelMs 是 SDK assistant 消息开始至结束的观测时长，工具、Host 材料 IO 和提交分别计时。输入等待不算模型空闲，但总任务 deadline 始终有效，额度和重试上限不增加。
 
+边界覆盖先按已解析路径和范围排除不可能覆盖的组合，再对剩余组合执行原始来源校验；部分引用仍须落在真实原文范围，不用同文内容替代坐标。该索引不跨尝试保存。
+
 Rewrite 只接收 summary、问题和理由文本槽位，不接触证据，不改变原归因或评分。可选改写记录放在 `meta.rewritten`，保持正式顶层六字段。
 
 ## Score
