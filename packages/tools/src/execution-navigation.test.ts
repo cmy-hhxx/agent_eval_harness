@@ -170,3 +170,25 @@ test("evidence-associated candidates retain whole-item pagination and exact next
     assert.equal(f.ctx.audit.evidenceBank!.length, 1); assert.deepEqual(f.ctx.audit.traceReads, []);
   } finally { await f.close(); }
 });
+
+test('responsibility-chain reads bundle request, return, actual input and output with stable indices',async()=>{
+ const f=await setup();
+ try {
+   const chain=[
+    {transition_index:1,kind:'request_formation',chain_index:1,chain_indices:[1],execution_node_index:1,source_node_index:1,target_node_index:1,before:[proof(0)],after:[proof(1)],predecessors:[]},
+    {transition_index:2,kind:'execution',chain_index:1,chain_indices:[1],execution_node_index:2,source_node_index:2,target_node_index:2,before:[proof(1)],after:[proof(2)],predecessors:[1]},
+    {transition_index:3,kind:'transfer',chain_index:1,chain_indices:[1],execution_node_index:null,source_node_index:2,target_node_index:3,before:[proof(2)],after:[proof(3)],predecessors:[2]},
+    {transition_index:4,kind:'generation',chain_index:1,chain_indices:[1],execution_node_index:3,source_node_index:3,target_node_index:3,before:[proof(3)],after:[proof(4)],predecessors:[3]},
+   ];
+   Object.assign(f.ctx.materialNavigation!.answer as object,{boundaries:chain,responsibility_choices:[{transition_index:2,chain_index:1,component:'finquery 取数服务'}]});
+   const runtime=new ToolRuntime(f.ctx,createRegistry().select(['read_responsibility_chain']));
+   const result=await runtime.execute('read_responsibility_chain',{candidate:'answer',transition_index:2},new AbortController().signal);
+   assert(!result.isError,result.content[0].text);
+   const value=JSON.parse(result.content[0].text!);
+   for(const key of ['request','original_return','actual_input','output']) assert.equal(value[key].length,1,key);
+   assert.equal(value.component,'finquery 取数服务');
+   assert.equal(value.request[0].evidence_index,value.request[0].evidence_index|0);
+   assert(value.request[0].quote);
+   assert.equal(f.snapshots.length,1);
+ } finally { await f.close(); }
+});
