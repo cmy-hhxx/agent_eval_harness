@@ -148,6 +148,8 @@ npm run report:relay -- --resolve <traceId> --outcome retry
 
 工作台发现登记目录中的包并保存持久批次；日常来源手动启动后自动清洗积压并持续接入新包，专项由页面选择批次并手动清洗。AIME 接管时核对已有规范输入与增量收据，分别补齐评分和归因覆盖。新任务创建独立收包与输出目录，目录和状态说明见[数据服务](../server_dashboard_ths/README.md)。外部状态位于 `runtime/state/data-service`，SQLite、ready、偏移索引、进度和临时解压目录均不在 checkout。
 
+Host 热状态默认写入 `~/.cache/eval-agent-harness/hot`。该目录必须位于服务器本机 SSD，并通过 `EVAL_HOT_STATE_ROOT` 或服务环境调整；不要把热日志放到 `/mnt/aigc_team` 的 Ceph。正式 JSONL、`progress.jsonl`、报告和 `state.json` 仍写评测产物目录。
+
 手动启动来源后，流水线从 `http://127.0.0.1:8081/data/wencai` 读取日常四路，并把进度直接上报同一数据服务。
 
 ## Eris 只读分析助手

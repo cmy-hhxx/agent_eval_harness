@@ -65,7 +65,7 @@ export interface EvaluationInputs {
   workbench?: {
     task: { id: string; name: string; source: string; category: string };
     batch_ids: string[];
-    records: { model: string; batch_id: string; case_id: string; input_file: string; input_index: number;
+    records: { model: string; batch_id: string; case_id: string; date?: string; input_file: string; input_index: number;
       package_id: string; package_name: string; original_file: string; original_line: number; original_item?: number }[];
   };
   versions: VersionConfig[];

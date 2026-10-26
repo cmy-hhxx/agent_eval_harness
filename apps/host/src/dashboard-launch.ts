@@ -2,7 +2,7 @@ import { spawn } from "node:child_process";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { errorText, HttpError, safeId } from "@eval/contracts";
-import { exists, locateRun, readJson } from "@eval/data";
+import { ensureClusterPlaceholder, exists, locateRun, readJson } from "@eval/data";
 import { readRunState, reconcileRun } from "@eval/workflows/comparison";
 import type { JsonObject, TaskPlan } from "@eval/contracts";
 import type { EvalConfig } from "@eval/workflows/comparison";
@@ -158,6 +158,8 @@ export async function startRun(options: LaunchOptions, value: Record<string, unk
   if (!resuming && config.inputs.workbench && (plan?.summary.issues as unknown[] | undefined)?.length && plan?.tasks.length)
     throw new HttpError(409, "输入预检存在异常，请修复后启动");
   if (await readLock(run)) throw new HttpError(409, "Run is already running");
+  if (path.basename(options.outputDir) === "0_daily_eval" && /^\d{4}-\d{2}-\d{2}$/.test(runId))
+    await ensureClusterPlaceholder(run);
   await options.beforeLaunch?.();
   const args = [CLI_ENTRY, "run"];
   if (options.discoverInputs) args.push("--discover-inputs");

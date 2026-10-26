@@ -15,5 +15,5 @@
   "stableSeconds":3,
   "stableTimeoutSeconds":30,
   "pollSeconds":60,
-  "concurrency":64
+  "concurrency":200
 }

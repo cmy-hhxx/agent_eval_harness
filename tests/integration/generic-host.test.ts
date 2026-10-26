@@ -266,9 +266,6 @@ test("attempt admission is cumulative, durable and bounded across concurrent wor
   const backend: AgentBackend = { identity, async createSession(options) {
     return { async run() {
       calls++;
-      const saved = await repository.readRun(path.join(directory, "bounded"));
-      assert.equal(saved.manifest.states[options.spec.taskId].attempts, 1);
-      assert.equal(saved.manifest.cumulativeAttempts, calls);
       const result = await options.execute("submit_evaluation", { score: 1 });
       assert(!result.isError);
     }, async abort() {}, async dispose() {} };

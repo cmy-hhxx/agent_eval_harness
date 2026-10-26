@@ -16,7 +16,7 @@
   ],
   "stateDirectory": "../data/automations/remote-evaluation",
   "sourceDirectory": "../data/sources/automations/remote-evaluation",
-  "runPrefix": "daily-",
+  "runPrefix": "",
   "predictionResults": "../data/sources/automations/prediction-evaluation",
   "engine": "pi",
   "pollMs": 15000,

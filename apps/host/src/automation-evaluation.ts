@@ -1,6 +1,6 @@
 import path from "node:path";
 import { type PlannedTask, type RemoteDay, type TaskPlan, type WorkflowDefinition, type Policy } from "@eval/contracts";
-import { hasLiveRunOwner, readJson } from "@eval/data";
+import { ensureClusterPlaceholder, hasLiveRunOwner, readJson } from "@eval/data";
 import { runEvaluation, type ModelRequestControl } from "@eval/host";
 import type { AutomationJob, AutomationState, EvaluationOutcome, EvaluationSummary } from "@eval/automations";
 import { comparisonWorkflow, expandComparisonPairs, publishableComparisons, reconcileRun, taskIdentity, type BatchPreflight, type Checkpoint, type EvalConfig, type TaskData } from "@eval/workflows/comparison";
@@ -377,6 +377,7 @@ export async function evaluateDay(config: AutomationConfig, job: AutomationJob, 
       issues += (plan.summary.issues as unknown[]).length;
       continue;
     }
+    await ensureClusterPlaceholder(path.join(output, runId));
     await runEvaluation({
       ...services, runId, output: evaluation.output, engine: execution.engine, evaluatorVersion: host.evaluatorVersion,
       taskSource: workflow,

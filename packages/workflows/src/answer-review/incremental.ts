@@ -45,7 +45,7 @@ export async function runAimeIncremental(options:{output:string;concurrency:numb
     for(const [date,records] of grouped){
       const job=state.jobs.find(j=>j.date===date);
       if(job){job.records.push(...records);job.done=false;}
-      else{const id=date.slice(5).replace('-','');state.jobs.push({id,date,records,output:path.join(options.output,id),done:false});}
+      else state.jobs.push({id:date,date,records,output:path.join(options.output,date),done:false});
     }
     scan.cleaned=true;scan.report_file=file;
     // Selection and the durable run IDs are committed together, before any model is started.
@@ -65,7 +65,7 @@ export async function runAimeIncremental(options:{output:string;concurrency:numb
       if(prior){if(prior.model!==record.model||prior.batch_id!==record.batch_id||prior.case_id!==record.case_id)throw Error('历史回答trace_id身份冲突');Object.assign(prior,record);continue;}
       if(!record.trace_id||!/^\d{4}-\d{2}-\d{2}$/.test(record.date))throw Error('历史规范输入坐标无效');
       let job=state.jobs.find(job=>job.date===record.date);
-      if(!job){const id=record.date.slice(5).replace('-','');job={id,date:record.date,records:[],output:path.join(options.output,id),done:false};state.jobs.push(job);}
+      if(!job){job={id:record.date,date:record.date,records:[],output:path.join(options.output,record.date),done:false};state.jobs.push(job);}
       job.records.push(record);job.done=false;known.set(record.trace_id,record);backfilled++;
     }
     // Existing attribution-only days also need their missing Score tasks reconciled once.

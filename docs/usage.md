@@ -75,7 +75,8 @@ npm run eval -- model-probe --engine prime --stage comparison --config configs/l
 | configs/local/ | 不入库的本机覆盖配置 |
 | data/sources/ | 原始 JSONL，长期只保留在这里 |
 | data/input-catalog/ | 业务身份及字节位置索引，不存正文 |
-| {source}/eval_output/0_daily_eval/ | 日常正式评测 |
+| {source}/eval_output/0_daily_eval/<YYYY-MM-DD>/results/ | 日常正式评测，按业务日期归档 |
+| {source}/eval_output/0_daily_eval/<YYYY-MM-DD>/cluster/ | 当天的聚类树与状态；未开始时保留空的 `cluster_tree.jsonl` 和 `state.json` |
 | {source}/eval_output/1_task_eval/<任务>/ | 专项正式评测 |
 | 当前评测目录的 attribution/、clustering/ | 独立归因与聚类作业 |
 | {source}/eval_output/test_eval/ | 所有小样本、试跑、benchmark 与稳定性验证 |
@@ -361,7 +362,8 @@ npm run eval -- rewrite-comparisons --run /mnt/fin_bench/eval_data/0_wencai/eval
 
 | 文件 | 用途 |
 |---|---|
-| state.json | 任务、来源索引、收据引用、草稿与累计用量 |
+| state.json | 周期性派生快照：任务状态、来源索引、收据引用和累计用量；不保存完整修复/复核现场 |
+| progress.jsonl | 已投影的追加式状态事件，按序号配合 state.json 恢复；不复制正式结果正文 |
 | overview.json | 运行目录与预计算统计：正式战绩、比例和结果引用，不保存正文 |
 | results/criteria.jsonl | 共同标准 |
 | results/attribution.jsonl | 单回答归因与证据 |
@@ -374,9 +376,9 @@ npm run eval -- rewrite-comparisons --run /mnt/fin_bench/eval_data/0_wencai/eval
 | stats.json | 数量、覆盖、冲突、版本、用量及产物清单 |
 | model-behavior.jsonl | 由当前有效归因派生的责任分类与 finding 来源，不提供底座排名 |
 
-正式 JSONL 是判词的权威存储，state 不重复保存已接受正文。崩溃恢复可处理相同重复行与中断尾行，冲突或缺失正式结果明确报错，不自动重评。写入顺序见[生命周期](architecture.md#生命周期)。
+正式 JSONL 是判词的权威存储，state 不重复保存已接受正文。运行中的提交先在本地 SQLite WAL 热日志中原子确认，再由 outbox 投影到正式 JSONL 和 progress.jsonl；进程崩溃重放本地事件，整机故障允许最多 5 秒未投影进度。崩溃恢复可处理相同重复行与中断尾行，冲突或缺失正式结果明确报错，不自动重评。写入顺序见[生命周期](architecture.md#生命周期)。
 
-高并发下，若已有后续检查点排队，已落盘结果的收据压缩并入该次写入，避免重复刷盘；没有后续写入时立即压缩。压缩失败仍能从先前的恢复检查点和正式结果恢复。
+`state.json` 仅周期写入，并对错误消息、错误数量和 receipt 审计做固定压缩；draft、completion candidate、inspection、evidence bank 与完整 review 上下文不进入检查点。热日志和 outbox 路径由 `EVAL_HOT_STATE_ROOT` 控制，默认位于 `~/.cache/eval-agent-harness/hot`；生产应放在本机 SSD，不放在 Ceph。
 
 Worker 健康检查暂时失败时，Host 暂缓使用该槽位并重查，不终止仍存活的进程，也不增加任务尝试次数。托管槽位绑定具体子进程，确认进程退出后才重建，避免端口复用误认其他 Worker。
 

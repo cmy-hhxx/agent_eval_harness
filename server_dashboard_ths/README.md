@@ -12,9 +12,11 @@
 | 外部状态根 | `runtime/state/data-service` |
 | wencai 日常包 | `0_wencai/1_7z_data/A_AA_comparision_data/*.7z` |
 | wencai 输出 | `0_wencai/2_daily_eval_input/<model>/<date>.jsonl` |
+| wencai 日常评测 | `0_wencai/eval_output/0_daily_eval/<YYYY-MM-DD>/{results,cluster}/` |
 | 问财后训练专项包 | `0_wencai/1_7z_data/post_train_model/*.7z` |
 | 问财后训练专项输出 | `0_wencai/5_multi_task_eval_input/post_train_model_eval/<model>/<date>.jsonl` |
 | aime 日常包与输出 | `1_aime/1_7z_data/online_data/*.7z`、`1_aime/2_daily_eval_input/<model>/<date>.jsonl` |
+| aime 日常评测 | `1_aime/eval_output/0_daily_eval/<YYYY-MM-DD>/{results,cluster}/` |
 | ifind 包与输出 | `2_ifind/1_7z_data/*.7z`、`2_ifind/2_daily_eval_input/<model>/<date>.jsonl` |
 
 服务进程只由 `workbench.sh` 启动，监听 `127.0.0.1:8081`。数据服务的内部来源前缀为：

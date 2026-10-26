@@ -7,6 +7,13 @@ import {runLock,writeJson} from '@eval/data';
 import {fixtureConfig,sessionRaw,attributionResult,emptyAudit,fakeIdentity,fakeEvaluatorVersion} from '../../../../tests/fixtures/comparison.js';
 import {planAnswerReview,answerReviewProgress,readAnswerReviewSources,readAnswerReviewAnalysis,answerReviewRepository,appendAnswerReviewInputs,answerReviewSamples,answerReviewSample,answerReviewRunSummaries,retryAnswerReviewTasks,prepareAnswerReviewAutomaticResume,answerReviewWorkflow,type AnswerReviewConfig} from './index.js';
 
+const withoutEvaluationMeta = (receipt: SubmissionReceipt): SubmissionReceipt => ({
+  ...receipt,
+  ...(receipt.evaluation && typeof receipt.evaluation === 'object'
+    ? { evaluation: { ...receipt.evaluation, meta: undefined } }
+    : {}),
+});
+
 test('existing accepted Attribution keeps its row while Score is added, paginated and selectively retried',async t=>{
   const f=await fixtureConfig([[{...sessionRaw('one'),batch_id:'b1'} as any],[],[],[]]);t.after(()=>rm(f.directory,{recursive:true,force:true}));
   const config:AnswerReviewConfig={...f.config,workflow:'answer-review',reviewStages:['attribution'],inputs:{...f.config.inputs,versions:f.config.inputs.versions.slice(0,1)}};
@@ -31,7 +38,7 @@ test('existing accepted Attribution keeps its row while Score is added, paginate
   const both:AnswerReviewConfig={...config,reviewStages:['score','attribution'],inputs:{...config.inputs,records:[input]}};
   assert.equal(await appendAnswerReviewInputs(run,both),0);assert.equal(await appendAnswerReviewInputs(run,both),0);
   const current=await answerReviewRepository.readRun(run),score=current.manifest.tasks.find(t=>t.stage==='score')!;
-  assert.equal(current.manifest.tasks.length,2);assert.deepEqual(current.receipts[task.id],state.receipts[task.id]);
+  assert.equal(current.manifest.tasks.length,2);assert.deepEqual(withoutEvaluationMeta(current.receipts[task.id]),withoutEvaluationMeta(state.receipts[task.id]));
   current.manifest.states[score.id]={status:'failed',attempts:2,reason:'score failed'};await answerReviewRepository.writeRun(run,current);
   const page=await answerReviewSamples(run,new URLSearchParams({model:c.version,status:'failed',limit:'1'}));
   assert.equal(page.total,1);assert.equal(page.items[0].stages.score.status,'failed');
@@ -44,7 +51,7 @@ test('existing accepted Attribution keeps its row while Score is added, paginate
   assert.deepEqual(summary.models[c.version],{answers:1,completed:0,failed:1,pending:0});assert.equal(summary.taskTotal,2);assert.equal(summary.taskCompleted,1);
   const unlock=await runLock(run);await assert.rejects(retryAnswerReviewTasks(run,{stages:['score']}),/owned/);await unlock();
   const retry=await retryAnswerReviewTasks(run,{taskIds:[score.id],stages:['score']});assert.deepEqual(retry.retried,[score.id]);
-  const after=await answerReviewRepository.readRun(run);assert.deepEqual(after.receipts[task.id],state.receipts[task.id]);assert.equal(after.manifest.states[score.id].attempts,2);
+  const after=await answerReviewRepository.readRun(run);assert.deepEqual(withoutEvaluationMeta(after.receipts[task.id]),withoutEvaluationMeta(state.receipts[task.id]));assert.equal(after.manifest.states[score.id].attempts,2);
   await assert.rejects(retryAnswerReviewTasks(run,{stages:'score'}),/重试范围/);
   const wrong=path.join(f.directory,'wrong');await writeJson(path.join(wrong,'state.json'),{workflow:'comparison'});
   await assert.rejects(answerReviewRunSummaries([{run:wrong}]),/不属于独立Score/);
@@ -84,7 +91,7 @@ test('one Score task retries without reopening accepted Attribution',async t=>{
   assert.equal(progress.summary.stages.attribution.completionRate,100);assert.equal(progress.summary.stages.score.completionRate,0);
   const accepted=structuredClone(state.receipts);
   assert.deepEqual((await retryAnswerReviewTasks(run,{taskIds:[score.id]})).retried,[score.id]);
-  const retried=await answerReviewRepository.readRun(run);assert.equal(retried.manifest.states[score.id].attempts,2);assert.deepEqual(retried.receipts,accepted);assert.equal(retried.manifest.states.instruction.status,'failed');
+  const retried=await answerReviewRepository.readRun(run);assert.equal(retried.manifest.states[score.id].attempts,2);assert.deepEqual(Object.fromEntries(Object.entries(retried.receipts).map(([id,receipt])=>[id,withoutEvaluationMeta(receipt)])),Object.fromEntries(Object.entries(accepted).map(([id,receipt])=>[id,withoutEvaluationMeta(receipt)])));assert.equal(retried.manifest.states.instruction.status,'failed');
   state.manifest.states[score.id].status='pending';await save();
   const pending=(await answerReviewRunSummaries([{run}])).runs[0];assert.equal(pending.stages.score.total,1);assert.equal(pending.stages.score.pending,1);assert.equal(pending.succeeded,0);
   assert.equal((await answerReviewSample(run,c.input_id)).results.score,null);
@@ -98,5 +105,5 @@ test('one Score task retries without reopening accepted Attribution',async t=>{
   assert.equal(completed.summary.completedInputCount,1);assert.equal(completed.summary.inputCompletionRate,100);
   assert.equal(completed.summary.stages['instruction-review'].completionRate,0);
   assert.deepEqual((await retryAnswerReviewTasks(run,{taskIds:[instruction.id],stages:['instruction-review']})).retried,[instruction.id]);
-  const after=await answerReviewRepository.readRun(run);assert.equal(after.manifest.states.instruction.attempts,1);assert.deepEqual(after.receipts[attribution.id],state.receipts[attribution.id]);assert.equal(after.recordedAttempts,4);
+  const after=await answerReviewRepository.readRun(run);assert.equal(after.manifest.states.instruction.attempts,1);assert.deepEqual(withoutEvaluationMeta(after.receipts[attribution.id]),withoutEvaluationMeta(state.receipts[attribution.id]));assert.equal(after.recordedAttempts,4);
 });

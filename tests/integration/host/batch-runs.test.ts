@@ -1,7 +1,8 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import path from "node:path";
-import { rm, writeFile } from "node:fs/promises";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import { createFileLogger, readJson, writeJson, writeJsonl } from "@eval/data";
 import { json, listen } from "@eval/runtime/http";
 import { startWorker } from "@eval/runtime/worker";
@@ -56,6 +57,27 @@ test("batch API freezes scope, persists across restart, and exposes runs outside
   // Missing registrations are incomplete, but a corrupted published registration is still an error.
   await writeFile(catalog.file("unfinished-preview"), "{bad");
   await assert.rejects(catalog.list(), SyntaxError);
+});
+
+test("daily batch runs use one business date as the run directory", async t => {
+  const directory = await mkdtemp(path.join(tmpdir(), "daily-batch-")), output = path.join(directory, "eval_output/0_daily_eval");
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  let dates = ["2026-10-24"];
+  const source = await listen(async (_req, res) => json(res, {
+    task: { id: "daily", name: "问财日常四路", source: "wencai", category: "daily" }, batch_ids: ["package"], models: ["a_fast"],
+    comparisons: [], output_dir: output,
+    records: dates.map((date, input_index) => ({ model: "a_fast", batch_id: date, case_id: "case-" + input_index, date,
+      input_file: path.join(directory, `inputs/a_fast/${date}.jsonl`), input_index, package_id: "package", package_name: "one.7z",
+      original_file: "one.7z/member.jsonl", original_line: input_index + 1 })),
+  }), 0);
+  t.after(() => source.close());
+  const batches = new DashboardBatches(path.join(directory, "launches"), source.url);
+  const run = await batches.prepare({ batch_ids: ["package"] });
+  assert.equal(run.runId, "2026-10-24");
+  assert.equal(run.outputDir, output);
+  assert.equal(path.basename(path.dirname(batches.config(run.runId))), "2026-10-24");
+  dates = ["2026-10-24", "2026-10-25"];
+  await assert.rejects(batches.prepare({ batch_ids: ["package"] }), /只能包含一个业务日期/);
 });
 
 test("scoped failure retry and interrupted resume preserve accepted results, coordinates and error history", async t => {

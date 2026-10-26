@@ -1,6 +1,15 @@
-import { localFiles, atomicWrite } from "@eval/data";
+import {
+  applyRunJournalDelta,
+  atomicWrite,
+  localFiles,
+  readProgressJournal,
+  RunHotStore,
+  runHotFile,
+  runJournalIdentity,
+} from "@eval/data";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
+import os from "node:os";
 import { inspect } from "node:util";
 import { setImmediate as yieldToIO } from "node:timers/promises";
 import {
@@ -119,9 +128,9 @@ export async function runEvaluation(options: RunOptions): Promise<Record<string,
   const abort = () => controller.abort(options.signal?.reason || new Error("Interrupted"));
   options.signal?.addEventListener("abort", abort, { once: true });
   if (options.signal?.aborted) abort();
-  let store: RunStore | undefined, http: Awaited<ReturnType<typeof listen>> | undefined;
+  let store: RunStore | undefined, hot: RunHotStore | undefined, http: Awaited<ReturnType<typeof listen>> | undefined;
   let workspace: Awaited<ReturnType<typeof createRunWorkspace>> | undefined;
-  let progressTimer: ReturnType<typeof setInterval> | undefined;
+  let progressTimer: ReturnType<typeof setInterval> | undefined, checkpointTimer: ReturnType<typeof setInterval> | undefined;
   let wake: () => void = () => {};
   const pause = () => wake();
   options.pauseSignal?.addEventListener("abort", pause, { once: true });
@@ -179,6 +188,22 @@ export async function runEvaluation(options: RunOptions): Promise<Record<string,
         },
       };
     }
+    hot = new RunHotStore(
+      runHotFile(process.env.EVAL_HOT_STATE_ROOT || path.join(os.homedir(), ".cache", "eval-agent-harness", "hot"), run),
+      runJournalIdentity(saved),
+    );
+    const snapshotSequence = saved.manifest.journalSequence ?? 0;
+    const replayed = new Map<number, { seq: number; event: import("@eval/data").RunJournalDelta }>();
+    for (const event of hot.eventsAfter(snapshotSequence)) replayed.set(event.seq, event);
+    for (const event of await readProgressJournal(run, snapshotSequence)) {
+      const previous = replayed.get(event.seq);
+      if (previous && canonical(previous.event) !== canonical(event.event))
+        throw new Error("本地热状态与进度事件流在同一序号上不一致");
+      replayed.set(event.seq, event);
+    }
+    for (const event of [...replayed.values()].sort((a, b) => a.seq - b.seq))
+      applyRunJournalDelta(saved, event.event);
+    if (replayed.size) hot.setSequenceFloor(Math.max(...replayed.keys()));
     const manifest = saved.manifest;
     cumulativeAttempts(manifest);
     if (options.maxAttempts !== undefined || options.stopStartingAt !== undefined)
@@ -223,7 +248,7 @@ export async function runEvaluation(options: RunOptions): Promise<Record<string,
         await writeJson(internalPath(run, safeId(name)), value);
     }
     const modelRequests = createModelRequests(options.modelRequests);
-    store = new RunStore(run, saved, inputs, options, modelRequests.deadline);
+    store = new RunStore(run, saved, inputs, options, modelRequests.deadline, hot);
     manifest.status = "running";
     delete manifest.finishedAt;
     await localFiles.remove(layout.stats, { force: true });
@@ -248,11 +273,17 @@ export async function runEvaluation(options: RunOptions): Promise<Record<string,
         delete state.reason;
       }
     }
-    await store.save();
+    await store.persistCheckpoint();
+    store.startOutbox();
+    checkpointTimer = setInterval(() => {
+      void store?.persistCheckpoint().catch(error => options.logger?.error(error, {
+        component: "host", event: "periodic_checkpoint_failed", run_id: options.runId,
+      }));
+    }, 5 * 60 * 1000);
     const current = store;
     const preparing = new Set<string>();
     const snapshot = () => ({ ...progressSnapshot(saved, Date.now(), preparing), in_flight_tasks: busy.size,
-      checkpoint: { ...current.checkpointMetrics } });
+      checkpoint: { ...current.checkpointMetrics }, outbox: current.outboxStatus() });
     // A task may expose a stage-specific view of its source without persisting a second input.
     const attemptSources = new Map<string, Map<string, unknown>>();
     const lock = await readJson<{ pid: number; token: string }>(layout.lockFile);
@@ -282,7 +313,7 @@ export async function runEvaluation(options: RunOptions): Promise<Record<string,
           throw new HttpError(400, "concurrency must be positive");
         desiredConcurrency = Number(value);
         manifest.concurrency = desiredConcurrency;
-        await current.save();
+        await current.save(undefined, { manifest: true });
         wake();
         return json(res, snapshot());
       }
@@ -323,7 +354,7 @@ export async function runEvaluation(options: RunOptions): Promise<Record<string,
     let workerUrls = options.workerUrls || [];
     const running = new Map<string, Promise<void>>();
     const taskConcurrency = () => options.modelRequests?.concurrency() ?? desiredConcurrency;
-    const runnable = (task: PlannedTask) => (running.size === 0 || running.size < taskConcurrency()) &&
+    const runnable = (task: PlannedTask) => !current.admissionPaused() && (running.size === 0 || running.size < taskConcurrency()) &&
       manifest.states[task.id].status === "pending" && !executionStopReason(manifest) && dispatchable(task) &&
       (manifest.states[task.id].nextRetryAt ?? 0) <= Date.now() &&
       Object.values(task.dependencies).every((id) => manifest.states[id]?.status === "succeeded");
@@ -417,12 +448,12 @@ export async function runEvaluation(options: RunOptions): Promise<Record<string,
       if (contentRemaining(task) <= 0) {
         state.status = "failed";
         state.reason ??= "Content submission budget exhausted";
-        await current.save();
+        await current.save(task.id);
         return;
       }
       if (controller.signal.aborted) {
         state.status = "cancelled";
-        await current.save();
+        await current.save(task.id);
         return;
       }
       let ready = false;
@@ -442,7 +473,7 @@ export async function runEvaluation(options: RunOptions): Promise<Record<string,
           // an attempt; a failed observation must not terminate a live process.
           deferWorker(worker);
           state.status = "pending";
-          await current.save();
+          await current.save(task.id);
           return;
         }
         workerUrl = worker.url;
@@ -746,7 +777,7 @@ export async function runEvaluation(options: RunOptions): Promise<Record<string,
       }
       if (receipt) {
         state.status = "succeeded";
-        await current.save();
+        await current.save(task.id);
       }
       if (!receipt) {
         record.error = state.reason;
@@ -811,7 +842,7 @@ export async function runEvaluation(options: RunOptions): Promise<Record<string,
         detail: status?.errorDetail ?? record.status?.errorDetail,
       });
       if (pause) {
-        await current.save();
+        await current.save(task.id, { manifest: true });
         options.onProgress?.("stage_paused " + JSON.stringify(pause));
         await options.logger?.error(`同类失败达到阈值，暂停 ${pause.stage}: ${pause.code} ${pause.path}`, {
           component: "host", event: "stage_paused", run_id: options.runId, task_id: task.id,
@@ -831,7 +862,7 @@ export async function runEvaluation(options: RunOptions): Promise<Record<string,
           saved.usage[key] += record.metrics.usage[key] || 0;
         saved.recordedAttempts++;
       }
-      await current.save();
+      await current.save(task.id, { usage: true });
       if (
         (!manifest.debug || (copied && eventsSaved && record.metrics)) &&
         record.status &&
@@ -867,7 +898,7 @@ export async function runEvaluation(options: RunOptions): Promise<Record<string,
       const retryDelay = !rerouted && status?.retryable ? options.retryDelaySeconds * 1000 * 2 ** Math.max(0, retries.transport - 1) : 0;
       state.status = "pending";
       state.nextRetryAt = Date.now() + retryDelay;
-      await current.save();
+      await current.save(task.id);
       // Return the worker and concurrency slot while this task backs off.
       } finally {
         modelRequests.remove(spec.attemptId);
@@ -980,7 +1011,7 @@ export async function runEvaluation(options: RunOptions): Promise<Record<string,
             manifest.states[task.id].reason = errorText(error);
             const pause = controller.signal.aborted || !observesFailures(task) ? undefined : guard.observe(task.stage, task.id, [{ category: "interruption", code: "host_execution_failed", path: "/" }]);
             if (pause) options.onProgress?.("stage_paused " + JSON.stringify(pause));
-            await current.save();
+            await current.save(task.id, { manifest: true });
             if (!controller.signal.aborted)
               await options.logger?.error(error, {
                 component: "host",
@@ -1002,7 +1033,7 @@ export async function runEvaluation(options: RunOptions): Promise<Record<string,
         // make progress before preparing the next task in a large cohort.
         await yieldToIO();
       }
-      if (blocked) await current.save();
+      if (blocked) await current.save(undefined, { manifest: true, all: true });
       const retryDeadlines = manifest.tasks.filter(task => !executionStopReason(manifest) && dispatchable(task) &&
         manifest.states[task.id].status === "pending" && (manifest.states[task.id].nextRetryAt ?? 0) > Date.now())
         .map(task => manifest.states[task.id].nextRetryAt!);
@@ -1034,7 +1065,8 @@ export async function runEvaluation(options: RunOptions): Promise<Record<string,
       manifest.executionStopReason = executionStopReason(manifest);
     manifest.status = controller.signal.aborted || options.pauseSignal?.aborted || manifest.pausedStages.length || manifest.executionStopReason ? "interrupted" : "finished";
     manifest.finishedAt = Date.now();
-    await current.save();
+    await current.save(undefined, { manifest: true, usage: true, all: true });
+    await current.persistCheckpoint();
     const executionTaskStatuses: Record<string, number> = {};
     for (const task of manifest.tasks.filter(inScope)) {
       const status = manifest.states[task.id].status;
@@ -1045,15 +1077,22 @@ export async function runEvaluation(options: RunOptions): Promise<Record<string,
       ...(manifest.executionStopReason ? { execution_stop_reason: manifest.executionStopReason } : {}) };
   } finally {
     if (progressTimer) clearInterval(progressTimer);
+    if (checkpointTimer) clearInterval(checkpointTimer);
     controller.abort();
     options.signal?.removeEventListener("abort", abort);
     options.pauseSignal?.removeEventListener("abort", pause);
     try {
       await Promise.all(owned.map((worker) => worker.close()));
       await Promise.all(workerExitLogs);
-      if (store && store.manifest.status === "running") {
-        store.manifest.status = "interrupted";
-        await store.save();
+      try {
+        if (store && store.manifest.status === "running") {
+          store.manifest.status = "interrupted";
+          await store.save(undefined, { manifest: true, usage: true, all: true });
+          await store.persistCheckpoint();
+        }
+      } finally {
+        if (store) await store.close();
+        else hot?.close();
       }
     } finally {
       // A failed checkpoint must not keep this date locked for the lifetime of the automation.

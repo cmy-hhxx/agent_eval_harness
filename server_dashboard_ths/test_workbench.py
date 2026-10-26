@@ -75,6 +75,16 @@ class WorkbenchTest(unittest.TestCase):
         with self.assertRaises(ValueError):
             self.catalog.evaluation_scope({"batch_ids": [first["id"], first["id"]]})
 
+    def test_daily_evaluation_scope_uses_source_date_root_without_task_directory(self):
+        self.package(rows=[archive_row("b_fast", "one")])
+        batch = self.discover_batches()[0]
+        task = self.task(category="daily")
+        self.catalog.assign({"batch_ids": [batch["id"]], "task_id": task["id"]})
+        self.clean([batch["id"]])
+        scope = self.catalog.evaluation_scope({"batch_ids": [batch["id"]]})
+        self.assertEqual(scope["task"]["category"], "daily")
+        self.assertEqual(Path(scope["output_dir"]), self.root / "data/0_wencai/eval_output/0_daily_eval")
+
     def test_task_assignment_cleaning_report_and_sample_survive_restart(self):
         self.package(rows=[archive_row("b_fast", "one"), archive_row("b_fast", "empty", answer="")],
                      extra={"AA-post_train_fast_V1.jsonl": json.dumps(archive_row("b_post_train_fast", "one")) + "\n{bad\n"})

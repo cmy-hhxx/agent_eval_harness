@@ -92,6 +92,8 @@ export async function loadAutomationConfig(file: string): Promise<AutomationConf
   if (!hostConfigs.length) throw new Error("hostConfigs must not be empty");
   const remoteModels = strings("remoteModels").map(safeId);
   if (!remoteModels.length) throw new Error("remoteModels must not be empty");
+  if (typeof raw.runPrefix !== "string") throw new Error("Invalid automations.runPrefix");
+  const runPrefix = raw.runPrefix ? safeId(raw.runPrefix) : "";
   const channelConcurrency = raw.channelConcurrency as AutomationConfig["channelConcurrency"];
   if (channelConcurrency !== undefined && (!channelConcurrency || typeof channelConcurrency !== "object" ||
       Array.isArray(channelConcurrency) || Object.entries(channelConcurrency).some(([channel, limit]) =>
@@ -112,7 +114,7 @@ export async function loadAutomationConfig(file: string): Promise<AutomationConf
   return {
     id: safeId(string("id")), sourceUrl: source.href.replace(/\/$/, ""), remoteModels, fromDate, throughDate, completedDates,
     hostConfigs, engine, stateDirectory: path.resolve(directory, string("stateDirectory")),
-    sourceDirectory: path.resolve(directory, string("sourceDirectory")), runPrefix: safeId(string("runPrefix")),
+    sourceDirectory: path.resolve(directory, string("sourceDirectory")), runPrefix,
     pollMs: number("pollMs"), refreshMs: raw.refreshMs === null ? Infinity : number("refreshMs"), retryMs: number("retryMs"),
     maxEvaluationAttempts: number("maxEvaluationAttempts"), requestTimeoutMs: number("requestTimeoutMs"),
     dailyComparisonLimitPerTier: raw.dailyComparisonLimitPerTier === null ? Infinity : number("dailyComparisonLimitPerTier"),

@@ -48,11 +48,24 @@ export class DashboardBatches {
     if (!response.ok) throw new HttpError(response.status, body.error || "读取清洗范围失败");
     if (!body.records?.length || !body.models?.length || !path.isAbsolute(body.output_dir)) throw new HttpError(409, "清洗范围无效");
     const scope: Scope = { task: body.task, batch_ids: body.batch_ids, records: body.records };
+    let runId: string;
+    if (scope.task.category === "daily") {
+      const dates = [...new Set(scope.records.map(record => record.date))];
+      const date = dates[0];
+      if (dates.length !== 1 || !date || !/^\d{4}-\d{2}-\d{2}$/.test(date))
+        throw new HttpError(409, "日常批次必须且只能包含一个业务日期");
+      runId = date;
+      const previous = await this.get(runId);
+      if (previous && !["draft", "preview_failed"].includes(previous.status))
+        throw new HttpError(409, "该业务日期的日常运行已存在");
+      if (await exists(path.join(body.output_dir, runId, "state.json")))
+        throw new HttpError(409, "该业务日期的日常结果已存在");
+    } else runId = randomUUID();
     const versions = body.models.filter(model => scope.records.some(row => row.model === model)).map(id => ({
       id, name: id, adapter: id.startsWith("b_") ? "b" : "a",
       sources: [...new Set(scope.records.filter(row => row.model === id).map(row => row.input_file))].map(file => ({ kind: "file", path: file })),
     }));
-    const run: BatchRun = { runId: randomUUID(), createdAt: Date.now(), outputDir: body.output_dir, scope: { task:scope.task,batch_ids:scope.batch_ids }, models:versions.map(version => version.id),
+    const run: BatchRun = { runId, createdAt: Date.now(), outputDir: body.output_dir, scope: { task:scope.task,batch_ids:scope.batch_ids }, models:versions.map(version => version.id),
       engine, settings: requested, status: "draft" };
     // Profiles and secrets are resolved from the current Host configuration at execution time.
     await writeJson(this.config(run.runId), { inputs: { versions, workbench: scope, batches: [], case_ids: [] },

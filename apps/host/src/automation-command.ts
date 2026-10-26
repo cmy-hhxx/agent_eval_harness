@@ -73,7 +73,7 @@ SIGINT/SIGTERM: 停止接收任务并等待 Host 保存进度；下次 run 自�
   const sourceNames = new Map(configs.map((config, index) => [config.id, values.config ? config.id : comparisonFiles[index].name]));
   const defaults = ["run", "serve"].includes(command) ? Object.fromEntries(await Promise.all(configs.map(async config =>
     [config.id, (await loadConfig(config.hostConfigs)).evaluation.execution.concurrency] as const))) : {};
-  if (aime) defaults[aime.id] = aime.configuration.concurrency ?? 64;
+  if (aime) defaults[aime.id] = aime.configuration.concurrency ?? 200;
   const llm = ["run", "serve"].includes(command) ? await automationLlm(schedulingFile, defaults) : undefined;
   const scope = { signal: controller.signal, llm, mongo: createAutomationMongoLane(), sourceNames, statisticsStore,
     exhaustedChannels: new Set<string>(), dashboards: new Map<string, AutomationDashboardSource>() };

@@ -54,7 +54,7 @@ export async function dailyPackageReport(options:DailyCoverageSource,packageId:s
     const stateFile=options.aime&&path.join(options.aime.configuration.stateDirectory,'state.json');
     const saved=stateFile&&await exists(stateFile)?await readJson<AimeIncrementalState>(stateFile):undefined;
     for(const date of dates){
-      const ids=saved?.jobs.filter(job=>job.date===date).map(job=>job.id)??[date.slice(5).replace('-','')],states=[];
+      const ids=saved?.jobs.filter(job=>job.date===date).map(job=>job.id)??[date],states=[];
       for(const runId of ids){const run=path.join(options.output,safeId(runId));if(await exists(path.join(run,'state.json')))states.push({runId,rows:await answerReviewProgress(run)});}
       aimeRuns.set(date,states);
     }

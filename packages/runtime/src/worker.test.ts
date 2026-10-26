@@ -328,6 +328,9 @@ async function harness(
     );
     const prepared = evaluationServices.agents.prepare(evaluationServices.taskSource.bind(task, plan.inputs,
       criteria ? { criteria: criteriaReceipt! } : {}, { tasks: plan.tasks }));
+    // Dedicated completion-review tests opt in explicitly; other cases isolate tool and repair behavior.
+    if (!profile?.completionReview)
+      prepared.evaluation = { ...prepared.evaluation, completionReview: undefined };
     let posts = 0, inspectionPosts = 0,
       lookups = 0;
     const host = await listen(async (req, res, url) => {

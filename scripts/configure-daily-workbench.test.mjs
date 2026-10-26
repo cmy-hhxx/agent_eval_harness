@@ -23,12 +23,12 @@ test("daily configuration preserves AIME progress and model overlays while enabl
     run();
     const workbench = await read("workbench.json"), aime = await read("aime-ingest-and-attribute.json"), wencai = await read("automations.json");
     assert.equal(aime.stateDirectory, stateDirectory);
-    assert.equal(aime.concurrency, 64);
+    assert.equal(aime.concurrency, 200);
     assert.deepEqual(aime.hostConfigs, [path.join(config, "daily-host.json"), "aime-current.json"]);
-    assert.equal(wencai.id, "existing"); assert.equal(wencai.fromDate, null); assert.equal(wencai.dailyComparisonLimitPerTier, null);
+    assert.equal(wencai.id, "existing"); assert.equal(wencai.runPrefix, ""); assert.equal(wencai.fromDate, null); assert.equal(wencai.dailyComparisonLimitPerTier, null);
     assert.equal(wencai.publishStatisticsLog, false); assert.equal(wencai.publishMongo, true); assert.equal(wencai.autoClean, true);
     assert.equal(workbench.runtime.evalConfigFile, path.join(config, "gateway.ini"));
-    assert.deepEqual((await read("scheduling.json")).sources, { existing: { concurrency: 32 }, special: { concurrency: 3 }, aime: { concurrency: 64 } });
+    assert.deepEqual((await read("scheduling.json")).sources, { existing: { concurrency: 32 }, special: { concurrency: 3 }, aime: { concurrency: 200 } });
     assert.deepEqual((await read("daily.manifest.json")).sources.map(source => source.name), ["问财日常四路", "AIME 日常全量", "专项"]);
     run(); assert.deepEqual(await read("aime-ingest-and-attribute.json"), aime);
     assert.equal((await read("daily.manifest.json")).sources.length, 3);

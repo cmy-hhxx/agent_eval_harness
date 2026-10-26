@@ -9,10 +9,12 @@ import {
   type RunRepository,
   type RunState,
 } from "@eval/contracts";
-import { atomicWrite, exists, readJson, readJsonlText, writeJsonl } from "./files.js";
+import { atomicWrite, exists, readJson, readJsonlText } from "./files.js";
 import { createResultFileWriter } from "./result-file.js";
 import { locateRun } from "./run-layout.js";
 import { writeRunOverview } from "./run-overview.js";
+import { applyRunJournalDelta, readProgressJournal } from "./run-journal.js";
+import { compactCheckpointState } from "./checkpoint-state.js";
 
 /** Codecs are pure business conversions. Only this module accesses run files. */
 export interface RunCodec<Checkpoint> {
@@ -60,15 +62,20 @@ export function createRunRepository<Checkpoint>(
         rows.set(key, row);
       }
     }
-    return codec.decode(checkpoint, (reference) => {
+    const decoded = codec.decode(checkpoint, (reference) => {
       const row = rows.get(safeId(reference.file!) + "\u0000" + reference.id);
-      if (!row) throw new Error("结果文件缺失：" + reference.id);
+      if (!row) throw new Error(`结果文件缺失：${reference.id}（${safeId(reference.file!)}）`);
       return row;
     }, taskIds);
+    if (!taskIds)
+      for (const event of await readProgressJournal(run, decoded.manifest.journalSequence ?? 0))
+        applyRunJournalDelta(decoded, event.event);
+    return decoded;
   }
   return {
     async writeRun(run, state) {
-      const checkpoint = codec.encode(state), overview = codec.overview?.(checkpoint, state);
+      const compact = compactCheckpointState(state);
+      const checkpoint = codec.encode(compact), overview = codec.overview?.(checkpoint, compact);
       await atomicWrite(locateRun(run).stateFile, JSON.stringify(checkpoint) + "\n");
       if (codec.overview) await writeRunOverview(run, overview);
     },
@@ -78,10 +85,24 @@ export function createRunRepository<Checkpoint>(
       const written = new Map<string, ResultReference & { row: JsonObject; auxiliary?: boolean }>();
       const directory = locateRun(run).results;
       const files = new Map<string, ReturnType<typeof createResultFileWriter>>();
+      let existingRows: Map<string, JsonObject> | undefined;
       let initialized = false;
       return async (state) => {
         const { manifest, receipts } = state;
         try {
+          if (!existingRows) {
+            existingRows = new Map();
+            await mkdir(directory, { recursive: true });
+            for (const name of await readdir(directory)) {
+              if (!name.endsWith(".jsonl")) continue;
+              for await (const line of readJsonlText(path.join(directory, name))) {
+                const row = JSON.parse(line) as JsonObject;
+                const key = safeId(name) + "\u0000" + codec.resultId(row), previous = existingRows.get(key);
+                if (previous && canonical(previous) !== canonical(row)) throw new Error("结果 ID 对应冲突结果：" + codec.resultId(row));
+                existingRows.set(key, row);
+              }
+            }
+          }
           for (const [id, exported] of written) if (receipts[id]) receipts[id].exported = exported;
           const pending = manifest.tasks.filter((task) => receipts[task.id] && !written.has(task.id));
           if (initialized && !pending.length) return;
@@ -91,19 +112,27 @@ export function createRunRepository<Checkpoint>(
           for (const task of pending) {
             const result = encodeResult(task, state, inputs);
             const file = safeId(result.file!);
+            const existing = existingRows.get(file + "\u0000" + result.id);
             const matching = [...exports].filter(([, value]) => value.file === file && value.id === result.id);
             if (matching.some(([, value]) => canonical(value.row) !== canonical(result.row)) && !result.auxiliary)
               throw new Error("结果 ID 对应冲突结果：" + result.id);
+            if (existing) {
+              const changed = canonical(existing) !== canonical(result.row);
+              if (changed && !result.auxiliary)
+                throw new Error("结果 ID 对应冲突结果：" + result.id);
+              if (changed) {
+                updates.add(file);
+                (groups[file] ??= new Map()).set(result.id, result.row);
+              }
+              exports.set(task.id, result);
+              if (changed) existingRows.set(file + "\u0000" + result.id, result.row);
+              continue;
+            }
             if (matching.length) updates.add(file);
             for (const [id, previous] of matching)
               exports.set(id, { ...previous, row: result.row });
             (groups[file] ??= new Map()).set(result.id, result.row);
             exports.set(task.id, result);
-          }
-          if (!initialized) {
-            await mkdir(directory, { recursive: true });
-            for (const file of await readdir(directory))
-              if (file.endsWith(".jsonl") && !groups[file]) await writeJsonl(path.join(directory, file), []);
           }
           for (const [file, rows] of Object.entries(groups)) {
             let writer = files.get(file);
@@ -114,6 +143,7 @@ export function createRunRepository<Checkpoint>(
                 if (result.file === file) all.set(result.id, result.row);
               await writer.replace(all.values());
             } else await writer.append(rows.values());
+            for (const [id, row] of rows) existingRows.set(file + "\u0000" + id, row);
           }
           for (const [id, exported] of exports) {
             receipts[id].exported = exported;
@@ -123,6 +153,7 @@ export function createRunRepository<Checkpoint>(
         } catch (error) {
           written.clear();
           files.clear();
+          existingRows = undefined;
           initialized = false;
           throw error;
         }

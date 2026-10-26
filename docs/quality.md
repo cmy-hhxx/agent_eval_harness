@@ -62,7 +62,7 @@ Attribution 会拒绝实际证据全部落在已识别视觉采集占位块内�
 
 先统一对象、期间、单位和统计口径，再比较。对舍入争议，从可靠原始数据独立复算，并由同一未舍入值核对回答与标准；不要二次舍入或反推不存在的原值。
 
-程序的 numeric matches、表格匹配和引用覆盖只是辅助观察。核查完整表头、单位、来源范围及已知反证；无可比来源保留未知。执行边界见[数值与实体核验](contract.md#数值与实体核验)，正反例见[数值测试](../packages/agents/src/attribution/numeric-quality.test.ts)和[表格测试](../packages/agents/src/attribution/table-quality.test.ts)。
+程序的 numeric matches、表格匹配和引用覆盖只是辅助观察。核查完整表头、单位、来源范围及已知反证；无可比来源保留未知。执行边界见[数值与实体核验](contract.md#数值与实体核验)，正反例见[数值目标测试](../packages/agents/src/attribution/numeric-targets.test.ts)和[计算测试](../packages/agents/src/attribution/numeric.test.ts)。
 
 ## 真实模型复核
 

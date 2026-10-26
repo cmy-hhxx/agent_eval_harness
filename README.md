@@ -13,7 +13,7 @@ TypeScript Host 编排评测任务，Pi / Prime Worker 执行模型与工具调�
 - checkout：`/mnt/aigc_team/user_workspace/chenmingyang/eval_harness/code`
 - 持久目录：`/mnt/aigc_team/user_workspace/chenmingyang/eval_harness/runtime`
 - 数据源：`/mnt/fin_bench/eval_data`
-- 评测产物：`/mnt/fin_bench/eval_data/{source}/eval_output/`；日常、专项分别在 `0_daily_eval/`、`1_task_eval/<任务>/`，所有真实模型测试在 `test_eval/`，不得写到其他位置。
+- 评测产物：`/mnt/fin_bench/eval_data/{source}/eval_output/`；日常按业务日期写入 `0_daily_eval/<YYYY-MM-DD>/{results,cluster}/`，专项写入 `1_task_eval/<任务>/`，所有真实模型测试在 `test_eval/`，不得写到其他位置。
 - 内部监听：工作台 `5001`；数据服务 `127.0.0.1:8081`；自动化看板 `127.0.0.1:4174`；运行实例看板 `127.0.0.1:4173`
 - 外部映射：`http://117.50.195.94:3309/`
 - 页面：`/` 单页工作台，一级入口为评测、数据、结果、更多；默认进入评测，问财和 AIME 同时可见、分别控制，可同时运行。

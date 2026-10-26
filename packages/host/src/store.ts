@@ -1,5 +1,12 @@
 import { ValidationError, HttpError, canonical, safeId, evidenceSources, requiredReadCallLimit, mergeRequiredReadRanges, extendRequiredReadRanges, toolBudgetMetadataChars, validationRequiredReads, validateEvidenceBank, validateEvidenceBankSources, type EvidenceBankUpdate, type EvidenceBank } from "@eval/contracts";
-import { internalPath, writeJson } from "@eval/data";
+import {
+  appendProgressJournal,
+  internalPath,
+  RunHotStore,
+  runJournalIdentity,
+  type RunJournalDelta,
+  writeJson,
+} from "@eval/data";
 import type {
   AttemptSpec,
   RunRepository,
@@ -9,6 +16,7 @@ import type {
   RunState,
   Submission,
   SubmissionReceipt,
+  TaskState,
   FailureContext,
   LogSink,
   TraceRead,
@@ -109,6 +117,14 @@ export interface EvaluationServices {
   agents: AgentRegistry;
 }
 
+interface SaveOptions {
+  all?: boolean;
+  tasks?: readonly PlannedTask[];
+  taskOrder?: string[];
+  manifest?: boolean;
+  usage?: boolean;
+}
+
 export class RunStore {
   readonly run: string;
   readonly manifest: RunManifest;
@@ -117,17 +133,25 @@ export class RunStore {
   readonly services: EvaluationServices;
   readonly attempts = new Map<string, AttemptSpec>();
   private readonly bindings = new Map<string, AgentBinding>();
-  readonly checkpointMetrics = { count: 0, snapshotMs: 0, writeMs: 0, savedAt: 0 };
+  readonly checkpointMetrics = { count: 0, snapshotMs: 0, writeMs: 0, bytes: 0, savedAt: 0 };
+  readonly outboxMetrics = { delivered: 0, failures: 0, lastError: undefined as string | undefined };
   private readonly evidenceSources = new Map<string, ReadonlyMap<string, unknown>>();
-  private writes = Promise.resolve();
-  private queuedWrite?: Promise<void>;
   private readonly submissions = new Map<string, Promise<void>>();
-  private commits = Promise.resolve();
+  private readonly journal: RunHotStore;
+  private readonly directMode: boolean;
   private committedReceipts: Record<string, SubmissionReceipt>;
   private readonly writeResults: (state: RunState) => Promise<void>;
   private readonly logged = new Set<string>();
+  private outboxTimer?: ReturnType<typeof setInterval>;
+  private outboxFlush?: Promise<void>;
+  private checkpointRun?: Promise<void>;
+  private fallbackSave?: Promise<void>;
+  private outboxStarted = false;
+  private admissionBlocked = false;
+  private lastDeliveredSequence = 0;
   constructor(run: string, state: RunState, inputs: Record<string, unknown>, services: EvaluationServices,
-    private readonly deadline: (spec: AttemptSpec) => number = spec => spec.deadline) {
+    private readonly deadline: (spec: AttemptSpec) => number = spec => spec.deadline,
+    journal?: RunHotStore) {
     this.run = run;
     this.state = state;
     this.manifest = state.manifest;
@@ -135,61 +159,148 @@ export class RunStore {
     this.committedReceipts = Object.fromEntries(Object.entries(state.receipts).map(([id, receipt]) => [id, { ...receipt }]));
     this.inputs = inputs;
     this.services = services;
+    this.directMode = !journal;
+    this.journal = journal ?? new RunHotStore(":memory:", runJournalIdentity(state));
+    this.lastDeliveredSequence = this.journal.lastDeliveredSequence();
     this.writeResults = services.repository.createResultWriter(run, inputs);
   }
-  save(): Promise<void> {
-    if (this.queuedWrite) return this.queuedWrite;
-    const next = this.writes.then(async () => {
-      this.queuedWrite = undefined;
-      const snapshotStarted = performance.now();
-      const snapshot = checkpointSnapshot(this.state);
-      this.checkpointMetrics.snapshotMs += performance.now() - snapshotStarted;
-      const writeStarted = performance.now();
-      const pending = snapshot.manifest.tasks.some(
-        (task) => snapshot.receipts[task.id] && !snapshot.receipts[task.id].exported,
-      );
-      await this.services.repository.writeRun(this.run, snapshot);
-      await this.writeResults(snapshot);
-      // Drop recovery payloads only after their formal result rows are durable.
-      // An already queued checkpoint will compact these references in its own durable write.
-      // If this optional compaction fails, the earlier full checkpoint still recovers the accepted result.
-      if (pending && !this.queuedWrite) await this.services.repository.writeRun(this.run, snapshot).catch(() => {});
-      this.checkpointMetrics.writeMs += performance.now() - writeStarted;
-      this.checkpointMetrics.count++;
-      this.checkpointMetrics.savedAt = Date.now();
-      for (const [id, receipt] of Object.entries(snapshot.receipts))
-        if (this.state.receipts[id]?.submissionId === receipt.submissionId && receipt.exported)
-          this.state.receipts[id].exported = receipt.exported;
-      this.committedReceipts = snapshot.receipts;
-      if (this.services.logger)
-        for (const task of snapshot.manifest.tasks) {
-          const receipt = snapshot.receipts[task.id];
-          if (!receipt?.exported || receipt.exported.auxiliary || this.logged.has(receipt.submissionId)) continue;
-          if (
-            await this.services.logger.evaluation({
-              time: new Date(receipt.acceptedAt).toISOString(),
-              workflow: this.services.taskSource.id,
-              run_id: snapshot.manifest.runId,
-              task_id: task.id,
-              attempt_id: receipt.attemptId,
-              submission_id: receipt.submissionId,
-              stage: task.stage,
-              result: receipt.exported.row,
-            })
-          )
-            this.logged.add(receipt.submissionId);
+  /** Persist a compact local delta. Ceph projection runs through the outbox. */
+  async save(taskId?: string, options: SaveOptions = {}): Promise<void> {
+    const states: Record<string, TaskState> = {};
+    if (options.all) {
+      for (const id of Object.keys(this.manifest.states)) states[id] = structuredClone(this.manifest.states[id]);
+    } else if (taskId && this.manifest.states[taskId]) {
+      states[taskId] = structuredClone(this.manifest.states[taskId]);
+    }
+    const { tasks: _tasks, states: _states, inputCatalog, ...manifest } = this.manifest;
+    const includeManifest = options.manifest === true || (!taskId && options.manifest !== false);
+    const delta: RunJournalDelta = {
+      at: Date.now(),
+      ...(includeManifest ? { manifest: { ...manifest, ...(inputCatalog === undefined ? {} : { inputCatalog }) } } : {}),
+      ...(options.taskOrder ? { taskOrder: [...options.taskOrder] } : {}),
+      ...(options.tasks?.length ? { tasks: options.tasks.map(task => structuredClone(task)) } : {}),
+      ...(Object.keys(states).length ? { states } : {}),
+      ...(options.usage ? { usage: structuredClone(this.state.usage), recordedAttempts: this.state.recordedAttempts } : {}),
+    };
+    this.journal.append(delta);
+    if (this.outboxStarted) void this.flushOutbox();
+    else if ((this.directMode || !taskId) && !this.fallbackSave) {
+      this.fallbackSave = Promise.resolve().then(() => this.persistCheckpoint());
+      void this.fallbackSave.then(() => { this.fallbackSave = undefined; },
+        () => { this.fallbackSave = undefined; });
+      return this.fallbackSave;
+    }
+  }
+
+  startOutbox(): void {
+    if (this.outboxStarted) return;
+    this.outboxStarted = true;
+    this.outboxTimer = setInterval(() => void this.flushOutbox(), 1000);
+    void this.flushOutbox();
+  }
+
+  admissionPaused(): boolean { return this.admissionBlocked; }
+
+  outboxStatus() { return { ...this.journal.outboxStats(), admissionPaused: this.admissionBlocked, ...this.outboxMetrics }; }
+
+  private outboxStats() { return this.journal.outboxStats(); }
+
+  private updateAdmission(): void {
+    const stats = this.outboxStats();
+    const oldestMs = stats.oldestAt === undefined ? 0 : Date.now() - stats.oldestAt;
+    this.admissionBlocked = stats.oldestAt !== undefined && (oldestMs > 5 * 60 * 1000 || stats.bytes > 10 * 1024 ** 3);
+  }
+
+  async flushOutbox(force = false): Promise<void> {
+    if ((!this.outboxStarted && !force) || this.outboxFlush) return this.outboxFlush;
+    this.outboxFlush = (async () => {
+      try {
+        while (true) {
+          const pending = this.journal.pending(500);
+          if (!pending.length) break;
+          if (pending.some(event => Object.keys(event.event.receipts ?? {}).length))
+            await this.writeResults(this.resultView());
+          const projected = pending.map(({ seq, event }) => {
+            const receipts = event.receipts && Object.fromEntries(Object.entries(event.receipts).map(([id, receipt]) => {
+              const exported = this.state.receipts[id]?.exported;
+              return [id, exported ? { ...receipt, exported } : receipt];
+            }));
+            return { seq, event: receipts ? { ...event, receipts } : event };
+          });
+          await appendProgressJournal(this.run, projected);
+          this.journal.markDelivered(pending.map(event => event.seq));
+          this.lastDeliveredSequence = pending.at(-1)!.seq;
+          this.outboxMetrics.delivered += pending.length;
         }
-    });
-    this.queuedWrite = next;
-    this.writes = next.catch(() => {});
+        this.outboxMetrics.lastError = undefined;
+        this.updateAdmission();
+        await this.logExportedReceipts();
+      } catch (error) {
+        this.outboxMetrics.failures++;
+        this.outboxMetrics.lastError = error instanceof Error ? error.message : String(error);
+        this.updateAdmission();
+        if (this.outboxMetrics.failures === 1 || this.outboxMetrics.failures % 30 === 0)
+          await this.services.logger?.error(error, {
+            component: "host", event: "outbox_projection_failed", run_id: this.manifest.runId,
+            detail: JSON.stringify({ ...this.outboxStats(), admission_paused: this.admissionBlocked }),
+          });
+      }
+    })().finally(() => { this.outboxFlush = undefined; });
+    return this.outboxFlush;
+  }
+
+  persistCheckpoint(): Promise<void> {
+    const next = (this.checkpointRun ?? Promise.resolve()).then(() => this.checkpointNow());
+    this.checkpointRun = next;
+    void next.then(() => { if (this.checkpointRun === next) this.checkpointRun = undefined; },
+      () => { if (this.checkpointRun === next) this.checkpointRun = undefined; });
     return next;
   }
+
+  private async checkpointNow(): Promise<void> {
+    if (this.outboxStarted) await this.flushOutbox(true);
+    const snapshotStarted = performance.now();
+    this.manifest.journalSequence = this.lastDeliveredSequence;
+    const snapshot = checkpointSnapshot(this.state);
+    this.checkpointMetrics.bytes = Buffer.byteLength(JSON.stringify(snapshot));
+    this.checkpointMetrics.snapshotMs += performance.now() - snapshotStarted;
+    const writeStarted = performance.now();
+    await this.writeResults(snapshot);
+    await this.services.repository.writeRun(this.run, snapshot);
+    for (const [id, receipt] of Object.entries(snapshot.receipts))
+      if (this.state.receipts[id]?.submissionId === receipt.submissionId && receipt.exported)
+        this.state.receipts[id].exported = receipt.exported;
+    this.checkpointMetrics.writeMs += performance.now() - writeStarted;
+    this.checkpointMetrics.count++;
+    this.checkpointMetrics.savedAt = Date.now();
+  }
+
+  async close(): Promise<void> {
+    if (this.outboxTimer) clearInterval(this.outboxTimer);
+    if (this.outboxStarted) await this.flushOutbox(true);
+    await this.fallbackSave;
+    await this.checkpointRun;
+    this.outboxTimer = undefined;
+    this.journal.close();
+  }
+
+  private resultView(): RunState {
+    return { ...this.state, manifest: { ...this.manifest, tasks: this.manifest.tasks } };
+  }
+
+  private async logExportedReceipts(): Promise<void> {
+    if (!this.services.logger) return;
+    for (const task of this.manifest.tasks) {
+      const receipt = this.state.receipts[task.id];
+      if (!receipt?.exported || receipt.exported.auxiliary || this.logged.has(receipt.submissionId)) continue;
+      if (await this.services.logger.evaluation({
+        time: new Date(receipt.acceptedAt).toISOString(), workflow: this.services.taskSource.id,
+        run_id: this.manifest.runId, task_id: task.id, attempt_id: receipt.attemptId,
+        submission_id: receipt.submissionId, stage: task.stage, result: receipt.exported.row,
+      })) this.logged.add(receipt.submissionId);
+    }
+  }
   async receipt(taskId: string): Promise<SubmissionReceipt | undefined> {
-    // Only this task's uncommitted receipt needs a durability barrier. Waiting
-    // on unrelated writes prevents the scheduler from filling free workers.
-    if (this.committedReceipts[taskId] || !this.state.receipts[taskId])
-      return this.committedReceipts[taskId];
-    await this.writes;
     return this.committedReceipts[taskId];
   }
   async dependencies(task: PlannedTask): Promise<Record<string, SubmissionReceipt>> {
@@ -236,7 +347,7 @@ export class RunStore {
       ...spec.evaluation.requiredReads ?? [], ...validationRequiredReads(spec.recovery?.errors ?? []),
     ] };
     spec.evaluation.requiredReads = mergeRequiredReadRanges(requiredReadRanges(spec, sources)).map(range => range.target);
-    if (executionStopReason(this.manifest)) return false;
+    if (executionStopReason(this.manifest) || this.admissionBlocked) return false;
     if (state.attemptId) { this.attempts.delete(state.attemptId); this.evidenceSources.delete(state.attemptId); this.bindings.delete(state.attemptId); }
     state.startedAt = state.lastProgressAt = Date.now();
     state.status = "running";
@@ -260,7 +371,7 @@ export class RunStore {
         ),
         { spec },
       );
-    await this.save();
+    await this.save(spec.taskId);
     return true;
   }
   async endAttempt(
@@ -273,24 +384,14 @@ export class RunStore {
       if (state.attemptId !== spec.attemptId || (await this.receipt(spec.taskId))) return;
       state.status = status;
       state.reason = reason;
-      await this.save();
+      await this.save(spec.taskId);
       this.attempts.delete(spec.attemptId);
       this.evidenceSources.delete(spec.attemptId);
       this.bindings.delete(spec.attemptId);
     });
   }
   async accept(value: Submission): Promise<SubmissionReceipt> {
-    const queuedAt = performance.now();
-    return this.exclusive(value.taskId, () => {
-      const commit = this.commits.then(() => {
-        void this.services.logger?.event?.("submission_wait", { component: "host", run_id: this.manifest.runId,
-          task_id: value.taskId, attempt_id: value.attemptId, message: value.submissionId,
-          lockWaitMs: performance.now() - queuedAt });
-        return this.acceptExclusive(value);
-      });
-      this.commits = commit.then(() => {}, () => {});
-      return commit;
-    });
+    return this.exclusive(value.taskId, () => this.acceptExclusive(value));
   }
   private validateBank(spec: AttemptSpec, bank: unknown, prefix: readonly string[] = spec.evidenceBank,
     sources = this.evidenceSources.get(spec.attemptId)): asserts bank is EvidenceBank {
@@ -307,7 +408,7 @@ export class RunStore {
       if (canonical(state.failure?.evidenceBank) !== canonical(value.evidenceBank)) {
         state.failure = { errors: [], contentSubmissions: 0, fileErrors: 0, repeatedErrors: 0, stopped: false,
           ...(state.failure ?? {}), attemptId: value.attemptId, evidenceBank: [...value.evidenceBank] };
-        await this.save();
+        await this.save(value.taskId);
       }
       return { evidenceBank: [...value.evidenceBank] };
     });
@@ -327,7 +428,7 @@ export class RunStore {
       state.failure = { ...failure, evidenceBank: [...failure.evidenceBank], contentSubmissions: Math.max(failure.contentSubmissions, state.failure?.contentSubmissions ?? 0),
         ...(state.failure?.inspection ? { inspection: state.failure.inspection } : {}),
         ...(state.failure?.completionCandidate ? { completionCandidate: state.failure.completionCandidate } : { completionCandidate: undefined }) };
-      await this.save();
+      await this.save(taskId);
     });
   }
   inspect(value: MaterialInspection) {
@@ -361,7 +462,7 @@ export class RunStore {
       if (!previous) {
         state.failure = { errors: [], contentSubmissions: value.contentSubmissions, fileErrors: state.failure?.fileErrors ?? 0,
           repeatedErrors: 0, stopped: false, attemptId: value.attemptId, inspection: checkpoint, evidenceBank };
-        await this.save();
+        await this.save(value.taskId);
       }
       return { inspection: checkpoint, material, evidenceBank };
     });
@@ -454,7 +555,7 @@ export class RunStore {
       if (!value.completionReview) throw new ValidationError([{category:'decision',code:'completion_review_stale',path:'/',
         message:'初稿只能进入一次独立复核，不能在原会话继续改稿或确认。'}]);
       previousCandidate.superseded = true;
-      await this.save();
+      await this.save(value.taskId);
     }
     let evaluation: unknown;
     const validationStarted = performance.now(), validationCpu = process.cpuUsage();
@@ -482,7 +583,7 @@ export class RunStore {
       state.failure = { ...state.failure, draft: structuredClone(value.evaluation), completionCandidate: candidate, errors,
         evidenceBank: [...value.audit.evidenceBank ?? []], contentSubmissions: value.submissionStats?.contentSubmissions ?? 1,
         fileErrors: value.submissionStats?.fileErrors ?? 0, repeatedErrors: 0, stopped: false, attemptId: value.attemptId };
-      await this.save();
+      await this.save(value.taskId);
       throw new ValidationError(errors);
     }
     const receipt: SubmissionReceipt = {
@@ -507,7 +608,7 @@ export class RunStore {
     state.failure = undefined;
     const previousTasks = [...this.manifest.tasks];
     const previousScope = this.manifest.executionScope && [...this.manifest.executionScope];
-    const addedIds: string[] = [];
+    const addedIds: string[] = [], changedTasks: PlannedTask[] = [];
     try {
       const advance = this.services.taskSource.advance?.(task, receipt, this.state, this.inputs);
       for (const replacement of advance?.replace ?? []) {
@@ -515,15 +616,31 @@ export class RunStore {
         if (index < 0 || this.manifest.states[replacement.id].status === "running")
           throw new Error("Cannot replace an unknown or running task");
         this.manifest.tasks[index] = replacement;
+        changedTasks.push(replacement);
       }
       for (const next of advance?.tasks ?? []) {
         if (this.manifest.states[next.id]) throw new Error("Duplicate follow-up task");
         this.manifest.tasks.push(next);
+        changedTasks.push(next);
         addedIds.push(next.id);
         this.manifest.states[next.id] = { status: "pending", attempts: 0, revision: 1 };
         if (this.manifest.executionScope?.includes(task.id)) this.manifest.executionScope.push(next.id);
       }
-      await this.save();
+      const { tasks: _tasks, states: _states, inputCatalog, ...manifest } = this.manifest;
+      const states: Record<string, TaskState> = { [task.id]: structuredClone(state) };
+      for (const id of addedIds) states[id] = structuredClone(this.manifest.states[id]);
+      try {
+        this.journal.append({
+          at: Date.now(), manifest: { ...manifest, ...(inputCatalog === undefined ? {} : { inputCatalog }) },
+          taskOrder: this.manifest.tasks.map(item => item.id), ...(changedTasks.length ? { tasks: changedTasks } : {}),
+          states, receipts: { [task.id]: structuredClone(receipt) },
+        });
+        if (this.directMode) await this.persistCheckpoint();
+      } catch (error) {
+        if (error instanceof Error && /UNIQUE constraint/i.test(error.message))
+          throw new HttpError(409, "Submission ID already belongs to another task");
+        throw error;
+      }
     } catch (error) {
       delete this.state.receipts[task.id];
       state.status = "running";
@@ -534,6 +651,8 @@ export class RunStore {
       for (const id of addedIds) delete this.manifest.states[id];
       throw error;
     }
+    this.committedReceipts[task.id] = receipt;
+    if (this.outboxStarted) void this.flushOutbox();
     this.attempts.delete(value.attemptId);
     this.evidenceSources.delete(value.attemptId);
     this.bindings.delete(value.attemptId);

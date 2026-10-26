@@ -30,7 +30,7 @@ const executionFile = path.join(config, "daily-execution.json");
 await write(executionFile, await read(path.join(code, "configs/automations-host.json")));
 const old = await optional(path.join(config, "automations.json"));
 const wencai = { ...await read(path.join(code, "configs/automations.json")),
-  ...(old ? Object.fromEntries(["id", "stateDirectory", "sourceDirectory", "runPrefix"].map(key => [key, old[key]])) : {}) };
+  ...(old ? Object.fromEntries(["id", "stateDirectory", "sourceDirectory"].map(key => [key, old[key]])) : {}) };
 wencai.hostConfigs = [hostFile, path.join(config, "models.json"), executionFile];
 wencai.sourceUrl = `http://${workbench.data.host}:${workbench.data.port}/data/wencai`;
 wencai.stateDirectory = path.resolve(config, wencai.stateDirectory);
@@ -41,7 +41,7 @@ aime.hostConfigs = [hostFile, ...aime.hostConfigs.filter(file => path.basename(f
 aime.archiveDirectory = path.join(dataRoot, "1_aime/1_7z_data/online_data");
 aime.inputDirectory = path.join(dataRoot, "1_aime/2_daily_eval_input");
 aime.outputDirectory = path.join(dataRoot, "1_aime/eval_output/0_daily_eval");
-aime.concurrency = 64;
+aime.concurrency = 200;
 await write(aimeFile, aime);
 const previousFile = path.resolve(config, workbench.runtime.manifest);
 const previous = await optional(previousFile);
@@ -56,7 +56,7 @@ if (workbench.runtime.schedulingFile) {
   const schedulingFile = path.resolve(config, workbench.runtime.schedulingFile);
   const scheduling = await optional(schedulingFile) ?? { sources: {} };
   scheduling.sources[wencai.id] = { concurrency: 32 };
-  scheduling.sources.aime = { concurrency: 64 };
+  scheduling.sources.aime = { concurrency: 200 };
   await write(schedulingFile, scheduling);
 }
 workbench.runtime.manifest = manifest;

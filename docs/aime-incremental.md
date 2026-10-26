@@ -6,7 +6,7 @@
 npm run aime:ingest-and-attribute -- --config /absolute/path/aime-ingest-and-attribute.json --watch
 ```
 
-配置参考 [示例](../configs/aime-ingest-and-attribute.example.json)。`hostConfigs` 指向当前 AIME 配置，两阶段的模型、thinking 和调用预算沿用这些配置。`concurrency` 默认 `64`，是整个 AIME 来源的上限，多日期与两阶段共享，不与问财混用。`pollSeconds` 默认 `60`：一轮评测全部结束后等待这一间隔，再扫描新包；无数据时同样等待，不启动空评测或重叠执行两轮。首次部署需执行 `npm run build:app`；数据处理继续使用项目已有 `py7zr`，压缩包完整性使用 `7z t`。
+配置参考 [示例](../configs/aime-ingest-and-attribute.example.json)。`hostConfigs` 指向当前 AIME 配置，两阶段的模型、thinking 和调用预算沿用这些配置。`concurrency` 默认 `200`，是整个 AIME 来源的上限，多日期与两阶段共享，不与问财混用。`pollSeconds` 默认 `60`：一轮评测全部结束后等待这一间隔，再扫描新包；无数据时同样等待，不启动空评测或重叠执行两轮。首次部署需执行 `npm run build:app`；数据处理继续使用项目已有 `py7zr`，压缩包完整性使用 `7z t`。
 
 按 `Ctrl+C` 停止；等待期间立即退出，评测期间中断并保存进度。之后重复同一命令恢复。持续模式持有现有锁，阻止另一实例写入同一范围。成功的 Score 与 Attribution 行不重复调用模型。自动恢复按阶段选择精确任务，保留任务 ID、已用次数及内容额度；网络中断、超时等可恢复任务在下一轮继续。中文校验失败先在当前任务中修复，仍有剩余额度时也纳入下一轮自动续修；已耗尽额度或确认不可恢复的内容失败保留在报告中，不阻塞新增回答。去掉 `--watch` 手动运行一轮或在工作台选择失败任务重试，仅将所选失败任务重新待评，不更换任务 ID、不清零尝试或内容账本。达到次数或内容预算上限的任务仍不派发，需提高当前预算；未知或回退的最终账本安全闸不因重试而解除。此命令自行启动所需的 Host/Worker，不依赖工作台页面服务。
 
@@ -36,19 +36,21 @@ tmux attach -t aime-auto
 
 输入仍在 `2_daily_eval_input/aime_fast/<日期>.jsonl` 和 `aime_expert/<日期>.jsonl`。首次启动从已有规范输入读取精确坐标，后续增量使用新发布记录的坐标；模型、业务 ID 和真实 trace ID 共同限定评测范围。全量涵盖全部合格单轮回答，不抽样、不裁剪多轮、不重评已接受结果。
 
-每天维护同一个目录和同一个run；后续补充旧日期的回答继续追加到对应日期，保留已成功结果。目录沿用现有MMDD结构：
+每天维护同一个目录和同一个run；后续补充旧日期的回答继续追加到对应日期，保留已成功结果。目录使用完整业务日期：
 
 ```text
-1_aime/eval_output/0_daily_eval/<MMDD>/results/score.jsonl
-1_aime/eval_output/0_daily_eval/<MMDD>/results/attribution.jsonl
-1_aime/eval_output/0_daily_eval/<MMDD>/results/instruction_review.jsonl
+1_aime/eval_output/0_daily_eval/<YYYY-MM-DD>/results/score.jsonl
+1_aime/eval_output/0_daily_eval/<YYYY-MM-DD>/results/attribution.jsonl
+1_aime/eval_output/0_daily_eval/<YYYY-MM-DD>/results/instruction_review.jsonl
+1_aime/eval_output/0_daily_eval/<YYYY-MM-DD>/cluster/cluster_tree.jsonl
+1_aime/eval_output/0_daily_eval/<YYYY-MM-DD>/cluster/state.json
 ```
 
 归因正式结果顶层只有 `meta`、`summary`、`Problem`、`has_standard_answer`、`is_correct`、`correct_reason`。样本、run、评测器、真实 `trace_id`、业务日期、输入及归档坐标由程序放在 `meta`，源输入元信息原样保留为 `meta.source_meta`。模型只选择稳定证据和边界编号，不重复填写身份。导出契约见 [answer-review-attribution.schema.json](../schemas/workflow/answer-review-attribution.schema.json)。
 
 中文验收使用 `npm run attribution:check-language -- --input <attribution.jsonl>`。归因点评检查覆盖 `summary`、`Problem` 中的问题和理由，语言检查不代替证据与完成性验收。命令只读，不修改结果或运行状态。
 
-新增日期的回答建立对应 `MMDD` 目录，补到已有日期的回答写回该日目录，不为每次执行另建 UUID 目录。历史只有归因的回答补建Score任务；可恢复的未完成任务沿原任务与额度继续，内容失败耗尽额度时保留可定位错误，等待显式重试。
+新增日期的回答建立对应 `YYYY-MM-DD` 目录，补到已有日期的回答写回该日目录，不为每次执行另建 UUID 目录。每天首次执行时创建 `cluster/`，未做聚类则 `cluster_tree.jsonl` 为空、`state.json` 为 `{}`。历史只有归因的回答补建Score任务；可恢复的未完成任务沿原任务与额度继续，内容失败耗尽额度时保留可定位错误，等待显式重试。
 
 流程状态保存在配置的既定 `runtime/state/` 子目录；`watch.json` 记录持续进程的 PID、并发、当前轮数、运行/等待/停止状态、下一次扫描时间和最近错误；`last-report.json` 是最近一轮摘要，`ingestions/<UUID>/report.json` 保存清洗明细。状态仅保存输入坐标、收据、进度和正式结果引用。日志复用 `runtime.log`、`evaluation.log`，不新增轮转日志。
 

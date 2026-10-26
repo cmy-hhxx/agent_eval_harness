@@ -60,7 +60,7 @@
 
 ```json
 {
-  "run_id": "daily-2026-10-21-a_fast__vs__b_fast",
+  "run_id": "2026-10-21",
   "engine": "pi",
   "status": "running",
   "started_at": 1792515600000,

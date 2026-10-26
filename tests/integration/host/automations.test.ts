@@ -38,7 +38,9 @@ async function fourModelSettings() {
 
 test("post-training disables same-count refresh while daily automation keeps it", async () => {
   assert.equal((await loadAutomationConfig(path.join(ROOT, "configs/automations-post-training.json"))).refreshMs, Infinity);
-  assert(Number.isFinite((await loadAutomationConfig(path.join(ROOT, "configs/automations.json"))).refreshMs));
+  const daily = await loadAutomationConfig(path.join(ROOT, "configs/automations.json"));
+  assert(Number.isFinite(daily.refreshMs));
+  assert.equal(daily.runPrefix, "", "daily run directories are the business date itself");
 });
 
 test("six-model automation configuration validates remote identities and reserves each pair independently", async () => {
@@ -1046,19 +1048,19 @@ test("an existing Fast run retains its date identity while Expert is added; hist
   const record = { ...raw(), batch_id: "2026-09-29" };
   const { directory, config } = await fixtureConfig([[record], [record], [record], [record]]);
   try {
-    const settings = await fourModelSettings();
+    const settings = { ...await fourModelSettings(), runPrefix: "" };
     const day: RemoteDay = { date: "2026-09-29", rows: Object.fromEntries(REMOTE_MODELS.map((model) => [model, 1])) as RemoteDay["rows"] };
     config.inputs.versions = config.inputs.versions.filter((version) => ["a_fast", "b_fast"].includes(version.id));
     const plan = await buildPlan(config);
     const state: RunState = { usage: emptyUsage(), receipts: {}, recordedAttempts: 0, manifest: {
-      format: "evaluation-run", debug: false, runId: "daily-" + day.date, status: "finished", evaluatorVersion: fakeEvaluatorVersion,
+      format: "evaluation-run", debug: false, runId: day.date, status: "finished", evaluatorVersion: fakeEvaluatorVersion,
       engine: fakeIdentity, config, tasks: plan.tasks, inputCatalog: plan.catalog, inputs: {},
       states: Object.fromEntries(plan.tasks.map((task) => [task.id, { status: "pending", attempts: 0 }])),
       preflight: plan.summary, startedAt: Date.now(),
     } };
-    await writeJson(path.join(directory, "daily-" + day.date, "state.json"), comparisonCodec.encode(state));
+    await writeJson(path.join(directory, day.date, "state.json"), comparisonCodec.encode(state));
     const targets = await evaluationTargets(settings, directory, day);
-    assert.deepEqual(targets.runIds, ["daily-2026-09-29"]);
+    assert.deepEqual(targets.runIds, ["2026-09-29"]);
     await assert.rejects(evaluationTargets({ ...settings, completedDates: [day.date] }, directory, day), /not complete/);
   } finally { await rm(directory, { recursive: true, force: true }); }
 });

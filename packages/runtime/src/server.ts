@@ -945,7 +945,10 @@ export async function startWorker(
         if (audit.review) record.failure.review = structuredClone(audit.review);
         record.failure.evidenceBank = [...audit.evidenceBank!];
         record.failure.contentSubmissions = (spec.recovery?.contentSubmissions || 0) + submissions;
-        if(reviewing){record.failure.stopped=true;attempt.status.retryable=false;}
+        const technicalReviewFailure = reviewing && (attempt.status.retryable || attempt.status.state === "timed_out") &&
+          record.failure.errors.every(({ category }) => category === "transport" || category === "interruption");
+        if (reviewing && technicalReviewFailure) attempt.status.retryable = true;
+        else if (reviewing) { record.failure.stopped=true;attempt.status.retryable=false; }
         attempt.status.failure = record.failure;
       }
       record.evidenceBank = [...audit.evidenceBank!];

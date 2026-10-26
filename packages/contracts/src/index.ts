@@ -607,6 +607,8 @@ export interface RunManifest {
   executionScope?: string[];
   /** Circuit breaks survive restart; only explicit stage recovery clears them. */
   pausedStages?: StagePause[];
+  /** Last journal event compacted into this checkpoint; later events replay over it. */
+  journalSequence?: number;
 }
 export interface FailureGuardPolicy {
   windowSize: number;

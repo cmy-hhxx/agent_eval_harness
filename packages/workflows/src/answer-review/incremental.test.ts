@@ -32,11 +32,11 @@ test('a same-name newer archive is processed after recovering the older frozen p
 });
 test('one fixed output per day grows when an older date receives more data',async()=>{
  const f=fixture();f.deps.clean=async()=>({report:report([record('old19','2026-10-19'),record('old20','2026-10-20')]),file:'/state/first.json'});
- await runAimeIncremental(options(),f.deps);assert.deepEqual(f.getState().jobs.map(j=>j.output),['/source/eval_output/0_daily_eval/1019','/source/eval_output/0_daily_eval/1020']);
+ await runAimeIncremental(options(),f.deps);assert.deepEqual(f.getState().jobs.map(j=>j.output),['/source/eval_output/0_daily_eval/2026-10-19','/source/eval_output/0_daily_eval/2026-10-20']);
  f.deps.scan=async()=>({scanned_archives:1,new_archives:0,updated_archives:1,retry_archives:0,names:['batch.7z'],archives:[signature('2')]});
  f.deps.clean=async()=>({report:report([{...record('new19','2026-10-19'),input_index:1}],'2'),file:'/state/second.json'});
  const update=await runAimeIncremental(options(),f.deps);
- assert.equal(update.attribution_started,1);assert.equal(f.getState().jobs.length,2);assert.equal(f.getState().jobs[0].records.length,2);assert.equal(f.getState().jobs[0].id,'1019');
+ assert.equal(update.attribution_started,1);assert.equal(f.getState().jobs.length,2);assert.equal(f.getState().jobs[0].records.length,2);assert.equal(f.getState().jobs[0].id,'2026-10-19');
 });
 test('duplicates, quarantine and unstable archives are reported without an empty model job',async()=>{
  const f=fixture(),r=report([]);r.reports[0].read=3;r.reports[0].exclusions=[{reason:'duplicate_trace'},{reason:'multiple_traces_not_supported'},{reason:'aime_mode_conflict'}];r.reports[0].excluded=3;r.deferred=[{archive:'growing.7z',reason:'archive_not_stable'}];

@@ -71,7 +71,8 @@ export function bindAnswerReview(task:PlannedTask,inputs:Record<string,unknown>,
   return bindScore(task,original,dependencies);
 }
 export const answerReviewWorkflow:WorkflowDefinition={
-  id:'answer-review',plan:config=>planAnswerReview(config as AnswerReviewConfig),bind:bindAnswerReview,observesFailures:()=>false,
+  id:'answer-review',plan:config=>planAnswerReview(config as AnswerReviewConfig),bind:bindAnswerReview,
+  observesFailures:task=>task.stage==='attribution',
   advance:(task,receipt,_state,inputs)=>{
     if(task.stage==='score')return {tasks:[]};
     if(task.stage==='attribution'){

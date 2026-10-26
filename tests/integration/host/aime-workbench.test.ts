@@ -1,11 +1,23 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import path from 'node:path';
-import {rm,readFile,writeFile} from 'node:fs/promises';
-import {writeJson,runLock} from '@eval/data';
+import {mkdtemp,readdir,rm,readFile,writeFile} from 'node:fs/promises';
+import {tmpdir} from 'node:os';
+import {ensureClusterPlaceholder,writeJson,runLock} from '@eval/data';
 import {fixtureConfig} from '../../fixtures/comparison.js';
 import {ROOT} from '../../fixtures/services.js';
 import {loadAimeWorkbench} from '../../../apps/host/src/aime-workbench.js';
+
+test('AIME daily run creates date-local cluster placeholders without replacing existing clustering output',async t=>{
+  const directory=await mkdtemp(path.join(tmpdir(),'aime-cluster-')),run=path.join(directory,'2026-10-24');t.after(()=>rm(directory,{recursive:true,force:true}));
+  await ensureClusterPlaceholder(run);
+  assert.deepEqual((await readdir(path.join(run,'cluster'))).sort(),['cluster_tree.jsonl','state.json']);
+  assert.equal(await readFile(path.join(run,'cluster','cluster_tree.jsonl'),'utf8'),'');
+  assert.deepEqual(JSON.parse(await readFile(path.join(run,'cluster','state.json'),'utf8')),{});
+  await writeFile(path.join(run,'cluster','cluster_tree.jsonl'),'{"level":0}\n');
+  await ensureClusterPlaceholder(run);
+  assert.equal(await readFile(path.join(run,'cluster','cluster_tree.jsonl'),'utf8'),'{"level":0}\n');
+});
 
 test('AIME Workbench persists independent settings and refuses an existing CLI owner without taking its lock',async t=>{
   const f=await fixtureConfig();t.after(()=>rm(f.directory,{recursive:true,force:true}));

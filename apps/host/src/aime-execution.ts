@@ -1,6 +1,6 @@
 import path from 'node:path';
 import {spawn} from 'node:child_process';
-import {exists,readJson,writeJson,runLock,createFileLogger,hasLiveRunOwner} from '@eval/data';
+import {ensureClusterPlaceholder,exists,readJson,writeJson,runLock,createFileLogger,hasLiveRunOwner} from '@eval/data';
 import type {ModelRequestControl} from '@eval/host';
 import {runAimeIncremental,runAimeWatch,answerReviewRepository,answerReviewProgress,prepareAnswerReviewRetry,prepareAnswerReviewAutomaticResume,appendAnswerReviewInputs,planAnswerReview,
   type AimeIncrementalState,type AimeJob,type AimeRecord,type AimeCleaningReport,type AimeEvaluationResult} from '@eval/workflows/answer-review';
@@ -20,7 +20,7 @@ export function aimeConfiguration(value:Record<string,unknown>,directory:string)
     logDirectory:located('logDirectory'),logLockDirectory:located('logLockDirectory'),hostConfigs:[] as string[],
     python:typeof value.python==='string'?value.python:'python3',pythonPath:value.pythonPath?located('pythonPath'):undefined,
     sevenZip:typeof value.sevenZip==='string'?value.sevenZip:'7z',engine:value.engine??'pi',stableSeconds:value.stableSeconds??3,
-    stableTimeoutSeconds:value.stableTimeoutSeconds??30,concurrency:value.concurrency??64,pollSeconds:value.pollSeconds??60} as AimeConfiguration;
+    stableTimeoutSeconds:value.stableTimeoutSeconds??30,concurrency:value.concurrency??200,pollSeconds:value.pollSeconds??60} as AimeConfiguration;
   if(!Array.isArray(value.hostConfigs)||!value.hostConfigs.length||value.hostConfigs.some(v=>typeof v!=='string'))throw Error('hostConfigs must list the existing AIME Host configuration files');
   c.hostConfigs=value.hostConfigs.map(v=>path.resolve(directory,String(v)));
   if(!['pi','prime'].includes(c.engine)||!Number.isFinite(c.stableSeconds)||c.stableSeconds<=0||c.stableTimeoutSeconds<=c.stableSeconds)throw Error('Invalid engine or stability interval');
@@ -100,6 +100,7 @@ export async function runAimeEvaluation(c:AimeConfiguration,options:AimeRunOptio
             file=path.join(job.output,'state.json'),traceIds=new Set(job.records.map(r=>r.trace_id));
           if(await exists(file))await appendAnswerReviewInputs(job.output,config);
           else{const plan=await planAnswerReview(config);if(plan.catalog.length!==job.records.length||plan.tasks.length!==2*job.records.length||(plan.summary.issues as unknown[]).length)throw Error('AIME全量范围校验失败');}
+          await ensureClusterPlaceholder(job.output);
           let eligible=traceIds,resumeTaskIds:Set<string>|undefined;
           if(await exists(file)){
             if(options.manualRetry)await prepareAnswerReviewRetry(job.output,traceIds);

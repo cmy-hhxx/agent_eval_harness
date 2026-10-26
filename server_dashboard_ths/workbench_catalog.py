@@ -410,7 +410,8 @@ class WorkbenchCatalog:
                     records.append({**record, "package_id": batch["id"], "package_name": batch["name"]})
             if not records:
                 raise Conflict("没有有效回答，不能启动空评测")
-            output = dataset.root / "eval_output" / ("0_daily_eval" if task["category"] == "daily" else "1_task_eval") / task["id"]
+            category = "0_daily_eval" if task["category"] == "daily" else Path("1_task_eval") / task["id"]
+            output = dataset.root / "eval_output" / category
             return {"task": task, "batch_ids": identifiers, "records": records,
                     "models": list(dataset.models), "comparisons": list(dataset.pairs.values()),
                     "output_dir": str(output)}

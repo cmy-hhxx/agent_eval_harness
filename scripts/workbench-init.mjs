@@ -59,7 +59,7 @@ await writeOnce(path.join(runtime, "config/aime-daily.json"), JSON.stringify({
   workflow: "answer-review", inputs: { versions: aimeModels }, comparisons: [],
   output: { kind: "directory", path: path.join(dataRoot, "1_aime/eval_output/0_daily_eval") },
   models: { judge: { model: "deepseek-v4.1-flash", thinking: "high" } },
-  execution: { concurrency: 64, maxToolCalls: 8 },
+  execution: { concurrency: 200, maxToolCalls: 8 },
   bindings: { score: { profile: "judge", thinking: "high" }, attribution: { profile: "judge", thinking: "high" } },
   rewrite: { attribution: false, comparison: false, comparisonItems: false, clustering: false }, clustering: { enabled: false },
 }, null, 2) + "\n");
