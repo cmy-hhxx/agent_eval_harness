@@ -15,7 +15,7 @@ AIME 使用 workflow: answer-review。每条回答先完成 Attribution，通过
 | is_correct | 仅判断与给定标准答案是否一致；无标准答案固定 null，确实无法判断时为 null |
 | correct_reason | 有标准答案时说明比较对象、依据和原因；无标准答案固定 null |
 
-每条问题使用 `problem_id/text/reason/evidence_status/evidence/component/attribution_reason`，责任链写入 `responsibility_chain`，有真实缺口时增加 `uncertainties`，确有独立传播或放大时增加 `related_responsibilities`，依赖计算时增加 `calculations`。问题编号、主体名称和证据坐标由程序填写；模型只选稳定编号并写判断。`evidence_status` 为“已确认”或“待核实”，与责任是否已知分开。证据原文去重，`purposes` 标注“问题”“归因”或两者。关联责任只保留一层主体—理由—证据关系。仅有输入输出差异不证明隐藏机制；已知参数生成调用不能因无隐藏推理而写未知。
+每条问题使用 `problem_id/text/reason/evidence_status/evidence/component/attribution_reason`，程序从模型选择的责任 boundary 和证据派生 `responsibility_chain`。有真实缺口时增加 `uncertainties`，确有独立传播或放大时增加 `related_responsibilities`，依赖计算时增加 `calculations`。问题编号、主体名称、责任链和证据坐标由程序填写；模型只选稳定编号并写判断。`evidence_status` 为“已确认”或“待核实”，与责任是否已知分开。证据原文去重，`purposes` 标注“问题”“归因”或两者。关联责任只保留一层主体—理由—证据关系。仅有输入输出差异不证明隐藏机制；已知参数生成调用不能因无隐藏推理而写未知。
 
 不再要求 strengths、逐项 criterion_assessments、core_assessment、meets_core、core_reason、维度、阶段、重要性、功能分类或重复调查表。原问与适用规则继续作为判断依据。计算只在问题判断确实依赖计算时记录，并保留来源、单位、期间、分母及程序复算能力。
 
@@ -69,7 +69,7 @@ npm run eval -- run --stage attribution --run-id answer-review-run --config conf
 | related_responsibilities | 仅独立传播或放大时填写边界、理由、证据引用及必要缺口 | 模型选择，程序解析主体；不复制原文 |
 | calculations | 仅问题依赖计算时必填，保留源数、单位、期间、分母、假设及复算 | 模型填源数与口径，程序核验坐标及算术 |
 
-模型常规提交只有 summary 和 Problem；每条问题必填 text、reason、evidence_status、evidence、responsibility_boundary、attribution_reason。有标准答案才额外提交 is_correct、correct_reason；正式六字段始终保留，meta 与 has_standard_answer 完全由程序填写。判断和说明为简洁中文，真实工具名与引文不翻译。
+模型常规提交只有 summary 和 Problem；每条问题必填 text、reason、evidence_status、evidence、responsibility_boundary、attribution_reason。有标准答案才额外提交 is_correct、correct_reason；正式六字段始终保留，meta、has_standard_answer、组件和责任链完全由程序填写。判断和说明为简洁中文，真实工具名与引文不翻译。
 
 程序验证结构、实际边界身份、证据坐标与读取记录、相关输入输出覆盖和计算一致性。程序不能可靠证明摘要没有漏项、机制文字没有过度推断、关联责任确有独立作用，或正文是否漏交必要计算；程序验收仍可能复现误判，仍须真实样本抽审。规则信号不能直接当作缺陷：零行、旧来源、原句直送及恢复后的工具失败均须结合具体任务和影响判断。
 
@@ -81,7 +81,7 @@ npm run eval -- run --stage attribution --run-id answer-review-run --config conf
 
 责任组件由 `packages/prompts/resources/attribution/taxonomy.json` 定义，按技术环节和工具维度分组；规划子模型、Expert 推理轮、终稿生成轮及具体工具名称由实际调用和实际命令解析，内部模型代号只用于溯源。展示名相同不合并不同调用。报表风险信号不自动成立为缺陷。
 
-责任链节点由模型选择现有 boundary 并写 state/evidence_indices，程序解析 component、stage、message_index、evidence_ids 与 primary/related/context。component 始终是独立主责组件，related_responsibilities 仅登记成立的关联责任；链中的正常返回、零行、历史页面不计责任。未采集处理调用的 transfer 节点 component 为 null，页面显示“输入材料变化（处理调用未采集）”；没有独立上游调用时显示“已采集输入”。终稿责任同时呈现上游状态与具体生成错误，不把整条链当作健康度组件。stats.json 与 report.md 分别统计主责问题数、关联责任数。
+责任链由程序从模型选择的 boundary、真实转换图和问题证据派生，按实际转换顺序列出 primary/related/context，并解析 component、stage、message_index 与 evidence_ids。模型不手写链节点。component 始终是独立主责组件，related_responsibilities 仅登记成立的关联责任；链中的正常返回、零行、历史页面不计责任。未采集处理调用的 transfer 节点 component 为 null。终稿责任同时呈现相关上游状态与具体生成错误，不把整条链当作健康度组件。stats.json 与 report.md 分别统计主责问题数、关联责任数。
 
 
 原文去重覆盖 JSON 父子范围和文本叶子；跨坐标完全相同的原文只保留一次 quote，also_at 保留全部真实坐标。不再按固定24万字符提前拒收；不改写所选原文，真实模型上下文和请求失败仍由运行时明确报告。Responses 的 off 显式发送 reasoning.effort=none，避免网关因字段缺省继续推理。

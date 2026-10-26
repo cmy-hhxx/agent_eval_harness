@@ -21,7 +21,7 @@
 
 业务链路目录遇到含图片的工具返回时，使用容器下原始文本叶子的坐标登记文本证据，保持原有摘录预算；图片展示占位符不能进入文本证据目录，也不能替代图片读取。
 
-每条问题使用 `problem_id/text/reason/evidence_status/evidence/component/attribution_reason`，有真实缺口时增加 `uncertainties`，确有独立传播或放大时增加 `related_responsibilities`，依赖计算时增加 `calculations`。问题编号、主体名称和证据坐标由程序填写；模型只选稳定编号并写判断。`evidence_status` 为“已确认”或“待核实”，与责任是否已知分开。证据原文去重，`purposes` 标注“问题”“归因”或两者。关联责任只保留一层主体—理由—证据关系。仅有输入输出差异不证明隐藏机制；已知参数生成调用不能因无隐藏推理而写未知。
+每条问题使用 `problem_id/text/reason/evidence_status/evidence/component/attribution_reason`，程序从模型选择的 boundary 和证据派生 `responsibility_chain`。有真实缺口时增加 `uncertainties`，确有独立传播或放大时增加 `related_responsibilities`，依赖计算时增加 `calculations`。问题编号、主体名称、责任链和证据坐标由程序填写；模型只选稳定编号并写判断。`evidence_status` 为“已确认”或“待核实”，与责任是否已知分开。证据原文去重，`purposes` 标注“问题”“归因”或两者。关联责任只保留一层主体—理由—证据关系。仅有输入输出差异不证明隐藏机制；已知参数生成调用不能因无隐藏推理而写未知。
 
 收据保存接受时的评测器标识和实际判官模型 `judge`；正式行的 `evaluator_version` 必须与收据一致。改写另存 `rewritten.evaluator_version`，统计汇总 `evaluator_versions` 与 `judge_models`。同 run 可混合版本：已接受结果不变，未完成任务使用当前配置。
 
@@ -237,7 +237,7 @@ Rewrite 只接收选定文本槽位，不接触原题、原始消息或证据。
 
 归因先验收结构、计算和真实调用身份。初稿通过验收后直接成为正式结果，不进入第二次模型会话；程序不证明摘要无漏项、机制解释无过度推断、关联责任确有独立作用，真实样本抽审仍是质量验收依据。
 
-正式 Problem 及关联责任不输出 `responsibility_boundary`；该稳定编号仅保留在内部模型提交与收据中，用于精确关联真实调用。程序按 attribution/taxonomy.json 的组件定义生成 component 展示名称，不用展示名称反查身份或去重调用；内部模型名及原始坐标仍可溯源。正文说明具体动作和偏差。
+正式 Problem 及关联责任不输出 `responsibility_boundary`；该稳定编号仅保留在内部模型提交与收据中，用于精确关联真实调用。程序按 attribution/taxonomy.json 的组件定义生成 component 展示名称和责任链，不用展示名称反查身份或去重调用；内部模型名及原始坐标仍可溯源。正文说明具体动作和偏差。
 
 归因探索与修复共用从开始即公开的既有总额度，提交不再解锁额外工具次数，不增加总预算或重试。进度 Token 仅累计已归档尝试，同时显示待归档次数和统计覆盖范围；零值不代表没有实际消耗。checkpoint.writeMs 是累计持久化墙钟时间，不是事件循环阻塞时间；snapshotMs 仅衡量快照构造，不涵盖全部持久化 CPU。
 

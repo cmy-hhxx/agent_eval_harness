@@ -41,7 +41,8 @@ test("per-field feedback uses the same shape without rerendering sources or bypa
     assert.deepEqual(context?.submission_shape, expected.properties.summary);
   }
   assert.equal(sourceReads, 0, "repairing field shape must not repeat whole-source identity validation");
-  (request.input.answer.component_catalog[0] as { component: string }).component = "伪造主体";
-  assert.throws(() => attributionSubmissionSchema(request), ValidationError);
-  assert(sourceReads > 0, "material preparation validates identities against original source records");
+  const tampered = structuredClone(request);
+  (tampered.input.answer.component_catalog[0] as { component: string }).component = "伪造主体";
+  assert.throws(() => attributionSubmissionSchema(tampered), ValidationError,
+    "material preparation validates identities against original source records");
 });

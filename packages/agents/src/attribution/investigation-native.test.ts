@@ -130,10 +130,10 @@ test('an observed truncation can be the primary context-transfer responsibility'
     text: '终稿称字段不全。', reason: '原始返回完整，实际输入只剩一段。', evidence_status: '已确认',
     evidence: [{ index, purposes: ['问题', '归因'] }], responsibility_boundary: `boundary:${transfer.transition_index}`,
     attribution_reason: '原始返回进入终稿输入时被截断，未能核对完整字段。',
-    responsibility_chain: [{ responsibility_boundary: `boundary:${transfer.transition_index}`, state: '原始返回 4000 字符，实际输入只剩 80 字符。', evidence_indices: [index] }],
   }] };
   const result = resolveModelSubmission(f.binding.request, draft, f.audit);
   assert.equal(result.Problem[0]!.component, '上下文组装与传递');
-  assert.equal(result.Problem[0]!.responsibility_chain![0]!.component, '上下文组装与传递');
-  assert.equal(result.Problem[0]!.responsibility_chain![0]!.message_index, null);
+  const primary = result.Problem[0]!.responsibility_chain!.find(item => item.role === 'primary')!;
+  assert.equal(primary.component, '上下文组装与传递');
+  assert.equal(primary.message_index, null);
 });
