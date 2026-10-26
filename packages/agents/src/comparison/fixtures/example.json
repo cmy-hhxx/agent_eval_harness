@@ -181,13 +181,13 @@
               "summary": "正确给出4。",
               "finding_indices": [],
               "status": "met",
-              "evidence_status": "established"
+              "evidence_status": "已确认"
             },
             "B": {
               "summary": "正确给出4。",
               "finding_indices": [],
               "status": "met",
-              "evidence_status": "established"
+              "evidence_status": "已确认"
             }
           },
           "criterion_ids": [
