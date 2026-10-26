@@ -1,6 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { emptyUsage, type RunState, type TaskState } from "@eval/contracts";
+import { emptyUsage, type PlannedTask, type RunState, type TaskState } from "@eval/contracts";
+import { attributionScheduling } from "@eval/workflows/attribution";
 import { progressSnapshot } from "./progress.js";
 
 test("progress separates execution failures from dependency blocks and cancellations", () => {
@@ -49,4 +50,39 @@ test("progress separates execution failures from dependency blocks and cancellat
   assert.equal(preparing.preparing, 1);
   assert.equal(preparing.running + preparing.repairing + preparing.queued, 0);
   assert.equal(preparing.updated_at, '1970-01-01T00:00:01.000Z');
+});
+
+test("attribution progress reports business session states instead of internal task acceptance", () => {
+  const tasks: PlannedTask[] = [];
+  for (let index = 0; index < 12; index++) {
+    const id = `session-${index + 1}`;
+    tasks.push(
+      { id: `${id}-component`, stage: "attribution-component", inputIds: { answer: id }, dependencies: {}, data: {} },
+      { id: `${id}-session`, stage: "attribution-session", inputIds: { answer: id },
+        dependencies: { component: `${id}-component` }, data: {} },
+    );
+  }
+  const states: Record<string, TaskState> = Object.fromEntries(tasks.map(task => [task.id, { status: "pending", attempts: 0 }]));
+  states["session-1-session"] = { status: "succeeded", attempts: 1 };
+  states["session-2-component"] = { status: "running", attempts: 1 };
+  states["session-3-component"] = { status: "blocked", attempts: 1 };
+  states["session-4-component"] = { status: "failed", attempts: 1 };
+  const state: RunState = {
+    manifest: {
+      format: "evaluation-run", runId: "attribution-progress", status: "running", debug: false,
+      engine: { engine: "pi", version: "test", commit: "test", buildId: "test" }, evaluatorVersion: "test",
+      config: {}, inputs: {}, preflight: {}, startedAt: 1, states, tasks,
+    },
+    receipts: {}, usage: emptyUsage(), recordedAttempts: 0,
+  };
+  const progress = progressSnapshot(state, 1, new Set(), attributionScheduling.sessionAdmission);
+  assert.deepEqual({
+    total: progress.total_sessions,
+    active: progress.active_sessions,
+    completed: progress.completed_sessions,
+    waiting: progress.waiting_sessions,
+    failed: progress.failed_sessions,
+    blocked: progress.blocked_sessions,
+  }, { total: 12, active: 8, completed: 1, waiting: 1, failed: 1, blocked: 1 });
+  assert.equal(progress.accepted, 0, "internal task acceptance remains a separate count");
 });

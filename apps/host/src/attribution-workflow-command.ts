@@ -27,7 +27,7 @@ export async function runAttributionWorkflowCommand(host: AttributionHostConfig,
   if (!saved && !initial.tasks.length) throw new Error("没有可评 session，请先查看 preflight");
   const base = createModelResolver(host.models);
   const routing = options.balanceChannels ? createBalancedModels(host.models) : {
-    modelForStage: (stage: string) => base(stage.startsWith("attribution") ? "attribution" : stage),
+    modelForStage: base,
   };
   const controller = new AbortController(), stop = () => controller.abort(new Error("User interrupted"));
   if (options.signal) { options.signal.addEventListener("abort", stop, { once: true }); if (options.signal.aborted) stop(); }

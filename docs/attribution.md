@@ -14,6 +14,12 @@ session input
 
 组件优先来自 `trace.meta.tool_names_text` 与 `skill_names_text`；字段为空时从真实工具调用派生。同名工具在多个 trace 中分别审查。内部任务只保留在 `state.json` 与收据中，不写独立结果文件。
 
+调度按输入 `input_id` 分成 session 前台窗口，默认同时准入 8 个未结束 session。窗口内的 component、trace、session 任务继续推进；窗口外 session 的 component 不进入执行槽位。session 完成、失败或 blocked 后释放窗口，后续 session 才获准进入。ready 的 trace 和 session 任务优先于其他 session 的 component backlog。准入状态完全从任务的持久化状态推导，续跑不依赖内存游标，也不允许 component backlog 占满全部任务槽位而饿死下游汇总。
+
+运行进度同时保留 component、trace、session 任务计数，并单独报告 `total_sessions`、`active_sessions`、`completed_sessions`、`waiting_sessions`、`failed_sessions`、`blocked_sessions`。业务完成度以 `completed_sessions` 为准，不能用内部 component 的 accepted 数代替。
+
+每个 `attribution-session` 收据接受后立即追加到 `results/attribution.jsonl`，不等待同一 run 的其他 session；续跑读取既有行并跳过已导出的 session。
+
 ## 小现场
 
 组件审查按“原问上下文 → 调用前推理 → 工具参数 → 工具返回 → 下一轮实际输入 → 下一轮推理/输出”阅读。首屏材料有输出上限，超大返回只给结构、状态和可定位片段；后续最多三次续读，优先使用 `search_trace` 做字面 grep，再按精确路径读取。
@@ -64,6 +70,8 @@ session input
 ```
 
 `quote` 最多 400 字，必须是精确连续原文，不能拼接或由程序截断。`evidence.component` 明确区分 `reasoning:`、`tool_call:`、`answer:` 等证据位置及具体组件。`calculations` 只保留文字点评，不再嵌套操作数和复算元数据。
+
+Component 提交在 Schema 与证据坐标校验之外，还会拒绝占位、空泛或重复叙述：`tmp`/`test`/`todo`/`占位` 等占位值、纯重复字符、`problem_phenomena` 与 `reason` 原句重复、不同 evidence 复制同一 reason、全部字段重复同一文本，以及内容完全相同的重复 Problem。校验不会改写或截断 quote，正式证据仍按原坐标解析；重叠但原因、影响范围或修复动作不同的问题不应合并。
 
 ## Trace 与 Session 汇总
 

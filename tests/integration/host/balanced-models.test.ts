@@ -21,6 +21,23 @@ test("evaluation balancing selects only Responses channels by default and reject
   } finally { await rm(directory, { recursive: true, force: true }); }
 });
 
+test("attribution fan-out stages resolve through the configured attribution binding", async () => {
+  const { directory, models } = await fixtureConfig();
+  try {
+    assert.equal(models.bindings["attribution-component"], undefined);
+    assert.equal(models.bindings["attribution-trace"], undefined);
+    assert.equal(models.bindings["attribution-session"], undefined);
+    const routing = createBalancedModels(models), base = routing.modelForStage("attribution");
+    for (const [index, stage] of ["attribution-component", "attribution-trace", "attribution-session"].entries()) {
+      const task = { id: `attribution-stage-${index}`, stage } as PlannedTask;
+      assert.equal(routing.modelForTask(task).model, base.model);
+      assert.equal(routing.modelForTask(task).thinking, base.thinking);
+      assert.equal(routing.modelForStage(stage).model, base.model);
+      assert.equal(routing.modelForStage(stage).thinking, base.thinking);
+    }
+  } finally { await rm(directory, { recursive: true, force: true }); }
+});
+
 test("healthy channels dispatch six original and four OpenAI tasks per ten, preserving retry routes", async () => {
   const { directory, models } = await fixtureConfig();
   models.channels["evaluation-gateway"].trafficWeight = 6;

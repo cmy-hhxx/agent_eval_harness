@@ -75,6 +75,22 @@ function progressCounts(progress = {}) {
   return { failures, blocked, cancelled,
     total: (progress.accepted || 0) + (progress.queued || 0) + (progress.preparing || 0) + (progress.running || 0) + (progress.repairing || 0) + failures + blocked + cancelled };
 }
+function sessionProgress(run) {
+  const progress = run.progress || {};
+  if (Number.isInteger(progress.total_sessions)) return progress;
+  const counts = run.stages?.["attribution-session"] || {};
+  const total = Object.values(counts).reduce((sum, count) => sum + count, 0);
+  if (!total) return undefined;
+  return { total_sessions: total, completed_sessions: counts.succeeded || 0, active_sessions: counts.running || 0,
+    waiting_sessions: counts.pending || 0, failed_sessions: (counts.failed || 0) + (counts.timed_out || 0),
+    blocked_sessions: counts.blocked || 0 };
+}
+function progressSummary(run) {
+  const sessions = sessionProgress(run);
+  if (sessions) return `${sessions.completed_sessions}/${sessions.total_sessions} session 已完成${sessions.active_sessions ? ` · ${sessions.active_sessions} 进行中` : ""}${sessions.waiting_sessions ? ` · ${sessions.waiting_sessions} 等待` : ""}${sessions.failed_sessions ? ` · ${sessions.failed_sessions} 失败` : ""}${sessions.blocked_sessions ? ` · ${sessions.blocked_sessions} 阻塞` : ""}`;
+  const { failures, blocked, cancelled, total } = progressCounts(run.progress);
+  return `${run.progress?.accepted || 0}/${total} 已接受${failures ? ` · ${failures} 失败` : ""}${blocked ? ` · ${blocked} 阻塞` : ""}${cancelled ? ` · ${cancelled} 取消` : ""}`;
+}
 function statusText(run) {
   const counts = progressCounts(run.progress);
   const stopped = [[counts.failures, "失败"], [counts.blocked, "阻塞"], [counts.cancelled, "取消"]]
@@ -100,12 +116,12 @@ function renderRuns() {
   }
   list.innerHTML = state.runs.map((run) => {
     const progress = run.progress || {};
-    const { failures, blocked, cancelled, total } = progressCounts(progress);
+    const failures = Object.values(progress.failures || {}).reduce((total, count) => total + count, 0);
     const selected = state.selectedRun === run.run_id;
     const canDelete = run.status !== "running" && state.startingRun?.id !== run.run_id && state.deletingRun !== run.run_id;
     return `<div class="run-entry"><button class="run-item ${selected ? "selected" : ""}" type="button" data-run="${escapeHtml(run.run_id)}" title="${escapeHtml(run.run_id)}" aria-current="${selected}">
       <span class="run-line"><span class="status-dot ${escapeHtml(run.status)}${failures ? " has-failure" : ""}"></span><span class="run-label">${escapeHtml(runLabel(run))}</span></span>
-      <span class="run-meta">${escapeHtml(run.engine)} · 评测器 ${escapeHtml(run.evaluator_version)} · ${progress.accepted || 0}/${total}${failures ? ` · ${failures} 失败` : ""}${blocked ? ` · ${blocked} 阻塞` : ""}${cancelled ? ` · ${cancelled} 取消` : ""}</span>
+      <span class="run-meta">${escapeHtml(run.engine)} · 评测器 ${escapeHtml(run.evaluator_version)} · ${escapeHtml(progressSummary(run))}</span>
     </button><button class="run-delete" type="button" data-delete="${escapeHtml(run.run_id)}" aria-label="删除运行 ${escapeHtml(runLabel(run))}" title="${canDelete ? "删除运行" : run.status === "running" ? "停止后可删除" : "删除中"}" ${canDelete ? "" : "disabled"}><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 6h18M9 6V3h6v3M5 6l1 15h12l1-15M10 10v7M14 10v7" /></svg></button></div>`;
   }).join("");
   if (options.resultsOnly) list.querySelectorAll('[data-delete]').forEach(button => button.hidden = true);
@@ -124,9 +140,8 @@ function renderOverview() {
   status.textContent = statusText(run);
   status.className = `status-chip ${run.status}${Object.values(run.progress?.failures || {}).some(Boolean) ? " has-failure" : ""}`;
   const progress = run.progress || {};
-  const totalTasks = progressCounts(progress).total;
   const libraryModels = Object.keys(run.problem_library || {}).length;
-  $("#run-description").textContent = `${progress.accepted || 0}/${totalTasks} 已接受${libraryModels ? ` · 问题库 ${libraryModels} 个模型` : ""}${run.live && progress.updated_at ? ` · 更新 ${new Date(progress.updated_at).toLocaleTimeString()}` : ""}`;
+  $("#run-description").textContent = `${progressSummary(run)}${libraryModels ? ` · 问题库 ${libraryModels} 个模型` : ""}${run.live && progress.updated_at ? ` · 更新 ${new Date(progress.updated_at).toLocaleTimeString()}` : ""}`;
   if (progress.usage) $("#run-description").textContent += ` · 已归档 ${Number(progress.usage.archived_tokens).toLocaleString()} Token（${progress.usage.archived_attempts} 次尝试） · ${progress.usage.unarchived_attempts} 次待归档`;
   $("#run-actions").innerHTML = run.status === "running"
     ? `<form id="concurrency-form" class="inline-form"><label for="live-concurrency">并发</label><input id="live-concurrency" type="number" min="1" value="${Number(progress.concurrency) || 1}" required /><button class="button" type="submit">调整</button></form><button class="button button-danger" type="button" data-stop="${escapeHtml(run.run_id)}">停止</button>`

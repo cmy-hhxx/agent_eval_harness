@@ -11,6 +11,7 @@ import traceResultSchema from "../../../../schemas/attribution/trace-result.sche
 import sessionSubmissionSchema from "../../../../schemas/attribution/session-summary-submission.schema.json" with { type: "json" };
 import sessionResultSchema from "../../../../schemas/attribution/session-result.schema.json" with { type: "json" };
 import { resolveAttributionEvidence } from "./source-evidence.js";
+import { componentContentIssues } from "./content-quality.js";
 import type { ComponentReviewResult, SessionAttributionResult, SessionProblem, TraceAttributionResult } from "./types.js";
 
 const componentTools = [
@@ -64,6 +65,8 @@ function componentReview(request: AgentRequest, draft: unknown, audit: ToolAudit
   const component = String(request.input.component ?? "").trim();
   if (!component) throw new ValidationError([{ category: "decision", code: "component_required", path: "/component",
     message: "组件审查任务缺少固定组件。" }]);
+  const contentIssues = componentContentIssues(value.problems);
+  if (contentIssues.length) throw new ValidationError(contentIssues);
   const raw = request.sources.answer.value as { messages: Record<string, unknown>[] };
   const traceIndex = Number(request.input.trace_index);
   const problems: SessionProblem[] = value.problems.map((problem, index) => ({

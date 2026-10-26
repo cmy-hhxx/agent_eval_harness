@@ -1,4 +1,4 @@
-import type { PlannedTask, RunManifest } from "@eval/contracts";
+import type { PlannedTask, RunManifest, WorkflowScheduling } from "@eval/contracts";
 
 /** Scopes are replaced or extended by accepted follow-up tasks. Index each revision once. */
 export function createScopeMembership(manifest: Pick<RunManifest, "executionScope">): (id: string) => boolean {
@@ -15,9 +15,61 @@ export function createScopeMembership(manifest: Pick<RunManifest, "executionScop
   };
 }
 
+export interface SessionAdmissionSnapshot {
+  total_sessions: number;
+  active_sessions: number;
+  completed_sessions: number;
+  waiting_sessions: number;
+  failed_sessions: number;
+  blocked_sessions: number;
+  admitted: ReadonlySet<string>;
+}
+
+/** Derive the foreground window only from durable task states so resume needs no cursor. */
+export function sessionAdmissionSnapshot(
+  tasks: readonly PlannedTask[],
+  states: RunManifest["states"],
+  policy: NonNullable<WorkflowScheduling["sessionAdmission"]>,
+): SessionAdmissionSnapshot {
+  if (!Number.isSafeInteger(policy.window) || policy.window < 1)
+    throw new Error("Session admission window must be a positive integer");
+  const sessions = new Map<string, { started: boolean; completed: boolean; failed: boolean; blocked: boolean }>();
+  for (const task of tasks) {
+    const id = policy.id(task);
+    if (!id) continue;
+    const state = states[task.id], status = state?.status ?? "pending",
+      session = sessions.get(id) ?? { started: false, completed: false, failed: false, blocked: false };
+    session.started ||= status !== "pending" || (state?.attempts ?? 0) > 0;
+    session.completed ||= status === "succeeded" && policy.completed(task);
+    session.failed ||= status === "failed" || status === "timed_out" || status === "cancelled";
+    session.blocked ||= status === "blocked";
+    sessions.set(id, session);
+  }
+  const admitted = new Set<string>();
+  for (const [id, session] of sessions)
+    if (session.started && (session.completed || session.failed || session.blocked)) admitted.add(id);
+  const open = [...sessions].filter(([, session]) => !session.completed && !session.failed && !session.blocked);
+  const selected = [...open.filter(([, session]) => session.started), ...open.filter(([, session]) => !session.started)]
+    .slice(0, policy.window);
+  for (const [id] of selected) admitted.add(id);
+  const completed = [...sessions.values()].filter((session) => session.completed).length;
+  const failed = [...sessions.values()].filter((session) => !session.completed && session.failed).length;
+  const blocked = [...sessions.values()].filter((session) => !session.completed && !session.failed && session.blocked).length;
+  const active = selected.length;
+  return {
+    total_sessions: sessions.size,
+    active_sessions: active,
+    completed_sessions: completed,
+    waiting_sessions: sessions.size - completed - failed - blocked - active,
+    failed_sessions: failed,
+    blocked_sessions: blocked,
+    admitted,
+  };
+}
+
 // Share primary slots between stages; independent checks and polish follow decisions.
-export function scheduleTasks(tasks: PlannedTask[], states: RunManifest["states"]): PlannedTask[] {
-  const priority = (stage: string) => stage === "rewrite" ? 2 : stage === "instruction-review" ? 1 : 0;
+export function scheduleTasks(tasks: PlannedTask[], states: RunManifest["states"], stagePriority?: (stage: string) => number): PlannedTask[] {
+  const priority = stagePriority ?? ((stage: string) => stage === "rewrite" ? 2 : stage === "instruction-review" ? 1 : 0);
   const stageByTask = new Map(tasks.map(task => [task.id, task.stage]));
   const continuation = (task: PlannedTask) => Object.values(task.dependencies).some(id => stageByTask.get(id) === task.stage);
   const stages = new Map<string, { tasks: PlannedTask[]; next: number; running: number }>();
