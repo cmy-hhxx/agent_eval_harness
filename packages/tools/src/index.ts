@@ -808,10 +808,12 @@ export class ToolRuntime {
     return result;
   }
   private evidenceQueue: Promise<void> = Promise.resolve();
+  private persistQueue: Promise<void> = Promise.resolve();
   execute(name: string, args: unknown, signal: AbortSignal, maxCalls = this.context.policy.maxToolCalls): Promise<ToolResult> {
-    if (!["read_execution", "read_responsibility_chain", "read_trace", "search_trace", "view_image", "check_table", "inspect_material", "edit_json"].includes(name))
+    if (!["inspect_material", "edit_json"].includes(name))
       return this.executeOne(name, args, signal, maxCalls);
-    // Evidence registration and incremental file edits share one task-local order.
+    // Material inspection and incremental file edits share one task-local order;
+    // read-only evidence tools may overlap and only serialize their bank persistence.
     const pending = this.evidenceQueue.then(() => this.executeOne(name, args, signal, maxCalls));
     this.evidenceQueue = pending.then(() => undefined, () => undefined);
     return pending;
@@ -877,7 +879,9 @@ export class ToolRuntime {
         for (const content of result.content) if (content.type === "text" && content.text)
           content.text = JSON.stringify(projectEvidenceReferences(JSON.parse(content.text), bank));
         if (result.details !== undefined) result.details = projectEvidenceReferences(result.details, bank);
-        await this.context.persistEvidenceBank?.([...bank]);
+        const snapshot = [...bank], write = this.persistQueue.then(() => this.context.persistEvidenceBank?.(snapshot));
+        this.persistQueue = write.then(() => undefined, () => undefined);
+        await write;
       }
       if (!result.isError && ["read_execution", "read_responsibility_chain", "read_trace", "search_trace", "view_image", "check_table"].includes(name)) {
         const candidate = (args as { candidate?: string }).candidate;

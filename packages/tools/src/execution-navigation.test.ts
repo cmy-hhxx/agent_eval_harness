@@ -192,3 +192,17 @@ test('responsibility-chain reads bundle request, return, actual input and output
    assert.equal(f.snapshots.length,1);
  } finally { await f.close(); }
 });
+
+test('read-only evidence tools overlap while bank persistence stays ordered',async()=>{
+ const f=await setup();
+ try {
+   const reads=await Promise.all([
+     f.runtime.execute('read_trace',{candidate:'answer',message_index:0,path:'/content'},new AbortController().signal),
+     f.runtime.execute('read_trace',{candidate:'answer',message_index:1,path:'/content'},new AbortController().signal),
+   ]);
+   assert(reads.every(result=>!result.isError));
+   assert.equal(new Set(f.ctx.audit.evidenceBank!).size,f.ctx.audit.evidenceBank!.length);
+   assert.equal(f.ctx.audit.evidenceBank!.length,2);
+   assert.equal(f.snapshots.at(-1)!.length,2);
+ } finally { await f.close(); }
+});
