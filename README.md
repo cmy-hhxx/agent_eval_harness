@@ -1,6 +1,6 @@
 # 可编排评测 Host
 
-TypeScript Host 编排评测任务，Pi / Prime Worker 执行模型与工具调用。主线为共同 Criteria → 单回答 Attribution → 两两 Comparison；改写默认开启，独立核验与聚类按需执行。
+TypeScript Host 编排评测任务，Pi / Prime Worker 执行模型与工具调用。主线为共同 Criteria 与单回答 Attribution 并行，两两 Comparison 依赖两者；改写默认开启，独立核验与聚类按需执行。
 
 开发先读 [AGENTS.md](AGENTS.md)。当前行为以源码、配置和 Schema 为准。
 
