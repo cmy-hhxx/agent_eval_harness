@@ -1,18 +1,15 @@
 import path from 'node:path';
 import {HttpError,safeId} from '@eval/contracts';
 import type {AutomationState} from '@eval/automations';
-import {answerReviewProgress,type AimeIncrementalState} from '@eval/workflows/answer-review';
 import { publishableComparisons, type Checkpoint } from "@eval/workflows/comparison";
 import { type Candidate } from "@eval/workflows/inputs";
-import {exists,readJson} from '@eval/data';
 import {checkpoint,isAutomationTask} from './automation-evaluation.js';
 import {dataRequest,type CatalogPage} from './daily-ingestion.js';
-import type {AimeWorkbench} from './aime-workbench.js';
 
 interface CoverageRecord {date:string;model:string;batch_id:string;case_id:string;trace_id?:string;[key:string]:unknown}
 interface Counts {total:number;completed:number;failed:number;pending:number;running:number}
 interface Coverage {runIds:string[];stages:Record<string,Counts>;mongoStatus?:'completed'|'pending'|'retry'}
-export interface DailyCoverageSource {sourceUrl:string;source:'wencai'|'aime';output:string;automationState?:AutomationState;aime?:AimeWorkbench}
+export interface DailyCoverageSource {sourceUrl:string;source:'wencai';output:string;automationState?:AutomationState}
 const matching=(record:CoverageRecord,candidate:Pick<Candidate,'version'|'batch_id'|'case_id'|'trace_id'>)=>
   record.model===candidate.version&&record.batch_id===candidate.batch_id&&record.case_id===candidate.case_id&&
   (record.trace_id===undefined||record.trace_id===candidate.trace_id);
@@ -49,16 +46,6 @@ export async function dailyPackageReport(options:DailyCoverageSource,packageId:s
     for(const runId of job?.runIds??[]){const state=await checkpoint(options.output,safeId(runId));if(state)states.push(state);}
     runs.set(date,states);for(const state of states)publishable.set(state,publishableComparisons(state));
   }
-  const aimeRuns=new Map<string,{runId:string;rows:Awaited<ReturnType<typeof answerReviewProgress>>}[]>();
-  if(options.source==='aime'){
-    const stateFile=options.aime&&path.join(options.aime.configuration.stateDirectory,'state.json');
-    const saved=stateFile&&await exists(stateFile)?await readJson<AimeIncrementalState>(stateFile):undefined;
-    for(const date of dates){
-      const ids=saved?.jobs.filter(job=>job.date===date).map(job=>job.id)??[date],states=[];
-      for(const runId of ids){const run=path.join(options.output,safeId(runId));if(await exists(path.join(run,'state.json')))states.push({runId,rows:await answerReviewProgress(run)});}
-      aimeRuns.set(date,states);
-    }
-  }
   const selected=records.map(record=>({record,coverage:{runIds:[],stages:{}} as Coverage,comparisonAccepted:false}));
   const identities=new Map<string,typeof selected>();
   const identity=(date:string,model:string,batchId:string,caseId:string)=>JSON.stringify([date,model,batchId,caseId]);
@@ -68,23 +55,7 @@ export async function dailyPackageReport(options:DailyCoverageSource,packageId:s
   }
   const select=(date:string,candidate:Pick<Candidate,'version'|'batch_id'|'case_id'|'trace_id'>)=>
     (identities.get(identity(date,candidate.version,candidate.batch_id,candidate.case_id))??[]).filter(item=>matching(item.record,candidate));
-  if(options.source==='aime'){
-    const statuses=new Map<typeof selected[number],Map<string,string>>(),rank=(status:string)=>status==='succeeded'?3:status==='running'?2:['failed','timed_out','cancelled','blocked'].includes(status)?1:0;
-    for(const [date,states]of aimeRuns)for(const state of states){
-      const matched=new Set<typeof selected[number]>();
-      for(const row of state.rows)for(const item of select(date,{version:row.model,batch_id:row.batchId,case_id:row.caseId,trace_id:row.traceId})){
-        matched.add(item);const views=statuses.get(item)??new Map<string,string>();statuses.set(item,views);
-        for(const [stage,view]of Object.entries({...row.stages,...(row.instructionReview.taskId?{'instruction-review':row.instructionReview}:{})}))
-          if(!views.has(stage)||rank(view.status)>rank(views.get(stage)!))views.set(stage,view.status);
-      }
-      for(const item of matched)if(!item.coverage.runIds.includes(state.runId))item.coverage.runIds.push(state.runId);
-    }
-    for(const item of selected){
-      const views=statuses.get(item)??new Map<string,string>();
-      for(const stage of ['score','attribution'])if(!views.has(stage))views.set(stage,'pending');
-      for(const [stage,status]of views)count(item.coverage,stage,status);
-    }
-  }else for(const [date,states]of runs){
+  for(const [date,states]of runs){
     const readyCount=states.reduce((n,state)=>n+publishable.get(state)!.size,0);
     for(const state of states){
       const matched=new Map<string,typeof selected>(),included=new Set<typeof selected[number]>();

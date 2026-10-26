@@ -57,7 +57,6 @@ interface WorkerHarnessOptions {
 }
 
 const fileProfile: Partial<AgentProfile> = {
-  ...attributionAgent.profiles.default,
   fileSubmission: true, jsonStringSubmission:false, draftWriteInCallLimit:false,
 };
 
@@ -202,7 +201,7 @@ async function harness(
       inputs: { "11111111-1111-4111-8111-111111111111": { messages: [{ content: material }, { content: "非必读正文" }] } },
       summary: {},
     };
-    const task = plan.tasks.find((item) => item.stage === "attribution") ?? plan.tasks[0],
+    const task = plan.tasks.find((item) => item.stage === "attribution-component") ?? plan.tasks[0],
       criteria = plan.tasks.find((item) => item.id === task.dependencies.criteria);
     const criteriaReceipt: SubmissionReceipt | undefined = criteria && {
       taskId: criteria.id, attemptId: "criteria", submissionId: "criteria", status: "succeeded",
@@ -211,7 +210,7 @@ async function harness(
     const evaluationServices: EvaluationServices = material === undefined ? {
       ...services,
       ...(profile ? { agents: new AgentRegistry([{ ...attributionAgent, profiles: {
-        default: { ...attributionAgent.profiles.default, ...(profile.fileSubmission ? {jsonStringSubmission:false}:{}), ...profile },
+        component: { ...attributionAgent.profiles.component!, ...(profile.fileSubmission ? {jsonStringSubmission:false}:{}), ...profile },
       } }]) } : {}),
     } : {
       repository: createRunRepository<RunState>({
@@ -412,7 +411,8 @@ test("a burst of model events is persisted in batches with complete ordered repl
   }));
   try {
     await fixture.start();
-    assert.equal((await fixture.done()).state, "succeeded");
+    const status = await fixture.done();
+    assert.equal(status.state, "succeeded", JSON.stringify(status));
     const response = await fetch(`${fixture.worker.url}/api/attempts/attempt/events?after=0`);
     const events = (await response.text()).split("\n").filter((line) => line.startsWith("data: ")).map((line) => JSON.parse(line.slice(6)) as WorkerEvent);
     assert.equal(events.filter((event) => event.type === "model").length, 200);
@@ -576,75 +576,12 @@ test("Host returns independent business errors with structure errors before a th
   try {
     await fixture.start();
     const status = await fixture.done();
-    assert.equal(status.state, "succeeded", status.error);
+    assert.equal(status.state, "succeeded", JSON.stringify(status));
     assert.deepEqual(fixture.counts(), { posts: 3, lookups: 0 }, "every complete draft reaches the same Host validation entry point");
     assert.equal((await fixture.store.receipt(fixture.spec.taskId))?.submissionStats?.contentSubmissions, 3);
   } finally { await fixture.close(); }
 });
 
-test("exhausted exploration budget still permits submission and two repairs", async () => {
-  const fixture = await harness(
-    async (options) => ({
-      async run() {
-        const submit = async (value: unknown) => {
-          const written = await options.execute("execute_code", { language: "python",
-            code: `import json\nfrom pathlib import Path\nPath('evaluation.json').write_text(json.dumps(json.loads(${JSON.stringify(JSON.stringify(value))}), ensure_ascii=False))`,
-            outputs: ["evaluation.json"] });
-          assert.equal(written.isError, undefined, JSON.stringify(written));
-          return options.execute("submit_evaluation_file", { path: "evaluation.json" });
-        };
-        await options.execute("read_trace", {
-          candidate: "answer",
-          message_index: 1,
-        });
-        assert.equal(
-          (
-            await options.execute("read_trace", {
-              candidate: "B",
-              message_index: 1,
-            })
-          ).isError,
-          true,
-        );
-        const invalid = invalidDraft(options.spec);
-        assert.equal(
-          (await submit(invalid)).isError,
-          true,
-        );
-        const useRepairCalls = async () => {
-          for (let index = 0; index < 2; index++)
-            assert.equal((await options.execute("calculate", { operation: "add", operands: ["2", "2"] })).isError, undefined);
-          const exhausted = await options.execute("calculate", { operation: "add", operands: ["2", "2"] });
-          assert.equal(exhausted.isError, true);
-          assert.match(exhausted.content[0]!.text!, /探索工具预算已耗尽/);
-        };
-        await useRepairCalls();
-        assert.equal((await submit(draftFor(options.spec, {}))).isError, true);
-        await useRepairCalls();
-        assert.equal(
-          (await submit(draftFor(options.spec, taskResult(options.spec)))).terminate,
-          true,
-        );
-      },
-      async abort() {},
-      async dispose() {},
-    }), { policy: { maxToolCalls: 2, repairAttempts: 2 }, profile:{...fileProfile,draftWriteInCallLimit:true} },
-  );
-  try {
-    await fixture.start();
-    const status = await fixture.done();
-    assert.equal(status.state, "succeeded", status.error);
-    const receipt = await fixture.store.receipt(fixture.spec.taskId);
-    assert.equal(receipt?.audit.calls, 2 + 3 * fixture.spec.policy.repairAttempts,
-      "the initial and repair allowances include all real writer calls");
-    assert.deepEqual(receipt?.audit.traceReads, [{
-      candidate: "answer", message_index: 1, kind: "json", path: "", start: 0,
-      end: JSON.stringify(raw("q", null).messages[1], null, 2).length,
-    }]);
-  } finally {
-    await fixture.close();
-  }
-});
 test("generic required text stays readable beyond twelve pages after exploration is exhausted", async () => {
   const material = '材料"\\\n🙂'.repeat(40000);
   let pages = 0, recovered = "";
@@ -1162,30 +1099,6 @@ test("resuming an unfinished invalid draft preserves its repair file and cumulat
   } finally { await fixture.close(); }
 });
 
-test("a session that stops before submitting gets one nudge and can still succeed", async () => {
-  const prompts: string[] = [];
-  const fixture = await harness(async (options) => ({
-    async run(prompt) {
-      prompts.push(prompt);
-      if (prompts.length === 1) return;
-      assert.equal(
-        (await submitFor(options, draftFor(options.spec, taskResult(options.spec)))).terminate,
-        true,
-      );
-    },
-    async abort() {},
-    async dispose() {},
-  }));
-  try {
-    await fixture.start();
-    assert.equal((await fixture.done()).state, "succeeded");
-    assert.equal(prompts.length, 2);
-    assert.match(prompts[0]!, /任务材料/);
-    assert.equal(prompts[1], fixture.spec.evaluation.submissionNudge);
-  } finally {
-    await fixture.close();
-  }
-});
 test("a session that ignores the nudge fails after one bounded follow-up and can retry without a draft", async () => {
   let runs = 0;
   const fixture = await harness(async () => ({

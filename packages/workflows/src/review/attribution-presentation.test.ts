@@ -99,7 +99,7 @@ test("foreign evidence previews and reads the actual peer input under its anonym
   assert.deepEqual(result, before);
 });
 
-test("table check model views use own full-directory ordinals while trusted own and peer checks remain exact", () => {
+test("canonical component table views use own full-directory ordinals while trusted checks remain exact", () => {
   const question = "列出股票名称与代码。", table = (code: string) => `| 股票代码 | 股票简称 |\n|---|---|\n| ${code} | Alpha |`;
   const traces: Record<string, RawInput> = {
     A: { messages: [{ role: "user", content: question }, { role: "tool", content: table("000001") }, { role: "assistant", content: table("000002") }] },
@@ -120,33 +120,22 @@ test("table check model views use own full-directory ordinals while trusted own 
   const rubric = criteriaResult(criteriaBinding.request.input as unknown as CriteriaInput);
   const receipt: SubmissionReceipt = { taskId: criteriaTask.id, attemptId: randomUUID(), submissionId: randomUUID(), acceptedAt: 1,
     status: "succeeded", evaluatorVersion: "fixture", judge: "fixture", evaluation: rubric, audit: emptyAudit(), usage: emptyUsage() };
-  const original: PlannedTask = { id: randomUUID(), stage: "attribution", dependencies: { criteria: criteriaTask.id },
+  const task: PlannedTask = { id: randomUUID(), stage: "attribution-component", dependencies: { criteria: criteriaTask.id },
     inputIds: { answer: candidates.A.input_id },
-    data: { stage: "attribution", candidates: { A: candidates.A }, reference: null } satisfies TaskData };
-  const comparison: PlannedTask = { id: randomUUID(), stage: "comparison", dependencies: { criteria: criteriaTask.id, A: original.id },
-    inputIds: { A: candidates.A.input_id, B: candidates.B.input_id },
-    data: { stage: "comparison", candidates, group: ["A", "B"], reference: null } satisfies TaskData };
-  const task: PlannedTask = { id: randomUUID(), stage: "attribution", dependencies: { criteria: criteriaTask.id },
-    inputIds: { answer: candidates.A.input_id, peer_B: candidates.B.input_id },
-    data: { stage: "attribution", candidates: { A: candidates.A }, referenceCandidates: { peer_B: candidates.B }, reference: null,
-      reviewOf: { taskId: original.id, round: 1, reasons: ["核验本方表格对应的同题来源。"] } } satisfies TaskData };
-  const before = structuredClone(inputs), binding = bindTask(task, inputs, { criteria: receipt }, { tasks: [criteriaTask, original, comparison, task] });
-  const own = binding.request.input.answer as any, peer = (binding.request.input.reference_materials as any).peer_B;
-  const shown = { answer: { table_check_results: tableChecksPresentation(own.table_check_results, traces.A, candidates.A.input_id) },
-    reference_materials: { peer_B: { table_check_results: tableChecksPresentation(peer.table_check_results, traces.B, candidates.B.input_id) } } };
+    data: { stage: "attribution-component", candidate: candidates.A, candidates: { A: candidates.A }, reference: null } satisfies TaskData };
+  const before = structuredClone(inputs), binding = bindTask(task, inputs, { criteria: receipt }, { tasks: [criteriaTask, task] });
+  const own = binding.request.input.answer as any;
+  const shown = { answer: { table_check_results: tableChecksPresentation(own.table_check_results, traces.A, candidates.A.input_id) } };
   assert.equal(shown.answer.table_check_results[0].answer_table_index, 2);
-  assert.equal(shown.reference_materials.peer_B.table_check_results[0].answer_table_index, 3);
   assert.equal(shown.answer.table_check_results[0].rows[0].sources[0].table_index, 1);
-  assert.equal(shown.reference_materials.peer_B.table_check_results[0].rows[0].sources[0].table_index, 2);
-  for (const checks of [shown.answer.table_check_results, shown.reference_materials.peer_B.table_check_results]) {
+  for (const checks of [shown.answer.table_check_results]) {
     assert(checks.every((check: any) => !Object.hasOwn(check, "answer_table_id")));
     assert(checks.flatMap((check: any) => check.rows).flatMap((row: any) => row.sources).every((source: any) => !Object.hasOwn(source, "table_id")));
   }
   assert.deepEqual(own.table_check_results, attributionTableChecks(traces.A, candidates.A.input_id, candidates.A.final_index));
-  assert.deepEqual(peer.table_check_results, attributionTableChecks(traces.B, candidates.B.input_id, candidates.B.final_index));
   assert.equal(own.table_check_results[0].answer_table_id, parseTraceTables(traces.A, candidates.A.input_id)[1].table_id);
   assert.deepEqual(inputs, before);
   const foreign = structuredClone(own.table_check_results);
-  foreign[0].answer_table_id = peer.table_check_results[0].answer_table_id;
+  foreign[0].answer_table_id = parseTraceTables(traces.B, candidates.B.input_id)[1].table_id;
   assert.throws(() => tableChecksPresentation(foreign, traces.A, candidates.A.input_id), /本方真实表格目录/);
 });

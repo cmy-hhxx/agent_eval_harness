@@ -23,7 +23,7 @@ const workerPattern = [
   "unsubmitted idle recovery",
 ].join("|");
 const fastFiles = [
-  "dist/packages/agents/src/attribution/contract.test.js",
+  "dist/packages/agents/src/attribution/responsibility.test.js",
   "dist/packages/agents/src/comparison/current-contract.test.js",
   "dist/packages/agents/src/clustering/profile.test.js",
   "dist/packages/contracts/src/evidence-selection.test.js",
@@ -35,15 +35,14 @@ const fastFiles = [
   "dist/packages/runtime/src/sdk-utils.test.js",
   "dist/packages/tools/src/evidence.test.js",
   "dist/packages/tools/src/required-reading.test.js",
-  "dist/packages/workflows/src/answer-review/resume.test.js",
   "dist/packages/workflows/src/comparison/attribution-contract.test.js",
+  "dist/packages/workflows/src/attribution/workflow.test.js",
   "dist/packages/workflows/src/comparison/optional-verification.test.js",
   "dist/packages/workflows/src/comparison/relative-preference.test.js",
   "dist/packages/workflows/src/comparison/simple-flow.test.js",
   "dist/packages/workflows/src/comparison/standalone-resumption.test.js",
   "dist/packages/workflows/src/review/public-trace.test.js",
   "dist/tests/architecture/dependencies.test.js",
-  "scripts/attribution-review-tree.test.mjs",
   "scripts/attribution-review-view.test.mjs",
   "scripts/benchmark.test.mjs",
   "data_service/dashboard.test.mjs",
@@ -70,7 +69,6 @@ const concurrency = Math.min(2, availableParallelism());
 const repositoryTests = [
   "scripts/attribution-review-tree.test.mjs",
   "scripts/attribution-review-view.test.mjs",
-  "scripts/attribution-review.test.mjs",
   "scripts/mongo-contracts.test.mjs",
   "scripts/benchmark.test.mjs",
   "scripts/publish.test.mjs",

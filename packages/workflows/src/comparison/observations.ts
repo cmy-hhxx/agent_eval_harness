@@ -1,4 +1,4 @@
-import { responsibilityLabels } from "@eval/agents/attribution";
+import { evidenceMessageIndex, sessionProblems, type SessionAttributionResult, type SessionProblem } from "@eval/agents/attribution";
 import { canonical } from "@eval/contracts";
 import type { PlannedTask, SubmissionReceipt } from "@eval/contracts";
 import {
@@ -8,7 +8,7 @@ import {
   type ClusteringObservation,
   type ClusteringObservationRef,
 } from "@eval/agents/clustering";
-import type { AttributionResult, ClusteringScope, TaskData } from "./types.js";
+import type { ClusteringScope, TaskData } from "./types.js";
 
 type AcceptedObservation = { evaluation?: unknown } & Partial<Pick<SubmissionReceipt, "submissionId" | "evaluatorVersion" | "taskId">>;
 type ReceiptLookup = (taskId: string) => AcceptedObservation | undefined;
@@ -17,7 +17,7 @@ export interface ProblemSource {
   input_id: string;
   case_id: string;
   source: { file: string; line: number };
-  Problem: AttributionResult["Problem"];
+  problems: SessionProblem[];
   batch_id?: string;
   attribution?: ClusteringObservationRef["attribution"];
 }
@@ -38,20 +38,17 @@ export function groupObservations(sources: ProblemSource[]): ClusteringObservati
     }
   >();
   for (const source of sources)
-    for (const finding of source.Problem) {
-      for (const component of responsibilityLabels(finding)) {
-        const key = canonical([normalizeLabel(component), normalizeLabel(finding.text), finding.reason]);
+    for (const finding of source.problems) {
+      const component = finding.component;
+      {
+        const key = canonical([normalizeLabel(component), normalizeLabel(finding.label), finding.definition]);
         const group = groups.get(key) ?? {
           component: component,
-          label: finding.text,
-          definition: "",
+          label: finding.label,
+          definition: finding.definition,
           entries: [],
         };
-        if (!group.definition && finding.reason.trim())
-          group.definition = finding.reason;
-        // The sample belongs to this answer. Peer facts stay in the full attribution;
-        // their physical coordinates must never be stored against the owner's input.
-        const evidence = finding.evidence.find(item => item.source === undefined && item.source_input_id === undefined);
+        const evidence = finding.evidence[0];
         if (!evidence) throw new Error(`问题样本缺少本方证据：${source.input_id}/${finding.problem_id}`);
         group.entries.push({
           ref: {
@@ -61,17 +58,15 @@ export function groupObservations(sources: ProblemSource[]): ClusteringObservati
             case_id: source.case_id,
             source: source.source,
             finding_id: finding.problem_id,
-            evidence_status: finding.evidence_status,
-            message_index: evidence.message_index,
+            evidence_status: "已确认",
+            message_index: evidenceMessageIndex(evidence.position) ?? 0,
             quote: evidence.quote,
           },
           example: {
-            finding: finding.text,
+            finding: finding.problem_phenomena,
             reason: finding.reason,
-            evidence_status: finding.evidence_status,
-            responsibilities: [finding,...finding.related_responsibilities??[]].filter(row=>row.component===component)
-              .map(row=>({component:row.component!,
-                attribution_reason:row.attribution_reason,...(row.uncertainties?{uncertainties:row.uncertainties}:{})})),
+            evidence_status: "已确认",
+            responsibilities: [{ component, attribution_reason: finding.reason }],
           },
         });
         groups.set(key, group);
@@ -122,7 +117,7 @@ function observationsFor(
         source: entry.source,
         ...(origin ? { attribution: { ...origin, task_id: accepted!.taskId!,
           submission_id: accepted!.submissionId!, evaluator_version: accepted!.evaluatorVersion! } } : {}),
-        Problem: ((accepted?.evaluation as AttributionResult | undefined)?.Problem) ?? [],
+        problems: accepted?.evaluation ? sessionProblems(accepted.evaluation as SessionAttributionResult) : [],
       };
     }),
   );

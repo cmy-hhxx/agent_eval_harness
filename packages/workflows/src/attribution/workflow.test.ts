@@ -86,6 +86,19 @@ test("only the session task exports one attribution row while component and trac
   assert.equal(plan.tasks.filter(task => task.stage !== "attribution-session").every(task => !state.receipts[task.id]!.exported), true);
 });
 
+test("trace and session tasks declare no worker sources and therefore pass source binding", async t => {
+  const f = await fixture(t);
+  const config = { ...f.config, workflow: "attribution", inputs: { ...f.config.inputs,
+    versions: f.config.inputs.versions.slice(0, 1) } } as AttributionConfig;
+  const plan = await planAttribution(config);
+  for (const task of plan.tasks.filter(task => task.stage === "attribution-trace" || task.stage === "attribution-session")) {
+    assert.deepEqual(task.inputIds, {});
+    const binding = bindAttribution(task, plan.inputs, {});
+    assert.deepEqual(binding.request.sources, {});
+    assert.equal(Object.entries(task.inputIds).every(([name, id]) => binding.request.sources[name]?.id === id), true);
+  }
+});
+
 test("component review resolves evidence into readable position, tool component and a short exact quote", async t => {
   const f = await fixture(t);
   const config = { ...f.config, workflow: "attribution", inputs: { ...f.config.inputs,

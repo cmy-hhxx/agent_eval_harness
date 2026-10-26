@@ -9,7 +9,7 @@ import { pendingTaskProgress } from "../review/task-progress.js";
 import { stageResult } from "./results.js";
 import { acceptedRewriteProjection } from "./rewrite-projection.js";
 import { supersededAttributionRewriteIds } from "./attribution-rewrite-planning.js";
-import type { AttributionResult, ComparisonResult, EvalConfig, TaskData } from "./types.js";
+import type { ComparisonResult, EvalConfig, SessionAttributionResult, TaskData } from "./types.js";
 
 export interface RepairSelection {
   taskIds?: string[];
@@ -299,25 +299,25 @@ export async function prepareAttributionRewrites(run: string, selection: Attribu
     const explicit = !!(selection.taskIds?.length || selection.resultIds?.length);
     for (const id of selection.taskIds ?? []) {
       const task = tasks.find(task => task.id === id), data = task?.data as TaskData | undefined;
-      if (task?.stage === "attribution") sources.add(id);
+      if (task?.stage === "attribution-session") sources.add(id);
       else if (task?.stage === "rewrite" && data?.rewriteOf?.stage === "attribution") sources.add(data.rewriteOf.taskId);
       else throw new Error("只能选择归因或归因改写任务：" + id);
     }
     for (const id of selection.resultIds ?? []) {
-      if (!tasks.some(task => task.stage === "attribution" && task.id === id)) throw new Error("未知归因结果：" + id);
+      if (!tasks.some(task => task.stage === "attribution-session" && task.id === id)) throw new Error("未知归因结果：" + id);
       sources.add(id);
     }
     const latest = new Map<string, PlannedTask>();
-    for (const task of tasks) if (task.stage === "attribution" && state.receipts[task.id]) {
+    for (const task of tasks) if (task.stage === "attribution-session" && state.receipts[task.id]) {
       if (!explicit && trialScope && !trialScope.has(task.id)) continue;
-      const inputId = (task.data as TaskData).candidates.A!.input_id, previous = latest.get(inputId);
+      const inputId = (task.data as TaskData).candidate!.input_id, previous = latest.get(inputId);
       if (!previous || state.receipts[previous.id]!.acceptedAt <= state.receipts[task.id]!.acceptedAt) latest.set(inputId, task);
     }
     const plans: { source: PlannedTask; rewrite?: PlannedTask; slots: string[] }[] = [];
     for (const source of explicit ? tasks.filter(task => sources.has(task.id)) : latest.values()) {
       const receipt = state.receipts[source.id];
       if (!receipt) throw new Error("归因尚未接受，先补跑失败任务：" + source.id);
-      const result = receipt.evaluation as AttributionResult, available = attributionSlots(result);
+      const result = receipt.evaluation as SessionAttributionResult, available = attributionSlots(result);
       for (const id of requested) if (!available.some(item => item.id === id)) throw new Error(`结果 ${source.id} 没有槽位 ${id}`);
       const filled = new Set(acceptedRewriteProjection(state, source.id)?.rewritten.rewrites.filter(item => item.text.trim()).map(item => item.id));
       const slots = available.filter(item => (!requested.size || requested.has(item.id)) &&
@@ -338,7 +338,7 @@ export async function prepareAttributionRewrites(run: string, selection: Attribu
     if (selection.apply && plans.length) {
       const ids: string[] = [];
       for (const [index, plan] of plans.entries()) {
-        const candidate = (plan.source.data as TaskData).candidates.A!, version = config.inputs.versions.find(item => item.id === candidate.version);
+        const candidate = (plan.source.data as TaskData).candidate!, version = config.inputs.versions.find(item => item.id === candidate.version);
         const rewrite = plan.rewrite ?? { id: randomUUID(), stage: "rewrite", inputIds: {}, dependencies: { source: plan.source.id },
           data: { stage: "rewrite", candidates: {}, reference: null, rewriteOf: { stage: "attribution", taskId: plan.source.id, resultId: plan.source.id },
             rewriteSlotIds: plan.slots, rewriteNames: { A: version?.display_name || version?.name || candidate.name },

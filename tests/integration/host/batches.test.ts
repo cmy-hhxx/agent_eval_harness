@@ -1,5 +1,4 @@
 import { randomUUID } from "node:crypto";
-import { canonicalEvidence } from "../../fixtures/evidence.js";
 import test from "node:test";
 import assert from "node:assert/strict";
 import { appendFile, readFile, rm } from "node:fs/promises";
@@ -11,6 +10,7 @@ import { reportRun } from "@eval/workflows/comparison";
 import { readRunState, writeRunState } from "@eval/workflows/comparison";
 import type { BatchPreflight, EvalConfig, TaskData } from "@eval/workflows/comparison";
 import type { RawInput } from "@eval/workflows/inputs";
+import { sessionProblems } from "@eval/agents/attribution";
 import { validateRun } from "../../fixtures/services.js";
 import { comparisonResult, criteriaResultForTask, emptyAudit, fakeEvaluatorVersion, fakeIdentity, fakeJudge, fixtureConfig, attributionResult, raw } from "../../fixtures/comparison.js";
 
@@ -21,8 +21,9 @@ function sample(batch: string, id = "q1", reference: unknown = null): RawInput {
 }
 function batchAttribution(inputId: string, correct = true, available = false) {
   const result = attributionResult(correct, "2+2=4", available, inputId);
-  for (const problem of result.Problem)
-    problem.evidence.push({ ...canonicalEvidence(inputId, 0, "计算2+2"), purposes: ["问题"] });
+  for (const problem of sessionProblems(result))
+    problem.evidence.push({ position: "trace_index 0 / message_index 0 / path /content", component: "question: 用户输入",
+      quote: "计算2+2", reason: "问题来源。" });
   return result;
 }
 function runState(config: EvalConfig, plan: TaskPlan): RunState {

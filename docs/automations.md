@@ -2,19 +2,19 @@
 
 [返回首页](../README.md) · [部署](deployment.md) · [远程接口](handoff.md) · [运行与恢复](usage.md#运行与恢复)
 
-工作台自动化服务由 `workbench.sh` 启动，默认等待手动运行。首页并列问财日常四路与 AIME 日常全量，独立控制、可同时运行。
+工作台自动化服务由 `workbench.sh` 启动，默认等待手动运行。首页并列问财日常四路与 AIME 日常全量。来源配置和 ID 分别加载、分别显示错误；某个来源不可用不会阻止工作台、数据服务、运行实例或其他来源启动。
 
-问财使用持续比较流水线：自动清洗目录包、安装输入、执行标准／归因／比较／改写，正式结果独立增量交付 MongoDB。AIME 使用[两阶段增量入口](aime-incremental.md)，执行 Score 与 Attribution，只保存正式文件和页面结果。两者默认全量，统计日志生成与上报关闭，聚类另行手动启动。
+问财使用持续比较流水线：自动清洗目录包、安装输入、执行标准／归因／比较／改写，正式结果独立增量交付 MongoDB。AIME 当前登记为 `attribution` workflow；automation 尚未支持该来源，页面把 AIME 标记为不可用，其他来源继续运行。AIME 归因通过 CLI 执行，见 [AIME 日常评测](aime-incremental.md)。
 
 ## 来源清单
 
-`configs/automations.manifest.json` 是生产来源清单。来源配置相对 `workbench.json` 的 `runtime.configDirectory` 解析。当前登记问财 `comparison` 与 AIME `answer-review`，两者分别组装自己的执行器与正式状态读取器。
+`configs/automations.manifest.json` 是生产来源清单。来源配置相对 `workbench.json` 的 `runtime.configDirectory` 解析。当前登记问财 `comparison` 与 AIME `attribution`。`answer-review` 已移除，不再作为清单取值、别名或兼容入口。
 
 增加来源只修改外部自动化配置并登记清单，然后重启工作台；`workbench.sh` 和调度实现不保存来源名称列表。显式 `--config` 只用于开发、测试或单来源 CLI；生产不传 `--config`。
 
 日常评测在手动运行后自动清洗并持续评测；专项任务独立导入、核对后再按需执行。后训练专项在数据与任务区选择批次清洗，操作见[数据服务](../data_service/README.md)。来源范围、模型、推理档位、并发和交付开关以[专项来源配置](../configs/automations-post-training.json)及其 `hostConfigs` 为准，不登记到日常清单。单独启动时，将工作台的 `runtime.manifest` 指向 checkout 外仅登记该专项的清单；看板按独立任务显示进度，点击该来源「运行」后才执行。
 
-Comparison 自动化来源必须显式配置 `publishMongo`。问财日常为 `true`；后训练专项为 `false`，输入校验和本地评测不依赖 MongoDB，结果与恢复状态仍正常落盘，监控显示“本地保存”。关闭时不执行输入上传、增量结果上传或日期交付，也不要求 MongoDB 凭据；预测替换任务必须启用该项。此开关与 `publishStatisticsLog` 独立，开启交付时仍严格报错，不因权限或连接失败自动切换为本地模式。AIME 使用独立执行器，只落盘正式结果，不走 MongoDB 交付。
+Comparison 自动化来源必须显式配置 `publishMongo`。问财日常为 `true`；后训练专项为 `false`，输入校验和本地评测不依赖 MongoDB，结果与恢复状态仍正常落盘，监控显示“本地保存”。关闭时不执行输入上传、增量结果上传或日期交付，也不要求 MongoDB 凭据；预测替换任务必须启用该项。此开关与 `publishStatisticsLog` 独立，开启交付时仍严格报错，不因权限或连接失败自动切换为本地模式。
 
 工作台配置通过环境变量传入：
 
@@ -36,13 +36,13 @@ npm run automations -- run --once
 npm run automations -- serve --port 4174
 ```
 
-生产由工作台向 `serve` 传入清单与外部配置目录。`serve` 只读历史状态并提供看板；点击「运行」才启动选定来源，其他来源保持待运行。点击「停止」会中断当前流水线并等待 Host 保存进度，停止中禁止再次运行；已接受结果保留。服务启动、崩溃重启和页面刷新均不会隐式启动来源；已手动运行的来源可在页面关闭后继续，重开页面会读取其状态。空闲页面不持续轮询运行状态，运行或停止中每 5 秒更新，空闲时可点击「刷新」。`check` 只读，不下载、不调用模型、不交付。显式 CLI `run` 直接执行，`run --once` 执行每个来源的一轮可执行工作。看板按来源显示状态和并发；并发设置为 0 时只暂停该来源的新模型请求，使用中请求、工具、下载、校验、Mongo 和统计生成继续执行。
+生产由工作台向 `serve` 传入清单与外部配置目录。`serve` 逐来源加载配置并只读历史状态；单个来源的 workflow、Host 配置或状态错误只标记该来源，`/api/status` 与页面返回可读错误，其他来源和 HTTP 服务继续启动。点击「运行」才启动选定来源，其他来源保持待运行。点击「停止」会中断当前流水线并等待 Host 保存进度，停止中禁止再次运行；已接受结果保留。服务启动、崩溃重启和页面刷新均不会隐式启动来源；已手动运行的来源可在页面关闭后继续，重开页面会读取其状态。空闲页面不持续轮询运行状态，运行或停止中每 5 秒更新，空闲时可点击「刷新」。`check` 只读，不下载、不调用模型、不交付。显式 CLI `run` 直接执行，`run --once` 执行每个来源的一轮可执行工作。看板按来源显示状态和并发；并发设置为 0 时只暂停该来源的新模型请求，使用中请求、工具、下载、校验、Mongo 和统计生成继续执行。
 
 同一任务 ID、状态目录、输入目录或 run 前缀不能被多个来源共享；独立实验使用新的 `id`、`stateDirectory`、`sourceDirectory` 和 `runPrefix`。问财日常配置使用空 `runPrefix`，使 run ID 直接等于业务日期；同一日期续跑沿用该 run。专项实验仍使用非空前缀区分运行。
 
 ## 数据链路
 
-1. 数据服务检测登记任务的新包并等待稳定；运行中的问财来源自动清洗待处理包，AIME 使用专用增量清洗器。专项仍支持手动清洗。
+1. 数据服务检测登记任务的新包并等待稳定；运行中的问财来源自动清洗待处理包。专项仍支持手动清洗。AIME 在 automation 接管 `attribution` workflow 前只保留来源错误状态，不使用旧 `answer-review` 路径。
 2. 手动点击来源「运行」后，流水线轮询 `http://127.0.0.1:8081/data/wencai/dashboard-data`。
 3. 对已就绪日期流式安装各模型 JSONL，校验 `Content-Length`、JSONL 和实际行数；安装不依赖 MongoDB。
 4. 完整输入提升为可恢复快照；旧输入的评测与 Mongo 交付结束前不替换。

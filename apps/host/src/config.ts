@@ -1,5 +1,4 @@
 import type { EvaluationConfig } from "@eval/workflows/inputs";
-import type { AnswerReviewConfig } from "@eval/workflows/answer-review";
 import type { AttributionConfig } from "@eval/workflows/attribution";
 import path from "node:path";
 import { DEFAULT_POLICY, type OutputTarget, type ProblemLibraryTarget } from "@eval/contracts";
@@ -11,6 +10,7 @@ import { inputAdapterIds } from "@eval/workflows/inputs";
 import {
   THINKING_LEVELS,
   DEFAULT_THINKING,
+  assertDeclaredModel,
   type ModelCatalog,
   type ModelProfile,
   type StageBinding,
@@ -51,11 +51,9 @@ interface HostConfiguration {
 
 export type HostConfig = HostConfiguration & (
   | { workflow: "comparison"; evaluation: EvalConfig }
-  | { workflow: "answer-review"; evaluation: AnswerReviewConfig }
   | { workflow: "attribution"; evaluation: AttributionConfig }
 );
 export type ComparisonHostConfig = Extract<HostConfig, { workflow: "comparison" }>;
-export type AnswerReviewHostConfig = Extract<HostConfig, { workflow: "answer-review" }>;
 export type AttributionHostConfig = Extract<HostConfig, { workflow: "attribution" }>;
 
 function isObject(value: unknown): value is ConfigObject {
@@ -154,7 +152,7 @@ function buildEvaluationBase(source: ConfigObject): EvaluationConfig {
     if (new Set(coordinates).size !== coordinates.length) throw new Error("Duplicate cleaning coordinates");
   }
   const versions = config.inputs?.versions;
-  if (!Array.isArray(versions) || versions.length < (config.inputs.workbench || source.workflow === "answer-review" ? 1 : 2)) throw new Error("至少配置两个输入版本");
+  if (!Array.isArray(versions) || versions.length < (config.inputs.workbench ? 1 : 2)) throw new Error("至少配置两个输入版本");
   for (const item of versions) {
     if (!/^[a-z0-9][a-z0-9_.-]{0,180}$/.test(item.id) || item.id.includes("..") || !inputAdapterIds.includes(item.adapter))
       throw new Error("Invalid input version");
@@ -202,10 +200,7 @@ function buildEvaluationBase(source: ConfigObject): EvaluationConfig {
   return config;
 }
 
-type WorkflowEvaluation = EvalConfig | AnswerReviewConfig | AttributionConfig;
-function isAnswerReviewEvaluation(config: WorkflowEvaluation): config is AnswerReviewConfig {
-  return "workflow" in config && config.workflow === "answer-review";
-}
+type WorkflowEvaluation = EvalConfig | AttributionConfig;
 function isAttributionEvaluation(config: WorkflowEvaluation): config is AttributionConfig {
   return "workflow" in config && config.workflow === "attribution";
 }
@@ -325,11 +320,13 @@ function buildModels(source: ConfigObject, configuration: ApplicationSettings): 
     const channel = channelId ? configuration.channels[channelId] : undefined;
     if (!channel) throw new Error(`Unknown models.${name}.channel in config.ini`);
     if (channel.api !== "openai-responses") throw new Error(`Evaluation channel "${channelId}" requires openai-responses`);
-    models[name] = {
+    const profile = {
       ...channel,
       model: optionalString(value.model, `models.${name}.model`) ?? channel.model,
       thinking: optionalThinking(value.thinking, `models.${name}.thinking`) ?? channel.thinking,
     };
+    if (profile.model) assertDeclaredModel(profile, profile.model);
+    models[name] = profile;
   }
   const bindings: Record<string, StageBinding> = {};
   for (const [stage, value] of Object.entries(rawBindings)) {
@@ -342,10 +339,15 @@ function buildModels(source: ConfigObject, configuration: ApplicationSettings): 
     if (channel && !configuration.channels[channel]) throw new Error(`Unknown bindings.${stage}.channel in config.ini`);
     if (channel && configuration.channels[channel].api !== "openai-responses")
       throw new Error(`Evaluation channel "${channel}" requires openai-responses`);
+    const model = optionalString(value.model, `bindings.${stage}.model`);
+    const routed = channel ? { ...models[value.profile], provider: channel,
+      models: configuration.channels[channel].models } : models[value.profile];
+    const effectiveModel = model ?? routed.model;
+    if (effectiveModel) assertDeclaredModel(routed, effectiveModel);
     bindings[stage] = {
       ...(channel ? { channel } : {}),
       profile: value.profile,
-      model: optionalString(value.model, `bindings.${stage}.model`),
+      model,
       thinking: optionalThinking(value.thinking, `bindings.${stage}.thinking`),
     };
   }
@@ -457,7 +459,7 @@ async function mergedSource(
 
 /** Narrows an evaluation to the selected models; configured groups keep their remaining members. */
 function selectVersions(evaluation: WorkflowEvaluation, ids: string[]): WorkflowEvaluation {
-  const independent = isAnswerReviewEvaluation(evaluation) || isAttributionEvaluation(evaluation);
+  const independent = isAttributionEvaluation(evaluation);
   if (ids.length < (independent ? 1 : 2))
     throw new Error(independent ? "至少选择一个模型" : "至少选择两个模型");
   const versions = evaluation.inputs.versions.filter((version) => ids.includes(version.id));
@@ -474,7 +476,7 @@ export async function loadComparisonEvaluation(sources: string | string[], setti
   readEvaluatorVersion(source);
   const evaluation = buildEvaluation(source);
   const selected = versions ? selectVersions(evaluation, versions) : evaluation;
-  if (isAnswerReviewEvaluation(selected) || isAttributionEvaluation(selected)) throw new Error("此入口需要对战工作流配置");
+  if (isAttributionEvaluation(selected)) throw new Error("此入口需要对战工作流配置");
   return selected;
 }
 
@@ -491,7 +493,6 @@ export async function loadConfig(
   const evaluation = versions ? selectVersions(base, versions) : base;
   const common = { evaluatorVersion, models, automation: configuration.automation };
   if (isAttributionEvaluation(evaluation)) return { ...common, workflow: "attribution", evaluation };
-  if (isAnswerReviewEvaluation(evaluation)) throw new Error("answer-review 已移除，请使用 attribution 或 comparison workflow");
   if ([evaluation.rewrite.comparison, evaluation.rewrite.attribution, evaluation.rewrite.clustering].some(Boolean) && !models.bindings.rewrite)
     throw new Error("rewrite 已启用但缺少 bindings.rewrite");
   if (evaluation.clustering.enabled && !models.bindings.clustering)

@@ -8,6 +8,7 @@ import { adapt, candidateKey, inputSources } from "../inputs/records.js";
 import { bindTask } from "./binding.js";
 import { advanceReview, configureStandardReview } from "./review.js";
 import { attributionRewritePlaceholder, reconcileAttributionRewriteGroups } from "./attribution-rewrite-planning.js";
+import { planAttributionUnit } from "@eval/workflows/attribution";
 import type { Candidate, RawInput, VersionConfig } from "../inputs/types.js";
 import type { EvalConfig, TaskData } from "./types.js";
 
@@ -156,12 +157,11 @@ export async function prepareAttributionJob(
         data: { stage: "criteria", candidates, reference, criteriaScope } satisfies TaskData };
       tasks.push(criteria);
       for (const candidate of scope) {
-        const attribution: PlannedTask = { id: randomUUID(), stage: "attribution", dependencies: { criteria: criteria.id }, inputIds: { answer: candidate.input_id },
-          data: { stage: "attribution", candidates: { A: candidate }, reference, criteriaScope,
+        const unit = planAttributionUnit(candidate, { data: { stage: "attribution-component", candidates: { A: candidate }, reference, criteriaScope,
             standardAnswerReview: config.standardAnswerReview === true,
-            initialContextChars: config.execution.initialContextChars } satisfies TaskData };
-        tasks.push(attribution); answerTasks.push({ candidate, task: attribution, standard: reference !== null });
-        if (config.rewrite.attribution) tasks.push(attributionRewritePlaceholder(attribution.id, {
+            initialContextChars: config.execution.initialContextChars }, dependencies: { criteria: criteria.id }, identity: criteria.id });
+        tasks.push(...unit.tasks); answerTasks.push({ candidate, task: unit.session, standard: reference !== null });
+        if (config.rewrite.attribution) tasks.push(attributionRewritePlaceholder(unit.session.id, {
           rewriteNames: { A: candidate.name }, case: { batch_id: candidate.batch_id, case_id: candidate.case_id, question: candidate.question },
         }));
       }

@@ -1,10 +1,9 @@
-import { modelMaterial, bindAttributionMaterial } from "../review/attribution.js";
+import { modelMaterial } from "../review/attribution.js";
 import { isToolSpan } from "../inputs/adapters.js";
 import { isDeepStrictEqual } from "node:util";
 import { workflowText } from "@eval/prompts";
 import { canonical, presentSource, type AgentBinding, type PlannedTask, type SubmissionReceipt, type TaskAnalysis } from "@eval/contracts";
-import { cite, originalUserTimestamp, evidenceSources, messageContentSources, instructionSources, normativeSources } from "@eval/tools";
-import { acceptedAttributionView } from "./accepted-attribution.js";
+import { cite, evidenceSources, messageContentSources, instructionSources, normativeSources } from "@eval/tools";
 import { projectComparisonEvidence } from "../review/evidence-presentation.js";
 import { contentText } from "../inputs/records.js";
 import { sessionComparisonInput, sessionQas } from "../inputs/session.js";
@@ -16,19 +15,18 @@ import { sourceSlots } from "./commentary.js";
 import { taskObservations, requestItems } from "./observations.js";
 import { normalizeLabel } from "@eval/agents/clustering";
 import { blindMaterials } from "./blind.js";
-import { attributionTableChecks, attributionTableReview } from "@eval/agents/attribution";
+import type { SessionAttributionResult } from "@eval/agents/attribution";
 import { originalAnswerUsage } from "./experience.js";
 import { traceCatalog } from "../review/catalog.js";
 import { citationInventory } from "../review/citations.js";
 import { criterionInstructionSources } from "../review/instruction-bindings.js";
 import { bindRewriteItems } from "./rewrite-presentation.js";
 import { comparisonScope, comparisonSlotChoices } from "@eval/agents/comparison";
-import { comparisonSourceReview } from "./source-review.js";
 import { taskAnalysisPresentation, taskFocus } from "../review/task-focus.js";
 import { verificationPresentation, verificationInspectionPresentation } from "./verification-presentation.js";
 import { getAnswerGeneration } from "../review/answer-generation.js";
 import { comparisonAttribution } from "./comparison-attribution.js";
-import type { AttributionResult } from "@eval/agents/attribution";
+import { bindAttribution } from "@eval/workflows/attribution";
 
 export function bindTask(
   task: PlannedTask,
@@ -36,6 +34,7 @@ export function bindTask(
   dependencies: Record<string, SubmissionReceipt | undefined>,
   context: { tasks: readonly PlannedTask[] },
 ): AgentBinding {
+  if (task.stage.startsWith("attribution-")) return bindAttribution(task, inputs, dependencies);
   return bindSourceTask(task, inputs, dependencies, context);
 }
 
@@ -158,60 +157,16 @@ function bindSourceTask(
   }
   if (data.stage === "comparison" && (data.group?.length ?? 0) < 2)
     throw new Error("对比组至少需要两个候选");
-  const attribution = data.stage === "attribution";
   const criteria = dependencies.criteria;
-  if (!acceptedAnalysis && !attribution && (!criteria || criteria.taskId !== task.dependencies.criteria || criteria.status !== "succeeded"))
+  if (!acceptedAnalysis && (!criteria || criteria.taskId !== task.dependencies.criteria || criteria.status !== "succeeded"))
     throw new Error("缺少已接受的共同验收基准");
   const criteriaTask = task.dependencies.criteria
     ? context.tasks.find(item => item.id === task.dependencies.criteria && item.stage === "criteria") : undefined;
-  if (!attribution && !criteriaTask) throw new Error("缺少共同验收基准的任务上下文");
-  const blind = criteriaTask ? blindMaterials((criteriaTask.data as TaskData).candidates)
-    : attribution ? blindMaterials(data.candidates) : undefined;
+  if (!criteriaTask) throw new Error("缺少共同验收基准的任务上下文");
+  const blind = criteriaTask ? blindMaterials((criteriaTask.data as TaskData).candidates) : undefined;
   const reference = structuredClone(data.reference);
   const task_analysis = acceptedAnalysis ? structuredClone(acceptedAnalysis)
     : criteriaTask && criteria ? structuredClone(criteria.evaluation) : undefined;
-  if (attribution) for (const [key, peer] of Object.entries(data.referenceCandidates ?? {})) {
-    const own = data.candidates.A;
-    const registered = context.tasks.flatMap(item => Object.values((item.data as TaskData).candidates))
-      .find(candidate => candidate.input_id === peer.input_id);
-    if (key === "answer" || task.inputIds[key] !== peer.input_id || !registered || !isDeepStrictEqual(registered, peer) ||
-      own.batch_id !== peer.batch_id || own.case_id !== peer.case_id || own.question.replace(/\s+/gu, "") !== peer.question.replace(/\s+/gu, "") ||
-      !inputs[peer.input_id] || !data.reviewOf || !context.tasks.some(item => item.stage === "comparison" &&
-        Object.values(item.inputIds).includes(own.input_id) && Object.values(item.inputIds).includes(peer.input_id) &&
-        Object.values(item.dependencies).some(id => id === task.id || id === data.reviewOf!.taskId)))
-      throw new Error("事实复核来源与登记的同题材料不一致：" + key);
-  }
-  if (attribution) {
-    const binding = bindAttributionMaterial(data.candidates.A, inputs[data.candidates.A.input_id] as RawInput,
-      task_analysis as TaskAnalysis | undefined, { reference, initialContextChars: data.initialContextChars });
-    const reviewReasons = [...(data.reviewOf?.reasons ?? []), ...(data.reviewQuestions ?? [])];
-    const additions = { allow_standard_conflict: data.standardAnswerReview === true,
-      ...(reviewReasons.length ? { review_context: { reasons: reviewReasons } } : {}) };
-    Object.assign(binding.request.input, additions); Object.assign(binding.modelInput!, additions);
-    if(reviewReasons.length)binding.modelInput!.review_context={reasons:reviewReasons,kind:"unverified_concerns"};
-    if(data.prediction)binding.modelInput!.prediction_evaluation=workflowText("prediction-evaluation");
-    if (Object.keys(data.referenceCandidates ?? {}).length) {
-      const registered: Record<string, unknown> = {}, shown: Record<string, unknown> = {};
-      for (const [key, candidate] of Object.entries(data.referenceCandidates!)) {
-        const peer = bindAttributionMaterial(candidate, inputs[candidate.input_id] as RawInput, task_analysis as TaskAnalysis, { reference });
-        const raw = peer.request.sources.answer.value as RawInput;
-        binding.request.sources[key] = peer.request.sources.answer;
-        const { component_catalog: _actors, norm_directory: _norms, ...peerAnswer } = peer.request.input.answer as Record<string, unknown>;
-        const { component_catalog: _shownActors, norm_directory: _shownNorms, ...peerShown } = peer.modelInput!.answer as Record<string, unknown>;
-        registered[key] = { ...peerAnswer, grader_only: true, source_input_id: candidate.input_id,
-          original_user_timestamp: originalUserTimestamp(raw) };
-        shown[key] = { ...peerShown, grader_only: true, source_input_id: candidate.input_id,
-          original_user_timestamp: originalUserTimestamp(raw) };
-      }
-      binding.request.input.reference_materials = registered;
-      binding.modelInput!.reference_materials = shown;
-    }
-    if (blind) {
-      for (const source of Object.values(binding.request.sources)) source.presentation = blind.presentation;
-      binding.modelInput = presentSource(binding.modelInput, blind.presentation);
-    }
-    return binding;
-  }
   const sources = Object.fromEntries(
     Object.entries(task.inputIds).map(([label, id]) => [label, {
       id,
@@ -310,33 +265,15 @@ function bindSourceTask(
     Object.entries(dependencies)
       .filter(([label, r]) => Object.hasOwn(data.candidates, label) && r?.taskId === task.dependencies[label] && r?.status === "succeeded")
       .map(([label, r]) => {
-        const sourceTask = context.tasks.find(source => source.id === r!.taskId && source.stage === "attribution");
-        let sourceRequest: AgentBinding["request"] = { sources: { answer: sources[label] }, input: {} };
-        if (sourceTask) {
-          sourceRequest = bindAcceptedAttribution(sourceTask, r!, inputs, context, task_analysis as TaskAnalysis).request;
-        } else if (r!.submitted !== undefined && Array.isArray(r!.audit.evidenceBank)) {
-          throw new Error("缺少已接受归因的原任务上下文，不能重建程序证据来源：" + r!.taskId);
-        }
-        const result = (r!.evaluation as {session_meta?:unknown}).session_meta !== undefined
-          ? r!.evaluation as import("@eval/agents/attribution").SessionAttributionResult
-          : acceptedAttributionView(r!, sourceRequest);
+        const sourceTask = context.tasks.find(source => source.id === r!.taskId && source.stage === "attribution-session");
+        if (!sourceTask || (r!.evaluation as { session_meta?: unknown }).session_meta === undefined)
+          throw new Error("Comparison 缺少 canonical attribution-session 来源：" + r!.taskId);
+        const result = r!.evaluation as SessionAttributionResult;
         return [label, result];
       }),
   );
-  const tableReviews = Object.fromEntries(Object.entries(data.candidates).flatMap(([label, candidate]) => {
-    const receipt = dependencies[label];
-    if (!receipt) return [];
-    if ((receipt.evaluation as {session_meta?:unknown}).session_meta !== undefined) return [];
-    const review = attributionTableReview({ input: { answer: { final_message_index: candidate.final_index,
-      table_check_results: attributionTableChecks(inputs[candidate.input_id] as RawInput, candidate.input_id, candidate.final_index) } },
-      sources: { answer: { id: candidate.input_id, value: inputs[candidate.input_id] } } },
-    acceptedAttributions[label] as AttributionResult);
-    return [[label, review]];
-  }));
   const attributions = Object.fromEntries(Object.entries(acceptedAttributions).map(([label, result]) =>
     [label, comparisonAttribution(result)]));
-  const sourceReview = comparisonSourceReview({ sources,
-    input: { task_analysis, candidates: materials, attributions } }, tableReviews);
   let comparisonDraft: ComparisonResult | undefined;
   if (data.verificationAudit) {
     const draftTask = context.tasks.find(item => item.id === data.verificationOf!.taskId);
@@ -350,7 +287,8 @@ function bindSourceTask(
       throw new Error("可选核验缺少匹配的已接受正式对比：" + data.verificationOf!.taskId);
     comparisonDraft = structuredClone(draft?.evaluation as ComparisonResult);
   }
-  const input = { task_analysis, ground_truth: { available: data.reference !== null, value: reference }, candidates: materials, ...(comparisonDraft ? { comparison_draft: comparisonDraft } : {}), attributions, source_review: sourceReview };
+  const input = { task_analysis, ground_truth: { available: data.reference !== null, value: reference }, candidates: materials,
+    ...(comparisonDraft ? { comparison_draft: comparisonDraft } : {}), attributions };
   const binding: AgentBinding = {
     agent: "comparison",
     profile: data.verificationAudit ? "verification" : "default",

@@ -1,7 +1,6 @@
 import { canonical, parseEvidenceCoordinates, type AgentRequest, type ValidationIssue } from "@eval/contracts";
 import { attributionTaxonomy, type AttributionComponent } from "@eval/prompts";
 import { traceComponentIdentities, type TraceComponentIdentity } from '@eval/tools';
-import type { Evidence, ProblemProposal } from "./types.js";
 import type { AttributionTransition } from "./transitions.js";
 
 /** Workflow supplies the directory; no taxonomy labels or raw call IDs become actors. */
@@ -20,9 +19,6 @@ export function componentCatalogIssues(request: AgentRequest): ValidationIssue[]
   const answer = request.input.answer as { final_message_index: number };
   return canonical(responsibilityIdentities(request)) === canonical(traceComponentIdentities(raw, request.sources.answer.id, answer.final_message_index)) ? [] :
     [{ category: 'evidence', code: 'component_catalog', path: '/answer/component_catalog', message: '主体目录必须对应真实调用及坐标。' }];
-}
-export function responsibilityLabels(problem: Pick<ProblemProposal, 'component' | 'related_responsibilities'>): string[] {
-  return [...new Set([problem.component,...(problem.related_responsibilities??[]).map(row=>row.component)].filter(name=>name!==UNKNOWN_COMPONENT))];
 }
 export const UNKNOWN_COMPONENT = '责任主体未确定';
 export interface ResponsibilityMaterial {
@@ -45,6 +41,8 @@ const componentAliases: Record<string,string> = {
 /** Map metadata tool/skill text to the stable taxonomy component display. */
 export function attributionComponentLabel(name: string): string {
   const value=name.trim();
+  const direct=component(value);
+  if(direct)return direct.label;
   const matching=Object.values(COMPONENTS).find(component=>component.label===value);
   if(matching)return matching.label;
   const code=componentAliases[value.toLowerCase()];
@@ -144,26 +142,4 @@ export function selectableTransitions(request: AgentRequest): AttributionTransit
   const raw = request.sources.answer.value as { messages: Record<string, unknown>[] };
   return answer.transitions.filter(t => t.execution_node_index !== null ||
     t.kind === "transfer" && transferChanged(answer, raw, t));
-}
-
-export function responsibilityIssues(request:AgentRequest,problem:unknown,_selected:readonly (Evidence|undefined)[],path:string):ValidationIssue[]{
-  const value=problem as ProblemProposal,issues:ValidationIssue[]=[];
-  const choices=new Set([UNKNOWN_COMPONENT,...selectableTransitions(request).map(t=>responsibilityDisplay(request,t.transition_index).component)]);
-  for(const [i,r] of [value,...value.related_responsibilities??[]].entries()){
-    const at=i?path+'/related_responsibilities/'+(i-1):path;
-    if(!choices.has(r.component))issues.push({category:'decision',code:'responsibility_actor',path:at,message:'组件名称由本任务真实调用职责生成。'});
-    if((r.component===UNKNOWN_COMPONENT||(!i&&value.evidence_status==='待核实'))&&!r.uncertainties?.some(text=>text.trim()))
-      issues.push({category:'decision',code:'responsibility_unresolved_required',path:at+'/uncertainties',message:'责任未定位或缺陷待核实时须说明真实断点；没有隐藏推理不等于调用未知。'});
-  }
-  const answer=request.input.answer as unknown as ResponsibilityMaterial;
-  for(const [i,item] of (value.responsibility_chain??[]).entries()){
-    const at=path+'/responsibility_chain/'+i;
-    const captured=item.component===null?item.message_index===null&&['input','transfer'].includes(item.stage):
-      answer.transitions.some(t=>t.kind===item.stage&&responsibilityDisplay(request,t.transition_index).component===item.component&&
-        (t.execution_node_index===null?item.message_index===null:
-          answer.execution_nodes.some(n=>n.execution_node_index===t.execution_node_index&&n.message_index===item.message_index)));
-    if(!captured||item.role==='primary'&&item.component!==value.component||item.role==='related'&&!value.related_responsibilities?.some(r=>r.component===item.component))
-      issues.push({category:'evidence',code:'responsibility_chain_identity',path:at,message:'责任链的调用身份和责任角色由程序解析，不能编造组件或把输入状态当作责任。'});
-  }
-  return issues;
 }

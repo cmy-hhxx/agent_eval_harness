@@ -1,10 +1,7 @@
 {
-  "workflow": "answer-review",
-  "rewrite": {
-    "attribution": false
-  },
+  "workflow": "attribution",
   "bindings": {
-    "score": {
+    "attribution": {
       "profile": "judge"
     }
   },

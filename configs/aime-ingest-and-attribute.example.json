@@ -7,7 +7,7 @@
   "settingsFile": "/mnt/aigc_team/user_workspace/chenmingyang/eval_harness/runtime/config/post-training.ini",
   "hostConfigs": [
     "host.json",
-    "answer-review.json",
+    "attribution.json",
     "/mnt/aigc_team/user_workspace/chenmingyang/eval_harness/runtime/config/aime-attribution-current.json"
   ],
   "logDirectory": "/mnt/aigc_team/user_workspace/chenmingyang/eval_harness/runtime/log",

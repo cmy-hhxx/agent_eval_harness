@@ -1,10 +1,10 @@
 import { comparisonProfile } from "@eval/agents/comparison";
-import { attributionProfile } from "@eval/agents/attribution";
 import { object, type JsonSchema } from "@eval/contracts";
 import template from "../../../../schemas/workflow/export.schema.json" with { type: "json" };
 import clusteringResult from "../../../../schemas/clustering/result.schema.json" with { type: "json" };
 import clusteringTemplate from "../../../../schemas/workflow/clustering.schema.json" with { type: "json" };
 import rewritten from "../../../../schemas/workflow/rewritten.schema.json" with { type: "json" };
+import { sessionAttributionResultSchema } from "@eval/agents/attribution";
 // Only export-specific identity, display and trace annotations belong to Workflow.
 export const rewrittenSchema: JsonSchema = rewritten;
 export const clusteringSchema: JsonSchema = {
@@ -28,7 +28,7 @@ export const outputSchema: JsonSchema = {
   $defs: {
     ...template.$defs,
     criterion: object(comparisonProfile.resultSchema!.$defs).criterion,
-    evaluation: structuredClone(attributionProfile.resultSchema!),
+    evaluation: structuredClone(sessionAttributionResultSchema),
     task_analysis: comparison.task_analysis,
     decision_basis: comparison.decision_basis,
   },

@@ -1,7 +1,7 @@
 import type { JsonObject, PlannedTask } from "@eval/contracts";
 import type { ClusteringResult } from "@eval/agents/clustering";
 import type { RewriteItem, Rewrites } from "@eval/agents/rewrite";
-import type { AttributionResult, ComparisonResult, TaskData } from "./types.js";
+import type { ComparisonResult, SessionAttributionResult, SessionProblem, TaskData } from "./types.js";
 import { decideVerdict, tierOf, verdictReason } from "./verdicts.js";
 
 /** Accepted rewrites addressed by source task; report rendering only reads from it. */
@@ -12,20 +12,33 @@ export interface CommentaryLookup {
 export function verdictSlotId(first: string, second: string): string {
   return `verdict.${[first, second].sort().join("__vs__")}.reason`;
 }
-export function attributionSlots(result:AttributionResult):RewriteItem[]{
- return [{id:'summary',label:'回答结论',text:result.summary},
-  ...(result.correct_reason?[{id:'correct_reason',label:'标准答案核对理由',text:result.correct_reason}]:[]),
-  ...result.Problem.flatMap((item,index)=>(['text','reason'] as const).map(field=>({
-   id:`Problem.${index}.${field}`,label:`问题 ${index+1} · ${field==='text'?'描述':'理由'}`,text:item[field],
-  })))];
+function problemSlots(prefix: string, label: string, problems: SessionProblem[]): RewriteItem[] {
+  return problems.flatMap((item, index) => ([
+    { id: `${prefix}.${index}.problem_phenomena`, label: `${label} ${index + 1} · 现象`, text: item.problem_phenomena },
+    { id: `${prefix}.${index}.reason`, label: `${label} ${index + 1} · 理由`, text: item.reason },
+    ...(item.calculations ?? []).map((calculation, calculationIndex) => ({
+      id: `${prefix}.${index}.calculations.${calculationIndex}.text`, label: `${label} ${index + 1} · 计算说明`, text: calculation.text,
+    })),
+  ]));
+}
+export function attributionSlots(result: SessionAttributionResult): RewriteItem[] {
+  return [
+    { id: "session_summary", label: "整场归因总结", text: result.session_summary },
+    ...result.turns.flatMap((turn, index) => [
+      { id: `turns.${index}.summary`, label: `第 ${index + 1} 轮 · 总结`, text: turn.summary },
+      ...(turn.correct_reason ? [{ id: `turns.${index}.correct_reason`, label: `第 ${index + 1} 轮 · 标准答案核对理由`, text: turn.correct_reason }] : []),
+      ...problemSlots(`turns.${index}.problem`, `第 ${index + 1} 轮问题`, turn.problem),
+    ]),
+    ...problemSlots("session_problem", "整场问题", result.session_problem),
+  ];
 }
 /** Keep each semantic unit together; unrelated findings never share a positional chain. */
-export function attributionRewriteGroups(result: AttributionResult, slotIds?: readonly string[]): string[][] {
+export function attributionRewriteGroups(result: SessionAttributionResult, slotIds?: readonly string[]): string[][] {
   const selected = slotIds && new Set(slotIds), groups = new Map<string, string[]>();
   for (const item of attributionSlots(result)) {
     if (selected && !selected.has(item.id)) continue;
-    const key = /^Problem\.\d+\./u.exec(item.id)?.[0] ??
-      "overview";
+    const key = /^(?:turns\.\d+|session_problem)\.\d+\./u.exec(item.id)?.[0]
+      ?? /^turns\.\d+\./u.exec(item.id)?.[0] ?? "session";
     const group = groups.get(key) ?? [];
     group.push(item.id); groups.set(key, group);
   }
@@ -95,18 +108,31 @@ export function clusteringSlots(result: ClusteringResult): RewriteItem[] {
   ];
 }
 /** Replace display prose only; source judgments, responsibility and evidence remain unchanged. */
-export function polishAttribution(result:AttributionResult,rewrites:Rewrites):AttributionResult{
- const view=structuredClone(result);
- if(rewrites.summary)view.summary=rewrites.summary;
- if(view.correct_reason!==null&&rewrites.correct_reason)view.correct_reason=rewrites.correct_reason;
- view.Problem?.forEach((item,index)=>{for(const field of ['text','reason'] as const)
-  if(rewrites[`Problem.${index}.${field}`])item[field]=rewrites[`Problem.${index}.${field}`];});
- return view;
+export function polishAttribution(result: SessionAttributionResult, rewrites: Rewrites): SessionAttributionResult {
+  const view = structuredClone(result);
+  if (rewrites.session_summary) view.session_summary = rewrites.session_summary;
+  const polishProblems = (prefix: string, problems: SessionProblem[]) => problems.forEach((problem, index) => {
+    for (const field of ["problem_phenomena", "reason"] as const) {
+      const text = rewrites[`${prefix}.${index}.${field}`];
+      if (text) problem[field] = text;
+    }
+    problem.calculations?.forEach((calculation, calculationIndex) => {
+      const text = rewrites[`${prefix}.${index}.calculations.${calculationIndex}.text`];
+      if (text) calculation.text = text;
+    });
+  });
+  view.turns.forEach((turn, index) => {
+    if (rewrites[`turns.${index}.summary`]) turn.summary = rewrites[`turns.${index}.summary`]!;
+    if (turn.correct_reason !== null && rewrites[`turns.${index}.correct_reason`]) turn.correct_reason = rewrites[`turns.${index}.correct_reason`]!;
+    polishProblems(`turns.${index}.problem`, turn.problem);
+  });
+  polishProblems("session_problem", view.session_problem);
+  return view;
 }
 export function sourceSlots(stage: "attribution" | "comparison" | "clustering", result: unknown, scope: "verdicts" | "items" | "all" = "verdicts"): RewriteItem[] {
   if (stage === "clustering") return clusteringSlots(result as ClusteringResult);
   return stage === "attribution"
-    ? attributionSlots(result as AttributionResult)
+    ? attributionSlots(result as SessionAttributionResult)
     : comparisonSlots(result as ComparisonResult, scope);
 }
 /** Apply already-unblinded rewrite text to its source slot without interpreting its contents. */
@@ -123,7 +149,7 @@ export function polishComparisonRow(
   if (!own && !Object.values(sourceRewrites).some(Boolean)) return row;
   const view = structuredClone(row);
   const assessments = view.assessments as Record<string, { summary: string }>;
-  const evaluations = view.evaluations as unknown as Record<string, AttributionResult>;
+  const evaluations = view.evaluations as unknown as Record<string, SessionAttributionResult>;
   for (const [label, candidate] of Object.entries(data.candidates)) {
     const assessmentText = own?.[`assessment.${label}.summary`];
     if (assessmentText && assessments[candidate.version])

@@ -2,7 +2,8 @@ import { canonical, type RunState, type TaskPlan } from "@eval/contracts";
 import { attributionSlots, comparisonSlots } from "./commentary.js";
 import { taskCase } from "./input.js";
 import { display, stageResult, sourceRewriteTasks } from "./results.js";
-import type { AttributionResult, ComparisonResult, EvalConfig, TaskData } from "./types.js";
+import type { ComparisonResult, EvalConfig, SessionAttributionResult, TaskData } from "./types.js";
+import { acceptedRewriteProjection } from "./rewrite-projection.js";
 
 function attributionDeliveryCoverage(state: RunState, requirements: DeliveryRequirements) {
   if (requirements.rewriteScopes?.length) throw new Error("归因作业不使用对比改写范围");
@@ -11,7 +12,7 @@ function attributionDeliveryCoverage(state: RunState, requirements: DeliveryRequ
   const config = state.manifest.config as EvalConfig;
   const latest = new Map<string, typeof state.manifest.tasks[number]>();
   for (const task of state.manifest.tasks) {
-    if (task.stage !== "attribution" || (selected && !selected.has(task.id))) continue;
+    if (task.stage !== "attribution-session" || (selected && !selected.has(task.id))) continue;
     const candidate = (task.data as TaskData).candidates.A;
     latest.set(canonical([candidate.batch_id, candidate.case_id, candidate.version]), task);
   }
@@ -27,9 +28,8 @@ function attributionDeliveryCoverage(state: RunState, requirements: DeliveryRequ
       errors.push(`${task.id}: attribution not completed`); continue;
     }
     counts.accepted++;
-    const expected = config.rewrite.attribution ? attributionSlots(receipt.evaluation as AttributionResult) : [];
-    const row = receipt.exported && stageResult("attribution", receipt.exported.row);
-    const rewritten = (row?.meta as import("@eval/contracts").JsonObject|undefined)?.rewritten as { rewrites: { id: string; text: string }[] } | undefined;
+    const expected = config.rewrite.attribution ? attributionSlots(receipt.evaluation as SessionAttributionResult) : [];
+    const rewritten = acceptedRewriteProjection(state, task.id)?.rewritten;
     const filled = new Set(rewritten?.rewrites.filter(item => item.text.trim()).map(item => item.id));
     const missing = expected.filter(item => !filled.has(item.id));
     requiredSlots += expected.length; filledSlots += expected.length - missing.length;

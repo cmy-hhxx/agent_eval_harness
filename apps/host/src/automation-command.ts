@@ -7,13 +7,13 @@ import { checkMongoPredictionSources, RemoteInputs } from "@eval/runtime/client"
 import { automationDateSelected, runPipeline, nextPublicationAt, type AutomationState } from "@eval/automations";
 import { syncRemoteInputs } from "./automation-download.js";
 import { generateStatisticsSnapshot, syncMongoDay } from "./automation-publication.js";
-import { startAutomationDashboard, type AutomationDashboardSource } from "./automation-dashboard.js";
+import { startAutomationDashboard, type AutomationDashboardSource, type AutomationUnavailableSource } from "./automation-dashboard.js";
 import { loadAutomationConfig, type AutomationConfig } from "./automation-config.js";
 import { evaluateDay, evaluationTargets, recoverEvaluation, remoteProgress } from "./automation-evaluation.js";
 import { createAutomationMonitor } from "./automation-monitor.js";
 import { loadConfig } from "./config.js";
 import { createAutomationModels } from "./automation-models.js";
-import { automationMongoTarget, automationSourceFiles, createAutomationMongoLane, validateAutomationTasks } from "./automation-sources.js";
+import { automationMongoTarget, automationSourceFiles, createAutomationMongoLane, validateAutomationTasks, type AutomationSourceFile } from "./automation-sources.js";
 import { automationLlm } from "./automation-llm.js";
 import { logger } from "./composition.js";
 import { discoverPrediction, predictionOrigin, predictionRemoteDay, syncPrediction } from "./automation-prediction.js";
@@ -22,7 +22,6 @@ import { StatisticsDeliveryStore } from "./statistics-delivery.js";
 import { createAutomationControl } from "./automation-control.js";
 import { startSourceCleaning, stopSourceCleaning } from "./daily-ingestion.js";
 import { loadDailyHost, readDailySettings } from "./daily-settings.js";
-import { loadAimeWorkbench } from "./aime-workbench.js";
 import { dailyWorkbench } from "./daily-workbench.js";
 
 function automationArguments(args: string[]) {
@@ -33,6 +32,21 @@ function automationArguments(args: string[]) {
     outcome: { type: "string" }, "request-id": { type: "string" }, "trace-id": { type: "string" },
     dashboard: { type: "boolean" }, port: { type: "string", default: "4174" },
   } });
+}
+
+function sourceFailureId(source: AutomationSourceFile): string {
+  const file = path.basename(source.file, path.extname(source.file));
+  return /aime/i.test(file) || /aime/i.test(source.name) ? "aime" : file;
+}
+
+function workflowFailure(source: AutomationSourceFile): AutomationUnavailableSource | undefined {
+  if (source.workflow === undefined || source.workflow === "comparison") return undefined;
+  const error = source.workflow === "answer-review"
+    ? 'workflow "answer-review" 已移除；请将来源配置改为 workflow "attribution"'
+    : source.workflow === "attribution"
+      ? 'automation 暂不支持 workflow "attribution"；请使用 npm run eval -- run 直接执行'
+      : `不支持的 automation workflow "${source.workflow}"`;
+  return { id: sourceFailureId(source), name: source.name, workflow: source.workflow, error };
 }
 
 export async function automationCommand(args: string[]): Promise<void> {
@@ -60,28 +74,71 @@ SIGINT/SIGTERM: 停止接收任务并等待 Host 保存进度；下次 run 自�
   if (values.manifest && values.config?.length) throw new Error("--manifest and --config cannot be combined");
   const files = await automationSourceFiles({ command, configured: values.config,
     manifestFile: values.manifest, configDirectory: values["config-dir"] });
-  const comparisonFiles = files.filter(source => source.workflow !== "answer-review");
-  const aimeFiles = files.filter(source => source.workflow === "answer-review");
-  if (aimeFiles.length > 1) throw new Error("Only one AIME daily source may own the input scope");
-  const aime = aimeFiles[0] ? await loadAimeWorkbench(aimeFiles[0].file, { id: "aime", name: aimeFiles[0].name }) : undefined;
-  const configs = await Promise.all(comparisonFiles.map(source => loadAutomationConfig(source.file)));
-  validateAutomationTasks(configs);
+  const unavailable: AutomationUnavailableSource[] = [];
+  const comparisonFiles: AutomationSourceFile[] = [];
+  for (const source of files) {
+    const failure = workflowFailure(source);
+    if (failure) unavailable.push(failure); else comparisonFiles.push(source);
+  }
+  if (command !== "serve" && unavailable.length) throw new Error(unavailable.map(source => `${source.name}: ${source.error}`).join("\n"));
+  let configs: AutomationConfig[] = [];
+  const configSources = new Map<AutomationConfig, AutomationSourceFile>();
+  if (command === "serve") {
+    for (const source of comparisonFiles) {
+      try {
+        const config = await loadAutomationConfig(source.file);
+        validateAutomationTasks([...configs, config]);
+        configs.push(config); configSources.set(config, source);
+      } catch (error) {
+        unavailable.push({ id: sourceFailureId(source), name: source.name, workflow: "comparison", error: errorText(error) });
+      }
+    }
+  } else {
+    configs = await Promise.all(comparisonFiles.map(source => loadAutomationConfig(source.file)));
+    validateAutomationTasks(configs);
+    configs.forEach((config, index) => configSources.set(config, comparisonFiles[index]!));
+  }
+  const serveSources = new Map<AutomationConfig, { host: Awaited<ReturnType<typeof loadConfig>>; state: AutomationState }>();
+  if (command === "serve") {
+    const ready: AutomationConfig[] = [];
+    for (const config of configs) {
+      try {
+        const host = await loadConfig(config.hostConfigs), file = path.join(config.stateDirectory, "state.json");
+        if (host.workflow !== "comparison")
+          throw new Error(`automation comparison 来源加载了 "${host.workflow}" workflow`);
+        let state: AutomationState;
+        try { state = await readJson<AutomationState>(file); }
+        catch (error) {
+          if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+          state = { id: config.id, sourceUrl: config.sourceUrl, status: "stopped", startedAt: 0, updatedAt: 0, jobs: {} };
+        }
+        if (state.id !== config.id || state.sourceUrl !== config.sourceUrl || !state.jobs || Array.isArray(state.jobs))
+          throw new Error("Automation state does not match this source/id");
+        state.status = "stopped";
+        ready.push(config); serveSources.set(config, { host, state });
+      } catch (error) {
+        const source = configSources.get(config);
+        unavailable.push({ id: config.id, name: source?.name ?? config.id, workflow: "comparison", error: errorText(error) });
+      }
+    }
+    configs = ready;
+  }
   const controller = new AbortController(), interrupt = () => controller.abort(new Error("Automation stopped"));
   const schedulingFile = path.resolve(process.env.EVAL_AUTOMATION_SCHEDULING_FILE || path.join(ROOT, "data/automations/scheduling.json"));
   const statisticsStore = new StatisticsDeliveryStore(path.resolve(process.env.EVAL_STATISTICS_DELIVERY_FILE ||
     path.join(ROOT, "data/automations/statistics-delivery.json")));
-  const sourceNames = new Map(configs.map((config, index) => [config.id, values.config ? config.id : comparisonFiles[index].name]));
-  const defaults = ["run", "serve"].includes(command) ? Object.fromEntries(await Promise.all(configs.map(async config =>
-    [config.id, (await loadConfig(config.hostConfigs)).evaluation.execution.concurrency] as const))) : {};
-  if (aime) defaults[aime.id] = aime.configuration.concurrency ?? 200;
+  const sourceNames = new Map(configs.map(config => [config.id,
+    values.config ? config.id : configSources.get(config)?.name ?? config.id] as const));
+  for (const source of unavailable) if (!sourceNames.has(source.id)) sourceNames.set(source.id, source.name);
+  const defaults = ["run", "serve"].includes(command) ? Object.fromEntries(await Promise.all(configs.map(async config => {
+    const host = command === "serve" ? serveSources.get(config)!.host : await loadConfig(config.hostConfigs);
+    return [config.id, host.evaluation.execution.concurrency] as const;
+  }))) : {};
+  if (command === "serve") for (const source of unavailable) defaults[source.id] ??= 0;
   const llm = ["run", "serve"].includes(command) ? await automationLlm(schedulingFile, defaults) : undefined;
   const scope = { signal: controller.signal, llm, mongo: createAutomationMongoLane(), sourceNames, statisticsStore,
     exhaustedChannels: new Set<string>(), dashboards: new Map<string, AutomationDashboardSource>() };
   if (command !== "run" && command !== "serve") {
-    if (aime) {
-      if (command === "status" || command === "check") console.log(JSON.stringify(await aime.snapshot(), null, 2));
-      else throw new Error("AIME recovery is managed through Workbench");
-    }
     for (const config of configs) await executeAutomationCommand(command, values, config, scope);
     return;
   }
@@ -91,49 +148,34 @@ SIGINT/SIGTERM: 停止接收任务并等待 Host 保存进度；下次 run 自�
   try {
     if (command === "serve") {
       for (const config of configs) {
-        const host = await loadConfig(config.hostConfigs);
-        let state: AutomationState;
-        try { state = await readJson(path.join(config.stateDirectory, "state.json")); }
-        catch (error) {
-          if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
-          state = { id: config.id, sourceUrl: config.sourceUrl, status: "stopped", startedAt: 0, updatedAt: 0, jobs: {} };
-        }
-        if (state.id !== config.id || state.sourceUrl !== config.sourceUrl || !state.jobs || Array.isArray(state.jobs))
-          throw new Error("Automation state does not match this source/id");
-        // Historical progress is readable, but does not grant permission to resume work.
-        state.status = "stopped";
+        const { host, state } = serveSources.get(config)!;
         scope.dashboards.set(config.id, { name: sourceNames.get(config.id)!, config, output: host.evaluation.output.path,
           state: () => state, settings: { evaluatorVersion: host.evaluatorVersion, concurrency: host.evaluation.execution.concurrency } });
       }
-      control = createAutomationControl([...configs.map(config => config.id), ...(aime ? [aime.id] : [])], async (id, signal, pauseSignal) => {
-        if (aime && id === aime.id) {
-          await aime.run(signal, { pauseSignal, modelRequests: { concurrency: () => llm!.concurrency(id),
-            acquire: (context, requestSignal) => llm!.acquire(id, context.runId, context, requestSignal) } });
-          return;
-        }
+      control = createAutomationControl([...configs.map(config => config.id), ...unavailable.map(source => source.id)], async (id, signal, pauseSignal) => {
+        const failed = unavailable.find(source => source.id === id);
+        if (failed) throw new Error(failed.error);
         try { await executeAutomationCommand("run", { ...values, dashboard: true }, configs.find(config => config.id === id)!, { ...scope, signal, pauseSignal }); }
         catch (error) {
           await logger.error(error, { component: "automations", event: "source_failed", detail: id });
           throw error;
         }
       });
-      dashboard = await startAutomationDashboard({ port, llm: llm!, statistics: statisticsStore, control,
+      dashboard = await startAutomationDashboard({ port, llm: llm!, statistics: statisticsStore, control, unavailable: () => unavailable,
         sources: () => configs.map(config => scope.dashboards.get(config.id)!),
-        daily: dailyWorkbench({ sources: () => configs.map(config => scope.dashboards.get(config.id)!), aime, control, llm: llm! }) });
+        daily: dailyWorkbench({ sources: () => configs.map(config => scope.dashboards.get(config.id)!), unavailable: () => unavailable, control, llm: llm! }) });
       console.log(`自动化 API：${dashboard.url} · 等待手动运行`);
       if (!controller.signal.aborted) await new Promise<void>(resolve => controller.signal.addEventListener("abort", () => resolve(), { once: true }));
       return;
     }
     if (values.dashboard) {
-      dashboard = await startAutomationDashboard({ port, llm: llm!, statistics: statisticsStore,
+      dashboard = await startAutomationDashboard({ port, llm: llm!, statistics: statisticsStore, unavailable: () => unavailable,
         sources: () => scope.dashboards.size === configs.length ? configs.map(config => scope.dashboards.get(config.id)!) : [] });
       console.log(`自动化 API：${dashboard.url}`);
     }
     const results = await Promise.allSettled([
       ...configs.map(config => executeAutomationCommand(command, values, config, scope)
         .catch(error => { controller.abort(error); throw error; })),
-      ...(aime ? [aime.run(controller.signal, { modelRequests: { concurrency: () => llm!.concurrency(aime.id),
-        acquire: (context, signal) => llm!.acquire(aime.id, context.runId, context, signal) } }).then(() => 0)] : []),
     ]);
     const failure = results.find(result => result.status === "rejected");
     if (failure?.status === "rejected") throw failure.reason;

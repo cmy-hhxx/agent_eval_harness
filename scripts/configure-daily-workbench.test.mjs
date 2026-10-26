@@ -25,7 +25,7 @@ test("daily configuration preserves AIME progress and model overlays while enabl
     const workbench = await read("workbench.json"), aime = await read("aime-ingest-and-attribute.json"), wencai = await read("automations.json");
     assert.equal(aime.stateDirectory, stateDirectory);
     assert.equal(aime.concurrency, 200);
-    assert.deepEqual(aime.hostConfigs, [path.join(config, "daily-host.json"), path.join(code, "configs/answer-review.json"), "aime-current.json"]);
+    assert.deepEqual(aime.hostConfigs, [path.join(config, "daily-host.json"), path.join(code, "configs/attribution.json"), "aime-current.json"]);
     assert.equal(wencai.id, "existing"); assert.equal(wencai.runPrefix, ""); assert.equal(wencai.fromDate, null); assert.equal(wencai.dailyComparisonLimitPerTier, null);
     assert.equal(wencai.publishStatisticsLog, false); assert.equal(wencai.publishMongo, true); assert.equal(wencai.autoClean, true);
     assert.equal(workbench.runtime.evalConfigFile, path.join(config, "gateway.ini"));

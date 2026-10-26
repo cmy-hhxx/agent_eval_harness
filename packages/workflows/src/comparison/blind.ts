@@ -1,5 +1,4 @@
 import { presentSource, type SourcePresentation } from "@eval/contracts";
-import type { AttributionResult } from "@eval/agents/attribution";
 import type { Candidate, RawInput } from "../inputs/types.js";
 
 // A comparison receives a view of its dependencies, never their identity-bearing source.
@@ -26,9 +25,6 @@ export function blindMaterials(candidates: Record<string, Candidate>) {
     presentation,
     trace(raw: RawInput): RawInput {
       return presentSource(raw, presentation);
-    },
-    attribution(result: AttributionResult): AttributionResult {
-      return scrub(result) as AttributionResult;
     },
   };
 }

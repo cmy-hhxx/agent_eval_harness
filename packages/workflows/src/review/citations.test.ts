@@ -4,7 +4,7 @@ import { randomUUID } from "node:crypto";
 import { emptyUsage, type PlannedTask, type SubmissionReceipt } from "@eval/contracts";
 import { evidenceSources, resolveEvidence, selectEvidenceSource } from "@eval/tools";
 import { citationInventory, citationSourceParts } from "./citations.js";
-import { attributionProfile } from "@eval/agents/attribution";
+import { componentAttributionProfile } from "@eval/agents/attribution";
 import { comparisonProfile } from "@eval/agents/comparison";
 import { Ajv2020 } from "ajv/dist/2020.js";
 import { bindTask } from "../comparison/binding.js";
@@ -163,8 +163,8 @@ test("deferred answer paragraphs retain context previews and candidate-specific 
     data: { stage: "criteria", candidates: { A: candidate }, reference: null } satisfies TaskData };
   const receipt: SubmissionReceipt = { taskId: criteriaId, attemptId: randomUUID(), submissionId: randomUUID(), acceptedAt: 1,
     status: "succeeded", evaluatorVersion: "fixture", judge: "fixture", evaluation: criteriaResult(), audit: emptyAudit(), usage: emptyUsage() };
-  const task: PlannedTask = { id: randomUUID(), stage: "attribution", inputIds: { answer: inputId }, dependencies: { criteria: criteriaId },
-    data: { stage: "attribution", candidates: { A: candidate }, reference: null } satisfies TaskData };
+  const task: PlannedTask = { id: randomUUID(), stage: "attribution-component", inputIds: { answer: inputId }, dependencies: { criteria: criteriaId },
+    data: { stage: "attribution-component", candidate, candidates: { A: candidate }, reference: null } satisfies TaskData };
   const binding = bindTask(task, { [inputId]: raw }, { criteria: receipt }, { tasks: [criteriaTask, task] });
   const original = citationInventory(raw, inputId, 2).references[0];
   const shown=binding.modelInput!.answer as {deferred_final_material:{read_request:{candidate:string;offset:number;max_chars:number};total_chars:number}[]};
@@ -537,7 +537,7 @@ test("both current agent request schemas accept the visual inventory with comple
     { type: "final_answer", role: "assistant", content: '<vis-html ref="html-chart"/>' },
   ] };
   const inventory = citationInventory(raw, evidenceInputId, 1);
-  for (const profile of [attributionProfile, comparisonProfile]) {
+  for (const profile of [componentAttributionProfile, comparisonProfile]) {
     const validate = new Ajv2020({ strict: false }).compile({
       $defs: profile.requestSchema!.$defs, $ref: "#/$defs/citationInventory",
     });

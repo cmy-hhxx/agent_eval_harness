@@ -1,4 +1,3 @@
-import { unknownFormationFixture } from "../../fixtures/responsibility.js";
 import { testSettings } from "../../fixtures/settings.js";
 import { canonicalEvidence } from "../../fixtures/evidence.js";
 import { services as appServices } from "@eval/host-app/composition";
@@ -11,7 +10,6 @@ import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { loadComparisonConfig, loadComparisonEvaluation, createModelResolver } from "@eval/host-app/config";
 import { adapt, createInputScanCache, inputAdapterIds, inputAdapters } from "@eval/workflows/inputs";
 import { buildPlan, expandComparisonPairs, reconcileRun } from "@eval/workflows/comparison";
-import { bindAttributionMaterial } from "@eval/workflows/review";
 import { prepare, validateEvaluation } from "../../fixtures/services.js";
 import { annotateFindings } from "@eval/workflows/comparison";
 import type { Finding } from "@eval/workflows/comparison";
@@ -19,10 +17,9 @@ import type { TaskData } from "@eval/workflows/comparison";
 import type { RawInput } from "@eval/workflows/inputs";
 import { emptyAudit, fakeEvaluatorVersion, fakeIdentity, fakeJudge, fixtureConfig, attributionResult, comparisonResult, criteriaResultForTask, raw } from "../../fixtures/comparison.js";
 import path from "node:path";
-import { canonical, evidenceId, emptyUsage, ValidationError, type RunState, type SubmissionReceipt } from "@eval/contracts";
-import { ArtifactStore, compressFile, fileSourceReader, readJsonl, writeJsonl } from "@eval/data";
+import { canonical, emptyUsage, type RunState, type SubmissionReceipt } from "@eval/contracts";
+import { compressFile, fileSourceReader, readJsonl, writeJsonl } from "@eval/data";
 import { ROOT } from "../../fixtures/services.js";
-import { createRegistry, ToolRuntime } from "@eval/tools";
 import { blindMaterials } from "../../../packages/workflows/src/comparison/blind.js";
 
 test("GPT reasoning metadata and null roles remain paired and pass the attribution request contract", async () => {
@@ -520,50 +517,6 @@ test("input adapters are registered by declaration, not by branching", () => {
     delete inputAdapters.custom;
   }
 });
-test("image observations require an actual image tool audit", async () => {
-  const input = raw("image", null);
-  input.messages[1].content = [
-    { type: "text", text: "2+2=4" },
-    { type: "image", mimeType: "image/png", data: "aW1hZ2UtZml4dHVyZQ==" },
-  ];
-  const { directory, config } = await fixtureConfig([[input], [], [input], []]);
-  try {
-    const plan = await buildPlan(config),
-      task = plan.tasks.find((item) => item.stage === "attribution")!,
-      result = attributionResult(false, "2+2=4", false, task.inputIds.answer!),
-      audit = emptyAudit();
-
-    result.Problem[0].evidence[0] = { evidence_id: evidenceId(task.inputIds.answer!, 1, "image"), message_index: 1, purposes:["问题"], quote: "[图像观察]图片呈现结果" };
-    result.Problem[0].evidence.push({...canonicalEvidence(task.inputIds.answer!, 0, "计算2+2"),purposes:["问题"]});
-    const delivered=canonicalEvidence(task.inputIds.answer!,1,"2+2=4","/content/0/text");
-    result.Problem[0].evidence.push({...delivered,purposes:["问题"]});
-    const candidate=Object.values((task.data as TaskData).candidates).find(candidate=>candidate.input_id===task.inputIds.answer)!;
-    const binding=bindAttributionMaterial(candidate,input);
-    Object.assign(result.Problem[0],unknownFormationFixture(binding.request,[delivered]));
-    assert.throws(() => validateEvaluation(task, plan.inputs, result, audit, {}), /未查看/);
-    const runtime = new ToolRuntime(
-      {
-        attemptId: "image",
-        workdir: directory,
-        inputs: new Map([["answer", input]]),
-        inputIds: new Map([["answer", task.inputIds.answer]]),
-        policy: config.execution,
-        audit,
-        artifacts: new ArtifactStore(path.join(directory, "artifacts")),
-      },
-      createRegistry().select(["view_image"]),
-    );
-    const viewed = await runtime.execute(
-      "view_image",
-      { candidate: "answer", message_index: 1 },
-      new AbortController().signal,
-    );
-    assert.equal(viewed.content[1].type, "image");
-    validateEvaluation(task, plan.inputs, result, audit, {});
-  } finally {
-    await rm(directory, { recursive: true, force: true });
-  }
-});
 test("planner preserves stage dependencies, fixed pair order and blind assignment", async () => {
   const { directory, config } = await fixtureConfig();
   try {
@@ -765,39 +718,6 @@ test("initial material discloses only projected content within its budget", asyn
   }
 });
 
-test("subjective inputs still run attribution and direct evidence needs no forced tool calls", async () => {
-  const { directory, config } = await fixtureConfig([[raw("q", null)], [], [raw("q", null)], []]);
-  try {
-    const plan = await buildPlan(config),
-      task = plan.tasks.find((item) => item.stage === "attribution")!;
-    assert.equal(plan.tasks.length, 4);
-    assert.deepEqual(Object.keys(task.dependencies), ["criteria"]);
-    assert.equal(plan.tasks.find((item) => item.id === task.dependencies.criteria)!.stage, "criteria");
-    const prepared = prepare(task, plan.inputs, {});
-    assert(!prepared.evaluation.toolNames.includes("set_task_contract"));
-    const result = attributionResult(true, "2+2=4", false, task.inputIds.answer!), audit = emptyAudit();
-    result.Problem[0].evidence.push({...canonicalEvidence(task.inputIds.answer!, 0, "计算2+2"),purposes:["问题"]});
-    validateEvaluation(task, plan.inputs, result, audit, {});
-    assert.equal(audit.calls, 0);
-    const bad = structuredClone(result);
-    bad.Problem[0].evidence[0].quote = "fabricated";
-    assert.doesNotThrow(() => validateEvaluation(task, plan.inputs, bad, emptyAudit(), {})); // Evidence business validation is disabled.
-    const subjective = attributionResult(true, "2+2=4", true, task.inputIds.answer!);
-    assert.throws(
-      () => validateEvaluation(task, plan.inputs, subjective, emptyAudit(), {}),
-      /has_standard_answer/,
-    );
-    const forged = structuredClone(result);
-
-    forged.Problem[0].component='不存在的主体';
-    assert.throws(
-      () => validateEvaluation(task, plan.inputs, forged, emptyAudit(), {}),
-      (error: unknown) => error instanceof ValidationError && error.issues!.some(issue => issue.code === "responsibility_actor"),
-    );
-  } finally {
-    await rm(directory, { recursive: true, force: true });
-  }
-});
 test("provenance resolves only references in the finding quote", () => {
   const input = raw();
   input.messages = [

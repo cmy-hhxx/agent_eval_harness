@@ -38,8 +38,8 @@ wencai.sourceDirectory = path.resolve(config, wencai.sourceDirectory);
 wencai.publication.logFile = path.join(runtime, "log/comparison-statistics-log.jsonl");
 await write(path.join(config, "automations.json"), wencai);
 const checkouts = path.join(runtime, "checkouts");
-aime.hostConfigs = [hostFile, path.join(code, "configs/answer-review.json"),
-  ...aime.hostConfigs.filter(file => !["host.json", "answer-review.json"].includes(path.basename(file)) &&
+aime.hostConfigs = [hostFile, path.join(code, "configs/attribution.json"),
+  ...aime.hostConfigs.filter(file => !["host.json", "attribution.json"].includes(path.basename(file)) &&
     path.resolve(config, file) !== hostFile && !path.resolve(config, file).startsWith(checkouts + path.sep))];
 aime.archiveDirectory = path.join(dataRoot, "1_aime/1_7z_data/online_data");
 aime.inputDirectory = path.join(dataRoot, "1_aime/2_daily_eval_input");
@@ -50,7 +50,7 @@ const previousFile = path.resolve(config, workbench.runtime.manifest);
 const previous = await optional(previousFile);
 const sources = [
   { name: "问财日常四路", config: "automations.json", workflow: "comparison" },
-  { name: "AIME 日常全量", config: "aime-ingest-and-attribute.json", workflow: "answer-review" },
+  { name: "AIME 日常全量", config: "aime-ingest-and-attribute.json", workflow: "attribution" },
   ...(previous?.sources ?? []).filter(source => !["automations.json", "aime-ingest-and-attribute.json"].includes(path.basename(source.config))),
 ];
 const manifest = path.join(config, "daily.manifest.json");

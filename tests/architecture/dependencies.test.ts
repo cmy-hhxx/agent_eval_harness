@@ -107,13 +107,12 @@ test("public package boundaries, independent Agents and acyclic implementation a
     );
     assert(!/#pi-sdk/.test(await readFile(path.join(root, file), "utf8")), file);
   }
-  for (const entry of ["inputs", "review", "answer-review"]) {
+  for (const entry of ["inputs", "review"]) {
     reachable.clear();
     walk(`packages/workflows/src/${entry}/index.ts`);
     for (const file of reachable) {
       assert(!file.startsWith("packages/workflows/src/comparison/"), `${entry} must not depend on comparison: ${file}`);
-      if (entry !== "answer-review")
-        assert(!file.startsWith("packages/workflows/src/answer-review/"), `Shared ${entry} must not depend on a concrete workflow: ${file}`);
+      assert(!file.startsWith("packages/workflows/src/answer-review/"), `Shared ${entry} must not depend on a concrete workflow: ${file}`);
     }
   }
 });

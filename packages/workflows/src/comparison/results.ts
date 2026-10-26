@@ -6,18 +6,18 @@ import {
   type RunState,
   type SubmissionReceipt,
 } from "@eval/contracts";
-import { attributionProfile } from "@eval/agents/attribution";
 import { instructionReviewRow } from "../review/instruction.js";
 import { criteriaProfile } from "@eval/agents/criteria";
 import { comparisonProfile } from "@eval/agents/comparison";
 import type { RewriteResult } from "@eval/agents/rewrite";
 import type { ClusteringObservation, ClusteringResult } from "@eval/agents/clustering";
-import type { AttributionResult, ComparisonResult, EvalConfig, Stage, TaskData } from "./types.js";
+import type { ComparisonResult, EvalConfig, SessionAttributionResult, Stage, TaskData } from "./types.js";
 import type { RawInput } from "../inputs/types.js";
 import { clusteringSchema, rewrittenSchema, outputSchema } from "./schema.js";
 import { decideVerdict, tierOf, verdictReason } from "./verdicts.js";
 import { taskObservations } from "./observations.js";
 import { acceptedRewriteProjection } from "./rewrite-projection.js";
+import { sessionAttributionResultSchema } from "@eval/agents/attribution";
 export { acceptedRewrites, acceptedRewriteProjection, sourceRewriteTasks } from "./rewrite-projection.js";
 export function display<T>(value: T, names: Record<string, string>, key = ""): T {
   if (typeof value === "string")
@@ -87,7 +87,7 @@ export function comparisonRow(
   const evaluations: Record<string, unknown> = {};
   for (const [label, c] of Object.entries(data.candidates)) {
     const attribution = task.dependencies[label]
-      ? (receipts.get(task.dependencies[label])?.evaluation as AttributionResult)
+      ? (receipts.get(task.dependencies[label])?.evaluation as SessionAttributionResult)
       : undefined;
     if (!attribution) throw new Error("缺少归因任务收据");
     evaluations[c.version] = structuredClone(attribution);
@@ -142,17 +142,14 @@ export function comparisonRow(
     },
   };
 }
-export function attributionRow(task:PlannedTask,receipt:SubmissionReceipt,runId?:string):JsonObject{
- const candidate=(task.data as TaskData).candidates.A,value=receipt.evaluation as AttributionResult;
- return {...structuredClone(value),meta:{...value.meta,...(runId?{run_id:runId}:{}),evaluator_version:receipt.evaluatorVersion,
-  task_id:task.id,submission_id:receipt.submissionId,input_id:task.inputIds.answer,batch_id:candidate.batch_id,case_id:candidate.case_id,
-  version:candidate.version,source:{file:candidate.source,line:candidate.line},judge:receipt.judge}};
+export function attributionRow(_task:PlannedTask,receipt:SubmissionReceipt):JsonObject{
+  return structuredClone(receipt.evaluation) as JsonObject;
 }
 /** Result file per stage; the single place that maps stages to JSONL artifacts. */
-export function resultFile(stage: Stage): string {
+export function resultFile(stage: Stage | "attribution"): string {
   if (stage === "instruction-review") return "instruction_review.jsonl";
   if (stage === "criteria") return "criteria.jsonl";
-  if (stage === "attribution") return "attribution.jsonl";
+  if (stage === "attribution" || stage === "attribution-session") return "attribution.jsonl";
   if (stage === "comparison") return "comparison.jsonl";
   if (stage === "rewrite") throw new Error("改写结果必须引用源结果文件");
   return "clustering.jsonl";
@@ -161,19 +158,18 @@ export function resultFile(stage: Stage): string {
 export function stageResult(stage: string, row: JsonObject): JsonObject {
   if (stage === "instruction-review") return row.instruction_review as JsonObject;
   return stage === "criteria" || ["comparison_review", "comparison_verification"].includes(String(row.evaluation_type)) ? row.result as JsonObject
-    : stage === "attribution" ? row
+    : stage === "attribution" || stage === "attribution-session" ? row
     : stage === "clustering" ? row.result as JsonObject : row;
 }
 function replaceStageResult(stage: string, row: JsonObject, result: JsonObject): JsonObject {
   if (stage === "instruction-review") return { ...row, instruction_review: result };
-  return stage === "attribution" ? result
+  return stage === "attribution" || stage === "attribution-session" ? result
     : stage === "clustering" || stage === "criteria" || ["comparison_review", "comparison_verification"].includes(String(row.evaluation_type)) ? { ...row, result } : result;
 }
 export function stageRewritten(stage:string,row:JsonObject):unknown{
- return stage==='attribution'?(row.meta as JsonObject).rewritten:stageResult(stage,row).rewritten;
+ return row.evaluation_type === "attribution_rewrite" ? row.rewritten : stageResult(stage,row).rewritten;
 }
 export function originalResultRow(stage:string,row:JsonObject):JsonObject{
- if(stage==='attribution'){const {rewritten:_rewritten,...meta}=row.meta as JsonObject;return {...row,meta};}
  const {rewritten:_rewritten,...result}=stageResult(stage,row);return replaceStageResult(stage,row,result);
 }
 /** Text-only polish embedded in the source result row. */
@@ -206,15 +202,17 @@ const ajv = new Ajv2020({ strict: false, allErrors: true });
 const validateOutput = ajv.compile(outputSchema),
   validateCriteria = ajv.compile(criteriaProfile.resultSchema!),
   validateComparison = ajv.compile(comparisonProfile.resultSchema!),
-  validateAttribution = ajv.compile(attributionProfile.resultSchema!),
+  validateAttribution = ajv.compile(sessionAttributionResultSchema),
   validateRewritten = ajv.compile(rewrittenSchema),
   validateClustering = ajv.compile(clusteringSchema);
-export function encodeResult(task: PlannedTask, state: RunState, inputs: Record<string, unknown>): ResultReference & { row: JsonObject; auxiliary?: boolean } {
+export function encodeResult(task: PlannedTask, state: RunState, inputs: Record<string, unknown>):
+  ResultReference & { row: JsonObject; auxiliary?: boolean } | null {
   const data = task.data as TaskData;
   if ((data.verificationAudit || data.verificationOf) &&
     (task.stage !== "comparison" || data.verificationAudit !== true || !data.verificationOf?.taskId))
     throw new Error("可选核验必须同时声明核验标记与正式对比来源。");
   const receipt = state.receipts[task.id];
+  if (task.stage === "attribution-component" || task.stage === "attribution-trace") return null;
   if (task.stage === "instruction-review") return receipt.exported ?? { id: task.id, file: "instruction_review.jsonl",
     row: instructionReviewRow(task, receipt, Object.values(data.candidates)[0]) };
   // Durable exports have already crossed the acceptance boundary. Reuse their exact row on resume.
@@ -233,24 +231,31 @@ export function encodeResult(task: PlannedTask, state: RunState, inputs: Record<
         case_id: Object.values((task.data as TaskData).candidates)[0]!.case_id }, result: receipt.evaluation,
     } };
   }
-  if (task.stage === "attribution") {
-    const row = attributionRow(task, receipt,state.manifest.runId);
+  if (task.stage === "attribution-session") {
+    const row = attributionRow(task, receipt);
     if (!validateAttribution(row))
       throw new Error("归因结果 schema 无效：" + ajv.errorsText(validateAttribution.errors));
-    return { id: task.id, file: "attribution.jsonl", row };
+    const session = row.session_meta as JsonObject;
+    return { id: String(session.session_id ?? session.case_id), file: "attribution.jsonl", row };
   }
   if (task.stage === "rewrite") {
     const source = (task.data as TaskData).rewriteOf!;
     const sourceTask = state.manifest.tasks.find((item) => item.id === source.taskId)!;
     const exported = encodeResult(sourceTask, state, inputs);
+    if (!exported) throw new Error("改写来源没有正式结果：" + source.taskId);
     const rewritten = acceptedRewriteProjection(state, source.taskId)!.rewritten;
     if (!validateRewritten(rewritten))
       throw new Error("改写结果 schema 无效：" + ajv.errorsText(validateRewritten.errors));
-    return {
-      ...exported,
-      row: source.stage==='attribution'?{...exported.row,meta:{...exported.row.meta as JsonObject,rewritten}}:replaceStageResult(source.stage, exported.row, { ...stageResult(source.stage, exported.row), rewritten }),
-      auxiliary: true,
-    };
+    if (source.stage === "attribution") {
+      const candidate = (sourceTask.data as TaskData).candidates.A;
+      return { id: task.id, file: "rewrite.jsonl", auxiliary: true, row: {
+        evaluation_type: "attribution_rewrite", evaluator_version: receipt.evaluatorVersion, task_id: task.id,
+        source_attribution_task_id: source.taskId, input_id: sourceTask.inputIds.answer,
+        batch_id: candidate.batch_id, case_id: candidate.case_id, version: candidate.version, rewritten,
+      } };
+    }
+    return { ...exported, row: replaceStageResult(source.stage, exported.row,
+      { ...stageResult(source.stage, exported.row), rewritten }), auxiliary: true };
   }
 
   if (task.stage === "clustering") {

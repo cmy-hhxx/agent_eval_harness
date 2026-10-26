@@ -1,10 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { bindAttributionMaterial } from "@eval/workflows/review";
 import { type Candidate, type RawInput } from "@eval/workflows/inputs";
-import type { AttributionResult, BusinessChain, ProblemProposal, AttributionTransition, Evidence } from "@eval/agents/attribution";
-import { responsibilityDisplay } from "@eval/agents/attribution";
-import { parseEvidenceCoordinates, resolveEvidence, evidenceCovers } from "@eval/tools";
-import { emptyAudit } from "./comparison.js";
+import type { BusinessChain, AttributionTransition } from "@eval/agents/attribution";
 
 /** Synthetic captured boundaries model the real ETF-to-spot failure without copying server data. */
 export function businessChainFixture(loss = false, question = "Gold prediction for next 6 months", dropSource = false) {
@@ -33,18 +30,5 @@ export function businessChainFixture(loss = false, question = "Gold prediction f
   const chains = (binding.request.input.answer as { business_chains: BusinessChain[] }).business_chains;
   const transitions = (binding.request.input.answer as {transitions: AttributionTransition[]}).transitions;
   const generated = transitions.find(edge=>edge.kind === "generation" && edge.after.some(item=>item.message_index===messages.length-2))!;
-  const chain = chains[0], evidence = [...new Map([...chain.checkpoints.flatMap(point => point.evidence), ...chain.final_evidence, ...transitions.flatMap(edge=>[...edge.before,...edge.after]).map(boundary=>resolveEvidence({messages},boundary,"answer",emptyAudit(),"/fixture",id))]
-    .filter((item): item is Evidence => typeof item.quote === "string")
-    .map(item => [item.evidence_id, item])).values()];
-  const problem:ProblemProposal={text:'ETF份额价错配现货报价',reason:'将GLD.P份额369美元错误作为XAU/USD现货3690美元，预测基准不可用。',evidence_status:'已确认',
-    ...responsibilityDisplay(binding.request,generated.transition_index),
-    attribution_reason:'实际输入保留基金代码和份额价格，生成输出改为现货及十倍价格。',uncertainties:['具体换算机制没有记录。']};
-  const result:AttributionResult={meta:{input_id:id},summary:problem.text,has_standard_answer:false,is_correct:null,correct_reason:null,
-    Problem:[{...problem,problem_id:'p1',evidence:evidence.filter(e=>!generated.before.some(b=>b.evidence_id===e.evidence_id) || !generated.predecessors.some(id=>transitions.find(t=>t.transition_index===id)!.after.some(b=>b.evidence_id!==e.evidence_id&&evidenceCovers({messages},candidate.input_id,e.evidence_id,b.evidence_id)))).map(e=>({...e,purposes:['问题','归因']}))}]};
-  const audit=emptyAudit();
-  audit.traceReads = evidence.flatMap(item => {
-    const point=parseEvidenceCoordinates(item.evidence_id)!;
-    return point.kind==='image'?[]:[{candidate:'answer',message_index:point.message_index,kind:point.kind,path:point.path,start:point.start,end:point.end}];
-  });
-  return { binding, chains, chain, transitions, generated, problem, result, evidence, audit, raw: { messages }, candidate };
+  return { binding, chains, chain: chains[0], transitions, generated, raw: { messages }, candidate };
 }

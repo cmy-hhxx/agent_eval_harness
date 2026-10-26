@@ -1,4 +1,4 @@
-import { responsibilityLabels } from "@eval/agents/attribution";
+import { sessionProblems, type SessionAttributionResult } from "@eval/agents/attribution";
 import path from "node:path";
 import { canonical, safeId, type ProblemLibrary, type RunState } from "@eval/contracts";
 import { fileSourceReader, problemLibraryFile, readProblemLibrary, withProblemLibraryLock, writeProblemLibrary } from "@eval/data";
@@ -12,7 +12,7 @@ import { parseEvidenceCoordinates, resolveEvidence } from "@eval/tools";
 import { loadRunInputs } from "../inputs/load.js";
 import { readRunState, readRunTasks } from "./run-data.js";
 import { taskObservations } from "./observations.js";
-import type { AttributionResult, EvalConfig, TaskData } from "./types.js";
+import type { EvalConfig, TaskData } from "./types.js";
 import type { Candidate, RawInput } from "../inputs/types.js";
 import { clusteringJobStorage, loadClusteringJobInputs, readClusteringJobSources } from "./clustering-job.js";
 import { allClusteringJobSources, clusteringJobItems, jobObservations, type ClusteringJobConfig, type ClusteringJobTask } from "./clustering-job-types.js";
@@ -152,23 +152,23 @@ export async function reviewProblemOccurrences(
     const sourceState = independent ? job!.sources.get(occurrence.attribution?.run ?? "") : state;
     const attributionTask = sourceState?.manifest.tasks.find(task => task.id === attributionTaskId);
     const attribution = attributionTaskId ? sourceState?.receipts[attributionTaskId] : undefined;
-    const owner = (attributionTask?.data as TaskData | undefined)?.candidates.A;
+    const owner = (attributionTask?.data as TaskData | undefined)?.candidate;
     const scopeCase = independent ? allClusteringJobSources(state.manifest.config as ClusteringJobConfig).find(source =>
       source.input_id === occurrence.input_id && source.task_id === attributionTaskId &&
       canonical({ run: source.run, run_id: source.run_id, task_id: source.task_id,
         submission_id: source.submission_id, evaluator_version: source.evaluator_version }) === canonical(occurrence.attribution))
       : scope!.cases[occurrence.input_id];
-    if (!attributionTask || attributionTask.stage !== "attribution" || !attribution ||
+    if (!attributionTask || attributionTask.stage !== "attribution-session" || !attribution ||
       attributionTask.inputIds.answer !== occurrence.input_id || owner?.input_id !== occurrence.input_id ||
       owner.version !== decision.model || owner.case_id !== occurrence.case_id || owner.batch_id !== occurrence.batch_id ||
       !scopeCase || scopeCase.case_id !== occurrence.case_id ||
       canonical(scopeCase.source) !== canonical(occurrence.source))
       fail("问题样本原 Attribution 来源或 owner 不一致：" + item.occurrence_id);
-    const finding = (attribution.evaluation as AttributionResult).Problem.find(finding => finding.problem_id === occurrence.finding_id);
+    const finding = sessionProblems(attribution.evaluation as SessionAttributionResult).find(finding => finding.problem_id === occurrence.finding_id);
     const association = problemAssociation(initial, occurrence);
     const component = initial.components[association.component_id]!;
     if (!finding ||
-      !responsibilityLabels(finding).some(label => [component.label, ...component.aliases]
+      !finding.component.split(" / ").some(label => [component.label, ...component.aliases]
         .some(name => normalizeLabel(name) === normalizeLabel(label))))
       fail("问题样本原 finding 或责任组件不存在：" + item.occurrence_id);
 

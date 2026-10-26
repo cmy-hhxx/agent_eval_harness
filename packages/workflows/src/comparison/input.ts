@@ -10,6 +10,7 @@ import { attributionRewritePlaceholder } from "./attribution-rewrite-planning.js
 import { predictionKey, predictionMaterial, readPredictionAnswers } from "./prediction.js";
 import type { BatchPreflight, EvalConfig, TaskData } from "./types.js";
 import type { Candidate } from "../inputs/types.js";
+import { planAttributionUnit, type AttributionTaskData } from "@eval/workflows/attribution";
 
 const normalize = (text: string) => text.replace(/\s+/gu, "");
 const LABELS = "ABCDEFGHIJKLMNOPQRSTUVWXYZ".split("");
@@ -20,6 +21,11 @@ export function taskCase(data: TaskData): { batch_id: string; case_id: string } 
 function taskKey(task: PlannedTask): string {
   const data = task.data as TaskData;
   if (task.stage === "instruction-review") return canonical([task.stage, task.dependencies.source]);
+  if (task.stage.startsWith("attribution-")) {
+    const attribution = task.data as AttributionTaskData;
+    return canonical(["attribution-unit", attribution.candidate.input_id, task.stage,
+      attribution.traceIndex ?? null, attribution.component ?? null, data.criteriaScope ?? null]);
+  }
   const comparisonRole = data.verificationAudit ? "audit" : "standalone";
   if (data.reviewOf) return canonical(["review", data.reviewOf.taskId, task.stage, data.group ?? Object.values(data.candidates).map((c) => c.version)]);
   if (data.stage === "criteria") return canonical(["criteria", data.criteriaScope]);
@@ -32,7 +38,7 @@ function taskKey(task: PlannedTask): string {
     data.stage === "rewrite"
       ? ["rewrite", data.rewriteOf!.taskId]
       : data.group ? [...data.group].sort() : [data.candidates.A.version];
-  return canonical([c.batch_id, c.case_id, task.stage, selector, ...(data.stage === "attribution" && data.criteriaScope ? [data.criteriaScope] : []), ...(data.stage === "comparison" ? [comparisonRole] : [])]);
+  return canonical([c.batch_id, c.case_id, task.stage, selector, ...(data.stage === "comparison" ? [comparisonRole] : [])]);
 }
 /** Batch identity for every stage, including clustering tasks that span cases. */
 export function taskIdentity(data: TaskData): { batch_id: string; case_id: string | null } {
@@ -140,7 +146,8 @@ export async function buildPlan(
     }
   const tasks: PlannedTask[] = [],
     criteriaTasks = new Map<string, PlannedTask>(),
-    checks = new Map<string, PlannedTask>(),
+    checks = new Map<string, { tasks: PlannedTask[]; session: PlannedTask }>(),
+    attributionTasks: PlannedTask[] = [],
     rewrites = new Map<string, PlannedTask[]>(),
     groupCounts: Record<string, number> = {};
   /** Reserve attribution's first group and preserve existing groups; rewrites own no input material. */
@@ -300,21 +307,12 @@ export async function buildPlan(
         const checkKey = canonical([batch, id, "attribution", [record.version], criteriaScope]);
         const existing = checks.get(checkKey);
         if (existing) {
-          dependencies[label] = existing.id;
-          continue;
-        }
-        const acceptedCheck = previous?.tasks.find((task) => task.stage === "attribution" && accepted.has(task.id) &&
-          (task.data as TaskData).candidates.A.input_id === record.input_id);
-        if (acceptedCheck) {
-          checks.set(checkKey, acceptedCheck);
-          dependencies[label] = acceptedCheck.id;
-          stats.attribution_tasks++;
+          dependencies[label] = existing.session.id;
           continue;
         }
         const reviewQuestions = config.reviewQuestions?.find(item => item.batch_id === batch && item.case_id === id)?.questions;
-        const data: TaskData = {
-          stage: "attribution",
-          // Internal slot only; attribution materials and tools use `answer`.
+        const data: TaskData & { revision?: number } = {
+          stage: "attribution-component",
           candidates: { A: record },
           standardAnswerReview: config.standardAnswerReview === true,
           reference,
@@ -323,9 +321,9 @@ export async function buildPlan(
           initialContextChars: config.execution.initialContextChars,
           ...(reviewQuestions ? { reviewQuestions: [...reviewQuestions] } : {}),
         };
-        const old = oldTasks.get(checkKey);
-        const checkId = old?.id || randomUUID();
-        const oldCheck = old?.data as TaskData | undefined;
+        const oldCheck = previous?.tasks.find(task => task.stage === "attribution-session" &&
+          (task.data as AttributionTaskData).candidate.input_id === record.input_id &&
+          (task.data as TaskData).criteriaScope === criteriaScope)?.data as TaskData | undefined;
         data.revision =
           (oldCheck?.revision || 1) +
           Number(
@@ -334,23 +332,19 @@ export async function buildPlan(
                 !isDeepStrictEqual(oldCheck.reviewQuestions, data.reviewQuestions) ||
                 oldCheck.candidates.A.input_id !== record.input_id),
           );
+        const unit = planAttributionUnit(record, { data: { ...data } as Record<string, unknown>, dependencies: { criteria: criteria.id }, previousTasks: previous?.tasks,
+          identity: criteria.id });
         stats.attribution_tasks++;
-        checks.set(checkKey, {
-          id: checkId,
-          stage: "attribution",
-          dependencies: {},
-          inputIds: { answer: record.input_id },
-          data,
-        });
+        checks.set(checkKey, unit); attributionTasks.push(...unit.tasks);
         addRewrite(
           "attribution",
-          checkId,
-          checkId,
+          unit.session.id,
+          unit.session.id,
           { case: { batch_id: record.batch_id, case_id: record.case_id, question: record.question } },
           data.revision || 1,
           { A: record.name },
         );
-        dependencies[label] = checkId;
+        dependencies[label] = unit.session.id;
       }
       const data: TaskData = {
         stage: "comparison",
@@ -395,8 +389,8 @@ export async function buildPlan(
   }
   // Cleaned answers without a complete configured pair still receive independent attribution.
   const selectedKeys = new Set(selected.map(entry => canonical(entry)));
-  const attributed = new Set([...checks.values(), ...(previous?.tasks ?? []).filter(task =>
-    task.stage === "attribution" && accepted.has(task.id))].flatMap(task => Object.values(task.inputIds)));
+  const attributed = new Set([...checks.values()].map(unit => unit.session)
+    .flatMap(task => Object.values(task.inputIds)));
   if (config.inputs.workbench) for (const record of records.values()) {
     if (!selectedKeys.has(canonical([record.batch_id, record.case_id])) || attributed.has(record.input_id)) continue;
     const criteriaScope = canonical([record.batch_id, record.case_id, [record.version]]);
@@ -406,14 +400,13 @@ export async function buildPlan(
         reference: record.reference, criteriaScope } satisfies TaskData };
     criteriaTasks.set(criteriaScope, criteria);
     const key = canonical([record.batch_id, record.case_id, "attribution", [record.version], criteriaScope]);
-    const prior = oldTasks.get(key);
-    const task: PlannedTask = { id: prior?.id || randomUUID(), stage: "attribution", dependencies: {},
-      inputIds: { answer: record.input_id }, data: { stage: "attribution", standalone: true, candidates: { A: record },
-        reference: record.reference, criteriaScope, initialContextChars: config.execution.initialContextChars,
-        standardAnswerReview: config.standardAnswerReview === true } satisfies TaskData };
-    checks.set(key, task);
+    const unit = planAttributionUnit(record, { data: { stage: "attribution-component", candidates: { A: record }, standalone: true, reference: record.reference,
+      criteriaScope, initialContextChars: config.execution.initialContextChars,
+      standardAnswerReview: config.standardAnswerReview === true }, dependencies: { criteria: criteria.id }, previousTasks: previous?.tasks,
+      identity: criteria.id });
+    checks.set(key, unit); attributionTasks.push(...unit.tasks);
     batchStats(record.batch_id).attribution_tasks++;
-    addRewrite("attribution", task.id, task.id,
+    addRewrite("attribution", unit.session.id, unit.session.id,
       { case: { batch_id: record.batch_id, case_id: record.case_id, question: record.question } }, 1, { A: record.name });
   }
   // Clustering groups the batch's attribution receipts per model; shards bound prompt and output size.
@@ -443,8 +436,9 @@ export async function buildPlan(
     const comparedInputs = new Set(activeComparisons.flatMap(task => Object.values(task.inputIds)));
     const acceptedClusters = (previous?.tasks ?? []).filter((task) => task.stage === "clustering" && accepted.has(task.id));
     const covered = new Set(acceptedClusters.flatMap((task) => Object.values(task.dependencies)));
-    const retained = (previous?.tasks ?? []).filter((task) => task.stage === "attribution" && accepted.has(task.id));
-    const attributions = new Map([...checks.values(), ...retained].map((task) => [task.id, task]));
+    const retained = (previous?.tasks ?? []).filter((task) => task.stage === "attribution-session" && accepted.has(task.id));
+    const attributions = new Map([...checks.values()].map(unit => [unit.session.id, unit.session] as const)
+      .concat(retained.map(task => [task.id, task] as const)));
     for (const task of attributions.values()) {
       if (covered.has(task.id)) continue;
       const data = task.data as TaskData,
@@ -549,12 +543,12 @@ export async function buildPlan(
   for (const issue of issues) if (issue.batch_id) batchStats(issue.batch_id).input_issues++;
   if ((config.comparisons.length || config.inputs.workbench) && options.materializeInputs !== false)
     await collected.materialize();
-  for (const review of comparisonPairs.length ? config.reviewQuestions ?? [] : []) if (![...checks.values()].some(task => {
-    const candidate = (task.data as TaskData).candidates.A;
+  for (const review of comparisonPairs.length ? config.reviewQuestions ?? [] : []) if (![...checks.values()].some(unit => {
+    const candidate = (unit.session.data as AttributionTaskData).candidate;
     return candidate.batch_id === review.batch_id && candidate.case_id === review.case_id;
-  })) issues.push({ batch_id: review.batch_id, case_id: review.case_id, stage: "attribution", reason: "review_case_unavailable" });
+  })) issues.push({ batch_id: review.batch_id, case_id: review.case_id, stage: "attribution-session", reason: "review_case_unavailable" });
   return {
-    tasks: [...criteriaTasks.values(), ...checks.values(), ...tasks, ...clusteringTasks, ...[...rewrites.values()].flat()],
+    tasks: [...criteriaTasks.values(), ...attributionTasks, ...tasks, ...clusteringTasks, ...[...rewrites.values()].flat()],
     inputs,
     catalog,
     summary: {

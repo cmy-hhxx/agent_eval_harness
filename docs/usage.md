@@ -34,6 +34,8 @@ api = openai-responses
 
 JSON 配置的 `models.<profile>.channel` 引用渠道。`--config` 可重复，按顺序深度合并；数组整体覆盖，相对路径按各自文件目录解析。共享配置在 [host.json](../configs/host.json)，本机模型填入 `configs/local/models.json`。
 
+启动与 preflight 会在派发任务前逐个校验 `models.json` 的模型以及阶段绑定覆盖：模型必须存在于对应 channel 的 `models` 声明中。错误包含 channel、model 和可用 models；同一配置只产生一次启动/预检失败。多个渠道使用相同模型时，每个渠道都必须声明该模型，并通过 `[automation].channels` 显式加入渠道池。
+
 渠道是协议与能力的唯一来源：INI 中配置 `api`、`context_window`、`max_output_tokens`、`supports_developer_role`、`supports_explicit_prompt_caching` 与 `efforts`。JSON 模型档案只声明 `channel / model / thinking`，阶段 `bindings` 选择档案或覆盖这三项。更换端点和模型无需修改业务 Agent；不支持 developer 角色时显式配置 false，显式提示词缓存仅在声明 true 时启用。
 
 协议探测默认只检查配置，显式执行才调用模型：

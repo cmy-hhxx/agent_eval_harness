@@ -2,11 +2,11 @@ import path from "node:path";
 import { canonical, safeId } from "@eval/contracts";
 import { exists, readJson, runLayout } from "@eval/data";
 import { runEvaluation } from "@eval/host";
-import { createClusteringJobRepository, createClusteringJobWorkflow, prepareFrozenClusteringJob, prepareClusteringJob, reportClusteringJob, type ClusteringJobConfig } from "@eval/workflows/comparison";
+import { createClusteringJobRepository, createClusteringJobWorkflow, prepareFrozenClusteringJob, prepareClusteringJob, readRunTasks, reportClusteringJob, type ClusteringJobConfig } from "@eval/workflows/comparison";
 import { createModelResolver, type HostConfig } from "./config.js";
 import { services } from "./composition.js";
 import { createBalancedModels } from "./balanced-models.js";
-import { readClusteringSource } from "./clustering-sources.js";
+const readClusteringSource = readRunTasks;
 
 const clusteringJobRepository = createClusteringJobRepository(readClusteringSource);
 const clusteringJobWorkflow = createClusteringJobWorkflow(readClusteringSource);

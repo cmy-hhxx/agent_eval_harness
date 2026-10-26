@@ -16,7 +16,11 @@ test("evaluation with explicit rewrites off has one comparison and no mandatory 
   const f = await fixtureConfig([[raw()], [], [raw()], []]);
   try {
     const plan = await buildPlan(f.config);
-    assert.deepEqual(plan.tasks.map(task => task.stage), ["criteria", "attribution", "attribution", "comparison"]);
+    assert.deepEqual(plan.tasks.filter(task => task.stage === "criteria").length, 1);
+    assert.deepEqual(plan.tasks.filter(task => task.stage === "attribution-session").length, 2);
+    assert.deepEqual(plan.tasks.filter(task => task.stage === "attribution-component").length > 0, true);
+    assert.deepEqual(plan.tasks.filter(task => task.stage === "attribution-trace").length, 2);
+    assert.deepEqual(plan.tasks.filter(task => task.stage === "comparison").length, 1);
     const comparison = plan.tasks.find(task => task.stage === "comparison")!;
     assert.equal((comparison.data as TaskData).verificationOf, undefined);
     const schema = comparisonProfile.submissionSchema as any;
@@ -36,15 +40,15 @@ test("real config defaults polish each attribution and comparison, then separate
   f.config.rewrite = { ...defaults.rewrite };
   try {
     const primary = await buildPlan(f.config);
-    const sources = primary.tasks.filter(task => ["attribution", "comparison"].includes(task.stage));
-    assert.equal(sources.filter(task => task.stage === "attribution").length, 2);
+    const sources = primary.tasks.filter(task => task.stage === "attribution-session" || task.stage === "comparison");
+    assert.equal(sources.filter(task => task.stage === "attribution-session").length, 2);
     assert.equal(sources.filter(task => task.stage === "comparison").length, 1);
     assert.equal(primary.tasks.filter(task => task.stage === "rewrite").length, 3);
     assert.equal(primary.tasks.filter(task => task.stage === "clustering").length, 0);
     for (const source of sources) {
       const polish = primary.tasks.filter(task => (task.data as TaskData).rewriteOf?.taskId === source.id);
       assert.equal(polish.length, 1);
-      assert.equal((polish[0].data as TaskData).rewriteOf!.stage, source.stage);
+      assert.equal((polish[0].data as TaskData).rewriteOf!.stage, source.stage === "attribution-session" ? "attribution" : source.stage);
       assert.deepEqual(polish[0].dependencies, { source: source.id });
       assert.equal((source.data as TaskData).verificationAudit, undefined);
       assert.equal((source.data as TaskData).verificationOf, undefined);
@@ -62,9 +66,9 @@ test("real config defaults polish each attribution and comparison, then separate
       assert.equal(polish.length, 1);
       assert.equal((polish[0].data as TaskData).rewriteOf!.stage, "clustering");
       assert.deepEqual(polish[0].dependencies, { source: cluster.id });
-      assert(Object.values(cluster.dependencies).every(id => maintenance.tasks.find(task => task.id === id)?.stage === "attribution"));
+      assert(Object.values(cluster.dependencies).every(id => maintenance.tasks.find(task => task.id === id)?.stage === "attribution-session"));
     }
-    for (const task of maintenance.tasks.filter(task => task.stage === "attribution")) manifest.states[task.id].status = "succeeded";
+    for (const task of maintenance.tasks.filter(task => task.stage === "attribution-session")) manifest.states[task.id].status = "succeeded";
     for (const cluster of clusters) assert.equal(comparisonWorkflow.canStart!(cluster, manifest), true,
       "settled attribution opens the separate clustering phase while comparisons and polish are pending");
     assert.equal(maintenance.tasks.filter(task => task.stage === "comparison").length, 1);
@@ -79,8 +83,9 @@ test("clustering starts after the base attribution queue settles without a globa
     const plan = await buildPlan(f.config), cluster = plan.tasks.find(task => task.stage === "clustering")!;
     const manifest = { tasks: plan.tasks, states: Object.fromEntries(plan.tasks.map(task => [task.id,
       { status: "succeeded", attempts: 1 }])) } as RunManifest;
-    const unrelated = plan.tasks.find(task => task.stage === "attribution" && !Object.values(cluster.dependencies).includes(task.id))!;
     const comparison = plan.tasks.find(task => task.stage === "comparison")!;
+    const unrelated = plan.tasks.find(task => task.stage === "attribution-session" &&
+      !Object.values(cluster.dependencies).includes(task.id) && !Object.values(comparison.dependencies).includes(task.id))!;
     for (const status of ["pending", "running"] as const) {
       manifest.states[unrelated.id].status = status;
       assert.equal(comparisonWorkflow.canStart!(cluster, manifest), false);

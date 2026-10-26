@@ -56,12 +56,11 @@ await writeOnce(path.join(runtime, "config/automations.json"), JSON.stringify(au
 const aimeModels = ["fast", "expert"].map(mode => ({ id: "aime_" + mode, name: "aime_" + mode,
   display_name: "AIME " + mode, adapter: "a", sources: [{ kind: "directory", path: path.join(dataRoot, "1_aime/2_daily_eval_input/aime_" + mode) }] }));
 await writeOnce(path.join(runtime, "config/aime-daily.json"), JSON.stringify({
-  workflow: "answer-review", inputs: { versions: aimeModels }, comparisons: [],
+  workflow: "attribution", inputs: { versions: aimeModels },
   output: { kind: "directory", path: path.join(dataRoot, "1_aime/eval_output/0_daily_eval") },
   models: { judge: { model: "deepseek-v4.1-flash", thinking: "high" } },
   execution: { concurrency: 200, maxToolCalls: 8 },
-  bindings: { score: { profile: "judge", thinking: "high" }, attribution: { profile: "judge", thinking: "high" } },
-  rewrite: { attribution: false, comparison: false, comparisonItems: false, clustering: false }, clustering: { enabled: false },
+  bindings: { attribution: { profile: "judge", thinking: "high" } },
 }, null, 2) + "\n");
 const aime = JSON.parse(await readFile(path.join(root, "configs/aime-ingest-and-attribute.example.json"), "utf8"));
 Object.assign(aime, { archiveDirectory: path.join(dataRoot, "1_aime/1_7z_data/online_data"),

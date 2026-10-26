@@ -17,8 +17,8 @@ function source(row: JsonObject): PlannedTask {
     question: "问题", final_index: 1, reference: "答案", llm: null,
     answer_timing: { first_token_seconds: null, first_answer_seconds: null, finish_seconds: null, source_unit: "ms", source_values: {}, source_fields: {} },
   };
-  return { id: String(row.task_id), stage: "attribution", inputIds: { answer: candidate.input_id }, dependencies: {},
-    data: { stage: "attribution", candidates: { A: candidate }, reference: "答案" } satisfies TaskData };
+  return { id: String(row.task_id), stage: "attribution-session", inputIds: {}, dependencies: {},
+    data: { stage: "attribution-session", candidate, candidates: { A: candidate }, reference: "答案" } satisfies TaskData };
 }
 function pair(first: string, second: string, core: [boolean, boolean], refs: [string, string],
   batch = "day", caseId = "case", winner: string | null = null): JsonObject {

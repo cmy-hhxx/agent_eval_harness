@@ -4,6 +4,7 @@ import path from "node:path";
 import { createRequire } from "node:module";
 import { pathToFileURL } from "node:url";
 import { caseResultView } from "@eval/workflows/comparison";
+import { sessionProblems } from "@eval/agents/attribution";
 import type { JsonObject } from "@eval/contracts";
 import { attributionResult, comparisonResult, criteriaResult } from "../../fixtures/comparison.js";
 import { ROOT } from "../../fixtures/services.js";
@@ -276,10 +277,12 @@ test("dashboard distinguishes initial receipts from queued reviews and shows pen
 
 test("dashboard pairs minimal attribution rewrites and evidence without changing accepted output", () => {
   const evaluation=attributionResult(false);
-  evaluation.Problem[0].text="缺点原文";
-  evaluation.meta.rewritten={evaluator_version:"fixture",rewrites:[{id:"Problem.0.text",text:"问题改写"},{id:"summary",text:"总结改写"},{id:"Problem.0.reason",text:"依据改写"}]};
-  const before=structuredClone(evaluation),result=caseResultView("attribution",evaluation as unknown as JsonObject)!;
-  const {dom,document,views,state}=render("attribution",result,"task/<one>");
+  sessionProblems(evaluation)[0]!.problem_phenomena="缺点原文";
+  const attributed = {...evaluation, rewritten:{evaluator_version:"fixture",rewrites:[
+    {id:"turns.0.problem.0.problem_phenomena",text:"问题改写"},{id:"session_summary",text:"总结改写"},{id:"turns.0.problem.0.reason",text:"依据改写"}]}};
+  const before=structuredClone(evaluation);
+  const resultWithRewrite=caseResultView("attribution-session",attributed as unknown as JsonObject)!;
+  const {dom,document,views,state}=render("attribution",resultWithRewrite,"task/<one>");
   try {
     assert.deepEqual(evaluation,before);
     assert.equal(document.querySelectorAll(".findings-nav a").length,1);
@@ -312,8 +315,8 @@ test("comparison shows each model's attribution with its own rewrites, directory
     ...comparisonResult(["left", "right"]),
     models: { left: { version: "左模型" }, right: { version: "右模型" } },
     evaluations: {
-      left: { ...evaluation, meta:{...evaluation.meta, rewritten: { evaluator_version: "fixture", rewrites: [{ id: "Problem.0.text", text: "左模型改写" }] }} },
-      right: { ...evaluation, meta:{...evaluation.meta, rewritten: { evaluator_version: "fixture", rewrites: [{ id: "Problem.0.text", text: "右模型改写" }] }} },
+      left: { ...evaluation, rewritten: { evaluator_version: "fixture", rewrites: [{ id: "turns.0.problem.0.problem_phenomena", text: "左模型改写" }] } },
+      right: { ...evaluation, rewritten: { evaluator_version: "fixture", rewrites: [{ id: "turns.0.problem.0.problem_phenomena", text: "右模型改写" }] } },
     },
   })!;
   const { dom, document } = render("comparison", result);
@@ -424,8 +427,8 @@ test("dashboard aligns models by version, prioritizes impact, and keeps accepted
 
 test("comparison cells retain problem evidence, source identities and escaped prose", () => {
   const evaluations={left:attributionResult(false),right:attributionResult(false)};
-  evaluations.left.Problem[0].text="错误数据 <img src=x>";
-  evaluations.left.Problem[0].reason="证据支持具体缺陷 <script>内容</script>";
+  sessionProblems(evaluations.left)[0]!.problem_phenomena="错误数据 <img src=x>";
+  sessionProblems(evaluations.left)[0]!.reason="证据支持具体缺陷 <script>内容</script>";
   const comparison=comparisonResult(["left","right"]);
   comparison.decision_basis.comparisons=[{aspect:"引用缺陷",criterion_ids:[],importance:"medium",better_candidates:["right"],assessments:{
     left:{summary:"已确认本方问题。",finding_indices:[0],status:"met",evidence_status:"已确认"},
@@ -435,8 +438,8 @@ test("comparison cells retain problem evidence, source identities and escaped pr
   const {dom,document,views}=render("comparison",projected);
   try {
     const table=document.querySelector(".comparison-table"),cells=table.querySelectorAll("td");assert.equal(cells.length,2);
-    for(const cell of cells){const problem=evaluations[cell.dataset.candidate as keyof typeof evaluations].Problem[0];
-      const shown=cell.querySelector(".comparison-finding");assert(shown);assert(shown.textContent.includes(problem.text));
+    for(const cell of cells){const problem=sessionProblems(evaluations[cell.dataset.candidate as keyof typeof evaluations])[0]!;
+      const shown=cell.querySelector(".comparison-finding");assert(shown);assert(shown.textContent.includes(problem.problem_phenomena));
       assert(shown.textContent.includes(problem.reason));for(const evidence of problem.evidence)assert(shown.textContent.includes(evidence.quote));
       const link=cell.querySelector("[data-finding-target]");assert(document.getElementById(link.dataset.findingTarget));}
     assert.equal(table.querySelector("img,script"),null);assert.equal(table.querySelectorAll(".comparison-advantage").length,1);
@@ -462,8 +465,8 @@ test("dashboard pairs clustering rewrites inside arrays and escapes text", () =>
 
 test("dashboard shows empty finding groups and no rewrite columns when no rewrites exist", () => {
   const evaluation = attributionResult();
-  evaluation.Problem = [];
-  const { dom, document } = render("attribution", caseResultView("attribution", evaluation as unknown as JsonObject)!);
+  evaluation.turns[0]!.problem = [];
+  const { dom, document } = render("attribution", caseResultView("attribution-session", evaluation as unknown as JsonObject)!);
   try {
     assert.equal(document.querySelectorAll(".rewrite-pair").length, 0);
     assert.equal(document.querySelectorAll(".findings-nav-group").length, 1);
