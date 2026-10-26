@@ -8,7 +8,7 @@
 
 ```mermaid
 flowchart LR
-  CLI[CLI / 看板] --> Host[通用 Host]
+  CLI[CLI / 工作台] --> Host[通用 Host]
   Automation[自动化] --> Host
 Workbench[工作台 supervisor / 网关] --> Automation
 Workbench --> DataService[Python 数据服务]
@@ -17,7 +17,7 @@ Workbench --> DataService[Python 数据服务]
   Validation[稳定性 Workflow] --> Host
   Validation --> Statistics[确定性统计与独立报告]
   Host --> Data[Data Repository]
-  Host <-->|HTTP / JSON + SSE| Worker[Pi / Prime Worker]
+  Host <-->|HTTP / JSON + SSE| Worker[Pi Worker]
   Worker --> SDK[vendored SDK]
   Worker --> Tools[公共工具]
 ```
@@ -61,9 +61,9 @@ Adapter 展开本地静态 Schema 引用，拒绝外部、循环和动态引用�
 
 显式提示词缓存仅在渠道声明 `supports_explicit_prompt_caching=true` 时启用，适用于支持的 GPT Responses 评测请求；其他请求保留 SDK 策略。它不复用判词或跨任务会话，实际收益以服务返回用量核对。实现与测试见 [sdk-utils.ts](../packages/runtime/src/sdk-utils.ts)。
 
-工作台网关监听内部 `5001`，为 `0.0.0.0` 上唯一对外服务；数据服务 `8081`、自动化看板 `4174` 和运行实例看板 `4173` 只监听回环地址。生产只提供 `/` 单页，页面片段和静态资源通过 `/workbench-assets/` 加载；网关按[路由白名单](../apps/host/src/workbench-routes.ts)转发 `/data/` 数据接口与 `/runtime/api/` 接口。
+工作台网关监听内部 `5001`，为 `0.0.0.0` 上唯一对外服务；数据服务 `8081`、自动化 API `4174` 和运行实例 API `4173` 只监听回环地址。生产只提供 `/` 单页，页面片段和静态资源通过 `/workbench-assets/` 加载；网关按[路由白名单](../apps/host/src/workbench-routes.ts)转发 `/data/` 数据接口与 `/runtime/api/` 接口。
 
-工作台在网关层完成单管理员登录、会话 Cookie 与 relay Bearer token 校验；页面和 API 不自建账号体系。运行实例页的 `/runtime/api/dashboard` 复用 CLI 预检与独立运行子进程，控制转发到持锁 Host，页面不调度或写结果。只读监控投影不替代权威文件。
+工作台在网关层完成单管理员登录、会话 Cookie 与 relay Bearer token 校验；页面和 API 不自建账号体系。运行实例 API 的 `/runtime/api/dashboard` 复用 CLI 预检与独立运行子进程，控制转发到持锁 Host，页面不调度或写结果。只读监控投影不替代权威文件。
 
 ## 接口和底座路由
 
@@ -75,7 +75,7 @@ Adapter 展开本地静态 Schema 引用，拒绝外部、循环和动态引用�
 | InputSource / SourceReader | 描述并解析来源 |
 | AgentBackend | SDK 会话、事件、取消和释放 |
 
-类型见 [Contracts](../packages/contracts/src/index.ts)，组装见 [composition.ts](../apps/host/src/composition.ts)。Runtime 客户端不加载 SDK。CLI 选择统一底座；库调用可用 `engineForTask` 路由到混合 Worker 池。
+类型见 [Contracts](../packages/contracts/src/index.ts)，组装见 [composition.ts](../apps/host/src/composition.ts)。Runtime 客户端不加载 SDK。CLI 固定使用 Pi；运行状态保留 Worker 构建身份用于恢复和匹配。
 
 `request` 是校验依据，`modelInput` 只用于展示。盲测、改写槽位、核验和聚类分片均由 Workflow 管理，具体语义见[数据契约](contract.md)。
 
@@ -95,7 +95,7 @@ Adapter 展开本地静态 Schema 引用，拒绝外部、循环和动态引用�
 
 ## 底座源码开发
 
-两套 vendor 使用独立依赖树。Pi 只注册应用网关模型；Prime 应用构建不下载模型目录。构建记录保存于 `.runtime/pi.json`、`.runtime/prime.json`，修改后按[开发指南](development.md#构建与依赖)重建。
+Pi vendor 使用独立依赖树，只注册应用网关模型。构建记录保存于 `.runtime/pi.json`，修改后按[开发指南](development.md#构建与依赖)重建。
 
 ## 独立分析助手
 

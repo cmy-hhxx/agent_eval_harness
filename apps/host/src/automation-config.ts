@@ -1,6 +1,6 @@
 import path from "node:path";
 import { pathToFileURL } from "node:url";
-import { safeId, type Engine } from "@eval/contracts";
+import { safeId } from "@eval/contracts";
 import { readJson } from "@eval/data";
 import { validInputDate } from "@eval/runtime/client";
 import type { PipelineOptions } from "@eval/automations";
@@ -16,7 +16,6 @@ export interface AutomationConfig extends PipelineOptions {
   stateDirectory: string;
   sourceDirectory: string;
   runPrefix: string;
-  engine: Engine;
   requestTimeoutMs: number;
   dailyComparisonLimitPerTier: number;
   channelConcurrency?: Record<string, number>;
@@ -24,7 +23,7 @@ export interface AutomationConfig extends PipelineOptions {
   publishMongo: boolean;
   publishStatisticsLog: boolean;
   autoClean?: boolean;
-  runtimeSettings?: { engine: "pi" | "prime"; debug: boolean; settings: Record<string, unknown> };
+  runtimeSettings?: { debug: boolean; settings: Record<string, unknown> };
   prediction?: { answersFile: string; sourceConfig: string };
   /** Accepted prediction replacements applied to this source's publication and statistics. */
   predictionResults?: string;
@@ -43,7 +42,7 @@ export interface AutomationConfig extends PipelineOptions {
 export async function loadAutomationConfig(file: string): Promise<AutomationConfig> {
   const raw = await readJson<Record<string, unknown>>(file), directory = path.dirname(path.resolve(file));
   const keys = ["id", "sourceUrl", "remoteModels", "fromDate", "throughDate", "completedDates", "hostConfigs", "stateDirectory",
-    "sourceDirectory", "runPrefix", "engine", "pollMs", "refreshMs", "retryMs", "maxEvaluationAttempts",
+    "sourceDirectory", "runPrefix", "pollMs", "refreshMs", "retryMs", "maxEvaluationAttempts",
     "requestTimeoutMs", "dailyComparisonLimitPerTier", "channelConcurrency", "publishProgress", "publishMongo", "publishStatisticsLog", "publication",
     "prediction", "predictionResults", "autoClean"];
   for (const key of Object.keys(raw)) if (!keys.includes(key)) throw new Error(`Unknown automation setting: ${key}`);
@@ -79,8 +78,6 @@ export async function loadAutomationConfig(file: string): Promise<AutomationConf
   if (![...(fromDate ? [fromDate] : []), ...(throughDate ? [throughDate] : []), ...completedDates].every(validInputDate) ||
       (throughDate && fromDate && throughDate < fromDate)) throw new Error("Invalid automation date range");
   if (raw.autoClean !== undefined && typeof raw.autoClean !== "boolean") throw new Error("Invalid automations.autoClean");
-  const engine = string("engine");
-  if (engine !== "pi" && engine !== "prime") throw new Error("Invalid automation engine");
   if (typeof raw.publishProgress !== "boolean") throw new Error("Invalid automations.publishProgress");
   if (typeof raw.publishStatisticsLog !== "boolean") throw new Error("Invalid automations.publishStatisticsLog");
   if (typeof raw.publishMongo !== "boolean") throw new Error("Invalid automations.publishMongo");
@@ -113,7 +110,7 @@ export async function loadAutomationConfig(file: string): Promise<AutomationConf
     if (!/^[A-Z_][A-Z0-9_]*$/.test(key)) throw new Error("Invalid publication environment variable name");
   return {
     id: safeId(string("id")), sourceUrl: source.href.replace(/\/$/, ""), remoteModels, fromDate, throughDate, completedDates,
-    hostConfigs, engine, stateDirectory: path.resolve(directory, string("stateDirectory")),
+    hostConfigs, stateDirectory: path.resolve(directory, string("stateDirectory")),
     sourceDirectory: path.resolve(directory, string("sourceDirectory")), runPrefix,
     pollMs: number("pollMs"), refreshMs: raw.refreshMs === null ? Infinity : number("refreshMs"), retryMs: number("retryMs"),
     maxEvaluationAttempts: number("maxEvaluationAttempts"), requestTimeoutMs: number("requestTimeoutMs"),

@@ -1,5 +1,5 @@
 import path from "node:path";
-import { safeId, type Engine } from "@eval/contracts";
+import { safeId } from "@eval/contracts";
 import { exists, runLayout } from "@eval/data";
 import { runEvaluation } from "@eval/host";
 import { attributionJobWorkflow, comparisonRepository, prepareAttributionJob, prepareAttributionPilotExpansion, reportRun, type AttributionJobConfig } from "@eval/workflows/comparison";
@@ -9,11 +9,10 @@ import { services } from "./composition.js";
 
 export async function runAttributionCommand(host: HostConfig, options: {
   runs?: string[]; runId?: string; output?: string; fromDate?: string; pilotAnswers?: number; pilotPerModel?: number;
-  apply?: boolean; engine: string; debug?: boolean; workers?: string[]; resumeStages?: string[];
+  apply?: boolean; debug?: boolean; workers?: string[]; resumeStages?: string[];
   discoverInputs?: boolean; balanceChannels?: boolean;
 }): Promise<number> {
   if (host.workflow !== "comparison") throw new Error("重归因作业需要对战工作流配置");
-  if (!["pi", "prime"].includes(options.engine)) throw new Error("--engine must be pi or prime");
   if (options.apply && !options.runId) throw new Error("reattribute --apply 需要 --run-id 保存独立进度");
   if (options.runId) safeId(options.runId);
   const pilot = options.pilotAnswers !== undefined || options.pilotPerModel !== undefined;
@@ -52,7 +51,7 @@ export async function runAttributionCommand(host: HostConfig, options: {
   try {
     const result = await runEvaluation({ ...services, ...routing, taskSource: attributionJobWorkflow,
       repository: comparisonRepository, report: reportRun, runId: options.runId!, output,
-      engine: options.engine as Engine, evaluatorVersion: host.evaluatorVersion, config,
+      engine: "pi", evaluatorVersion: host.evaluatorVersion, config,
       plan: prepared?.plan ?? { tasks: [], inputs: {}, summary: {} }, policy: config.execution,
       concurrency: config.execution.concurrency, retries: config.execution.retries,
       retryDelaySeconds: config.execution.retryDelaySeconds, failureGuard: config.execution.failureGuard,

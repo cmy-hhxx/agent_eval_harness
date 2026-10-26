@@ -1009,22 +1009,6 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
-    def send_static(self, file_path: Path, content_type: str, prefix: str) -> None:
-        try:
-            body = file_path.read_bytes()
-            if content_type.startswith("text/html"):
-                body = body.replace(b"__BASE__", prefix.encode())
-        except OSError:
-            self.send_json(404, {"error": "not found"})
-            return
-        self.send_response(200)
-        self.send_header("Content-Type", content_type)
-        self.send_header("Content-Length", str(len(body)))
-        self.send_header("Cache-Control", "no-cache")
-        self.send_header("X-Content-Type-Options", "nosniff")
-        self.end_headers()
-        self.wfile.write(body)
-
     def workbench_request(self) -> bool:
         parsed = urlsplit(self.path)
         if not parsed.path.startswith("/data/workbench/"):
@@ -1080,21 +1064,6 @@ class Handler(BaseHTTPRequestHandler):
             return
         dataset, path = self.dataset_path()
         if dataset is None:
-            return
-        static_files = {
-            "/": ("dashboard.html", "text/html; charset=utf-8"),
-            "/dashboard.css": ("dashboard.css", "text/css; charset=utf-8"),
-            "/dashboard.js": ("dashboard.js", "application/javascript; charset=utf-8"),
-            "/records": ("records.html", "text/html; charset=utf-8"),
-            "/records/": ("records.html", "text/html; charset=utf-8"),
-            "/records.bundle.js": ("records.bundle.js", "application/javascript; charset=utf-8"),
-            "/docs": ("docs.html", "text/html; charset=utf-8"),
-            "/docs/": ("docs.html", "text/html; charset=utf-8"),
-            "/docs/handoff.md": ("docs/handoff.md", "text/markdown; charset=utf-8"),
-        }
-        if path in static_files:
-            filename, content_type = static_files[path]
-            self.send_static(CODE_DIR / filename, content_type, dataset.url_prefix)
             return
         if path == "/health":
             self.send_json(200, {"ok": True})
@@ -1229,7 +1198,7 @@ class Handler(BaseHTTPRequestHandler):
         if not isinstance(value["run_id"], str) or not re.fullmatch(r"[A-Za-z0-9._-]{1,128}", value["run_id"]):
             self.send_json(400, {"error": "invalid run_id"})
             return
-        if value["engine"] not in ("pi", "prime") or value["status"] not in ("running", "finished", "interrupted"):
+        if value["engine"] != "pi" or value["status"] not in ("running", "finished", "interrupted"):
             self.send_json(400, {"error": "invalid engine or status"})
             return
         if not isinstance(value["dates"], list):

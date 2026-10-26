@@ -42,7 +42,7 @@ test("answer-review CLI applies input, batch, case and limit selection before pr
 test("answer-review trial flags reject production output before any model work", async t => {
   const f = await fixture(t);
   for (const flags of [["--test-eval"], ["--pilot-cases", "1"]]) {
-    await assert.rejects(f.cli("run", "--stage", "attribution", "--run-id", "trial", "--engine", "invalid",
+    await assert.rejects(f.cli("run", "--stage", "attribution", "--run-id", "trial",
       "--output", f.config.output.path, ...flags), (error: unknown) =>
       /Test evaluation output must be under/.test((error as { stderr: string }).stderr));
   }

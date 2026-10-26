@@ -106,8 +106,8 @@ test("monitor counts accepted evaluations and rewrites without waiting for defer
       assert.equal(reads, 1, "HTTP monitoring shares the progress projection");
       assert.equal((await fetch(server.url + "/api/status", { method: "POST" })).status, 405);
       assert.equal((await fetch(server.url + "/.env")).status, 404);
-      assert.match(await (await fetch(server.url)).text(), /完成对比 · 含改写/);
-      assert.match(await (await fetch(server.url + "/automations.js")).text(), /api\/status/);
+      assert.equal((await fetch(server.url)).status, 404);
+      assert.equal((await fetch(server.url + "/automations.js")).status, 404);
     } finally { await server.close(); }
     await assert.rejects(fetch(server.url), /fetch failed/);
     current.status = "running"; current.jobs["2026-09-30"].evaluation = "evaluating";

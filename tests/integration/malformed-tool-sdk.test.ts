@@ -10,15 +10,13 @@ import { AgentRegistry, runEvaluation } from "@eval/host";
 import { createModelResolver } from "@eval/host-app/config";
 import { body, listen } from "@eval/runtime/http";
 import { piBackend } from "@eval/runtime/pi";
-import { primeBackend } from "@eval/runtime/prime";
 import { startWorker } from "@eval/runtime/worker";
 import { fakeIdentity, fixtureConfig } from "../fixtures/comparison.js";
 import { services } from "../fixtures/services.js";
 
 /** Real SDK strict parsing followed by a same-session Runtime repair, with no external gateway. */
-for (const engine of ["pi", "prime"] as const)
-  for (const truncated of [false,true])
-  test(`${engine}: ${truncated ? "incomplete tool arguments retain length" : "malformed completed tool arguments use the loading repair budget"} before a valid submission`, { timeout: 60000 }, async () => {
+for (const truncated of [false,true])
+  test(`pi: ${truncated ? "incomplete tool arguments retain length" : "malformed completed tool arguments use the loading repair budget"} before a valid submission`, { timeout: 60000 }, async () => {
     const { directory, config, models } = await fixtureConfig();
     const inputId = randomUUID(), taskId = "malformed-task", runId = "malformed-sdk";
     const errors: string[] = [];
@@ -60,7 +58,7 @@ for (const engine of ["pi", "prime"] as const)
     (task, state) => ({ id: task.id, file: "results.jsonl", row: { id: task.id, result: state.receipts[task.id].evaluation } }));
     const previous = process.env.EVAL_CHANNEL_KEY_evaluation_Hgateway, previousOffline = process.env.PI_OFFLINE;
     process.env.EVAL_CHANNEL_KEY_evaluation_Hgateway = "local-fixture-secret"; process.env.PI_OFFLINE = "1";
-    const backend = (engine === "pi" ? piBackend : primeBackend)({ ...fakeIdentity, engine });
+    const backend = piBackend({ ...fakeIdentity, engine: "pi" });
     const worker = await startWorker(backend,path.join(directory,"worker"));
     try {
       models.models.judge!.baseUrl = gateway.url + "/v1"; models.models.judge!.api = "openai-responses";
@@ -68,7 +66,7 @@ for (const engine of ["pi", "prime"] as const)
       await runEvaluation({ runId, debug: true, output: config.output, config,
         plan: { tasks: [{ id: taskId, stage: "malformed", inputIds: { answer: inputId }, dependencies: {}, data: {} }],
           inputs: { [inputId]: { messages: [{ content: "Original fixture material." }] } }, summary: {} },
-        engine, identity: backend.identity, evaluatorVersion: "fixture", modelForStage: () => modelForStage("attribution"),
+        engine: "pi", identity: backend.identity, evaluatorVersion: "fixture", modelForStage: () => modelForStage("attribution"),
         policy: { ...config.execution, repairAttempts: 3 }, concurrency: 1, retries: 0, retryDelaySeconds: 0,
         agents: new AgentRegistry([{ id: "malformed", profiles: { default: profile } }]), repository,
         taskSource: { id: "malformed", bind: (task, inputs) => ({ agent: "malformed", profile: "default",
@@ -83,10 +81,10 @@ for (const engine of ["pi", "prime"] as const)
       const events = gunzipSync(await readFile(file)).toString().trim().split("\n").map(line=>JSON.parse(line) as WorkerEvent);
       const providerArguments = events.filter(event => event.type === "model" && object(event.data).type === "provider_tool_arguments")
         .map(event => event.data);
-      assert.deepEqual(providerArguments, engine === "pi" ? [1, 2].map(index => ({ type: "provider_tool_arguments",
+      assert.deepEqual(providerArguments, [1, 2].map(index => ({ type: "provider_tool_arguments",
         response_id: `resp_${index}`, status: truncated && index === 1 ? "incomplete" : "completed",
         calls: [{ id: `fc_${index}`, call_id: `call_${index}`, name: "submit_evaluation",
-          arguments: index === 1 ? '{"ok":' : '{"ok":true}' }] })) : []);
+          arguments: index === 1 ? '{"ok":' : '{"ok":true}' }] })));
       const starts = events.filter(event=>event.type==="tool_start").map(event=>event.data as Record<string,unknown>);
       assert.equal(starts.length,truncated ? 1 : 2);
       if (!truncated) {

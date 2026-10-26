@@ -5,7 +5,6 @@ import { dashboardSettings, editableDashboardSettings, loadComparisonConfig, rea
 import type { AutomationConfig } from "./automation-config.js";
 
 export interface DailySettings {
-  engine: "pi" | "prime";
   debug: boolean;
   settings: Record<string, unknown>;
 }
@@ -14,7 +13,7 @@ export async function readDailySettings(config: AutomationConfig): Promise<Daily
   try { return await readJson<DailySettings>(settingsFile(config)); }
   catch (error) {
     if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
-    return { engine: config.engine, debug: false, settings: {} };
+    return { debug: false, settings: {} };
   }
 }
 export async function loadDailyHost(config: AutomationConfig): Promise<DailySettings & { host: ComparisonHostConfig }> {
@@ -31,13 +30,13 @@ export async function dailySettingsView(config: AutomationConfig) {
       thinking: binding.thinking ?? profile.thinking }];
   }));
   return { ...base, execution: host.evaluation.execution, rewrite: host.evaluation.rewrite, bindings,
-    engine: execution.engine, debug: execution.debug };
+    debug: execution.debug };
 }
 export async function saveDailySettings(config: AutomationConfig, value: unknown) {
   if (!value || typeof value !== "object" || Array.isArray(value)) throw new HttpError(400, "运行设置必须是对象");
   const previous = await readDailySettings(config);
-  const { engine = previous.engine, debug = previous.debug, ...settings } = value as Record<string, unknown>;
-  if (engine !== "pi" && engine !== "prime" || typeof debug !== "boolean") throw new HttpError(400, "引擎或 debug 设置无效");
+  const { debug = previous.debug, ...settings } = value as Record<string, unknown>;
+  if (typeof debug !== "boolean") throw new HttpError(400, "debug 设置无效");
   const patch = dashboardSettings(settings, previous.settings);
   if (patch.clustering || patch.versions) throw new HttpError(400, "日常来源范围由收包目录决定，聚类单独启动");
   const host = await loadComparisonConfig(config.hostConfigs, undefined, patch);
@@ -45,6 +44,6 @@ export async function saveDailySettings(config: AutomationConfig, value: unknown
   for (const stage of ["criteria", "attribution", "comparison", "rewrite"]) resolve(stage);
   if (config.publishMongo && (!host.evaluation.rewrite.comparison || host.evaluation.rewrite.comparisonItems === false))
     throw new HttpError(400, "MongoDB 交付需要比较改写");
-  await writeJson(settingsFile(config), { engine, debug, settings: patch });
+  await writeJson(settingsFile(config), { debug, settings: patch });
   return dailySettingsView(config);
 }

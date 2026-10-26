@@ -13,7 +13,7 @@ import type { DashboardModelLoader } from "./dashboard-models.js";
 
 type Selection = ClusteringJobConfig["clusteringJob"];
 interface Scope { task_id: string; batch_ids: string[]; run_ids: string[] }
-interface AnalysisJob { id: string; created_at: number; scope: Scope; output_dir: string; engine: "pi" | "prime";
+interface AnalysisJob { id: string; created_at: number; scope: Scope; output_dir: string; engine: "pi";
   status: "preview" | "reserved"; pid?: number; error?: string; completed_at?: number }
 const identity = (source: ClusteringJobSource) => JSON.stringify([source.run, source.task_id, source.submission_id]);
 const business = (row: {model: string; batch_id: string; case_id: string}) => JSON.stringify([row.model,row.batch_id,row.case_id]);
@@ -138,8 +138,7 @@ export class DashboardAnalysis {
     return {job_id:id,counts:scope.counts,summary:prepared.plan.summary,output_dir:path.join(output_dir,id)};
   }
   async launch(id: string, value: Record<string,unknown>) {
-    if (Object.keys(value).some(key => !['engine','resume_stages'].includes(key))) throw new HttpError(400,'未知聚类启动参数');
-    if (value.engine !== undefined && !['pi','prime'].includes(String(value.engine))) throw new HttpError(400,'Invalid engine');
+    if (Object.keys(value).some(key => !['resume_stages'].includes(key))) throw new HttpError(400,'未知聚类启动参数');
     const resumeStages = stringIds(value.resume_stages ?? [],'resume_stages');
     let release:()=>Promise<void>;
     try { release = await runLock(path.join(this.directory,'.claims')); }
@@ -169,10 +168,10 @@ export class DashboardAnalysis {
         const state = await clusteringJobRepository.readRun(directory);
         if (resumeStages.some(stage=>!state.manifest.pausedStages?.some(pause=>pause.stage===stage))) throw new HttpError(400,'只能解除当前暂停阶段');
       }
-      job.status='reserved'; job.engine=(value.engine as 'pi'|'prime'|undefined) ?? job.engine; delete job.error;
+      job.status='reserved'; delete job.error;
       await writeJson(this.file(id),job);
       const args=[path.join(path.dirname(fileURLToPath(import.meta.url)),'cli.js'),'cluster','--apply','--run-id',id,'--output',job.output_dir,
-        '--engine',job.engine,'--clustering-selection',this.selectionFile(id)];
+        '--clustering-selection',this.selectionFile(id)];
       for (const config of this.configs) args.push('--config',config);
       for (const stage of resumeStages) args.push('--resume-stage',stage);
       let child: AnalysisProcess;

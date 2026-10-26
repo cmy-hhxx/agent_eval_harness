@@ -17,7 +17,7 @@ for (const [command, args, expected] of [
     console.error(`${command}: expected ${expected}, got ${actual || result.error}`);
   } else console.log(`${command}: ${actual}`);
 }
-for (const [engine, item] of Object.entries(upstream).filter(([name]) => name === "pi" || name === "prime")) {
+for (const [engine, item] of Object.entries(upstream).filter(([name]) => name === "pi")) {
   try {
     const stamp = JSON.parse(await readFile(path.join(root, ".runtime", `${engine}.json`), "utf8"));
     const directory = path.join(root, item.directory);
@@ -45,15 +45,6 @@ if (!(await exists(path.join(root, "dist/apps/host/src/cli.js")))) {
   failures++;
   console.error("Host not built; run npm run build:app");
 }
-const runtime = spawnSync(
-  path.join(root, ".runtime/prime-python/bin/python"),
-  ["-c", "import rlm; assert callable(rlm.create_session)"],
-  { encoding: "utf8" },
-);
-if (runtime.status !== 0) {
-  failures++;
-  console.error("Prime Python runtime missing; run npm run bootstrap.");
-} else console.log("Prime Python runtime: ready (independent .runtime/prime-python)");
 try {
   const { boundProfiles, loadConfig } = await import("@eval/host-app/config");
   const { createRegistry } = await import("@eval/tools");

@@ -126,8 +126,7 @@ function renderOverview() {
   const progress = run.progress || {};
   const totalTasks = progressCounts(progress).total;
   const libraryModels = Object.keys(run.problem_library || {}).length;
-  const engineLabel = run.engine === "prime" ? "Prime" : "Pi";
-  $("#run-description").textContent = `${engineLabel} · ${progress.accepted || 0}/${totalTasks} 已接受${libraryModels ? ` · 问题库 ${libraryModels} 个模型` : ""}${run.live && progress.updated_at ? ` · 更新 ${new Date(progress.updated_at).toLocaleTimeString()}` : ""}`;
+  $("#run-description").textContent = `${progress.accepted || 0}/${totalTasks} 已接受${libraryModels ? ` · 问题库 ${libraryModels} 个模型` : ""}${run.live && progress.updated_at ? ` · 更新 ${new Date(progress.updated_at).toLocaleTimeString()}` : ""}`;
   if (progress.usage) $("#run-description").textContent += ` · 已归档 ${Number(progress.usage.archived_tokens).toLocaleString()} Token（${progress.usage.archived_attempts} 次尝试） · ${progress.usage.unarchived_attempts} 次待归档`;
   $("#run-actions").innerHTML = run.status === "running"
     ? `<form id="concurrency-form" class="inline-form"><label for="live-concurrency">并发</label><input id="live-concurrency" type="number" min="1" value="${Number(progress.concurrency) || 1}" required /><button class="button" type="submit">调整</button></form><button class="button button-danger" type="button" data-stop="${escapeHtml(run.run_id)}">停止</button>`
@@ -617,7 +616,7 @@ function launchPayload() {
     bindings[stage] = { ...(selected ? { channel: selected[0], model: selected[1] } : {}), thinking };
   });
   return {
-    runId: state.runId, engine: $("#engine").value,
+    runId: state.runId,
     ...(batches.length ? { batch: batches } : {}), ...(cases.length ? { case: cases } : {}),
     debug: $("#debug").checked,
     settings: {
@@ -781,7 +780,6 @@ $("#run-actions").addEventListener("click", async (event) => {
   else if (node.dataset.resume) {
     if (state.run.batch_run && options.onBatchResume) { options.onBatchResume(node.dataset.resume); return; }
     state.runId = node.dataset.resume;
-    $("#engine").value = state.run.engine === "prime" ? "prime" : "pi";
     invalidatePreview();
     $("#config").scrollIntoView({ behavior: scrollBehavior() });
     $("#preview-button").focus();

@@ -12,7 +12,6 @@ import { createRunRepository } from "@eval/data";
 import { body, json, listen, request } from "@eval/runtime/http";
 import { startWorkerPool } from "@eval/runtime/worker";
 import { piBackend } from "@eval/runtime/pi";
-import { primeBackend } from "@eval/runtime/prime";
 import { fakeIdentity } from "../fixtures/comparison.js";
 import { ROOT, services } from "../fixtures/services.js";
 
@@ -34,8 +33,7 @@ test("the Worker CLI publishes independent slots in one process and closes every
   for (const url of ready.urls) await assert.rejects(fetch(url + "/api/health", { signal: AbortSignal.timeout(1000) }));
 });
 
-for (const engine of ["pi", "prime"] as const)
-  test(`${engine}: one SDK backend serves eight concurrent isolated sessions across two channels`, { timeout: 30000 }, async t => {
+  test(`pi: one SDK backend serves eight concurrent isolated sessions across two channels`, { timeout: 30000 }, async t => {
     const directory = await mkdtemp(path.join(tmpdir(), "worker-pool-sdk-"));
     const keys = ["POOL_CHANNEL_A", "POOL_CHANNEL_B"], previous = keys.map(key => process.env[key]);
     keys.forEach((key, index) => { process.env[key] = "fixture-secret-" + index; });
@@ -63,7 +61,7 @@ for (const engine of ["pi", "prime"] as const)
         active--;
       } catch (error) { errors.push(String(error)); release(); json(res, { error: "fixture error" }, 500); }
     });
-    const backend = (engine === "pi" ? piBackend : primeBackend)({ ...fakeIdentity, engine });
+    const backend = piBackend({ ...fakeIdentity, engine: "pi" });
     const pool = await startWorkerPool(backend, path.join(directory, "worker"), 8);
     t.after(async () => {
       release(); await pool.close(); await gateway.close(); await rm(directory, { recursive: true, force: true });
@@ -78,7 +76,7 @@ for (const engine of ["pi", "prime"] as const)
     const tasks = Array.from({ length: 8 }, (_, value) => ({ id: randomUUID(), stage: "numeric", inputIds: {}, dependencies: {}, data: { value } }));
     await runEvaluation({ ...services, agents: new AgentRegistry([{ id: "numeric", profiles: { default: profile } }]), repository,
       taskSource: { id: "pool", bind: task => ({ agent: "numeric", profile: "default", request: { input: task.data as { value: number }, sources: {} } }) },
-      engine, identity: backend.identity, evaluatorVersion: "fixture", runId: "pool", output: { kind: "directory", path: directory },
+      engine: "pi", identity: backend.identity, evaluatorVersion: "fixture", runId: "pool", output: { kind: "directory", path: directory },
       config: {}, snapshots: {}, report: async () => ({}), plan: { tasks, inputs: {}, summary: {} },
       modelForStage: () => { throw Error("Task routing is required"); }, modelForTask: task => {
         const channel = (task.data as { value: number }).value % 2;

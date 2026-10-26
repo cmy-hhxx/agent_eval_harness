@@ -3,7 +3,7 @@ import { parseArgs } from "node:util";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { createFileLogger } from "@eval/data";
-import type { AgentBackend, Engine, EngineIdentity } from "@eval/contracts";
+import type { Engine } from "@eval/contracts";
 import { errorText, redact } from "@eval/contracts";
 import { loadIdentity } from "@eval/runtime/client";
 import { startWorkerPool } from "@eval/runtime/worker";
@@ -33,22 +33,13 @@ async function main() {
   logger = logs(ROOT);
   if (!process.send) await logger.initialize();
   const engine = values.engine as Engine;
-  if (!["pi", "prime"].includes(engine)) throw new Error("--engine pi|prime required");
+  if (engine !== "pi") throw new Error("--engine pi required");
   process.env.PI_OFFLINE = "1";
   process.env.PI_TELEMETRY = "0";
-  process.env.PRIME_AGENT_TELEMETRY = "0";
   process.env.DO_NOT_TRACK = "1";
-  process.env.PRIME_AGENT_KERNEL_PYTHON = path.join(ROOT, ".runtime/prime-python/bin/python");
   const identity = await loadIdentity(engine, ROOT);
-  const adapters: Record<Engine, string> = {
-    pi: "@eval/runtime/pi",
-    prime: "@eval/runtime/prime",
-  };
-  const adapter = (await import(adapters[engine])) as Record<
-    string,
-    (identity: EngineIdentity) => AgentBackend
-  >;
-  const backend = adapter[`${engine}Backend`](identity);
+  const { piBackend } = await import("@eval/runtime/pi");
+  const backend = piBackend(identity);
   const worker = await startWorkerPool(
     backend,
     values.directory || path.join(ROOT, ".runtime", "workers", `${engine}-${process.pid}`),

@@ -11,7 +11,7 @@ import {ROOT} from './paths.js';
 export interface AimeConfiguration {
   archiveDirectory:string;inputDirectory:string;dataStateDirectory:string;stateDirectory:string;outputDirectory:string;
   hostConfigs:string[];settingsFile:string;logDirectory:string;logLockDirectory:string;
-  python:string;pythonPath?:string;sevenZip:string;engine:'pi'|'prime';stableSeconds:number;stableTimeoutSeconds:number;concurrency:number;pollSeconds:number;
+  python:string;pythonPath?:string;sevenZip:string;stableSeconds:number;stableTimeoutSeconds:number;concurrency:number;pollSeconds:number;
 }
 export function aimeConfiguration(value:Record<string,unknown>,directory:string):AimeConfiguration{
   const located=(key:string)=>{const item=value[key];if(typeof item!=='string'||!item.trim())throw Error('Missing '+key);return path.resolve(directory,item);};
@@ -19,11 +19,11 @@ export function aimeConfiguration(value:Record<string,unknown>,directory:string)
     stateDirectory:located('stateDirectory'),outputDirectory:located('outputDirectory'),settingsFile:located('settingsFile'),
     logDirectory:located('logDirectory'),logLockDirectory:located('logLockDirectory'),hostConfigs:[] as string[],
     python:typeof value.python==='string'?value.python:'python3',pythonPath:value.pythonPath?located('pythonPath'):undefined,
-    sevenZip:typeof value.sevenZip==='string'?value.sevenZip:'7z',engine:value.engine??'pi',stableSeconds:value.stableSeconds??3,
+    sevenZip:typeof value.sevenZip==='string'?value.sevenZip:'7z',stableSeconds:value.stableSeconds??3,
     stableTimeoutSeconds:value.stableTimeoutSeconds??30,concurrency:value.concurrency??200,pollSeconds:value.pollSeconds??60} as AimeConfiguration;
   if(!Array.isArray(value.hostConfigs)||!value.hostConfigs.length||value.hostConfigs.some(v=>typeof v!=='string'))throw Error('hostConfigs must list the existing AIME Host configuration files');
   c.hostConfigs=value.hostConfigs.map(v=>path.resolve(directory,String(v)));
-  if(!['pi','prime'].includes(c.engine)||!Number.isFinite(c.stableSeconds)||c.stableSeconds<=0||c.stableTimeoutSeconds<=c.stableSeconds)throw Error('Invalid engine or stability interval');
+  if(!Number.isFinite(c.stableSeconds)||c.stableSeconds<=0||c.stableTimeoutSeconds<=c.stableSeconds)throw Error('Invalid stability interval');
   if(!Number.isSafeInteger(c.concurrency)||c.concurrency<1)throw Error('Invalid concurrency');
   if(!Number.isSafeInteger(c.pollSeconds)||c.pollSeconds<1)throw Error('Invalid pollSeconds');
   if(c.outputDirectory!==path.join(path.dirname(c.inputDirectory),'eval_output','0_daily_eval'))throw Error('正式结果必须位于同一AIME来源的eval_output/0_daily_eval');
@@ -55,7 +55,7 @@ export function aimeScopedHost(base:HostConfig,job:AimeJob,concurrency:number,ta
 }
 export interface AimeRunOptions {
   signal:AbortSignal;pauseSignal?:AbortSignal;modelRequests?:ModelRequestControl;watch?:boolean;manualRetry?:boolean;
-  host?:()=>Promise<HostConfig>;engine?:()=>AimeConfiguration['engine'];debug?:()=>boolean;concurrency?:()=>number;
+  host?:()=>Promise<HostConfig>;debug?:()=>boolean;concurrency?:()=>number;
 }
 /** The CLI and Workbench share this owner, ingestion journal, day runs and accepted receipts. */
 export async function runAimeEvaluation(c:AimeConfiguration,options:AimeRunOptions){
@@ -115,7 +115,7 @@ export async function runAimeEvaluation(c:AimeConfiguration,options:AimeRunOptio
             launched=before?pendingBefore.filter(task=>eligible.has((task.data as {candidate:{trace_id:string}}).candidate.trace_id)).length:job.records.length*2;
             if(launched){const {runAnswerReviewCommand}=await import('./answer-review-command.js');
               const requests=options.modelRequests;
-              code=await runAnswerReviewCommand(host,{command:'run',runId:job.id,engine:options.engine?.()??c.engine,signal,pauseSignal:options.pauseSignal,
+              code=await runAnswerReviewCommand(host,{command:'run',runId:job.id,signal,pauseSignal:options.pauseSignal,
                 modelRequests:requests,debug:options.debug?.(),resumeTaskIds:resumeTaskIds&&[...resumeTaskIds]});}
           }
           if(!await exists(file))return {launched:0,succeeded:0,failures:[],exit_code:options.signal.aborted?130:2,output:job.output};

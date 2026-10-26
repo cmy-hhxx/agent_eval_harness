@@ -1,6 +1,6 @@
 # 可编排评测 Host
 
-TypeScript Host 编排评测任务，Pi / Prime Worker 执行模型与工具调用。主线为共同 Criteria 与单回答 Attribution 并行，两两 Comparison 依赖两者；改写默认开启，独立核验与聚类按需执行。
+TypeScript Host 编排评测任务，Pi Worker 执行模型与工具调用。主线为共同 Criteria 与单回答 Attribution 并行，两两 Comparison 依赖两者；改写默认开启，独立核验与聚类按需执行。
 
 开发先读 [AGENTS.md](AGENTS.md)。当前行为以源码、配置和 Schema 为准。
 
@@ -14,7 +14,7 @@ TypeScript Host 编排评测任务，Pi / Prime Worker 执行模型与工具调�
 - 持久目录：`/mnt/aigc_team/user_workspace/chenmingyang/eval_harness/runtime`
 - 数据源：`/mnt/fin_bench/eval_data`
 - 评测产物：`/mnt/fin_bench/eval_data/{source}/eval_output/`；日常按业务日期写入 `0_daily_eval/<YYYY-MM-DD>/{results,cluster}/`，专项写入 `1_task_eval/<任务>/`，所有真实模型测试在 `test_eval/`，不得写到其他位置。
-- 内部监听：工作台 `5001`；数据服务 `127.0.0.1:8081`；自动化看板 `127.0.0.1:4174`；运行实例看板 `127.0.0.1:4173`
+- 内部监听：工作台 `5001`；数据服务 `127.0.0.1:8081`；自动化 API `127.0.0.1:4174`；运行实例 API `127.0.0.1:4173`
 - 外部映射：`http://117.50.195.94:3309/`
 - 页面：`/` 单页工作台，一级入口为评测、数据、结果、更多；默认进入评测，问财和 AIME 同时可见、分别控制，可同时运行。
 - 每个来源默认进入总览，用 Tabler 与 ECharts 展示全量数据分布、业务日期趋势和当前评测覆盖；包名、清洗报告及分页明细位于次级页签。

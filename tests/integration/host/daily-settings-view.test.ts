@@ -17,8 +17,8 @@ async function environment(save?:(id:string,value:any)=>Promise<Response>){
   const execution={timeoutSeconds:600,maxToolCalls:8,retries:1,repairAttempts:3,retryDelaySeconds:10,maxTaskAttempts:4};
   const sources=['wencai','aime'].map(id=>({id,name:id,workflow:id==='aime'?'answer-review':'comparison',status:'idle',concurrency:32,
     archiveDirectory:`/mnt/fin_bench/${id}/input`,outputDirectory:`/mnt/fin_bench/${id}/output`,
-    settings:{engine:'pi',debug:false,execution:{...execution},bindings:Object.fromEntries((id==='aime'?['score','attribution']:['criteria','attribution','comparison','rewrite']).map(stage=>[stage,{channel:'evaluation-gateway',model:id==='aime'?'saved-model-not-in-current-catalog':model,thinking:'high'}])),rewrite:{attribution:true,comparison:true}},
-    activeSettings:{engine:'pi',execution:{...execution},bindings:{score:{model:'current-running-model',thinking:'low'}}},
+    settings:{debug:false,execution:{...execution},bindings:Object.fromEntries((id==='aime'?['score','attribution']:['criteria','attribution','comparison','rewrite']).map(stage=>[stage,{channel:'evaluation-gateway',model:id==='aime'?'saved-model-not-in-current-catalog':model,thinking:'high'}])),rewrite:{attribution:true,comparison:true}},
+    activeSettings:{execution:{...execution},bindings:{score:{model:'current-running-model',thinking:'low'}}},
     modelCatalog:[{id:model,channel:'evaluation-gateway',name:'Short display alias'}],stages:{},packages:{items:[],total:0,page:1,pageSize:10},runs:[]}));
   const calls:{url:string;body:any}[]=[];
   const fetcher=async(url:string,init:RequestInit={})=>{
@@ -74,8 +74,8 @@ test('configuration retains source drafts and current stale model identity, rese
     f.controller.select('aime');
     assert.equal(f.el('daily-settings-title').textContent,'AIME 日常全量 · 配置');assert.equal(f.el('daily-bindings').children.length,2);
     const selected=f.el('daily-bindings').querySelector('[data-stage=score]');assert.deepEqual(JSON.parse(selected.value),['evaluation-gateway','saved-model-not-in-current-catalog']);assert.match(selected.title,/saved-model-not-in-current-catalog/);
-    f.el('daily-engine').value='prime';f.el('daily-engine').dispatchEvent(new f.dom.window.Event('change',{bubbles:true}));f.el('daily-settings-reset').click();
-    assert.equal(f.el('daily-engine').value,'pi');assert.equal(f.calls.length,0,'reset does not call the server');
+    f.el('daily-timeout').value='999';f.el('daily-timeout').dispatchEvent(new f.dom.window.Event('input',{bubbles:true}));f.el('daily-settings-reset').click();
+    assert.equal(f.el('daily-timeout').value,'600');assert.equal(f.calls.length,0,'reset does not call the server');
     f.controller.select('wencai');assert.equal(f.el('daily-timeout').value,'777');assert.equal(f.el('daily-settings-panel-execution').hidden,false);
     f.el('daily-settings-form').dispatchEvent(new f.dom.window.Event('submit',{cancelable:true}));await wait(()=>f.el('daily-settings-status').textContent.includes('已保存'));
     assert.equal(f.calls[0].url,'/runtime/api/daily/wencai/settings');assert.equal(f.calls[0].body.execution.timeoutSeconds,777);assert.equal(f.calls[0].body.execution.maxTaskAttempts,4);assert.equal(f.calls[0].body.execution.repairAttempts,3);assert.equal(f.calls[0].body.bindings.criteria.model,model);

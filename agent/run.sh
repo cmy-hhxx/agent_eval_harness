@@ -9,7 +9,7 @@ if command -v mise >/dev/null 2>&1 && [[ "${ERIS_MISE:-}" != 1 ]]; then
   exec mise exec -- bash "$0" "$@"
 fi
 node scripts/eris-toolchain.mjs
-if [[ ! -d node_modules || ! -f .runtime/pi.json || ! -f .runtime/prime.json ]]; then
+if [[ ! -d node_modules || ! -f .runtime/pi.json ]]; then
   npm run bootstrap
   npm run build
 else

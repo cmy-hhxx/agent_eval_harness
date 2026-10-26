@@ -297,9 +297,9 @@ class MultiAgentTest(unittest.TestCase):
                 self.assertEqual(get(f"/data/{provider}/dashboard-data")["dates"][0]["models"][model]["row_count"], 1)
                 self.assertEqual(get(f"/data/{provider}/data/2026-10-14/{model}.jsonl")["version"], model)
                 self.assertEqual(get(f"/data/{provider}/records/2026-10-14/{model}")["items"][0]["answer"], "Answer")
-                with urlopen(base + "/data/" + provider) as response:
-                    self.assertEqual(response.url, base + "/data/" + provider + "/")
-                    self.assertIn(f'/data/{provider}/dashboard.js', response.read().decode())
+                with self.assertRaises(HTTPError) as error:
+                    urlopen(base + "/data/" + provider)
+                self.assertEqual(error.exception.code, 404)
             state = {"runId": "aime-test", "startedAt": 1, "status": "running", "engine": {"engine": "pi"},
                      "inputs": {"answer": {"version": "aime_fast", "batch_id": "2026-10-14", "case_id": "q"}},
                      "tasks": {"c": {"stage": "criteria", "status": "succeeded", "receipt": {"status": "succeeded"}, "inputIds": {"A": "answer"}},

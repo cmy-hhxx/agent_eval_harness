@@ -126,7 +126,7 @@ export function mountDaily(root, options = {}) {
     selectSettingsTab(settingsTabs.get(source.id) || 'models');
     $('daily-settings-advanced').open = false; $('daily-active-settings').open = false;
     $('daily-settings-status').textContent = settingsMessages.get(source.id) || (drafts.has(source.id) ? '未保存' : '');
-    $('daily-engine').value = settings.engine || 'pi'; $('daily-timeout').value = execution.timeoutSeconds ?? 3600; $('daily-tools').value = execution.maxToolCalls ?? 20; $('daily-retries').value = execution.retries ?? 1; $('daily-debug').checked = settings.debug === true;
+    $('daily-timeout').value = execution.timeoutSeconds ?? 3600; $('daily-tools').value = execution.maxToolCalls ?? 20; $('daily-retries').value = execution.retries ?? 1; $('daily-debug').checked = settings.debug === true;
     $('daily-repairs').value = execution.repairAttempts ?? 1; $('daily-attempts').value = execution.maxTaskAttempts ?? ''; $('daily-retry-delay').value = execution.retryDelaySeconds ?? 10;
     const catalog = source.modelCatalog || [];
     $('daily-bindings').replaceChildren(...Object.entries(settings.bindings || {}).filter(([stage]) => stage !== 'clustering').map(([stage,binding]) => {
@@ -173,7 +173,7 @@ export function mountDaily(root, options = {}) {
     $('daily-active-settings').hidden = !source.activeSettings;
     if (source.activeSettings) {
       const current = source.activeSettings, execution = current.execution || {};
-      $('daily-active-values').replaceChildren(...[['引擎',current.engine],...Object.entries(current.bindings || {}).filter(([stage]) => stage !== 'clustering').map(([stage,binding]) => [stageLabels[stage] || stage,`${binding.model} · ${binding.thinking}`]),['执行预算',`超时 ${execution.timeoutSeconds} 秒 · 工具 ${execution.maxToolCalls} · 传输重试 ${execution.retries} · 修正 ${execution.repairAttempts} · 尝试 ${execution.maxTaskAttempts ?? '按当前预算'} · 间隔 ${execution.retryDelaySeconds} 秒`],['Debug',current.debug ? '开启' : '关闭']].map(([label,value]) => { const item = doc.createElement('div'); item.append(node('dt',label),node('dd',value)); return item; }));
+      $('daily-active-values').replaceChildren(...[...Object.entries(current.bindings || {}).filter(([stage]) => stage !== 'clustering').map(([stage,binding]) => [stageLabels[stage] || stage,`${binding.model} · ${binding.thinking}`]),['执行预算',`超时 ${execution.timeoutSeconds} 秒 · 工具 ${execution.maxToolCalls} · 传输重试 ${execution.retries} · 修正 ${execution.repairAttempts} · 尝试 ${execution.maxTaskAttempts ?? '按当前预算'} · 间隔 ${execution.retryDelaySeconds} 秒`],['Debug',current.debug ? '开启' : '关闭']].map(([label,value]) => { const item = doc.createElement('div'); item.append(node('dt',label),node('dd',value)); return item; }));
     }
     $('daily-settings').querySelectorAll('input,select,button[type=submit]').forEach(item => { item.disabled = !connected || busy; });
     $('daily-settings-save').textContent = busy ? '保存中…' : '保存配置'; $('daily-settings-form').setAttribute('aria-busy',String(busy)); $('daily-settings-reset').disabled = !connected || busy || !drafts.has(source.id);
@@ -264,7 +264,7 @@ export function mountDaily(root, options = {}) {
     $('daily-bindings').querySelectorAll('[data-stage]').forEach(input => { const choice = input.value ? JSON.parse(input.value) : []; bindings[input.dataset.stage] = {channel:choice[0] || '',model:choice[1] || '',thinking:$('daily-bindings').querySelector(`[data-thinking="${input.dataset.stage}"]`).value}; });
     $('daily-rewrites').querySelectorAll('input').forEach(input => { rewrite[input.dataset.rewrite] = input.checked; });
     const execution = {timeoutSeconds:Number($('daily-timeout').value),maxToolCalls:Number($('daily-tools').value),retries:Number($('daily-retries').value),repairAttempts:Number($('daily-repairs').value),retryDelaySeconds:Number($('daily-retry-delay').value),maxTaskAttempts:$('daily-attempts').value ? Number($('daily-attempts').value) : null};
-    return {engine:$('daily-engine').value,bindings,execution,...(data?.sources.find(source => source.id === selected)?.workflow === 'answer-review' ? {} : {rewrite}),debug:$('daily-debug').checked};
+    return {bindings,execution,...(data?.sources.find(source => source.id === selected)?.workflow === 'answer-review' ? {} : {rewrite}),debug:$('daily-debug').checked};
   }
   $('daily-settings-form').oninput = $('daily-settings-form').onchange = () => { drafts.set(selected,settingsValue()); settingsMessages.set(selected,'未保存'); $('daily-settings-status').textContent = '未保存'; $('daily-settings-reset').disabled = !connected || busy; };
   $('daily-settings-reset').onclick = () => { drafts.delete(selected); settingsMessages.delete(selected); formSource = undefined; renderDetail(); };

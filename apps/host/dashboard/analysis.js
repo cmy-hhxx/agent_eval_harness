@@ -90,7 +90,7 @@ export function mountAnalysis(root,options={}) {
   $('#analysis-refresh').onclick=()=>void perform(async()=>{state.preview=null;await loadRuns(false);await loadJobs();if(state.rows.length)await scope(false);});
   $('#analysis-scope').onclick=()=>void perform(scope);
   $('#analysis-preview').onclick=()=>void perform(async()=>{const revision=state.revision;const preview=await request('/analysis/preview',selection());if(revision!==state.revision)return;state.preview=preview;$('#analysis-plan').textContent=`归因 ${preview.summary.attribution_answers} · 聚类任务 ${preview.summary.clustering_tasks} · 待观察召回 ${preview.summary.recalled_problems} · ${preview.output_dir}`;});
-  $('#analysis-start').onclick=()=>void perform(async()=>{const preview=state.preview;state.preview=null;await request(`/analysis/${preview.job_id}/start`,{engine:$('#analysis-engine').value});await scope();await loadJobs();});
+  $('#analysis-start').onclick=()=>void perform(async()=>{const preview=state.preview;state.preview=null;await request(`/analysis/${preview.job_id}/start`,{});await scope();await loadJobs();});
   $('#analysis-status').onchange=()=>{state.page=1;void perform(()=>scope(false));};
   $('#analysis-prev').onclick=()=>{if(state.busy)return;state.page--;void perform(()=>scope(false));};$('#analysis-next').onclick=()=>{if(state.busy)return;state.page++;void perform(()=>scope(false));};
   const ready=perform(async()=>{await loadRuns(true);await loadJobs();});

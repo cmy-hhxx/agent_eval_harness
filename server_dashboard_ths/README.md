@@ -88,9 +88,8 @@ python3 server_dashboard_ths/app.py --process-archives post_training_model
 - `cleaning_report.py`：排除原因、原始坐标和清洗计数。
 - `metadata.py`：RUED 难度计算、业务标签补齐和效率指标规整。
 - `multi_agent_inputs.py`：aime/ifind 会话适配，复用同一处理引擎；完整保留 trace、轮次、meta 和原顺序。
-- `dashboard.*`、`records.*`、`docs.html`：日期、样本和文档页面。
+- `dashboard.*`、`records.*`：统一工作台挂载的数据和样本片段；服务本身不提供独立工作台页面。
 - `records-markdown.js`：样本回答的安全 Markdown/GFM 渲染。
-- `build.mjs`：把样本页打包为不提交的 `records.bundle.js`。
 - `requirements.txt`：Python 数据处理依赖；工作台首次启动安装到外部 `runtime/python-packages`。
 
 状态、SQLite、记录偏移、ready、处理进度、归档维护和临时解压目录全部位于配置的外部状态根，不写入 checkout。
@@ -107,7 +106,6 @@ python3 server_dashboard_ths/app.py --process-archives post_training_model
 ## 本地验证
 
 ```bash
-node server_dashboard_ths/build.mjs
 python3 -m unittest discover -s server_dashboard_ths -p 'test_*.py'
 node --test server_dashboard_ths/dashboard.test.mjs
 ```

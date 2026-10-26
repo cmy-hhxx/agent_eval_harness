@@ -10,7 +10,6 @@ import { ROOT } from "./paths.js";
 
 export interface ModelProbeOptions {
   configPaths: string[];
-  engine: Engine;
   stage?: string;
   execute?: boolean;
   signal?: AbortSignal;
@@ -31,10 +30,9 @@ export interface ModelProbeResult {
 
 /** A dry run resolves configuration only. Execution is explicit and never retries. */
 export async function runModelProbe(options: ModelProbeOptions): Promise<ModelProbeResult> {
-  if (!["pi", "prime"].includes(options.engine)) throw new Error("--engine must be pi or prime");
   const host = await loadConfig(options.configPaths), stage = options.stage ?? "comparison";
   const model = createModelResolver(host.models)(stage);
-  const result: ModelProbeResult = { engine: options.engine, stage, channel: model.provider, model: model.model,
+  const result: ModelProbeResult = { engine: "pi", stage, channel: model.provider, model: model.model,
     api: model.api, status: "planned", attempts: 0, modelRequests: 0, toolCalls: 0, usage: emptyUsage() };
   if (!options.execute) return result;
   options.signal?.throwIfAborted();
@@ -48,9 +46,8 @@ export async function runModelProbe(options: ModelProbeOptions): Promise<ModelPr
   controller.signal.addEventListener("abort", stop, { once: true });
   try {
     if (!process.env[model.apiKeyEnv]) throw new Error(`Missing ${model.apiKeyEnv}`);
-    const identity = await loadIdentity(options.engine, ROOT);
-    const backend = options.engine === "pi" ? (await import("@eval/runtime/pi")).piBackend(identity)
-      : (await import("@eval/runtime/prime")).primeBackend(identity);
+    const identity = await loadIdentity("pi", ROOT);
+    const backend = (await import("@eval/runtime/pi")).piBackend(identity);
     await localFiles.mkdir(directory, { recursive: true });
     const spec: AttemptSpec = {
       runId: "model-probe", taskId: randomUUID(), attemptId: randomUUID(), inputRevision: 1, engine: identity,

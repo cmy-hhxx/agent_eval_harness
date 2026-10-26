@@ -6,7 +6,7 @@
 
 | 模块 | 职责 | 入口 |
 |---|---|---|
-| apps/host | CLI、配置、组装、工作台 supervisor、登录/relay API、看板及自动化应用 | [workbench.ts](../../apps/host/src/workbench.ts)、[cli.ts](../../apps/host/src/cli.ts)、[dashboard.ts](../../apps/host/src/dashboard.ts)、[automation-command.ts](../../apps/host/src/automation-command.ts) |
+| apps/host | CLI、配置、组装、工作台 supervisor、登录/relay API、工作台及自动化应用 | [workbench.ts](../../apps/host/src/workbench.ts)、[cli.ts](../../apps/host/src/cli.ts)、[dashboard.ts](../../apps/host/src/dashboard.ts)、[automation-command.ts](../../apps/host/src/automation-command.ts) |
 | apps/worker | Worker 进程入口 | [cli.ts](../../apps/worker/src/cli.ts) |
 | agent | Eris 定义、产品接口与界面 | [Agent 说明](../../agent/README.md) |
 | Contracts | 纯类型、协议、证据坐标与共用规则 | [index.ts](../../packages/contracts/src/index.ts) |

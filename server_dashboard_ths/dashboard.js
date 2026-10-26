@@ -407,19 +407,3 @@ const timer = window.setInterval(() => {
 void loadCatalog();
 return { destroy() { disposed = true; clearInterval(timer); } };
 }
-if (globalThis.document?.querySelector("#dataset-range")) {
-  let selectionRevision = 0;
-  mountData(document, { async onSamples(selection) {
-    const revision = ++selectionRevision;
-    let container = document.getElementById("inline-records");
-    if (!container) { container = document.createElement("section"); container.id = "inline-records"; document.querySelector("main").append(container); }
-    try {
-      const response = await fetch(`/data/${selection.dataset}/records`, { signal: AbortSignal.timeout(15000) });
-      if (!response.ok) throw new Error(`HTTP ${response.status}`);
-      const html = new DOMParser().parseFromString(await response.text(), "text/html");
-      if (revision !== selectionRevision) return;
-      container.replaceChildren(html.querySelector("main"));
-      globalThis.DataRecords.mountRecords(container, selection);
-    } catch (error) { if (revision === selectionRevision) container.textContent = `样本读取失败：${error.message}`; }
-  } });
-}

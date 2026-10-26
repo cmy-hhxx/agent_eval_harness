@@ -10,14 +10,12 @@ import { AgentRegistry, runEvaluation } from "@eval/host";
 import { createModelResolver } from "@eval/host-app/config";
 import { body, listen } from "@eval/runtime/http";
 import { piBackend } from "@eval/runtime/pi";
-import { primeBackend } from "@eval/runtime/prime";
 import { startWorker } from "@eval/runtime/worker";
 import { fakeIdentity, fixtureConfig } from "../fixtures/comparison.js";
 import { services } from "../fixtures/services.js";
 
-for (const engine of ["pi", "prime"] as const)
-  for (const materialKind of ["none", "text", "json"] as const)
-    test(`${engine}: exhausted exploration permits failed-writer correction and mandatory reads; content repairs share the writer cap (${materialKind})`, { timeout: 60000 }, async () => {
+for (const materialKind of ["none", "text", "json"] as const)
+    test(`pi: exhausted exploration permits failed-writer correction and mandatory reads; content repairs share the writer cap (${materialKind})`, { timeout: 60000 }, async () => {
       const { directory, config, models } = await fixtureConfig();
       const mandatory = materialKind !== "none";
       const material = "必须核对的原文。";
@@ -104,16 +102,16 @@ for (const engine of ["pi", "prime"] as const)
       const previous = process.env.EVAL_CHANNEL_KEY_evaluation_Hgateway, previousOffline = process.env.PI_OFFLINE;
       process.env.EVAL_CHANNEL_KEY_evaluation_Hgateway = "local-fixture-secret";
       process.env.PI_OFFLINE = "1";
-      const backend = (engine === "pi" ? piBackend : primeBackend)({ ...fakeIdentity, engine });
+      const backend = piBackend({ ...fakeIdentity, engine: "pi" });
       const worker = await startWorker(backend, path.join(directory, "worker"));
       try {
         models.models.judge!.baseUrl = gateway.url + "/v1";
         models.models.judge!.api = "openai-responses";
-        const modelForStage = createModelResolver(models), runId = `budget-${engine}-${materialKind}`;
+        const modelForStage = createModelResolver(models), runId = `budget-pi-${materialKind}`;
         await runEvaluation({
           runId, output: config.output, config, plan: { tasks: [{ id: "budget-task", stage: "budget", inputIds: { answer: inputId }, dependencies: {}, data: {} }],
             inputs: { [inputId]: { messages: [inputMessage] } }, summary: {} },
-          engine, identity: backend.identity, evaluatorVersion: "fixture", modelForStage: () => modelForStage("attribution"),
+          engine: "pi", identity: backend.identity, evaluatorVersion: "fixture", modelForStage: () => modelForStage("attribution"),
           policy: { ...config.execution, maxToolCalls: 1, repairAttempts: 2 }, concurrency: 1, retries: 0, retryDelaySeconds: 0,
           agents: new AgentRegistry([{ id: "budget", profiles: { default: profile } }]), repository,
           taskSource: { id: "budget", bind: (task, inputs) => {

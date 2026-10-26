@@ -38,13 +38,13 @@
 
 ## 构建与依赖
 
-安装和完整构建见 [README](../README.md#本地开发)。`build:pi` / `build:prime` 可单独构建底座；版本与来源分别由 [mise.toml](../mise.toml)、[vendor/upstream.json](../vendor/upstream.json)维护。
+安装和完整构建见 [README](../README.md#本地开发)。`build:pi` 可单独构建底座；版本与来源分别由 [mise.toml](../mise.toml)、[vendor/upstream.json](../vendor/upstream.json)维护。
 
-根 workspace、两套 vendor workspace 和 Prime Python runtime 使用独立依赖树。公共代码工具用根 `.venv`。`bootstrap` 创建 Prime 虚拟环境后，用 Python 自带的 `ensurepip` 初始化环境内的 pip，再通过配置的 pip 安装源安装锁定依赖。修改 vendor 必须登记 `local_changes` 并重建。
+根 workspace 和 Pi vendor workspace 使用独立依赖树。公共代码工具用根 `.venv`。修改 vendor 必须登记 `local_changes` 并重建。
 
 `build:app` 先在临时目录编译和复制资源，再逐文件发布到 `dist/`，随后构建 Eris。编译阶段失败不改变旧产物，发布或后续失败可能留下部分更新。实现见 [build-app.mjs](../scripts/build-app.mjs)、[build-agent.mjs](../scripts/build-agent.mjs)和 [publishTree](../scripts/lib.mjs)。
 
-Pi 源码检查用 `npm --prefix vendor/pi run check:sources`；上游 `check` 依赖已裁剪模型目录，不作为本项目回归入口。Prime 构建不下载模型或 MCP 目录，集成测试使用 `PI_OFFLINE=1`。
+Pi 源码检查用 `npm --prefix vendor/pi run check:sources`；上游 `check` 依赖已裁剪模型目录，不作为本项目回归入口。集成测试使用 `PI_OFFLINE=1`。
 
 Eris 普通构建只读本仓库 [Deepseek 源码映射](../vendor/deepseek/sources.json)与[本地补丁](../vendor/deepseek/local.patch)。显式 `node scripts/vendor-deepseek.mjs <上游仓库>` 从干净的上游 checkout 同步选定源码与测试，不引入上游桌面构建。测试入口从 `agent/vitest.config.mjs` 读取，公开源导出与上游声明的 npm 依赖补丁随映射保存；本地改动清单以 `vendor/upstream.json` 为唯一维护位置。
 

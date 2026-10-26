@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { rm, readFile } from "node:fs/promises";
 import path from "node:path";
-import type { Engine, WorkerEvent } from "@eval/contracts";
+import type { WorkerEvent } from "@eval/contracts";
 import { body, listen } from "@eval/runtime/http";
 import { exists, readJsonl } from "@eval/data";
 import { object, SUBMISSION_FILE_SCHEMA } from "@eval/contracts";
@@ -17,9 +17,8 @@ import { runEvaluation } from "@eval/host";
 import { validateRun } from "../fixtures/services.js";
 import { draftFor, fakeEvaluatorVersion, fixtureConfig, raw, taskResult, inspectionDraft } from "../fixtures/comparison.js";
 
-for (const engine of ["pi", "prime"] as Engine[])
   test(
-    `${engine}: real vendored SDK over HTTP worker, multiple channels, independent instruction review, optional verification and resume`,
+    `pi: real vendored SDK over HTTP worker, multiple channels, independent instruction review, optional verification and resume`,
     { timeout: 120000 },
     async () => {
       const { directory, config, models } = await fixtureConfig([[raw()], [], [raw()], []]);
@@ -30,7 +29,7 @@ for (const engine of ["pi", "prime"] as Engine[])
         serverErrors: string[] = [];
       let permits = 0, activePermits = 0;
       const stageRequests = { criteria: 0, attribution: 0, comparison: 0, verification: 0, "instruction-review": 0 };
-      const expectedStageRequests = { criteria: 1, attribution: engine === "pi" ? 4 : 2, comparison: 1, verification: 4, "instruction-review": 2 };
+      const expectedStageRequests = { criteria: 1, attribution: 4, comparison: 1, verification: 4, "instruction-review": 2 };
       const gateway = await listen(async (req, res) => {
         try {
           assert(activePermits > 0, "every real SDK HTTP request must hold a model permit");
@@ -147,7 +146,7 @@ for (const engine of ["pi", "prime"] as Engine[])
           );
           let name: string, args: unknown;
           const previousCall = messages.filter(message => message.type === "function_call").at(-1)?.name;
-          if(attribution && engine === "pi" && !rejected)(evaluation as {correctness_evidence_indices:number[]}).correctness_evidence_indices[0]=999999;
+          if(attribution && !rejected)(evaluation as {correctness_evidence_indices:number[]}).correctness_evidence_indices[0]=999999;
           if (!fileSubmission) {
             name = "submit_evaluation";
             args = evaluation;
@@ -193,10 +192,10 @@ api=openai-responses
         config.execution.timeoutSeconds = 45;
         config.execution.idleTimeoutSeconds = 15;
         const options = {
-          runId: "sdk-" + engine,
-          debug: engine === "pi",
+          runId: "sdk-pi",
+          debug: true,
           output: config.output,
-          engine,
+          engine: "pi" as const,
           evaluatorVersion: fakeEvaluatorVersion,
           config,
           ...services,
@@ -239,29 +238,27 @@ api=openai-responses
         assert.equal(activePermits, 0, "completed streams release all LLM permits");
         assert.equal(permits, requests.length, "each SDK turn acquires a separate permit");
         const acceptedRequestCount = requests.length;
-        if (engine === "pi") {
-          const task = options.plan.tasks.find((task) => task.stage === "attribution")!;
-          const events: WorkerEvent[] = [];
-          for await (const event of readJsonl(
-            path.join(
-              config.output.path,
-              options.runId,
-              "_internal",
-              "tasks",
-              task.id,
-              "attempt-001/events.jsonl.gz",
-            ),
-          ))
-            events.push(event as WorkerEvent);
-          assert(
-            events.some(
-              (e) =>
-                e.type === "model" &&
-                object(e.data).type === "tool_execution_end" &&
-                object(e.data).isError === true,
-            ),
-          );
-        }
+        const task = options.plan.tasks.find((task) => task.stage === "attribution")!;
+        const events: WorkerEvent[] = [];
+        for await (const event of readJsonl(
+          path.join(
+            config.output.path,
+            options.runId,
+            "_internal",
+            "tasks",
+            task.id,
+            "attempt-001/events.jsonl.gz",
+          ),
+        ))
+          events.push(event as WorkerEvent);
+        assert(
+          events.some(
+            (e) =>
+              e.type === "model" &&
+              object(e.data).type === "tool_execution_end" &&
+              object(e.data).isError === true,
+          ),
+        );
         const validation = await validateRun(path.join(config.output.path, options.runId));
         assert.equal(validation.valid, true, JSON.stringify(validation.errors));
         await runEvaluation(options);

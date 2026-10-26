@@ -3,17 +3,13 @@ import assert from "node:assert/strict";
 import path from "node:path";
 import { tmpdir } from "node:os";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
-import { execFile } from "node:child_process";
-import { promisify } from "node:util";
 import { object } from "@eval/contracts";
 import { body, listen, json } from "@eval/runtime/http";
 import { runModelProbe } from "../../apps/host/src/model-probe.js";
 import { ROOT } from "../fixtures/services.js";
 
-const executeFile = promisify(execFile);
-
-for (const engine of ["pi", "prime"] as const) for (const scenario of ["complete", "missing-usage", "partial-usage", "wrong-final", "missing-terminal", "extra-tool", "provider-error"] as const)
-  test(`${engine} model probe validates Responses tools, terminal output and usage: ${scenario}`, { timeout: 30000 }, async () => {
+for (const scenario of ["complete", "missing-usage", "partial-usage", "wrong-final", "missing-terminal", "extra-tool", "provider-error"] as const)
+  test(`model probe validates Responses tools, terminal output and usage: ${scenario}`, { timeout: 30000 }, async () => {
     const directory = await mkdtemp(path.join(tmpdir(), "model-probe-test-")), previous = process.env.EVAL_CONFIG_FILE;
     const requests: Record<string, unknown>[] = [], errors: string[] = [];
     const gateway = await listen(async (req, res) => {
@@ -54,19 +50,13 @@ for (const engine of ["pi", "prime"] as const) for (const scenario of ["complete
     await writeFile(path.join(directory, "models.json"), JSON.stringify({ models: { judge: { model: "local-model", thinking: "off" } } }));
     process.env.EVAL_CONFIG_FILE = path.join(directory, "config.ini");
     try {
-      const options = { configPaths: [path.join(ROOT, "configs/host.json"), path.join(directory, "models.json")], engine };
+      const options = { configPaths: [path.join(ROOT, "configs/host.json"), path.join(directory, "models.json")] };
       const planned = await runModelProbe(options);
       assert.equal(planned.status, "planned");
       assert.equal(planned.attempts, 0);
       assert.equal(requests.length, 0, "dry run must never call /models or inference");
       let result: Awaited<ReturnType<typeof runModelProbe>>;
-      if (engine === "prime" && scenario === "provider-error") {
-        const child = await executeFile(process.execPath, ["--input-type=module", "-e",
-          `import { runModelProbe } from ${JSON.stringify(path.join(ROOT, "dist/apps/host/src/model-probe.js"))};\nconsole.log(JSON.stringify(await runModelProbe(${JSON.stringify({ ...options, execute: true })})));`]);
-        result = JSON.parse(child.stdout);
-        assert.match(child.stderr, /provider stream failure/);
-        assert(!child.stderr.includes("fixture-probe-secret"), "the actual SDK stderr must redact echoed credentials");
-      } else result = await runModelProbe({ ...options, execute: true });
+      result = await runModelProbe({ ...options, execute: true });
       assert.deepEqual(errors, []);
       assert.equal(result.attempts, 1);
       assert.equal(result.status, scenario === "complete" ? "passed" : "failed");

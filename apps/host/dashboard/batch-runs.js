@@ -87,7 +87,7 @@ export function mountBatchRuns(root, options = {}) {
     busy = true; $('batch-preview').disabled = true; error(''); invalidate();
     const selection = selectionRevision;
     try {
-      const value = await api('batch-runs/preview',{ batch_ids:selected,engine:$('batch-engine').value,settings:{ execution:{ concurrency:Number($('batch-concurrency').value) } } });
+      const value = await api('batch-runs/preview',{ batch_ids:selected,settings:{ execution:{ concurrency:Number($('batch-concurrency').value) } } });
       if (selection !== selectionRevision || disposed) return;
       prepared = value; const s = value.summary;
       $('batch-preview-summary').textContent = `${value.task.name} · ${s.valid_inputs} 个回答 · ${s.attribution_tasks} 个归因 · ${s.comparison_tasks} 个对局 · ${s.issues_count} 个输入异常`;

@@ -19,7 +19,6 @@ export async function readAnswerReviewCommand(command: "report" | "status" | "va
 interface AnswerReviewOptions {
   command: string;
   runId?: string;
-  engine: string;
   debug?: boolean;
   stage?: string;
   signal?: AbortSignal;
@@ -36,7 +35,6 @@ interface AnswerReviewOptions {
 
 export async function runAnswerReviewCommand(host: AnswerReviewHostConfig, options: AnswerReviewOptions) {
   if (options.stage && !["score", "attribution"].includes(options.stage)) throw Error("独立评审只可选择score或attribution");
-  if (!["pi", "prime"].includes(options.engine)) throw Error("engine必须为pi或prime");
   const config: AnswerReviewConfig = { ...host.evaluation,
     ...(options.resumeTaskIds&&{reviewTaskIds:options.resumeTaskIds}),
     reviewStages: options.stage ? [options.stage as "score" | "attribution"] : ["score", "attribution"] };
@@ -66,7 +64,7 @@ export async function runAnswerReviewCommand(host: AnswerReviewHostConfig, optio
   try {
     const result = await runEvaluation({ ...services, ...routing, taskSource: answerReviewWorkflow,
       repository: answerReviewRepository, report: reportAnswerReview, runId: options.runId,
-      output: config.output, engine: options.engine as "pi" | "prime", evaluatorVersion: host.evaluatorVersion,
+      output: config.output, engine: "pi", evaluatorVersion: host.evaluatorVersion,
       config, plan, taskIds, policy: config.execution, concurrency: config.execution.concurrency,
       taskConcurrency: config.execution.taskConcurrency,
       retries: config.execution.retries, retryDelaySeconds: config.execution.retryDelaySeconds,

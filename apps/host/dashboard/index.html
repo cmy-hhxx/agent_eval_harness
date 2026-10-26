@@ -5,7 +5,6 @@
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <meta name="color-scheme" content="light" />
     <title>评测工作台</title>
-    <link rel="stylesheet" href="/runtime/run-assets/dashboard.css" />
   </head>
   <body>
     <div class="app-shell">
@@ -36,7 +35,6 @@
             <div class="launch-row">
               <div class="sample-field"><span class="inline-field-label">抽样数量</span><div class="sample-control" role="group" aria-label="抽样数量"><span class="sample-input"><input id="sample-size" type="number" min="1" inputmode="numeric" value="10" aria-label="指定抽样数量" /><span aria-hidden="true">个</span></span><button id="sample-all" class="sample-mode" type="button" aria-pressed="false">全部</button></div></div>
               <label class="inline-field seed-field"><span>Seed</span><input id="sample-seed" type="number" min="0" max="4294967295" step="1" inputmode="numeric" value="41" aria-label="抽样 Seed" /></label>
-              <label class="inline-field"><span>底座</span><select id="engine"><option value="pi">Pi</option><option value="prime">Prime</option></select></label>
               <button id="preview-button" class="button" type="button">预检</button>
               <button id="launch-button" class="button button-primary" type="submit" disabled>启动</button>
             </div>
@@ -102,6 +100,5 @@
         <div class="dialog-actions"><button id="delete-cancel" class="button" type="button">取消</button><button id="delete-confirm" class="button button-danger" type="submit">删除运行</button></div>
       </form>
     </dialog>
-    <script type="module" src="/runtime/run-assets/dashboard.js"></script>
   </body>
 </html>

@@ -85,8 +85,6 @@ export interface RunOptions extends EvaluationServices {
   pauseSignal?: AbortSignal;
   workerUrls?: string[];
   identity?: EngineIdentity;
-  engineForTask?: (task: PlannedTask) => Engine;
-  identities?: Partial<Record<Engine, EngineIdentity>>;
   onProgress?: (message: string) => void;
   onEvent?: (event: unknown) => void;
 }
@@ -144,13 +142,6 @@ export async function runEvaluation(options: RunOptions): Promise<Record<string,
   const busy = new Set<{ url: string }>();
   try {
     const identity = options.identity || (await loadIdentity(options.engine, options.runtime.root));
-    const engineForTask = options.engineForTask || (() => options.engine);
-    const identities: Partial<Record<Engine, EngineIdentity>> = {
-      ...options.identities,
-      [options.engine]: identity,
-    };
-    for (const engine of new Set(options.plan.tasks.map(engineForTask)))
-      identities[engine] ??= await loadIdentity(engine, options.runtime.root);
     let saved: RunState;
     let inputs = options.plan.inputs;
     if (await exists(layout.stateFile)) {
@@ -241,8 +232,6 @@ export async function runEvaluation(options: RunOptions): Promise<Record<string,
     const paused = (task: PlannedTask) => observesFailures(task) && guard.paused(task.stage);
     const dispatchable = (task: PlannedTask) => inScope(task) && !paused(task);
     manifest.concurrency = desiredConcurrency;
-    for (const engine of new Set(manifest.tasks.map(engineForTask)))
-      identities[engine] ??= await loadIdentity(engine, options.runtime.root);
     workspace = await createRunWorkspace(run, manifest.debug);
     const working = workspace.directory;
     if (manifest.debug) {
@@ -364,23 +353,8 @@ export async function runEvaluation(options: RunOptions): Promise<Record<string,
     const pending = manifest.tasks.filter(runnable);
     if (!workerUrls.length && pending.length && taskConcurrency() > 0 && !options.pauseSignal?.aborted) {
       // Start incrementally so every successful child remains owned if a later launch fails.
-      const engines = [...new Set(pending.map(engineForTask))];
-      for (const engine of engines)
-        for (
-          let i = 0;
-          !options.pauseSignal?.aborted && !controller.signal.aborted && i <
-          Math.min(
-            Math.max(1, Math.floor(taskConcurrency() / engines.length)),
-            pending.filter((t) => engineForTask(t) === engine).length,
-          );
-          i++
-        )
-          owned.push(
-            await launchWorker(
-              engine,
-              path.join(working, "workers", `${engine}-${i}-${randomUUID()}`),
-            ),
-          );
+      for (let i = 0; !options.pauseSignal?.aborted && !controller.signal.aborted && i < Math.min(taskConcurrency(), pending.length); i++)
+        owned.push(await launchWorker(identity.engine, path.join(working, "workers", `${identity.engine}-${i}-${randomUUID()}`)));
       workerUrls = owned.map((w) => w.url);
     }
     const workers = await Promise.all(
@@ -390,10 +364,7 @@ export async function runEvaluation(options: RunOptions): Promise<Record<string,
         owner: owned.findLast(worker => worker.url === url),
       })),
     );
-    const eligible = workers.filter(
-      (w) =>
-        canonical(w.health.identity) === canonical(identities[w.health.identity.engine]),
-    );
+    const eligible = workers.filter((w) => canonical(w.health.identity) === canonical(identity));
     if (pending.length && !eligible.length && taskConcurrency() > 0 && !options.pauseSignal?.aborted) throw new Error("No worker matches the selected build");
     const unavailable = new Map<(typeof workers)[number], { since: number; checkAt: number }>();
     const deferWorker = (worker: (typeof workers)[number]) => unavailable.set(worker, {
@@ -402,8 +373,8 @@ export async function runEvaluation(options: RunOptions): Promise<Record<string,
     async function replaceExitedWorker(worker: (typeof workers)[number]): Promise<boolean> {
       // Bind capacity to its process, not a port that another child may later reuse.
       if (!worker.owner || !exitedWorkers.has(worker.owner)) return false;
-      const replacement = await launchWorker(worker.health.identity.engine,
-        path.join(working, "workers", `${worker.health.identity.engine}-${randomUUID()}`));
+      const replacement = await launchWorker(identity.engine,
+        path.join(working, "workers", `${identity.engine}-${randomUUID()}`));
       owned.push(replacement);
       worker.owner = replacement;
       worker.url = replacement.url;
@@ -439,7 +410,6 @@ export async function runEvaluation(options: RunOptions): Promise<Record<string,
     ): Promise<void> {
       const sources = binding.request.sources;
       let workerUrl = worker.url;
-      const identity = identities[engineForTask(task)]!;
       const state = manifest.states[task.id];
       const taskModel = () => options.modelForTask?.(task, state.channel) ?? options.modelForStage(task.stage);
       const model = taskModel();
@@ -924,7 +894,7 @@ export async function runEvaluation(options: RunOptions): Promise<Record<string,
           await replaceExitedWorker(worker);
           const health = await request<WorkerStatus>(worker.url + "/api/health", "GET", undefined, AbortSignal.timeout(1000));
           if ((!worker.owner || !exitedWorkers.has(worker.owner)) && !health.activeAttempt &&
-              canonical(health.identity) === canonical(identities[health.identity.engine])) {
+              canonical(health.identity) === canonical(identity)) {
             worker.health = health;
             unavailable.delete(worker);
             return;
@@ -935,22 +905,16 @@ export async function runEvaluation(options: RunOptions): Promise<Record<string,
       if (!options.workerUrls?.length && running.size < taskConcurrency() && !options.pauseSignal?.aborted) {
         const waiting = manifest.tasks.filter(runnable);
         let slots = Math.max(0, taskConcurrency() - running.size);
-        for (const engine of new Set(waiting.map(engineForTask))) {
-          if (options.pauseSignal?.aborted) break;
-          const target = Math.min(slots, waiting.filter((task) => engineForTask(task) === engine).length);
-          const idle = eligible.filter(
-            (worker) => !busy.has(worker) && worker.health.identity.engine === engine,
-          ).length;
+        if (!options.pauseSignal?.aborted) {
+          const target = Math.min(slots, waiting.length);
+          const idle = eligible.filter((worker) => !busy.has(worker)).length;
           for (let i = idle; i < target && !controller.signal.aborted && !options.pauseSignal?.aborted; i++) {
-            const worker = await launchWorker(
-              engine,
-              path.join(working, "workers", `${engine}-${randomUUID()}`),
-            );
+            const worker = await launchWorker(identity.engine,
+              path.join(working, "workers", `${identity.engine}-${randomUUID()}`));
             owned.push(worker);
             const health = await request<WorkerStatus>(`${worker.url}/api/health`);
             eligible.push({ url: worker.url, health, owner: worker });
           }
-          slots -= target;
         }
       }
       let scheduled = false, blocked = false;
@@ -991,11 +955,9 @@ export async function runEvaluation(options: RunOptions): Promise<Record<string,
           bindingMs, profileMs: performance.now() - preparationStarted - bindingMs,
           preparationCpuMs: (cpu.user + cpu.system) / 1000, ...binding.preparationTimings };
         const capable = eligible.filter(
-          (w) =>
-            w.health.identity.engine === engineForTask(task) &&
-            prepared.evaluation.toolNames.every((name) => w.health.tools.includes(name)),
+          (w) => prepared.evaluation.toolNames.every((name) => w.health.tools.includes(name)),
         );
-        if (!capable.length) throw new Error("Required engine or tools not available");
+        if (!capable.length) throw new Error("Required tools not available");
         const worker = capable.find((w) => !busy.has(w) && !unavailable.has(w));
         if (!worker) { preparing.delete(task.id); continue; }
         if (options.channelConcurrency) {

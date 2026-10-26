@@ -89,17 +89,12 @@ prepare() {
 }
 
 if [[ ! -d node_modules ]] || ! npm ls --depth=0 --silent >/dev/null 2>&1 || [[ ! -f .runtime/pi.json ]] || \
-   [[ ! -f .runtime/prime.json ]] || [[ ! -f vendor/pi/packages/coding-agent/dist/index.js ]] || \
-   [[ ! -f vendor/prime-agent/packages/coding-agent/dist/index.js ]] || [[ package-lock.json -nt node_modules/.package-lock.json ]]; then
+   [[ ! -f vendor/pi/packages/coding-agent/dist/index.js ]] || [[ package-lock.json -nt node_modules/.package-lock.json ]]; then
   prepare '正在准备固定依赖…' npm run bootstrap
   prepare '正在构建应用与运行时…' npm run build
 elif [[ ! -f dist/apps/host/src/workbench.js ]] || \
   [[ -n "$(find apps packages scripts schemas configs package.json package-lock.json tsconfig.json mise.toml -type f -newer dist/apps/host/src/workbench.js -print -quit 2>/dev/null)" ]]; then
   prepare '正在构建当前应用…' npm run build:app
-fi
-if [[ ! -f server_dashboard_ths/records.bundle.js ]] || \
-  [[ -n "$(find server_dashboard_ths/records.js server_dashboard_ths/records-markdown.js -type f -newer server_dashboard_ths/records.bundle.js -print -quit 2>/dev/null)" ]]; then
-  prepare '正在构建样本浏览页…' node server_dashboard_ths/build.mjs
 fi
 
 exec node dist/apps/host/src/workbench.js start --config "$CONFIG"

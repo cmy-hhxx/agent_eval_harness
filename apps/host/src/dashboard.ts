@@ -1,13 +1,11 @@
 import type { ServerResponse } from "node:http";
 import { readSettings, type ApplicationSettings } from "./settings.js";
-import { readdir, readFile } from "node:fs/promises";
-import { fileURLToPath } from "node:url";
+import { readdir } from "node:fs/promises";
 import path from "node:path";
 import { body, json, listen } from "@eval/runtime/http";
 import { errorText, HttpError, safeId } from "@eval/contracts";
 import { deleteRun, exists, localFiles, listRunArtifacts, locateRun, runLock, readJson, RunDeletionError } from "@eval/data";
 import { editableDashboardSettings, loadComparisonEvaluation, loadConfig, createModelResolver, readConfigSources } from "./config.js";
-import { dashboardReference } from "./dashboard-reference.js";
 import {
   clearUnavailableDashboardModels,
   discoverDashboardModels,
@@ -53,9 +51,6 @@ interface DashboardCheckpoint {
   tasks?: Record<string, CheckpointTask>;
 }
 
-const ASSET_DIR = path.join(path.dirname(fileURLToPath(import.meta.url)), "../dashboard");
-
-const asset = (name: string) => readFile(path.join(ASSET_DIR, name), "utf8");
 function record(value: unknown, message: string): Record<string, unknown> {
   if (!value || typeof value !== "object" || Array.isArray(value)) throw new HttpError(400, message);
   return value as Record<string, unknown>;
@@ -247,7 +242,7 @@ export async function startDashboard(options: DashboardOptions) {
   const analysis = new DashboardAnalysis(batches, options.configPaths, readModels);
   const batchOptions = (entry: BatchRun) => ({ configPaths: [...options.configPaths, batches.config(entry.runId)],
     outputDir: entry.outputDir, modelCatalog: readModels, plan: inputs.plan });
-  const batchPayload = (entry: BatchRun) => ({ runId: entry.runId, engine: entry.engine, settings: entry.settings });
+  const batchPayload = (entry: BatchRun) => ({ runId: entry.runId, settings: entry.settings });
   const batchSummary = async (entry: BatchRun) => {
     let state, stateError: string | undefined;
     try { state = await inspectRun(entry.outputDir, entry.runId); }
@@ -271,32 +266,6 @@ export async function startDashboard(options: DashboardOptions) {
     if (["POST", "DELETE"].includes(req.method || "") && ![`http://${host}`, `https://${host}`].includes(req.headers.origin ?? ""))
       throw new HttpError(403, "Request origin does not match the dashboard");
     if (req.method === "GET" && url.pathname === "/api/health") return json(res, { ok: true });
-    if (req.method === "GET" && (url.pathname === "/" || url.pathname === "/index.html")) {
-      res.writeHead(200, { "content-type": "text/html; charset=utf-8" });
-      res.end(await asset("index.html"));
-      return;
-    }
-    if (req.method === "GET" && ["/reference", "/problems"].includes(url.pathname)) {
-      res.writeHead(200, { "content-type": "text/html; charset=utf-8" });
-      res.end(await asset(`${url.pathname.slice(1)}.html`));
-      return;
-    }
-    if (req.method === "GET" && url.pathname === "/api/dashboard/reference") {
-      const [evaluation, current] = await Promise.all([
-        loadComparisonEvaluation(options.configPaths), readConfigSources(options.configPaths),
-      ]);
-      return json(res, dashboardReference(evaluation, current.evaluatorVersion));
-    }
-    if (req.method === "GET" && ["/dashboard.css", "/reference.css", "/problems.css"].includes(url.pathname)) {
-      res.writeHead(200, { "content-type": "text/css; charset=utf-8" });
-      res.end(await asset(url.pathname.slice(1)));
-      return;
-    }
-    if (req.method === "GET" && ["/dashboard.js", "/dashboard-view.js", "/reference.js", "/problems.js"].includes(url.pathname)) {
-      res.writeHead(200, { "content-type": "text/javascript; charset=utf-8" });
-      res.end(await asset(url.pathname.slice(1)));
-      return;
-    }
     if (req.method === "GET" && url.pathname === "/api/dashboard/config") {
       const current = await readConfigSources(options.configPaths);
       let modelCatalog: DashboardModel[] = [];

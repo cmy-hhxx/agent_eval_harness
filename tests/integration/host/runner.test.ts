@@ -237,6 +237,7 @@ test("two workers execute dependency graph, archive receipts and reuse only same
       "_internal",
       "model-behavior.jsonl",
       "overview.json",
+      "progress.jsonl",
       "report.md",
       "results",
       "state.json",
@@ -473,48 +474,39 @@ for (const missingArtifact of [false, true])
       await rm(directory, { recursive: true, force: true });
     }
   });
-test("one host routes tasks to both engines without sharing sessions or workspaces", async () => {
+test("one host runs all tasks through Pi without sharing sessions or workspaces", async () => {
   const { directory, config, modelForStage } = await fixtureConfig();
   config.comparisons = [
     ["a_fast", "b_fast"],
     ["a_expert", "b_expert"],
   ];
-  const calls = { pi: 0, prime: 0 },
-    workdirs = new Set<string>();
-  const primeIdentity = { ...fakeIdentity, engine: "prime" as const };
-  const backend = (engine: "pi" | "prime"): AgentBackend => ({
-    identity: engine === "pi" ? fakeIdentity : primeIdentity,
+  let calls = 0;
+  const workdirs = new Set<string>();
+  const backend: AgentBackend = {
+    identity: fakeIdentity,
     async createSession(options) {
-      assert.equal(options.spec.engine.engine, engine);
+      assert.equal(options.spec.engine.engine, "pi");
       assert(!workdirs.has(options.workdir));
       workdirs.add(options.workdir);
       return {
         async run() {
           await inspectFor(options);
-          calls[engine]++;
+          calls++;
           await submitFor(options, draftFor(options.spec, taskResult(options.spec)));
         },
         async abort() {},
         async dispose() {},
       };
     },
-  });
-  const workers = await Promise.all([
-    startWorker(backend("pi"), path.join(directory, "pi")),
-    startWorker(backend("prime"), path.join(directory, "prime")),
-  ]);
+  };
+  const worker = await startWorker(backend, path.join(directory, "pi"));
   try {
     const summary = await runEvaluation({
-      runId: "mixed",
+      runId: "pi-routing",
       output: config.output,
       engine: "pi",
       identity: fakeIdentity,
       evaluatorVersion: fakeEvaluatorVersion,
-      identities: { prime: primeIdentity },
-      engineForTask: (task) =>
-        Object.values((task.data as TaskData).candidates).some((c) => c.version.includes("expert"))
-          ? "prime"
-          : "pi",
       config,
       ...services,
       plan: await buildPlan(config),
@@ -523,15 +515,16 @@ test("one host routes tasks to both engines without sharing sessions or workspac
       concurrency: 2,
       retries: 0,
       retryDelaySeconds: 0,
-      workerUrls: workers.map((w) => w.url),
+      workerUrls: [worker.url],
     });
     assert.equal(summary.completed_comparisons, 2);
-    assert.deepEqual(calls, { pi: 5, prime: 6 });
+    assert.equal(calls, 11);
     assert.equal(workdirs.size, 11);
-    const run = path.join(config.output.path, "mixed");
+    const run = path.join(config.output.path, "pi-routing");
     assert.deepEqual((await readdir(run)).sort(), [
       "model-behavior.jsonl",
       "overview.json",
+      "progress.jsonl",
       "report.md",
       "results",
       "state.json",
@@ -539,12 +532,13 @@ test("one host routes tasks to both engines without sharing sessions or workspac
       "task_summaries.md",
     ]);
     assert.doesNotMatch(await readFile(path.join(run, "report.md"), "utf8"), /_internal/);
-    assert.equal((await validateRun(run)).valid, true);
+    const validation = await validateRun(run);
+    assert.equal(validation.valid, true, JSON.stringify(validation.errors));
     await reportRun(run);
     await assert.rejects(reportRun(run, { details: true }), /--debug/);
     assert.equal(await exists(internalPath(run)), false);
   } finally {
-    await Promise.all(workers.map((w) => w.close()));
+    await worker.close();
     await rm(directory, { recursive: true, force: true });
   }
 });

@@ -22,11 +22,10 @@ export function createStabilityModelResolver(modelForStage: (stage: string) => M
 }
 
 export async function runStabilityCommand(host: HostConfig, options: {
-  cases?: string; sourceRun?: string; runId?: string; output?: string; apply?: boolean; engine: string;
+  cases?: string; sourceRun?: string; runId?: string; output?: string; apply?: boolean;
   debug?: boolean; workers?: string[]; resumeStages?: string[]; maxAttempts?: number; stopStartingAt?: number; seed?: number;
 }): Promise<number> {
   if (host.workflow !== "comparison") throw new Error("稳定性实验需要对战工作流配置");
-  if (!["pi", "prime"].includes(options.engine)) throw new Error("--engine must be pi or prime");
   if (options.apply && !options.runId) throw new Error("validate-stability --execute requires --run-id");
   if (options.runId) safeId(options.runId);
   const output = { kind: "directory" as const, path: testEvaluationOutput(host.evaluation.output.path, options.output) };
@@ -56,9 +55,9 @@ export async function runStabilityCommand(host: HostConfig, options: {
   process.once("SIGINT", interrupt); process.once("SIGTERM", interrupt);
   try {
     const result = await runEvaluation({ ...services, taskSource: await createStabilityWorkflow(config), repository: stabilityRepository,
-      report: reportStability, runId: options.runId!, output, engine: options.engine as Engine,
+      report: reportStability, runId: options.runId!, output, engine: "pi",
       evaluatorVersion: host.evaluatorVersion, config, plan: prepared?.plan ?? { tasks: [], inputs: {}, summary: {} },
-      modelForStage, modelForTask: createStabilityModelResolver(modelForStage, options.engine as Engine, config.execution),
+      modelForStage, modelForTask: createStabilityModelResolver(modelForStage, "pi", config.execution),
       policy: config.execution, concurrency: config.execution.concurrency, retries: config.execution.retries,
       retryDelaySeconds: config.execution.retryDelaySeconds, failureGuard: config.execution.failureGuard,
       maxAttempts: config.stability.maxAttempts, stopStartingAt: config.stability.stopStartingAt,

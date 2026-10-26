@@ -1,5 +1,5 @@
 import path from "node:path";
-import { canonical, safeId, type Engine } from "@eval/contracts";
+import { canonical, safeId } from "@eval/contracts";
 import { exists, readJson, runLayout } from "@eval/data";
 import { runEvaluation } from "@eval/host";
 import { createClusteringJobRepository, createClusteringJobWorkflow, prepareFrozenClusteringJob, prepareClusteringJob, reportClusteringJob, type ClusteringJobConfig } from "@eval/workflows/comparison";
@@ -13,10 +13,9 @@ const clusteringJobWorkflow = createClusteringJobWorkflow(readClusteringSource);
 
 export async function runClusteringCommand(host: HostConfig, options: {
   runs?: string[]; selectionFile?: string; runId?: string; output?: string; apply?: boolean;
-  engine: string; debug?: boolean; workers?: string[]; resumeStages?: string[]; balanceChannels?: boolean;
+  debug?: boolean; workers?: string[]; resumeStages?: string[]; balanceChannels?: boolean;
 }): Promise<number> {
   if (host.workflow !== "comparison") throw new Error("聚类作业需要对战工作流配置");
-  if (!["pi", "prime"].includes(options.engine)) throw new Error("--engine must be pi or prime");
   if (options.apply && !options.runId) throw new Error("cluster --apply 需要 --run-id 保存独立进度");
   if (options.runId) safeId(options.runId);
   const output = { kind: "directory" as const,
@@ -53,7 +52,7 @@ export async function runClusteringCommand(host: HostConfig, options: {
   process.once("SIGINT", interrupt); process.once("SIGTERM", interrupt);
   try {
     const result = await runEvaluation({ ...services, ...routing, taskSource: clusteringJobWorkflow, repository: clusteringJobRepository,
-      report: run => reportClusteringJob(run, readClusteringSource), snapshots: {}, runId: options.runId!, output, engine: options.engine as Engine,
+      report: run => reportClusteringJob(run, readClusteringSource), snapshots: {}, runId: options.runId!, output, engine: "pi",
       evaluatorVersion: host.evaluatorVersion, config,
       plan: prepared?.plan ?? { tasks: [], inputs: {}, summary: {} },
       policy: config.execution, modelForStage, concurrency: config.execution.concurrency,

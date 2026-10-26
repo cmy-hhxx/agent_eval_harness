@@ -8,7 +8,7 @@
 
 ```bash
 npm run eval -- preflight
-npm run eval -- run --engine pi --run-id pi-001 \
+npm run eval -- run --run-id pi-001 \
   --config configs/host.json --config configs/local/models.json
 npm run eval -- status --run /mnt/fin_bench/eval_data/0_wencai/eval_output/0_daily_eval/pi-001
 npm run eval -- report --run /mnt/fin_bench/eval_data/0_wencai/eval_output/0_daily_eval/pi-001
@@ -28,7 +28,7 @@ api_key = your-gateway-key
 api = openai-responses
 ```
 
-Pi / Prime 评测入口只接受 `openai-responses`，不自动降级协议。URL 保留网关要求的路径；`models = model-a,model-b` 声明静态目录，适合没有 `/models` 的自部署服务。未声明时才发现远程目录；一个渠道发现失败不隐藏其他渠道，错误在看板按渠道呈现。重复或未知字段报错，支持整行注释和引号字符串，不支持行尾注释或变量插值。完整字段以模板和 [settings.ts](../apps/host/src/settings.ts) 为准。
+评测入口只接受 `openai-responses`，不自动降级协议。URL 保留网关要求的路径；`models = model-a,model-b` 声明静态目录，适合没有 `/models` 的自部署服务。未声明时才发现远程目录；一个渠道发现失败不隐藏其他渠道，错误在看板按渠道呈现。重复或未知字段报错，支持整行注释和引号字符串，不支持行尾注释或变量插值。完整字段以模板和 [settings.ts](../apps/host/src/settings.ts) 为准。
 
 `[environment]` 保存搜索、Mongo、代理等服务端变量，覆盖同名进程变量。代理配置须让 localhost、127.0.0.1、::1 直连。评测和服务器 Eris 均不读取本机 .env，Eris 独立配置见 [Agent 配置](../agent/README.md#模型与设置)。测试或独立部署可用 `EVAL_CONFIG_FILE` 指定 INI。
 
@@ -39,9 +39,8 @@ JSON 配置的 `models.<profile>.channel` 引用渠道。`--config` 可重复，
 协议探测默认只检查配置，显式执行才调用模型：
 
 ```bash
-npm run eval -- model-probe --engine pi --stage comparison --config configs/local/models.json
-npm run eval -- model-probe --engine pi --stage comparison --config configs/local/models.json --execute
-npm run eval -- model-probe --engine prime --stage comparison --config configs/local/models.json --execute
+npm run eval -- model-probe --stage comparison --config configs/local/models.json
+npm run eval -- model-probe --stage comparison --config configs/local/models.json --execute
 ```
 
 探测通过实际 SDK 验证流式工具参数、工具结果续轮、最终文本与用量。一次执行计一次阶段尝试，通常包含两次模型请求；60 秒截止，不自动重试。输出 `status / attempts / modelRequests / toolCalls / usage` 和脱敏错误。探测使用所选阶段的思考参数，单次响应最多 512 输出 token；若单独选择低推理配置测协议，应在实验记录中注明，不能据此宣称生产推理条件已通过。
@@ -110,7 +109,7 @@ npm run eval -- index --dataset competitor_comparison --dataset-name 竞品对�
   --input b_fast=data/sources/model-answers/b_fast/竞品对比.jsonl \
   --config configs/host.json
 npm run eval -- preflight --dataset competitor_comparison
-npm run eval -- run --dataset competitor_comparison --engine pi --run-id competitor-001 \
+npm run eval -- run --dataset competitor_comparison --run-id competitor-001 \
   --config configs/host.json --config configs/local/models.json
 ```
 
@@ -217,7 +216,7 @@ npm run eval -- run --test-eval --run-id pilot-001 --discover-inputs \
 
 | 接口 | 行为 |
 |---|---|
-| `POST batch-runs/preview` | batch_ids、engine、settings；生成 UUID 和固定范围，返回预检及输出目录 |
+| `POST batch-runs/preview` | batch_ids、settings；生成 UUID 和固定范围，返回预检及输出目录 |
 | `GET batch-runs` | 持久化批次关联和当前运行状态 |
 | `POST batch-runs/<run>/start` | 重新校验输入/模型后启动，重复启动拒绝 |
 | `POST batch-runs/<run>/resume` | 恢复全部未完成任务，可显式传 resume_stages 解除阶段暂停 |
@@ -226,7 +225,7 @@ npm run eval -- run --test-eval --run-id pilot-001 --discover-inputs \
 | `GET batch-runs/<run>/artifacts` | 正式产物清单；file 参数下载清单内单文件 |
 | `POST analysis/scope` | task_id、batch_ids（空为全部包）、run_ids；page/status 分页筛选回答纳入状态 |
 | `POST analysis/preview` | 同上范围字段；冻结最新接受归因引用，返回作业 UUID 与计划，不占用 |
-| `POST analysis/<job>/start` | engine；原子占用冻结范围并执行独立聚类 |
+| `POST analysis/<job>/start` | 原子占用冻结范围并执行独立聚类 |
 | `POST analysis/<job>/resume` | 同作业续跑；可传 resume_stages 解除已暂停阶段 |
 | `POST analysis/<job>/stop` | 停止分析；保留收据和范围占用 |
 | `GET analysis` | 已启动分析作业、真实任务状态和错误 |
@@ -237,23 +236,15 @@ npm run eval -- run --test-eval --run-id pilot-001 --discover-inputs \
 
 启动关联存于 `EVAL_WORKBENCH_RUNS_DIR`，由 supervisor 设置在运行配置目录内；数据服务内部地址由 `EVAL_WORKBENCH_DATA_URL` 注入。输入只从服务端清洗报告获取。现有 runs 的样本、结果、停止和并发接口识别批次运行的实际输出目录。分析登记在其同级 `workbench-analysis/`，正式结果在任务输出目录的 `clustering/`；操作与纳入语义见[手动分析](workbench.md#结果归档与手动分析)。
 
-### 运行实例看板
+### 运行实例 API
 
 ```bash
 npm run eval -- dashboard --port 4173 --config configs/host.json --config configs/local/models.json
 ```
 
-该命令只用于本地开发。生产由 `workbench.sh` 启动同一 Host 看板，并只监听 `127.0.0.1:4173`，由 `/` 工作台的评测运行区读取接口。端口被占用时启动失败，不自动切换。
+该命令只启动运行实例 API，不提供独立页面。生产由 `workbench.sh` 启动同一服务并只监听 `127.0.0.1:4173`，由远程 `/` 统一工作台读取接口。端口被占用时启动失败，不自动切换。
 
-选择日期、模型与抽样，调整高级设置，等待扫描后预检并确认启动；设置变化须重新预检。模型来自渠道目录，密钥不进入浏览器。运行中可停止、调并发，详情可续跑。
-
-| 同页区块 | 内容 |
-|---|---|
-| 评测运行 | 输入、主线阶段、正式结果与改写；聚类在运行总览 |
-| 问题库 | 问题类、有效样本与来源召回，只读 |
-| 数据与流程定义 | 当前构建的流程、Schema、提示词和工具，只读 |
-
-删除须确认，清除该 run 产物及两份运行日志中的对应记录；活动或损坏锁、损坏日志阻止删除。原始输入、共享问题库、其他 run 与聚合交付回执保留。界面规范见 [PRODUCT](../PRODUCT.md)。
+统一工作台按需读取评测运行、正式结果、改写与问题库；删除须确认，清除该 run 产物及两份运行日志中的对应记录。活动或损坏锁、损坏日志阻止删除，原始输入、共享问题库、其他 run 与聚合交付回执保留。界面规范见 [PRODUCT](../PRODUCT.md)。
 
 ## 可选复核与后置聚类
 
@@ -401,8 +392,7 @@ require-batch / require-rewrite 可重复。selected 只缩小交付覆盖范围
 
 ```bash
 npm run worker -- --engine pi --directory .runtime/workers/pi-1 --port 4101
-npm run worker -- --engine prime --directory .runtime/workers/prime-1 --port 4102
-npm run eval -- run --engine pi --worker http://127.0.0.1:4101 --run-id external-001 \
+npm run eval -- run --worker http://127.0.0.1:4101 --run-id external-001 \
   --config configs/host.json --config configs/local/models.json
 ```
 

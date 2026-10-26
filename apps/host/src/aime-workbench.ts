@@ -7,13 +7,13 @@ import {loadConfig,createModelResolver,dashboardSettings,type AnswerReviewHostCo
 import {readSettings} from './settings.js';
 import {loadAimeConfiguration,runAimeEvaluation,type AimeRunOptions} from './aime-execution.js';
 
-interface AimeSettingsPatch {engine?:'pi'|'prime';debug?:boolean;bindings?:Record<string,unknown>;execution?:Record<string,unknown>}
+interface AimeSettingsPatch {debug?:boolean;bindings?:Record<string,unknown>;execution?:Record<string,unknown>}
 
 export async function loadAimeWorkbench(file:string,options:{id?:string;name?:string}={}){
   const configuration=await loadAimeConfiguration(file),id=options.id??'aime',name=options.name??'AIME日常',settingsFile=path.join(configuration.stateDirectory,'workbench-settings.json');
   let overlay:AimeSettingsPatch=await exists(settingsFile)?await readJson(settingsFile):{},running=false;
   const host=async(patch=overlay):Promise<AnswerReviewHostConfig>=>{
-    const {engine:_engine,debug:_debug,...settings}=patch;
+    const {debug:_debug,...settings}=patch;
     const current=await loadConfig(configuration.hostConfigs,await readSettings(configuration.settingsFile),settings);
     if(current.workflow!=='answer-review')throw Error('AIME来源需要独立评测配置');
     current.evaluation.rewrite={attribution:false};
@@ -61,7 +61,7 @@ export async function loadAimeWorkbench(file:string,options:{id?:string;name?:st
       taskTotal:view.coverage.stages.reduce((n,stage)=>n+stage.total,0),taskCompleted:view.coverage.stages.reduce((n,stage)=>n+stage.completed,0),
       concurrency:configuration.concurrency,evaluatorVersion:current.evaluatorVersion,ownerAlive,externalOwner,watch:watch??null,
       error:externalOwner?'AIME正由另一个进程运行，请先停止原aime-auto或CLI进程':watch?.lastError??null,
-      settings:{engine:overlay.engine??configuration.engine,debug:overlay.debug??false,execution:{...current.evaluation.execution,concurrency:configuration.concurrency},
+      settings:{debug:overlay.debug??false,execution:{...current.evaluation.execution,concurrency:configuration.concurrency},
         bindings:Object.fromEntries(['score','attribution','instruction-review'].map(stage=>{const binding=current.models.bindings[stage],profile=current.models.models[binding?.profile];
           return [stage,{channel:binding?.channel??profile?.provider??'',model:binding?.model??profile?.model??'',thinking:binding?.thinking??profile?.thinking??'medium'}];}))},
       packages,stages,runs:view.runs,report:report??null};
@@ -69,12 +69,11 @@ export async function loadAimeWorkbench(file:string,options:{id?:string;name?:st
   const setSettings=async(value:unknown)=>{
     if(!value||typeof value!=='object'||Array.isArray(value))throw new HttpError(400,'AIME设置必须是对象');
     const raw=value as Record<string,unknown>;
-    if(Object.keys(raw).some(key=>!['engine','debug','execution','bindings'].includes(key)))throw new HttpError(400,'AIME设置包含未知字段');
-    if(raw.engine!==undefined&&!['pi','prime'].includes(String(raw.engine)))throw new HttpError(400,'未知Worker引擎');
+    if(Object.keys(raw).some(key=>!['debug','execution','bindings'].includes(key)))throw new HttpError(400,'AIME设置包含未知字段');
     if(raw.debug!==undefined&&typeof raw.debug!=='boolean')throw new HttpError(400,'debug必须是布尔值');
     if(raw.bindings&&Object.keys(raw.bindings as object).some(stage=>!['score','attribution','instruction-review'].includes(stage)))throw new HttpError(400,'AIME只配置Score、Attribution与独立指令检查');
-    const {engine,debug,...modelSettings}=raw,{engine:previousEngine,debug:previousDebug,...previous}=overlay;
-    const patch={...dashboardSettings(modelSettings,previous),engine:engine??previousEngine,debug:debug??previousDebug} as AimeSettingsPatch;
+    const {debug,...modelSettings}=raw,{debug:previousDebug,...previous}=overlay;
+    const patch={...dashboardSettings(modelSettings,previous),debug:debug??previousDebug} as AimeSettingsPatch;
     const validated=await host(patch),resolver=createModelResolver(validated.models);
     resolver('score');resolver('attribution');resolver('instruction-review');
     await writeJson(settingsFile,patch);overlay=patch;
@@ -89,10 +88,10 @@ export async function loadAimeWorkbench(file:string,options:{id?:string;name?:st
     setConcurrency:(concurrency:number)=>setSettings({execution:{concurrency}}),
     async run(signal:AbortSignal,controls:Pick<AimeRunOptions,'modelRequests'|'pauseSignal'>={}){
       if(running)throw new HttpError(409,'AIME正在运行');running=true;
-      const selected=structuredClone(overlay),selectedEngine=selected.engine??configuration.engine,selectedDebug=selected.debug??false;
+      const selected=structuredClone(overlay),selectedDebug=selected.debug??false;
       try{
         const current=await host(selected),resolver=createModelResolver(current.models);resolver('score');resolver('attribution');resolver('instruction-review');
-        return await runAimeEvaluation(configuration,{signal,...controls,watch:true,host:async()=>structuredClone(current),engine:()=>selectedEngine,
+        return await runAimeEvaluation(configuration,{signal,...controls,watch:true,host:async()=>structuredClone(current),
           debug:()=>selectedDebug,concurrency:()=>controls.modelRequests?.concurrency()??configuration.concurrency});
       }
       finally{running=false;}

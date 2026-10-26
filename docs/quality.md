@@ -110,7 +110,7 @@ npm run benchmark -- replay --fixtures /mnt/fin_bench/eval_data/0_wencai/eval_ou
 npm run benchmark -- run --fixtures /mnt/fin_bench/eval_data/0_wencai/eval_output/test_eval/regression/fixtures.json --run-id sample-pi --limit 4
 ```
 
-run 默认预览，--execute 才调用模型；支持 --engine prime 和 --swap，须用新 ID。collect 的 limit 是草稿数，run 的 limit 是对比组数。失败草稿集不能估计生产首次通过率。
+run 默认预览，--execute 才调用模型；支持 --swap，须用新 ID。collect 的 limit 是草稿数，run 的 limit 是对比组数。失败草稿集不能估计生产首次通过率。
 
 ```bash
 npm run benchmark -- compare --run /mnt/fin_bench/eval_data/0_wencai/eval_output/test_eval/sample-pi \

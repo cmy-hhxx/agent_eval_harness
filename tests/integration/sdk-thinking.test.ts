@@ -6,12 +6,10 @@ import path from "node:path";
 import { DEFAULT_POLICY, object, type AttemptSpec } from "@eval/contracts";
 import { body, listen } from "@eval/runtime/http";
 import { piBackend } from "@eval/runtime/pi";
-import { primeBackend } from "@eval/runtime/prime";
 import { fakeIdentity } from "../fixtures/comparison.js";
 
-for (const engine of ["pi", "prime"] as const)
-  for (const api of ["openai-completions", "openai-responses"] as const)
-    test(`${engine}: ${api} sends the explicitly configured max reasoning effort`, { timeout: 30000 }, async () => {
+for (const api of ["openai-completions", "openai-responses"] as const)
+    test(`pi: ${api} sends the explicitly configured max reasoning effort`, { timeout: 30000 }, async () => {
       const directory = await mkdtemp(path.join(tmpdir(), "sdk-max-thinking-"));
       const requests: Record<string, unknown>[] = [];
       const gateway = await listen(async (request, response) => {
@@ -39,7 +37,7 @@ for (const engine of ["pi", "prime"] as const)
       process.env[key] = "local-fixture-secret";
       process.env.PI_OFFLINE = "1";
       try {
-        const identity = { ...fakeIdentity, engine };
+        const identity = { ...fakeIdentity, engine: "pi" as const };
         const spec: AttemptSpec = {
           runId: "max-thinking", taskId: "task", attemptId: "attempt", inputRevision: 1,
           engine: identity, evidenceBank: [], inputs: [], policy: DEFAULT_POLICY,
@@ -50,7 +48,7 @@ for (const engine of ["pi", "prime"] as const)
           prompt: "Respond with done.", hostUrl: gateway.url, deadline: Date.now() + 15000,
         };
         const errors: string[] = [];
-        const session = await (engine === "pi" ? piBackend : primeBackend)(identity).createSession({
+        const session = await piBackend(identity).createSession({
           spec, workdir: directory, tools: [], async execute() { throw new Error("No tools are registered"); },
           onEvent(event) {
             const value = object(event);

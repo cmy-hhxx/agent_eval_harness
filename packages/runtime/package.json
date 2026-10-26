@@ -19,10 +19,6 @@
       "types": "./pi.d.ts",
       "import": "./pi.js"
     },
-    "./prime": {
-      "types": "./prime.d.ts",
-      "import": "./prime.js"
-    },
     "./assistant": {
       "types": "./assistant.d.ts",
       "import": "./assistant.js"

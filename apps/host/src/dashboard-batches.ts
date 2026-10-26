@@ -8,7 +8,7 @@ import type { EvalConfig } from "@eval/workflows/comparison";
 type Scope = NonNullable<EvalConfig["inputs"]["workbench"]>;
 export interface BatchRun {
   runId: string; createdAt: number; outputDir: string; scope: Omit<Scope, "records">; models: string[];
-  engine: string; settings: Record<string, unknown>; status: string; archivedAt?: number; pid?: number; error?: string;
+  engine: "pi"; settings: Record<string, unknown>; status: string; archivedAt?: number; pid?: number; error?: string;
 }
 interface SourceScope extends Scope { models: string[]; comparisons: string[][]; output_dir: string }
 
@@ -32,14 +32,13 @@ export class DashboardBatches {
   }
   save(run: BatchRun) { return writeJson(this.file(run.runId), run); }
   async prepare(value: Record<string, unknown>) {
-    if (Object.keys(value).some(key => !["batch_ids", "engine", "settings"].includes(key))) throw new HttpError(400, "Unknown batch launch field");
+    if (Object.keys(value).some(key => !["batch_ids", "settings"].includes(key))) throw new HttpError(400, "Unknown batch launch field");
     const requested = dashboardSettings(value.settings ?? {});
     if (requested.versions || requested.clustering) throw new HttpError(400, "批次运行固定被评范围，聚类另行启动");
     const ids = value.batch_ids;
     if (!Array.isArray(ids) || !ids.length || ids.length > 200 || ids.some(id => typeof id !== "string") || new Set(ids).size !== ids.length)
       throw new HttpError(400, "选择 1–200 个不同批次");
-    const engine = value.engine ?? "pi";
-    if (engine !== "pi" && engine !== "prime") throw new HttpError(400, "Invalid engine");
+    const engine = "pi";
     const response = await fetch(this.sourceUrl + "/data/workbench/evaluation-scope", {
       method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ batch_ids: ids }),
       signal: AbortSignal.timeout(30000),

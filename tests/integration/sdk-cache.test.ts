@@ -6,12 +6,10 @@ import path from "node:path";
 import { DEFAULT_POLICY, object, type AttemptSpec } from "@eval/contracts";
 import { body, listen } from "@eval/runtime/http";
 import { piBackend } from "@eval/runtime/pi";
-import { primeBackend } from "@eval/runtime/prime";
 import { fakeIdentity } from "../fixtures/comparison.js";
 
-for (const engine of ["pi", "prime"] as const)
-  for (const supportsExplicitPromptCaching of [false, true])
-  test(`${engine}: Responses cache extension support=${supportsExplicitPromptCaching} preserves task history`, { timeout: 60000 }, async () => {
+for (const supportsExplicitPromptCaching of [false, true])
+  test(`pi: Responses cache extension support=${supportsExplicitPromptCaching} preserves task history`, { timeout: 60000 }, async () => {
     const directory = await mkdtemp(path.join(tmpdir(), "eval-sdk-cache-"));
     const requests: Record<string, unknown>[] = [];
     const gateway = await listen(async (req, res) => {
@@ -37,7 +35,7 @@ for (const engine of ["pi", "prime"] as const)
     const previousOffline = process.env.PI_OFFLINE;
     process.env[keyName] = "local-fixture-secret";
     process.env.PI_OFFLINE = "1";
-    const backend = (engine === "pi" ? piBackend : primeBackend)({ ...fakeIdentity, engine });
+    const backend = piBackend({ ...fakeIdentity, engine: "pi" });
     let executed = 0;
     try {
       for (const [index, toolNames] of [[], [], ["read_trace"]].entries()) {

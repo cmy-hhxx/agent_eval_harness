@@ -379,7 +379,7 @@ export async function evaluateDay(config: AutomationConfig, job: AutomationJob, 
     }
     await ensureClusterPlaceholder(path.join(output, runId));
     await runEvaluation({
-      ...services, runId, output: evaluation.output, engine: execution.engine, evaluatorVersion: host.evaluatorVersion,
+      ...services, runId, output: evaluation.output, engine: "pi", evaluatorVersion: host.evaluatorVersion,
       taskSource: workflow,
       config: evaluation, plan, policy: evaluation.execution, ...routing,
       concurrency: modelRequests?.concurrency() || evaluation.execution.concurrency, modelRequests, retries: evaluation.execution.retries,
@@ -438,7 +438,7 @@ export function remoteDateProgress(date: string, runs: Checkpoint[], limit: numb
   return { date, pairs };
 }
 
-export function remoteProgress(state: AutomationState, engine: AutomationConfig["engine"], dates: ReturnType<typeof remoteDateProgress>[]) {
+export function remoteProgress(state: AutomationState, engine: "pi", dates: ReturnType<typeof remoteDateProgress>[]) {
   const sourcePath = new URL(state.sourceUrl).pathname.replace(/\/+$/, "");
   const namedPairs = ["/data/gpt", "/data/post_training_model"].includes(sourcePath);
   const active = Object.values(state.jobs).some((job) => job.download !== "ready" ||

@@ -23,7 +23,6 @@ const {
     fixtures: { type: "string" },
     output: { type: "string" },
     config: { type: "string", multiple: true, default: ["configs/host.json"] },
-    engine: { type: "string", default: "pi" },
     "run-id": { type: "string" },
     limit: { type: "string", default: "32" },
     execute: { type: "boolean" },
@@ -288,9 +287,8 @@ if (command === "collect") {
 } else if (command === "run") {
   if (!values.fixtures || !values["run-id"])
     throw new Error(
-      "run --fixtures FIXTURES.json --run-id ID [--engine pi|prime] [--limit 4] [--swap] [--execute]",
+      "run --fixtures FIXTURES.json --run-id ID [--limit 4] [--swap] [--execute]",
     );
-  if (!["pi", "prime"].includes(values.engine)) throw new Error("--engine must be pi or prime");
   const { fixtures } = await loadFixtures(values.fixtures);
   const selected = [
     ...new Map(fixtures.filter((f) => f.task.stage === "comparison").map((f) => [f.task.id, f])).values(),
@@ -365,7 +363,7 @@ if (command === "collect") {
         await runEvaluation({
           runId: values["run-id"],
           output: config.output,
-          engine: values.engine,
+          engine: "pi",
           evaluatorVersion: host.evaluatorVersion,
           config,
           ...services,

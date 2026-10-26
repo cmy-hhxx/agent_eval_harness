@@ -13,9 +13,7 @@
     "agent"
   ],
   "imports": {
-    "#pi-sdk": "./vendor/pi/packages/coding-agent/dist/index.js",
-    "#prime-sdk": "./vendor/prime-agent/packages/coding-agent/dist/index.js",
-    "#prime-ai": "./vendor/prime-agent/packages/ai/dist/index.js"
+    "#pi-sdk": "./vendor/pi/packages/coding-agent/dist/index.js"
   },
   "scripts": {
     "bootstrap": "node scripts/bootstrap.mjs",
@@ -37,7 +35,6 @@
     "test:full": "npm run build:app && node scripts/test.mjs --full",
     "test:integration": "npm run build:app && node --test --test-concurrency=2 dist/tests/integration/*.test.js",
     "build:pi": "node scripts/build.mjs pi",
-    "build:prime": "node scripts/build.mjs prime",
     "worker": "node dist/apps/worker/src/cli.js",
     "build:agent": "node scripts/build-agent.mjs",
     "agent": "node dist/apps/host/src/agent.js",

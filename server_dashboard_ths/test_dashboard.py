@@ -362,11 +362,10 @@ class DashboardTest(unittest.TestCase):
         self.assertEqual(self.get_json("/data/gpt/dashboard-data"), {"dates": [], "evaluation": None})
         self.assertEqual(self.get_json("/data/gpt/dates"), {"dates": []})
         for prefix in ("/data/wencai", "/data/gpt"):
-            with urlopen(self.base + prefix + "/") as response:
-                html = response.read().decode()
-            self.assertIn(f'href="{prefix}/dashboard.css"', html)
-            self.assertIn(f'src="{prefix}/dashboard.js"', html)
-            self.assertNotIn("__BASE__", html)
+            for route in ("/", "/dashboard.css", "/dashboard.js", "/records", "/records.bundle.js", "/docs", "/docs/handoff.md"):
+                with self.assertRaises(HTTPError) as error:
+                    urlopen(self.base + prefix + route)
+                self.assertEqual(error.exception.code, 404)
         counts = dict.fromkeys(PAIR_FIELDS, 0)
         counts.update({"total_cases": 3, "completed_cases": 3})
         payload = {"run_id": "six-model-test", "engine": "pi", "status": "finished",

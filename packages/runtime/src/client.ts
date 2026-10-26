@@ -36,7 +36,6 @@ export async function spawnWorker(
       ...process.env,
       PI_OFFLINE: "1",
       PI_TELEMETRY: "0",
-      PRIME_AGENT_TELEMETRY: "0",
       DO_NOT_TRACK: "1",
     },
   });

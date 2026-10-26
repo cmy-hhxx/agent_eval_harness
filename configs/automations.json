@@ -18,7 +18,6 @@
   "sourceDirectory": "../data/sources/automations/remote-evaluation",
   "runPrefix": "",
   "predictionResults": "../data/sources/automations/prediction-evaluation",
-  "engine": "pi",
   "pollMs": 15000,
   "refreshMs": 1800000,
   "retryMs": 30000,
