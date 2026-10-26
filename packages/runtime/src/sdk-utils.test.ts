@@ -105,7 +105,10 @@ const submissions = {
   comparison: {
     assessments: { A: {meets_core:true,summary:"已完成。",core_failure_refs:[]}, B:{meets_core:true,summary:"已完成。",core_failure_refs:[]} }, preference: null, relative_preference: "A",
     tradeoff: "双方均完成核心要求。",
-    comparisons: [{ importance: "high", better_candidate: null },
+    comparisons: [{ importance: "high", better_candidate: null, assessments: {
+      A: { summary: "已完成。", finding_indices: [], status: "met", evidence_status: "已确认" },
+      B: { summary: "已完成。", finding_indices: [], status: "met", evidence_status: "已确认" },
+    } },
       { importance: "low" }],
   } satisfies ComparisonSubmission,
   rewrite: { rewrites: [{ id: "summary", text: "双方均完成核心要求。" }] },
