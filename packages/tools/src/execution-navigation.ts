@@ -220,7 +220,7 @@ export const readResponsibilityChainTool: Omit<ToolDefinition, "description"> = 
     });
     const limit = args.max_chars ?? 16000, chars = { used: 0, limit };
     const chainIndex = selected.chain_index;
-    const sameChain = boundaries.filter(item => item.chain_index === chainIndex);
+    const sameChain = chainIndex === null || chainIndex === undefined ? [selected] : boundaries.filter(item => item.chain_index === chainIndex);
     const ofKind = (kind: string) => sameChain.find(item => item.kind === kind);
     const nodeOf = (item: Record<string, unknown> | undefined) => nodes.find(node => node.execution_node_index === item?.execution_node_index);
     const requestFormation = ofKind("request_formation"), execution = ofKind("execution"), transfer = ofKind("transfer"), generation = ofKind("generation");
