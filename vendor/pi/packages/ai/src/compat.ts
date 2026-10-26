@@ -26,7 +26,6 @@ export * from "./images.ts";
 export * from "./images-api-registry.ts";
 export * from "./index.ts";
 export * from "./legacy-api-aliases.ts";
-export * from "./providers/images/register-builtins.ts";
 
 import { anthropicMessagesApi } from "./api/anthropic-messages.lazy.ts";
 import { azureOpenAIResponsesApi } from "./api/azure-openai-responses.lazy.ts";
@@ -38,8 +37,6 @@ import { openAICodexResponsesApi } from "./api/openai-codex-responses.lazy.ts";
 import { openAICompletionsApi } from "./api/openai-completions.lazy.ts";
 import { openAIResponsesApi } from "./api/openai-responses.lazy.ts";
 import { piMessagesApi } from "./api/pi-messages.lazy.ts";
-import { getEnvApiKey } from "./env-api-keys.ts";
-import type { ModelsApiStreamOptions } from "./models.ts";
 import { builtinModels, getBuiltinModel, getBuiltinModels, getBuiltinProviders } from "./providers/all.ts";
 
 export type { BuiltinProvider } from "./providers/all.ts";
@@ -47,7 +44,6 @@ export type { BuiltinProvider } from "./providers/all.ts";
 import { createFauxCore, type FauxProviderRegistration, type RegisterFauxProviderOptions } from "./providers/faux.ts";
 import type {
 	Api,
-	ApiStreamOptions,
 	AssistantMessage,
 	AssistantMessageEventStream,
 	Context,
@@ -214,33 +210,6 @@ export function resetApiProviders(): void {
 
 registerBuiltInApiProviders();
 
-const compatModels = builtinModels();
-const AMBIENT_AUTH_MARKER = "<authenticated>";
-
-function hasExplicitApiKey(apiKey: string | undefined): apiKey is string {
-	return typeof apiKey === "string" && apiKey.trim().length > 0;
-}
-
-function withEnvApiKey<TOptions extends StreamOptions>(
-	model: Model<Api>,
-	options: TOptions | undefined,
-): TOptions | undefined {
-	if (hasExplicitApiKey(options?.apiKey)) return options;
-	const apiKey = getEnvApiKey(model.provider, options?.env);
-	if (!apiKey || apiKey === AMBIENT_AUTH_MARKER) return options;
-	return { ...options, apiKey } as TOptions;
-}
-
-function hasResolvedCloudflareAuth(options: StreamOptions | undefined): boolean {
-	return hasExplicitApiKey(options?.apiKey) || typeof options?.headers?.["cf-aig-authorization"] === "string";
-}
-
-function getBuiltinProviderForModel(model: Model<Api>) {
-	if (getApiProvider(model.api) !== builtinApiProviderInstances.get(model.api)) return undefined;
-	const provider = compatModels.getProvider(model.provider);
-	return provider?.getModels().some((candidate) => candidate.api === model.api) ? provider : undefined;
-}
-
 function resolveApiProvider(api: Api) {
 	const provider = getApiProvider(api);
 	if (!provider) {
@@ -255,15 +224,8 @@ export function stream<TApi extends Api>(
 	options?: ProviderStreamOptions,
 ): AssistantMessageEventStream {
 	const transcript = normalizeContext(context);
-	const builtinProvider = getBuiltinProviderForModel(model);
-	if (builtinProvider) {
-		if (model.provider.startsWith("cloudflare-") && !hasResolvedCloudflareAuth(options)) {
-			return compatModels.stream(model, transcript, options as ModelsApiStreamOptions<TApi> | undefined);
-		}
-		return builtinProvider.stream(model, transcript, withEnvApiKey(model, options) as ApiStreamOptions<TApi>);
-	}
 	const provider = resolveApiProvider(model.api);
-	return provider.stream(model, transcript, withEnvApiKey(model, options) as StreamOptions);
+	return provider.stream(model, transcript, options as StreamOptions);
 }
 
 export async function complete<TApi extends Api>(
@@ -281,15 +243,8 @@ export function streamSimple<TApi extends Api>(
 	options?: SimpleStreamOptions,
 ): AssistantMessageEventStream {
 	const transcript = normalizeContext(context);
-	const builtinProvider = getBuiltinProviderForModel(model);
-	if (builtinProvider) {
-		if (model.provider.startsWith("cloudflare-") && !hasResolvedCloudflareAuth(options)) {
-			return compatModels.streamSimple(model, transcript, options);
-		}
-		return builtinProvider.streamSimple(model, transcript, withEnvApiKey(model, options));
-	}
 	const provider = resolveApiProvider(model.api);
-	return provider.streamSimple(model, transcript, withEnvApiKey(model, options));
+	return provider.streamSimple(model, transcript, options);
 }
 
 export async function completeSimple<TApi extends Api>(
