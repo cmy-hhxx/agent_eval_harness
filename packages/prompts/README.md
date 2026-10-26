@@ -21,7 +21,7 @@
 | `resources/eris/` | Eris 系统、预测、核对及工具规则 |
 | [src/index.ts](src/index.ts) | 加载、渲染与公开入口 |
 
-固定规则在系统提示词中发送一次。Attribution 将需要的点评和证据原则合并进五步流程，不再次叠加共享文案；任务消息只追加本次适用的条件规则、焦点、材料、预算和恢复信息。可信请求与模型展示投影分开，展示精简不改变业务校验或证据。装配与规则归属见[归因提示词](../../docs/attribution-prompt.md)。
+固定规则在系统提示词中发送一次。Attribution 将需要的点评和证据原则合并进五步流程，不再次叠加共享文案；组件目录、责任链结构和字段填写细节不重复进入固定提示词。任务消息只追加本次适用的条件规则、焦点、材料、预算和恢复信息。可信请求与模型展示投影分开，展示精简不改变业务校验或证据。装配与规则归属见[归因提示词](../../docs/attribution-prompt.md)。
 
 Agent Profile 向 `agentPrompt` 显式传入 `fileSubmission`、`draftWriteInCallLimit` 与可选 `profile`；本模块据此渲染工具和预算，不根据阶段名称决定运行策略。
 

@@ -26,6 +26,9 @@ export function resolveModelSubmission(request:AgentRequest,draft:unknown,audit:
   const value=draft as AttributionSubmission,available=(request.input.ground_truth as {available:boolean}).available;
   const {transitions:edges,execution_nodes:nodes}=request.input.answer as unknown as ResponsibilityMaterial;
   const edge=(index:number,path:string)=>{const found=edges.find(e=>e.transition_index===index);if(!found)throw new ValidationError([{category:'evidence',code:'transition_invalid',path,message:'选择本任务真实边界编号。',actual:index}]);return found;};
+  const chainState=(kind:ResponsibilityMaterial['transitions'][number]['kind'])=>kind==='request_formation'?'已采集该次请求形成及其后继证据。'
+    :kind==='execution'?'已采集该次执行输入与返回证据。':kind==='transfer'?'已采集材料传递前后证据。'
+      :kind==='generation'?'已采集该次生成输入与输出证据。':'已采集交付内容证据。';
   const resolve=(index:number,path:string,observation?:string)=>resolveAttributionEvidence(request,resolveEvidenceSelection(audit.evidenceBank??[],{evidence_index:index,...(observation?{observation}:{})},path),audit,path);
   const result:AttributionResult={meta:{input_id:request.sources.answer.id},summary:value.summary,Problem:value.Problem.map((p,i)=>{
     const seenBoundaries=new Set<number>();
@@ -42,6 +45,7 @@ export function resolveModelSubmission(request:AgentRequest,draft:unknown,audit:
       const proof=evidence(item.index,path+'/evidence/'+j);
       proof.purposes=[...new Set([...proof.purposes,...item.purposes])];
     });
+    const explicit=new Map<number,{role:'primary'|'related';reason:string;evidence_ids:string[]}>();
     const related=p.related_responsibilities?.map((r,j)=>{
       const at=path+'/related_responsibilities/'+j;
       const ids=r.evidence_indices.map((index,k)=>{
@@ -51,6 +55,7 @@ export function resolveModelSubmission(request:AgentRequest,draft:unknown,audit:
       const relatedBoundary=selectBoundary(r.responsibility_boundary,at);
       const bindingIssues=responsibilityBindingIssues(request,relatedBoundary,r.evidence_indices.map(index=>resolve(index,at)),audit,at);
       if(bindingIssues.length)throw new ValidationError(bindingIssues);
+      explicit.set(relatedBoundary!,{role:'related',reason:r.attribution_reason,evidence_ids:ids});
       return {...responsibilityDisplay(request,relatedBoundary),
         attribution_reason:r.attribution_reason,evidence_ids:ids,...(r.uncertainties?{uncertainties:r.uncertainties}:{})};
     });
@@ -60,29 +65,32 @@ export function resolveModelSubmission(request:AgentRequest,draft:unknown,audit:
       const proof=resolve(index,at,observations.get(index));
       return proof;
     }):undefined;
-    // Context nodes describe observed inputs, not additional responsible actors.
-    const chain=(p.responsibility_chain??[]).map((item,j)=>{
-      const at=path+'/responsibility_chain/'+j;
-      const index=item.responsibility_boundary===null?null:Number(item.responsibility_boundary.slice('boundary:'.length));
-      const boundary=index===null?undefined:edge(index,at);
-      const displayed=boundary==null?null:responsibilityDisplay(request,index).component;
-      const responsible=index===primary||p.related_responsibilities?.some(r=>r.responsibility_boundary===item.responsibility_boundary);
-      const component=boundary?.kind==='transfer'?(responsible?displayed:null):displayed===UNKNOWN_COMPONENT?null:displayed;
-      const node=nodes.find(n=>n.execution_node_index===boundary?.execution_node_index);
-      const ids=item.evidence_indices.map(n=>{const e=evidence(n,at);e.purposes=[...new Set([...e.purposes,'归因' as const])];return e.evidence_id;});
-      return {component,stage:boundary?.kind??'input' as const,state:item.state,
-        role:index===primary?'primary' as const:p.related_responsibilities?.some(r=>r.responsibility_boundary===item.responsibility_boundary)?'related' as const:'context' as const,
-        message_index:node?.message_index??null,evidence_ids:ids};
-    });
-    for(const [index,r] of [p,...p.related_responsibilities??[]].entries()){
-      const boundary=edge(Number(r.responsibility_boundary!.slice('boundary:'.length)),path),role=index?'related' as const:'primary' as const;
-      const node=nodes.find(n=>n.execution_node_index===boundary.execution_node_index);
-      if(!chain.some(n=>n.role===role&&n.stage===boundary.kind&&n.message_index===(node?.message_index??null))){
-        chain.push({component:responsibilityDisplay(request,boundary.transition_index).component,stage:boundary.kind,state:index?r.attribution_reason:p.text,role,message_index:node?.message_index??null,evidence_ids:index?related![index-1].evidence_ids:[...selected.keys()]});
+    // Responsibility is a model decision; the chain is a program projection of the selected
+    // boundaries and only those captured ancestors that share the selected evidence.
+    const selectedEvidence=[...selected.values()],attributionEvidence=selectedEvidence.filter(item=>item.purposes.includes('归因')).map(item=>item.evidence_id);
+    explicit.set(primary! ,{role:'primary',reason:p.attribution_reason,evidence_ids:attributionEvidence.length?attributionEvidence:selectedEvidence.map(item=>item.evidence_id)});
+    const chainEvidence=[...attributionEvidence,...(related??[]).flatMap(item=>item.evidence_ids)];
+    const evidenceIds=new Set(chainEvidence.length?chainEvidence:selectedEvidence.map(item=>item.evidence_id));
+    const context=new Set<number>();
+    const visit=(index:number)=>{
+      for(const predecessor of edge(index,path+'/responsibility_chain').predecessors){
+        if(explicit.has(predecessor)||context.has(predecessor))continue;
+        const boundary=edge(predecessor,path+'/responsibility_chain');
+        if(![...boundary.before,...boundary.after].some(item=>evidenceIds.has(item.evidence_id)))continue;
+        context.add(predecessor);visit(predecessor);
       }
-    }
-    const finalInvolved=[p,...p.related_responsibilities??[]].some(r=>responsibilityDisplay(request,Number(r.responsibility_boundary!.slice('boundary:'.length))).component==='终稿生成轮');
-    if(finalInvolved&&!p.responsibility_chain?.length)throw new ValidationError([{category:'structure',code:'responsibility_chain_required',path:path+'/responsibility_chain',message:'终稿责任须提供相关上游输入状态的责任链；无独立上游记录时用null表示已采集输入，不编造组件。'}]);
+    };
+    for(const index of explicit.keys())visit(index);
+    const chain=[...new Set([...explicit.keys(),...context])].sort((a,b)=>a-b).flatMap(index=>{
+      const boundary=edge(index,path+'/responsibility_chain'),entry=explicit.get(index);
+      const displayed=responsibilityDisplay(request,index).component;
+      if(!entry&&boundary.kind!=='transfer'&&displayed===UNKNOWN_COMPONENT)return [];
+      const captured=[...boundary.before,...boundary.after].map(item=>item.evidence_id).filter(id=>evidenceIds.has(id));
+      return [{component:boundary.kind==='transfer'&&!entry?null:displayed,stage:boundary.kind,
+        state:entry?.reason??chainState(boundary.kind),role:entry?.role??'context' as const,
+        message_index:nodes.find(node=>node.execution_node_index===boundary.execution_node_index)?.message_index??null,
+        evidence_ids:[...new Set(entry?.evidence_ids.length?entry.evidence_ids:captured)]}];
+    });
     return {problem_id:'p'+(i+1),text:p.text,reason:p.reason,evidence_status:p.evidence_status,evidence:[...selected.values()],
       ...responsibilityDisplay(request,primary),
       responsibility_chain:chain,

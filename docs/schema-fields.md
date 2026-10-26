@@ -50,6 +50,8 @@
 
 正式 Problem 及关联责任不输出 `responsibility_boundary`；该稳定编号仅保留在内部模型提交与收据中，用于精确关联真实调用。程序按 attribution/taxonomy.json 的组件定义生成 component 展示名称，不用展示名称反查身份或去重调用；内部模型名及原始坐标仍可溯源。正文说明具体动作和偏差。
 
+正式 `responsibility_chain` 由程序从模型选择的主责/关联责任 boundary、实际转换和问题证据派生。模型提交不含该字段；程序只把命中当前问题证据的上游转换作为 context，正常传递不升级为责任主体。
+
 归因探索与修复共用从开始即公开的既有总额度，提交不再解锁额外工具次数，不增加总预算或重试。进度 Token 仅累计已归档尝试，同时显示待归档次数和统计覆盖范围；零值不代表没有实际消耗。checkpoint.writeMs 是累计持久化墙钟时间，不是事件循环阻塞时间；snapshotMs 仅衡量快照构造，不涵盖全部持久化 CPU。
 
 责任选择仅接受 `boundary:<transition_index>`，不接受裸节点数字或null；正式输出仍不含 responsibility_boundary。未被终稿引用的实际压缩来源也进入处理链导航。

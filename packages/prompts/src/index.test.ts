@@ -159,6 +159,15 @@ test("attribution sends only applicable rule resources and does not repeat share
   assert(!focused.includes('候选私有规范'));
 });
 
+test("attribution fixed policy delegates program identity, component routing and chain structure",()=>{
+  const prompt=agentPrompt('attribution',['read_execution','read_responsibility_chain'],{fileSubmission:true});
+  assert.match(prompt.systemPrompt,/工作顺序/);
+  assert.match(prompt.systemPrompt,/判定规则/);
+  assert.doesNotMatch(prompt.systemPrompt,/planner-search|planner-finquery|finquery\.py|data-visualizer/);
+  assert.doesNotMatch(prompt.systemPrompt,/\bresponsibility_chain\b/);
+  assert.doesNotMatch(prompt.systemPrompt,/responsibility_boundary[^\n]*state[^\n]*evidence_indices/);
+});
+
 test("taxonomy components carry one group, stage and definition", () => {
   const groups = attributionTaxonomy.groups;
   const components = attributionTaxonomy.components;
