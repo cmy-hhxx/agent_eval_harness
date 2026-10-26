@@ -917,10 +917,10 @@ test("dashboard counts one finding across components and topics while retaining 
   const fixture = await setup(false, true);
   const libraryFile = path.join(fixture.config.problemLibrary.path, "a_fast.json");
   const library = await readJson<ProblemLibrary>(libraryFile);
-  library.classes.k1.category_paths = [["正确性", "数值"]];
+  library.classes.k1.category = "数值正确性";
   library.components.c2 = { ...library.components.c1, id: "c2", label: "工具输出解读" };
   library.classes.k3 = { ...library.classes.k1, id: "k3", component_id: "c2", label: "工具数值误读",
-    aliases: [], category_paths: [["正确性", "数值"]] };
+    aliases: [], category: "数值正确性" };
   library.occurrences.push(
     { ...library.occurrences[0], id: "o-shared", class_id: "k3" },
     { ...library.occurrences[0], id: "o-repeated", at: "2025-12-31T00:00:00.000Z" },
@@ -932,7 +932,7 @@ test("dashboard counts one finding across components and topics while retaining 
     assert.deepEqual(model.totals, { components: 2, classes: 2, occurrences: 2 });
     assert.deepEqual(model.components.map((component: { classes: { occurrences: number }[] }) =>
       component.classes.map(problem => problem.occurrences)), [[2], [1]]);
-    const topic = model.categories.find((category: { path: string[] }) => JSON.stringify(category.path) === '["正确性","数值"]');
+    const topic = model.categories.find((category: { category: string }) => category.category === "数值正确性");
     assert.deepEqual(topic.class_ids, ["k1", "k3"]);
     assert.equal(topic.occurrences, 2);
     for (const [classId, total] of [["k1", 2], ["k3", 1]] as const) {

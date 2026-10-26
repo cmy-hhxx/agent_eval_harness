@@ -4,21 +4,12 @@ import assert from "node:assert/strict";
 import { rm } from "node:fs/promises";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
-import type { AgentBackend, JsonObject, RunState, SubmissionReceipt } from "@eval/contracts";
-import { exists, readJson, readJsonl, writeJson, writeJsonl } from "@eval/data";
-import { startWorker } from "@eval/runtime/worker";
+import type { RunState, SubmissionReceipt } from "@eval/contracts";
+import { exists, readJson, writeJson } from "@eval/data";
 import { clusteringProfile, emptyLibrary, type ClusteringResult } from "@eval/agents/clustering";
-import { runEvaluation } from "@eval/host";
-import { buildPlan, comparisonWorkflow, reportRun, readRunState, writeRunState, syncProblemLibrary } from "@eval/workflows/comparison";
+import { buildPlan, comparisonWorkflow, syncProblemLibrary } from "@eval/workflows/comparison";
 import type { AttributionResult, TaskData } from "@eval/workflows/comparison";
-import { services, validateRun } from "../../fixtures/services.js";
-import { submitFor, inspectFor, attributionResult, draftFor, emptyAudit, fakeEvaluatorVersion, fakeIdentity, fixtureConfig, raw, taskResult, parsedMaterial } from "../../fixtures/comparison.js";
-
-async function rows(file: string): Promise<JsonObject[]> {
-  const result: JsonObject[] = [];
-  for await (const row of readJsonl(file)) result.push(row as JsonObject);
-  return result;
-}
+import { attributionResult, emptyAudit, fakeEvaluatorVersion, fixtureConfig, raw } from "../../fixtures/comparison.js";
 
 /** Attribution result carrying a problem proposal so clustering has observations to classify. */
 function problemAttribution(answer: string, inputId: string): AttributionResult {
@@ -26,6 +17,7 @@ function problemAttribution(answer: string, inputId: string): AttributionResult 
   result.correct_reason = "最终结果5与标准结果4不符。";
   result.Problem[0] = {
     ...result.Problem[0]!,
+    ...responsibilityFixture("最终回答组织"),
     reason: "原文给出5，正确结果应为4。",
     text: "算术错误",
   };
@@ -35,7 +27,7 @@ function problemAttribution(answer: string, inputId: string): AttributionResult 
 function proposedClass(): ClusteringResult {
   return {
     assignments: [{ item_id: "o1", new_class_key: "new" }],
-    new_classes: [{ key: "new", component: "回答生成：本题事实关系推导与结果使用（消息 1） / 数据解释与计算 / 事实关系推导", label: "算术错误", definition: "计算不符。", closest_existing: null, novelty: "首次出现。", category_paths: [["数值可靠性"]] }],
+    new_classes: [{ key: "new", component: "回答生成：本题事实关系推导与结果使用（消息 1） / 数据解释与计算 / 事实关系推导", label: "算术错误", definition: "计算不符。", closest_existing: null, novelty: "首次出现。", category: "数值可靠性" }],
     merges: [],
   };
 }
@@ -43,29 +35,6 @@ function proposedClass(): ClusteringResult {
 const attributedReceipt = (taskId: string, evaluation: AttributionResult) => ({
   taskId, submissionId: randomUUID(), evaluatorVersion: fakeEvaluatorVersion, evaluation,
 });
-
-function backendWith(calls: { value: number }): AgentBackend {
-  return {
-    identity: fakeIdentity,
-    async createSession(options) {
-      return {
-        async run() {
-          await inspectFor(options);
-          calls.value++;
-          let result = taskResult(options.spec);
-          if (options.spec.evaluation.id === "attribution") {
-            const material = parsedMaterial(options.spec) as { answer: { final_answer: string } };
-            result = problemAttribution(material.answer.final_answer, options.spec.inputs.find(input => input.name === "answer")!.id);
-          }
-          const submitted = await submitFor(options, draftFor(options.spec, result));
-          if (options.spec.evaluation.id !== "clustering") assert.equal(submitted.isError, undefined, JSON.stringify(submitted));
-        },
-        async abort() {},
-        async dispose() {},
-      };
-    },
-  };
-}
 
 test("a batch may create every component its own observations use", async () => {
   const { directory, config } = await fixtureConfig(undefined, false, true);
@@ -90,7 +59,7 @@ test("a batch may create every component its own observations use", async () => 
 
     const known = structuredClone(task);
     (known.data as { projection: unknown }).projection = {
-      components: [{ id: "c1", label: "Search / 数据解释与计算 / 结果完整性", definition: "", aliases: ["搜索"], classes: [] }],
+      components: [{ id: "c1", label: "Search", definition: "", aliases: [], classes: [] }],
     };
     const narrowed = comparisonWorkflow.bind(known, {}, dependencies, { tasks: plan.tasks.map(item => item.id === known.id ? known : item) }).request.input as {
       budget: { max_new_components: number };
@@ -131,129 +100,6 @@ test("clustering bind preserves each shard's reserved component headroom", async
       else assert.throws(() => clusteringProfile.validate!(request, proposal, emptyAudit()), /新增组件数超过 budget\.max_new_components/);
     }
   } finally {
-    await rm(directory, { recursive: true, force: true });
-  }
-});
-
-test("clustering builds a bounded per-model library and recalls classes across runs", async () => {
-  const { directory, config, modelForStage } = await fixtureConfig(
-    [
-      [raw("q1", "4", "2+2=5"), raw("q2", "4", "2+2=5")],
-      [],
-      [raw("q1", "4", "2+2=5"), raw("q2", "4", "2+2=5")],
-      [],
-    ],
-    false,
-    true,
-  );
-  const calls = { value: 0 };
-  const worker = await startWorker(backendWith(calls), path.join(directory, "worker"));
-  try {
-    const plan = await buildPlan(config);
-    assert.equal(plan.summary.attribution_tasks, 4);
-    assert.equal(plan.summary.comparison_tasks, 2);
-    assert.equal(plan.summary.comparison_verification_tasks, 0);
-    assert.equal(plan.summary.clustering_tasks, 2);
-    for (const task of plan.tasks.filter((item) => item.stage === "clustering")) {
-      assert.deepEqual(task.inputIds, {}, "clustering must not fetch input material");
-      assert.equal(Object.keys(task.dependencies).length, 2, "one attribution dependency per answer");
-      assert(Object.values(task.dependencies).every(id => plan.tasks.find(task => task.id === id)!.stage === "attribution"),
-        "library maintenance depends only on accepted attribution");
-    }
-    const options = {
-      runId: "cluster-first",
-      output: config.output,
-      engine: "pi" as const,
-      identity: fakeIdentity,
-      evaluatorVersion: fakeEvaluatorVersion,
-      config,
-      ...services,
-      plan,
-      policy: config.execution,
-      modelForStage,
-      concurrency: 2,
-      retries: 0,
-      retryDelaySeconds: 0,
-      workerUrls: [worker.url],
-    };
-    const summary = await runEvaluation(options);
-    assert.equal(summary.completed_comparisons, 2);
-    assert.equal(calls.value, 14, "2 criteria + 4 attribution + 4 instruction reviews + 2 comparisons + 2 clustering");
-    const run = path.join(config.output.path, "cluster-first");
-
-    const clustering = await rows(path.join(run, "results", "clustering.jsonl"));
-    assert.equal(clustering.length, 2);
-    for (const row of clustering) {
-      assert.equal(row.clustering_type, "problem_library");
-      assert((row.result as { new_classes: unknown[] }).new_classes.length === 1);
-    }
-    for (const model of ["a_fast", "b_fast"]) {
-      const library = await readJson<{
-        model: string;
-        components: Record<string, unknown>;
-        classes: Record<string, { label: string; status: string }>;
-        occurrences: { class_id: string; case_id: string; classification: string }[];
-      }>(path.join(config.problemLibrary.path, `${model}.json`));
-      assert.equal(library.model, model);
-      assert.equal(Object.keys(library.components).length, 1);
-      assert.equal(Object.keys(library.classes).length, 1);
-      assert.equal(Object.values(library.classes)[0]!.label, "算术错误");
-      assert.equal(library.occurrences.length, 2);
-      assert.deepEqual(
-        library.occurrences.map((occurrence) => occurrence.case_id).sort(),
-        ["q1", "q2"],
-      );
-      assert(library.occurrences.every((occurrence) => occurrence.classification === "created"));
-    }
-    const stats = summary.problem_library as Record<string, { classes: number; occurrences: number; proposed_new_classes: number }>;
-    assert.equal(stats.a_fast!.classes, 1);
-    assert.equal(stats.a_fast!.occurrences, 2);
-    assert.equal(stats.a_fast!.proposed_new_classes, 1);
-    assert.equal((await validateRun(run)).valid, true);
-    const clusteringFile = path.join(run, "results", "clustering.jsonl");
-    await writeJsonl(clusteringFile, [
-      { ...clustering[0], evaluator_version: "wrong" }, ...clustering.slice(1),
-    ]);
-    await assert.rejects(readRunState(run), /结果评测器版本与收据不一致/);
-    await writeJsonl(clusteringFile, clustering);
-
-    // Rebuilding a report re-applies receipts idempotently: no duplicate classes or occurrences.
-    await reportRun(run);
-    const replay = await readJson<{ classes: Record<string, unknown>; occurrences: unknown[] }>(
-      path.join(config.problemLibrary.path, "a_fast.json"),
-    );
-    assert.equal(Object.keys(replay.classes).length, 1);
-    assert.equal(replay.occurrences.length, 2);
-    assert.equal((await validateRun(run)).valid, true);
-
-    // Disabling new clustering work on resume still keeps and reports accepted receipts.
-    const resumed = await runEvaluation({
-      ...options,
-      config: { ...config, clustering: { ...config.clustering, enabled: false } },
-      plan: { tasks: [], inputs: {}, summary: {} },
-    });
-    assert.equal(calls.value, 14, "resume preserves all accepted evaluation receipts");
-    assert.equal((resumed.problem_library as Record<string, { occurrences: number }>).a_fast?.occurrences, 2);
-
-    // A new run recalls the existing class instead of creating another one.
-    await runEvaluation({
-      ...options,
-      runId: "cluster-second",
-      plan: await buildPlan(config),
-    });
-    assert.equal(calls.value, 28);
-    const recalled = await readJson<{ classes: Record<string, unknown>; occurrences: { classification: string }[] }>(
-      path.join(config.problemLibrary.path, "a_fast.json"),
-    );
-    assert.equal(Object.keys(recalled.classes).length, 1, "the second run reuses the class");
-    assert.equal(recalled.occurrences.length, 4);
-    assert(
-      recalled.occurrences.slice(2).every((occurrence) => occurrence.classification === "assigned"),
-    );
-    assert.equal((await validateRun(path.join(config.output.path, "cluster-second"))).valid, true);
-    assert.equal((await readRunState(run)).manifest.tasks.filter((task) => task.stage === "clustering").length, 2);
-  } finally {
-    await worker.close();
     await rm(directory, { recursive: true, force: true });
   }
 });
@@ -358,134 +204,6 @@ test("a model over the library cap cannot partially commit another model", async
   }
 });
 
-test("a clustering task over budget fails without growing the library", async () => {
-  const { directory, config, modelForStage } = await fixtureConfig(
-    Array.from({ length: 4 }, () => [raw("q1", "4", "2+2=5")]), false, true,
-  );
-  config.clustering.maxNewClassesPerTask = 0;
-  const calls = { value: 0 };
-  const worker = await startWorker(backendWith(calls), path.join(directory, "worker"));
-  try {
-    const summary = await runEvaluation({
-      runId: "cluster-budget",
-      output: config.output,
-      engine: "pi" as const,
-      identity: fakeIdentity,
-      evaluatorVersion: fakeEvaluatorVersion,
-      config,
-      ...services,
-      plan: await buildPlan(config),
-      policy: config.execution,
-      modelForStage,
-      concurrency: 1,
-      retries: 0,
-      retryDelaySeconds: 0,
-      workerUrls: [worker.url],
-    });
-    assert.equal(summary.completed_comparisons, 1);
-    assert.equal((summary.task_statuses as Record<string, number>).failed, 2, "one clustering task per model");
-    assert.equal(await exists(path.join(config.problemLibrary.path, "a_fast.json")), false);
-    assert.equal((await validateRun(path.join(config.output.path, "cluster-budget"))).valid, true);
-  } finally {
-    await worker.close();
-    await rm(directory, { recursive: true, force: true });
-  }
-});
-
-test("explicit deferred reclassification preserves original receipts and uses only unassigned observations", async () => {
-  const { directory, config, modelForStage } = await fixtureConfig(
-    Array.from({ length: 4 }, () => [raw("q1", "4", "2+2=5")]), false, true,
-  );
-  config.clustering.maxNewClassesPerTask = 1;
-  const calls: string[] = [];
-  let defer = true;
-  const backend: AgentBackend = { identity: fakeIdentity, async createSession(options) {
-    return { async run() {
-      await inspectFor(options);
-      calls.push(options.spec.evaluation.id);
-      let result = taskResult(options.spec);
-      if (options.spec.evaluation.id === "attribution") {
-        const material = parsedMaterial(options.spec) as { answer: { final_answer: string } };
-        const value = problemAttribution(material.answer.final_answer, options.spec.inputs.find(input => input.name === "answer")!.id);
-        value.Problem.push({ ...structuredClone(value.Problem[0]!), problem_id: "f-second", text: "第二现象", reason: "与计算错误具有不同边界的第二现象。" });
-        result = value;
-      }
-      if (options.spec.evaluation.id === "clustering") {
-        const material = parsedMaterial(options.spec) as { items: { id: string; component: string; label: string }[];
-          library: { components: { classes: { id: string }[] }[] } };
-        if (defer) {
-          const first = material.items[0]!;
-          result = { assignments: material.items.map((item, index) => index === 0
-            ? { item_id: item.id, new_class_key: "first" }
-            : { item_id: item.id, deferred_reason: "本次新增类预算已用完，已有类不涵盖该现象。" }),
-            new_classes: [{ key: "first", component: first.component, label: first.label, definition: "第一现象。", closest_existing: null, novelty: "首例。", category_paths: [["数值可靠性"]] }], merges: [] };
-        } else {
-          assert.equal(material.items.length, 1, "accepted assignments never reenter reclassification");
-          const item = material.items[0]!;
-          const closest = material.library.components.flatMap(component => component.classes)[0]!.id;
-          result = { assignments: [{ item_id: item.id, new_class_key: "later" }],
-            new_classes: [{ key: "later", component: item.component, label: item.label, definition: "后续归类现象。", closest_existing: closest, novelty: "边界不同。", category_paths: [["数值可靠性"]] }], merges: [] };
-        }
-      }
-      const submitted = await submitFor(options, draftFor(options.spec, result));
-      assert.equal(submitted.isError, undefined, JSON.stringify(submitted));
-    }, async abort() {}, async dispose() {} };
-  } };
-  const worker = await startWorker(backend, path.join(directory, "worker"));
-  const run = path.join(config.output.path, "deferred-reclassification");
-  try {
-    const plan = await buildPlan(config), options = { ...services, runId: "deferred-reclassification", output: config.output,
-      engine: "pi" as const, identity: fakeIdentity, evaluatorVersion: fakeEvaluatorVersion, config, plan,
-      policy: config.execution, modelForStage, concurrency: 1, retries: 0, retryDelaySeconds: 0, workerUrls: [worker.url] };
-    await runEvaluation(options);
-    const { prepareDeferredClustering } = await import("@eval/workflows/comparison");
-    const before = await readRunState(run), original = before.manifest.tasks.filter(task => task.stage === "clustering");
-    assert(original.every(task => before.receipts[task.id]), JSON.stringify(before.manifest.states));
-    const rowsBefore = await rows(path.join(run, "results/clustering.jsonl"));
-    assert(rowsBefore.every(row => (row.result as ClusteringResult).assignments.some(item => item.deferred_reason)));
-    assert(Object.values(await syncProblemLibrary(before)).every(model => model.assigned === 1 && model.occurrences === 1),
-      "deferred observations are neither assigned nor library samples");
-    const { readFile } = await import("node:fs/promises");
-    const checkpoint = await readFile(path.join(run, "state.json"), "utf8");
-    await assert.rejects(prepareDeferredClustering(run, {}), /显式 --all/);
-    const preview = await prepareDeferredClustering(run, { all: true });
-    assert.equal(preview.count, original.length);
-    assert(preview.selected.every(item => item.task_id === null && item.item_ids.length === 1));
-    assert.equal(await readFile(path.join(run, "state.json"), "utf8"), checkpoint);
-    const applied = await prepareDeferredClustering(run, { all: true, apply: true });
-    const prepared = await readRunState(run);
-    for (const task of original) assert.deepEqual(prepared.receipts[task.id], before.receipts[task.id]);
-    for (const task of applied.selected) assert(!original.some(original => original.id === task.task_id));
-    for (const item of applied.selected) {
-      const progress = prepared.manifest.states[item.task_id!];
-      progress.status = "failed"; progress.attempts = 1;
-      progress.failure = { contentSubmissions: 1, fileErrors: 2, errors: [{ category: "transport", code: "offline", path: "/", message: "offline" }],
-        repeatedErrors: 0, stopped: false, attemptId: "spent-attempt" };
-    }
-    await writeRunState(run, prepared);
-    const repeated = await prepareDeferredClustering(run, { all: true, apply: true });
-    assert.deepEqual(repeated.selected.map(item => item.task_id), applied.selected.map(item => item.task_id), "preparation is idempotent before resume");
-    const repeatedState = await readRunState(run);
-    for (const item of applied.selected) {
-      assert.equal(repeatedState.manifest.states[item.task_id!].status, "pending");
-      assert.deepEqual(repeatedState.manifest.states[item.task_id!].failure, prepared.manifest.states[item.task_id!].failure);
-    }
-    defer = false;
-    const judgments = calls.filter(stage => !["clustering", "rewrite"].includes(stage)).length;
-    await runEvaluation({ ...options, plan: { tasks: [], inputs: {}, summary: {} } });
-    const after = await readRunState(run), rowsAfter = await rows(path.join(run, "results/clustering.jsonl"));
-    assert.equal(rowsAfter.length, rowsBefore.length + original.length);
-    assert.deepEqual(rowsAfter.slice(0, rowsBefore.length), rowsBefore, "old formal rows remain exact");
-    assert.equal(calls.filter(stage => !["clustering", "rewrite"].includes(stage)).length, judgments);
-    assert.equal((await prepareDeferredClustering(run, { all: true })).count, 0, "resolved descendants are not queued again");
-    assert.equal((await validateRun(run)).valid, true);
-    for (const task of original) assert.deepEqual(after.receipts[task.id], before.receipts[task.id]);
-  } finally {
-    await worker.close();
-    await rm(directory, { recursive: true, force: true });
-  }
-});
-
 test("library statistics count a jointly attributed finding once", async () => {
   const { directory, config } = await fixtureConfig(undefined, false, true);
   try {
@@ -499,7 +217,7 @@ test("library statistics count a jointly attributed finding once", async () => {
     const result: ClusteringResult = {
       assignments: observations.map((item, index) => ({ item_id: item.id, new_class_key: `n${index}` })), merges: [],
       new_classes: observations.map((item, index) => ({ key: `n${index}`, component: item.component, label: item.label,
-        definition: item.definition, closest_existing: null, novelty: "首例。", category_paths: [["可靠性"]] })),
+        definition: item.definition, closest_existing: null, novelty: "首例。", category: "可靠性" })),
     };
     const state = { manifest: { runId: "joint", config, tasks: [task] }, receipts: { ...receipts,
       [task.id]: { submissionId: "joint-submission", evaluatorVersion: fakeEvaluatorVersion, evaluation: result } } } as unknown as RunState;

@@ -23,7 +23,7 @@ function fixture() {
     const componentId = randomUUID(), classId = randomUUID();
     library.components[componentId] = { id: componentId, label, definition: "", aliases: [], first_seen: null };
     library.classes[classId] = { id: classId, component_id: componentId, label: "问题" + index, definition: "机制边界" + index,
-      aliases: [], status: "active", merged_into: null, first_seen: null, category_paths: [["可靠性"]] };
+      aliases: [], status: "active", merged_into: null, first_seen: null, category: "可靠性" };
     library.occurrences.push({ id: randomUUID(), class_id: classId, version: model, evaluator_version: "fixture", batch_id: "day",
       case_id: "case", input_id: inputId, run_id: "cluster", task_id: randomUUID(), submission_id: randomUUID(),
       attribution: ref.attribution, finding_id: ref.finding_id, evidence_status: ref.evidence_status, message_index: 1,

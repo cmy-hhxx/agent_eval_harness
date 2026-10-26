@@ -56,7 +56,7 @@ test("AIME freezes current accepted attributions, clusters them and exports all 
     const items = binding.request.input.items as { id: string; component: string }[];
     const result = { assignments: items.map(item => ({ item_id: item.id, new_class_key: "arithmetic" })),
       new_classes: items.length ? [{ key: "arithmetic", component: items[0].component, label: "算术错误",
-        definition: "算术运算给出错误结果。", closest_existing: null, novelty: "首次发现。", category_paths: [["计算错误"]] }] : [],
+        definition: "算术运算给出错误结果。", closest_existing: null, novelty: "首次发现。", category: "计算错误" }] : [],
       merges: [], class_updates: [] };
     clustered.receipts[task.id] = receipt(task.id, result);
     clustered.manifest.states[task.id] = { status: "succeeded", attempts: 1 };

@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import {AgentRegistry} from '@eval/host';
 import {ValidationError,type SubmissionReceipt} from '@eval/contracts';
 import {scoreAgent,type ScoreResult} from '@eval/agents/score';
+import {scoreDirectory} from '@eval/prompts';
 import type {Candidate} from '@eval/workflows/inputs';
 import example from '../../../agents/src/attribution/fixtures/example.json' with {type:'json'};
 import {scoreTask,bindScore} from './score.js';
@@ -28,6 +29,14 @@ test('one score task depends on accepted attribution and exposes only native sub
   assert.deepEqual(Object.keys(scoreAgent.profiles),['default']);
   const result=f.registry.resolve(f.binding,f.draft,f.audit) as ScoreResult;
   assert.equal(result.evaluations.length,12);assert.equal(result.diagnostics.length,24);assert.equal(result.final_answer_score.score,10);
+});
+test('score rows resolve by explicit indices and reject duplicate unit indices',()=>{
+ const f=fixture();f.draft.evaluations.reverse();f.draft.diagnostics.reverse();
+ const result=f.registry.resolve(f.binding,f.draft,f.audit) as ScoreResult;
+ assert.deepEqual(result.evaluations.map(row=>row.item_id),Object.keys(scoreDirectory.units));
+ assert.deepEqual(result.diagnostics.map(row=>row.diagnostic_id),Object.keys(scoreDirectory.diagnostics));
+ const duplicate=fixture();duplicate.draft.evaluations[1].unit_index=duplicate.draft.evaluations[0].unit_index;
+ assert.throws(()=>duplicate.registry.resolve(duplicate.binding,duplicate.draft,duplicate.audit),/重复/);
 });
 test('score cannot run without an accepted attribution receipt',()=>{
   const f=fixture();assert.throws(()=>bindScore(f.task,{messages:[]},{}),/归因/);

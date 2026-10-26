@@ -16,13 +16,14 @@
 | is_correct / correct_reason | Attribution | 标准一致性核对 | 只判断与给定标准答案是否一致，独立于问题归因；无标准时两者固定 null。 |
 | Problem / text / reason / evidence_status | Attribution | Comparison、Score、Clustering、报告 | 正式问题及依据、实际影响与缺陷确定性；允许充分评审后的空数组，摘要不替代问题。 |
 | component / attribution_reason | 模型选边界并解释，程序解析主体 | 归责与导出 | 绑定真实调用，区分事实偏离与机制推断；主体未知不撤销缺陷。 |
-| accepted_attribution / problem_assignments | Workflow、Score | 单次评分及程序导出 | 完成情况、已确认或待核的问题和恢复状态来自接受收据；模型仅映射选档，程序保留源问题、责任确定性及证据。 |
+| accepted_attribution / problem_assignments | Workflow、Score | 单次评分及程序导出 | 完成情况、已确认或待核的问题和恢复状态来自接受收据；模型用 finding_index 映射选档，程序保留源问题、责任确定性及证据。 |
 | evidence / calculations / uncertainties | 模型选证据与必要计算 | 程序核查与复算 | 用途为问题、归因或两者；原文去重。计算保留单位、期间、分母和假设；真实缺口直接记录。 |
 | evidence_id / evidence refs | Agent 与 Host | 引用校验、复核、查看原文 | 可解析坐标，必需；位置合法不证明语义正确。 |
 | numeric references / table checks | 程序材料导航 | 疑点定位 | 仅作为核查线索，正式判断及必要计算写入对应 Problem。 |
-| comparisons / importance / better_candidate | Comparison | 排名派生、逐项展示 | 共同且可比的差异是判决依据，不能靠问题数替代。 |
-| a_summary / b_summary / tradeoff | Comparison 内部提交 | 正式总评及 decision_basis.tradeoff | 两方摘要描述各自交付；单一 tradeoff 解释整场取舍，避免拼接自相矛盾的两段理由。 |
-| preference / relative_preference | Comparison 内部提交 | 排名与偏好展示 | 正式胜负与并列内的相对倾向不同；完全等价允许后者 null。 |
+| comparisons[].slot_index / kind / assessments | Comparison | 排名派生、逐项展示 | 槽位与候选身份显式提交，不依赖数组顺序或动态对象键；共同且可比的差异是判决依据，不能靠问题数替代。 |
+| assessments[].summary / tradeoff | Comparison 内部提交 | 正式总评及 decision_basis.tradeoff | 两方摘要描述各自交付；单一 tradeoff 解释整场取舍，避免拼接自相矛盾的两段理由。 |
+| quality_winner / relative_preference | Comparison 内部提交 | 排名与偏好展示 | quality_winner 只在双方核心可用且存在实质优势时给出正式胜者；并列内的相对倾向单独表达，完全等价允许 null。 |
+| category | Clustering、问题库 | 看板主题、聚类树、目录维护 | 一个问题类只有一个问题方向；单值字段直接表达，不再包装为路径数组。 |
 | scope_conflicts[].slot_index / reason | Comparison 内部提交 | 来源复核请求派生 | 共同要求的口径冲突不能从 core 布尔推导；只选择现有共同槽，由程序生成双方既有 review_requests 并停止排名，不改源归因。 |
 | assessments.meets_core | Comparison | 正式判决 | 由比较阶段按实际交付判断，不从已删除的归因核心字段补造。 |
 | ranking / verdicts | Workflow 确定性派生 | 看板、对战统计、报告 | 模型不重复手写；不同层面供当前消费者直接使用，保持外部契约。 |

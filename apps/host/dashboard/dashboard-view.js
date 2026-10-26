@@ -131,7 +131,7 @@ export function createDashboardViews({
     stage_trace: "阶段回溯", tools: "关联工具", candidate_tools: "候选工具", locations: "位置", tool_name: "工具名称", confidence: "置信度",
     result: "结果", winner: "胜出候选", winner_name: "胜出名称", winner_version: "胜出版本",
     rewritten: "改写后", assignments: "归类", new_classes: "新建类", merges: "合并", class_updates: "类维护",
-    category_paths: "主题路径", deferred_reason: "延期理由",
+    category: "问题方向", deferred_reason: "延期理由",
     item_id: "问题条目", class_id: "问题类", new_class_key: "新类", key: "标识", closest_existing: "最接近的已有类", novelty: "新建理由", into: "合入类", from: "来源类",
   };
   const valueLabels = {

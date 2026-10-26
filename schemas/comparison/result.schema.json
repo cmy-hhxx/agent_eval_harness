@@ -140,6 +140,7 @@
               },
               "better_candidates": {
                 "type": "array",
+                "maxItems": 1,
                 "uniqueItems": true,
                 "items": {
                   "type": "string",

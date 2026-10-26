@@ -7,7 +7,7 @@ import {
 import { images, traceReadCoverage } from "@eval/tools";
 import type { ComparisonInput, ComparisonResult } from "./types.js";
 import { criterionAppliesToPair } from "./pair-scope.js";
-import { comparisonAdvantageCandidates, comparisonResourceMetrics, comparisonResourcesComparable, requiredSourceReviews } from "./slots.js";
+import { comparisonAdvantageCandidates, comparisonResourceAdvantage, comparisonResourceMetrics, requiredSourceReviews } from "./slots.js";
 import { comparisonResultIssues } from "./result-checks.js";
 import schema from "../../../../schemas/comparison/result.schema.json" with { type: "json" };
 
@@ -49,7 +49,7 @@ export function validateEvaluation(request:AgentRequest,result:unknown,audit:Too
  if(!validator(result))throw new ValidationError(schemaIssues(validator.errors,result));
  const input=request.input as unknown as ComparisonInput,value=result as ComparisonResult,labels=Object.keys(input.candidates);
  const errors:ValidationIssue[]=[...comparisonResultIssues(request,value),...comparisonFinalImageIssues(request,audit),...comparisonDeferredFinalIssues(request,audit)];
- const add=(code:string,path:string,message:string,candidate?:string)=>errors.push({category:'decision',code,path,message,candidate});
+ const add=(code:string,path:string,message:string,candidate?:string,actual?:unknown)=>errors.push({category:'decision',code,path,message,candidate,actual});
  if(!isDeepStrictEqual(value.task_analysis,input.task_analysis))add('task_analysis_changed','/task_analysis','共同评测规则不得改写。');
  const criteria=[...input.task_analysis.requirements,...input.task_analysis.scoring_points,...input.task_analysis.red_flags];
  const byId=new Map<string,TaskCriterion>(criteria.map(item=>[item.id,item]));
@@ -65,9 +65,11 @@ export function validateEvaluation(request:AgentRequest,result:unknown,audit:Too
    if(!assessment.core_failure_refs.length)add('core_failure_unproven',`/assessments/${candidate}/core_failure_refs`,'核心失败须引用共同 requirements 及本次比较中已证实的缺陷。',candidate);
    for(const id of assessment.core_failure_refs){
     const criterion=input.task_analysis.requirements.find(item=>item.id===id);
-    const cells=value.decision_basis.comparisons.filter(row=>row.criterion_ids.includes(id)).map(row=>row.assessments[candidate]);
-    if(!criterion||!criterionAppliesToPair(input,criterion)||!cells.some(cell=>cell?.evidence_status==='已确认'&&['unmet','partial'].includes(cell.status)&&cell.finding_indices.length))
-     add('core_failure_unproven',`/assessments/${candidate}/core_failure_refs`,'核心失败仅引用双方共同要求、已证实未达标的比较格和既有 Problem；缺少归因记录须请求来源复核。',candidate);
+    const rows=value.decision_basis.comparisons.filter(row=>row.criterion_ids.includes(id));
+    if(!criterion||!criterionAppliesToPair(input,criterion)||!rows.some(row=>row.importance==='high'&&
+      row.assessments[candidate]?.evidence_status==='已确认'&&['unmet','partial'].includes(row.assessments[candidate].status)&&
+      row.assessments[candidate].finding_indices.length))
+     add('core_failure_unproven',`/assessments/${candidate}/core_failure_refs`,'核心失败须引用高重要性共同要求、已证实未达标的比较格和既有 Problem；缺少归因记录须请求来源复核。',candidate);
    }
   }
  }
@@ -92,8 +94,12 @@ export function validateEvaluation(request:AgentRequest,result:unknown,audit:Too
     if(cell.status==='unknown'&&cell.evidence_status!=='待核实')add('criterion_unknown_established',path,'未知状态不能确证。',candidate);
    }
   }
-  if(row.better_candidates.length&&!comparisonAdvantageCandidates(row.assessments).length)add('comparison_advantage_unproven',path,'双方同口径且有确证判断时才可认定优势。');
-  if(!row.criterion_ids.length&&row.better_candidates.length&&!comparisonResourcesComparable(input))add('comparison_resource_incomparable',path,'资源优势须使用双方同种有效指标。');
+  if(row.better_candidates.some(candidate=>!labels.includes(candidate)))add('comparison_advantage_candidate_invalid',`${path}/better_candidates`,'优势方必须是本场候选。');
+  if(row.criterion_ids.length&&row.better_candidates.some(candidate=>!comparisonAdvantageCandidates(row.assessments).includes(candidate)))add('comparison_advantage_unproven',path,'优势必须来自双方同口径、已确认且不落后于对方状态的判断。');
+  if(!row.criterion_ids.length){
+   const expected=comparisonResourceAdvantage(input),actual=row.better_candidates;
+   if(!isDeepStrictEqual(actual,expected?[expected]:[]))add('comparison_resource_direction_invalid',`${path}/better_candidates`,'资源方向必须与双方同种有效原始指标的实际支配关系一致。',undefined,{expected:expected?[expected]:[],actual});
+  }
   if(!row.criterion_ids.length)for(const [candidate,cell]of Object.entries(row.assessments))if(cell.evidence_status==='已确认'&&!Object.values(comparisonResourceMetrics(input,candidate)).some(item=>item!==null))add('unlinked_observation_unproven',path,'无资源数据不能生成已确认资源判断。',candidate);
  }
  if(value.status==='decided'){

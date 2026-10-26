@@ -25,8 +25,9 @@ export function display<T>(value: T, names: Record<string, string>, key = ""): T
       key === "quote"
         ? value
         : value.replace(
-            /【候选([A-Z])】/g,
-            (marker, label: string) => names[label] ?? marker,
+            /【候选([A-Z])】|候选([A-Z])/g,
+            (marker, bracketed: string | undefined, bare: string | undefined) =>
+              names[bracketed ?? bare!] ?? marker,
           )
     ) as T;
   if (Array.isArray(value)) return value.map((v) => display(v, names)) as T;

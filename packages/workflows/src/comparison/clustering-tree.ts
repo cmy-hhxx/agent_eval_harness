@@ -75,9 +75,9 @@ export function projectClusteringTree(config: ClusteringJobConfig, inputs: Recor
         path: [model, componentLabel, direction, label], label, definition }, kind, samples, kind === "class" ? id : undefined);
     };
     for (const [id, samples] of members) {
-      const problem = library.classes[id], component = library.components[problem.component_id], paths = problem.category_paths;
-      if (paths?.length !== 1 || paths[0].length !== 1) throw new Error("聚类树问题类必须有一个方向：" + id);
-      place(component.id, component.label, paths[0][0], id, problem.label, problem.definition, samples, "class");
+      const problem = library.classes[id], component = library.components[problem.component_id], category = problem.category;
+      if (!category?.trim()) throw new Error("聚类树问题类必须有一个方向：" + id);
+      place(component.id, component.label, category, id, problem.label, problem.definition, samples, "class");
     }
     const pending = new Map<string, TreeSample[]>();
     for (const [coordinate, { ref, component }] of desired) {

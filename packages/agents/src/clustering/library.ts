@@ -11,7 +11,7 @@ import type {
   AttributionSource,
 } from "@eval/contracts";
 import type { ClusteringResult, ClusteringExample } from "./types.js";
-import { categoryPathIssues, unionCategoryPaths } from "./organization.js";
+import { categoryIssues, unionCategories } from "./organization.js";
 import { effectiveProblemOccurrences } from "./occurrence-review.js";
 import { representativeSamples } from "./samples.js";
 
@@ -60,7 +60,7 @@ export function projectLibrary(library: ProblemLibrary): ProblemProjection {
           label: problem.label,
           definition: problem.definition,
           aliases: problem.aliases,
-          ...(problem.category_paths === undefined ? {} : { category_paths: problem.category_paths.map(path => [...path]) }),
+          ...(problem.category === undefined ? {} : { category: problem.category }),
           occurrences: counts.get(problem.id)?.size ?? 0,
           examples: representativeSamples(occurrences.filter(item => item.class_id === problem.id), item => ({
             answer: item.input_id, date: item.batch_id, certainty: item.evidence_status, scene: item.case_id,
@@ -161,7 +161,7 @@ export function applyClustering(library: ProblemLibrary, input: ApplyClusteringI
       Object.entries(library.classes).map(([id, problem]) => [
         id,
         { ...problem, aliases: [...problem.aliases],
-          ...(problem.category_paths === undefined ? {} : { category_paths: problem.category_paths.map(path => [...path]) }) },
+          ...(problem.category === undefined ? {} : { category: problem.category }) },
       ]),
     ),
     occurrences: library.occurrences.map((occurrence) => ({ ...occurrence })),
@@ -188,7 +188,7 @@ export function applyClustering(library: ProblemLibrary, input: ApplyClusteringI
       event("class_created", { component_id: created.id, kind: "component" });
       return created;
     })();
-  const createClass = (componentId: string, label: string, definition: string, origin: ProblemOrigin, paths?: string[][]): ProblemClass => {
+  const createClass = (componentId: string, label: string, definition: string, origin: ProblemOrigin, category?: string): ProblemClass => {
     const created: ProblemClass = {
       id: randomUUID(),
       component_id: componentId,
@@ -198,7 +198,7 @@ export function applyClustering(library: ProblemLibrary, input: ApplyClusteringI
       status: "active",
       merged_into: null,
       first_seen: origin,
-      ...(paths === undefined ? {} : { category_paths: paths.map(path => [...path]) }),
+      ...(category === undefined ? {} : { category }),
     };
     next.classes[created.id] = created;
     event("class_created", { class_id: created.id, component_id: componentId, kind: "class" });
@@ -216,16 +216,17 @@ export function applyClustering(library: ProblemLibrary, input: ApplyClusteringI
       source.status = "merged";
       source.merged_into = target.id;
       target.aliases = [...new Set([...target.aliases, source.label, ...source.aliases])];
-      const explicitPaths = updateApplied(target.id) ? undefined :
-        input.result.class_updates?.find(update => update.class_id === target.id)?.category_paths;
-      const paths = unionCategoryPaths(target.category_paths, source.category_paths);
-      // No inherited paths is unorganized; only an explicit empty update attempts to clear a path.
-      const categoryIssues = categoryPathIssues(explicitPaths ?? (paths.length ? paths : undefined), `/merges/${mergeIndex}/category_paths`);
-      if (categoryIssues.length) throw new ValidationError(categoryIssues);
-      if (paths.length > 1 && explicitPaths === undefined)
-        throw new Error("合并后只能保留一条主要主题路径；需要明确维护目标类的 category_paths");
-      if (target.category_paths !== undefined || source.category_paths !== undefined || explicitPaths !== undefined)
-        target.category_paths = paths.map(path => [...path]);
+      const explicitCategory = updateApplied(target.id) ? undefined :
+        input.result.class_updates?.find(update => update.class_id === target.id)?.category;
+      const categories = unionCategories(target.category, source.category);
+      const issues = explicitCategory === undefined
+        ? categories.flatMap(category => categoryIssues(category, `/merges/${mergeIndex}/category`))
+        : categoryIssues(explicitCategory, `/merges/${mergeIndex}/category`);
+      if (issues.length) throw new ValidationError(issues);
+      if (categories.length > 1 && explicitCategory === undefined)
+        throw new Error("合并后只能保留一个问题方向；需要明确维护目标类的 category");
+      if (explicitCategory === undefined && (target.category !== undefined || source.category !== undefined))
+        target.category = categories[0];
       for (const occurrence of next.occurrences)
         if (occurrence.class_id === source.id) {
           occurrence.previous_class_id = source.id;
@@ -241,12 +242,12 @@ export function applyClustering(library: ProblemLibrary, input: ApplyClusteringI
   for (const [updateIndex, update] of (input.result.class_updates ?? []).entries()) {
     // Replaying an old accepted receipt must never roll back later directory maintenance.
     if (updateApplied(update.class_id)) continue;
-    const categoryIssues = categoryPathIssues(update.category_paths, `/class_updates/${updateIndex}/category_paths`);
-    if (categoryIssues.length) throw new ValidationError(categoryIssues);
+    const issues = categoryIssues(update.category, `/class_updates/${updateIndex}/category`);
+    if (issues.length) throw new ValidationError(issues);
     const problem = next.classes[update.class_id];
     if (!problem || problem.status !== "active") throw new Error("维护目标必须仍是活跃问题类：" + update.class_id);
     const before: JsonObject = { label: problem.label, definition: problem.definition,
-      category_paths: problem.category_paths ?? [] };
+      category: problem.category ?? null };
     if (update.label !== undefined && update.label !== problem.label) {
       const collision = Object.values(next.classes).find(other => other.id !== problem.id &&
         other.status === "active" && other.component_id === problem.component_id && matchesLabel(other, update.label!));
@@ -255,11 +256,11 @@ export function applyClustering(library: ProblemLibrary, input: ApplyClusteringI
       problem.label = update.label;
     }
     if (update.definition !== undefined) problem.definition = update.definition;
-    if (update.category_paths !== undefined) problem.category_paths = update.category_paths.map(path => [...path]);
+    if (update.category !== undefined) problem.category = update.category;
     event("class_updated", { class_id: problem.id, submission_id: input.submission_id,
       task_id: input.task_id, run_id: input.run_id, reason: update.reason, before,
       ...(input.run_path ? { run: input.run_path } : {}),
-      after: { label: problem.label, definition: problem.definition, category_paths: problem.category_paths ?? [] } });
+      after: { label: problem.label, definition: problem.definition, category: problem.category ?? null } });
   }
 
   const observations = new Map(input.observations.map((observation) => [observation.id, observation]));
@@ -278,10 +279,10 @@ export function applyClustering(library: ProblemLibrary, input: ApplyClusteringI
       (problem) => problem.status === "active" && problem.component_id === component.id && matchesLabel(problem, entry.label),
     );
     if (!existing) {
-      const categoryIssues = categoryPathIssues(entry.category_paths, `/new_classes/${newClassIndex}/category_paths`);
-      if (categoryIssues.length) throw new ValidationError(categoryIssues);
+      const issues = categoryIssues(entry.category, `/new_classes/${newClassIndex}/category`);
+      if (issues.length) throw new ValidationError(issues);
     }
-    const problem = existing ?? createClass(component.id, entry.label, entry.definition, origin, entry.category_paths);
+    const problem = existing ?? createClass(component.id, entry.label, entry.definition, origin, entry.category);
     createdClasses.set(entry.key, { problem, created: !existing });
   }
 

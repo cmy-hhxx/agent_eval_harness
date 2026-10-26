@@ -7,9 +7,10 @@ export function comparisonIssueContext(request: AgentRequest, _value: unknown, i
   if (issue.category !== "structure") return undefined;
   if (issue.path === "/comparisons") {
     const slots = comparisonSlotChoices(request);
-    return { target: { path: "/comparisons" }, submission_shape: { type: "array", minItems: slots.length, maxItems: slots.length,
-      items: { type: ["object", "null"] } },
-      slot_count: slots.length, slot_order: slots.map(({ slot_index, aspect, optional }) => ({ slot_index, aspect, optional })) };
+    return { target: { path: "/comparisons" }, submission_shape: { type: "array",
+      minItems: slots.filter(slot => !slot.optional).length, maxItems: slots.length, items: { type: "object" } },
+      required_slot_count: slots.filter(slot => !slot.optional).length,
+      slots: slots.map(({ slot_index, aspect, optional, kind }) => ({ slot_index, aspect, optional, kind })) };
   }
   const match = /^\/comparisons\/(0|[1-9]\d*)(?:\/|$)/u.exec(issue.path);
   if (match) {
@@ -17,9 +18,9 @@ export function comparisonIssueContext(request: AgentRequest, _value: unknown, i
     if (!slot) return undefined;
     const row = slot.kind === "resource" ? schema.$defs.resource : schema.$defs.commentary;
     return { target: { slot_index: index, index_base: 0, path: `/comparisons/${index}`, aspect: slot.aspect, optional: slot.optional },
-      submission_shape: { ...structuredClone(row), type: slot.optional ? ["object", "null"] : "object",
-        properties: { ...structuredClone(row.properties), ...(slot.kind === "resource" ? {}
-          : { better_candidate: { enum: [...slot.advantage_candidates, null] } }) } } };
+      submission_shape: { ...structuredClone(row), properties: { ...structuredClone(row.properties),
+        slot_index: { const: index }, kind: { const: slot.kind },
+        ...(slot.kind === "resource" ? {} : { better_candidate: { enum: [...slot.advantage_candidates, null] } }) } } };
   }
   if (issue.path === "/") return { target: { path: "/" }, submission_shape: structuredClone(schema) };
   if (issue.path === "/assessments")

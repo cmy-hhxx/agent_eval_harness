@@ -103,18 +103,17 @@ const submissions = {
     summary: "回答完成计算。", is_correct: true, correct_reason: "与标准一致。", Problem: [],
   } satisfies AttributionSubmission,
   comparison: {
-    assessments: { A: {meets_core:true,summary:"已完成。",core_failure_refs:[]}, B:{meets_core:true,summary:"已完成。",core_failure_refs:[]} }, preference: null, relative_preference: "A",
+    assessments: [{candidate:"A",meets_core:true,summary:"已完成。",core_failure_refs:[]},{candidate:"B",meets_core:true,summary:"已完成。",core_failure_refs:[]}], quality_winner: null, relative_preference: "A",
     tradeoff: "双方均完成核心要求。",
-    comparisons: [{ importance: "high", better_candidate: null, assessments: {
-      A: { summary: "已完成。", finding_indices: [], status: "met", evidence_status: "已确认" },
-      B: { summary: "已完成。", finding_indices: [], status: "met", evidence_status: "已确认" },
-    } },
-      { importance: "low" }],
+    comparisons: [{slot_index:0,kind:"criterion",importance:"high",better_candidate:null,assessments:[
+      {candidate:"A",summary:"已完成。",finding_indices:[],status:"met",evidence_status:"已确认"},
+      {candidate:"B",summary:"已完成。",finding_indices:[],status:"met",evidence_status:"已确认"}]},
+      {slot_index:1,kind:"resource",importance:"low"}],
   } satisfies ComparisonSubmission,
   rewrite: { rewrites: [{ id: "summary", text: "双方均完成核心要求。" }] },
   clustering: {
     assignments: [{ item_id: "O1", class_label: "算术错误" }, { item_id: "O2", new_class_index: 0 }],
-    new_classes: [{ component: "模型自身推理", label: "单位换算遗漏", definition: "比较前没有统一单位。", novelty: "现有类未覆盖换算问题。", category_paths: [["数值可靠性"]] }],
+    new_classes: [{ component: "模型自身推理", label: "单位换算遗漏", definition: "比较前没有统一单位。", novelty: "现有类未覆盖换算问题。", category: "数值可靠性" }],
     merges: [],
   } satisfies ClusteringSubmission,
 };

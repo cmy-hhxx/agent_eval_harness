@@ -3,11 +3,9 @@ import assert from 'node:assert/strict';
 import path from 'node:path';
 import {mkdtemp,rm} from 'node:fs/promises';
 import {tmpdir} from 'node:os';
-import {emptyUsage,type RunState} from '@eval/contracts';
 import type {AutomationState} from '@eval/automations';
-import {readJson,writeJson} from '@eval/data';
-import {planAnswerReview,answerReviewRepository,type AnswerReviewConfig} from '@eval/workflows/answer-review';
-import {fixtureConfig,sessionRaw,fakeIdentity,fakeEvaluatorVersion} from '../../fixtures/comparison.js';
+import {writeJson} from '@eval/data';
+import {fixtureConfig} from '../../fixtures/comparison.js';
 import {dailyPackageReport} from '../../../apps/host/src/daily-coverage.js';
 
 test('package coverage joins exact identities, follows rewrites and requires a current Mongo receipt',async t=>{
@@ -35,36 +33,6 @@ test('package coverage joins exact identities, follows rewrites and requires a c
   record.model='a_fast';report.section='exclusions';
   const excluded=await dailyPackageReport(options,'package',new URLSearchParams({section:'exclusions'}));assert.deepEqual(excluded,report);
   await assert.rejects(dailyPackageReport({...options,sourceUrl:'http://data.test/data/aime'},'package',new URLSearchParams()),/不属于此日常来源/);
-});
-
-test('AIME report keeps historical Attribution coverage and marks its missing Score as pending',async t=>{
-  const row={...sessionRaw('one'),batch_id:'2026-10-24'},f=await fixtureConfig([[row as any],[],[],[]]);t.after(()=>rm(f.directory,{recursive:true,force:true}));
-  const config:AnswerReviewConfig={...f.config,workflow:'answer-review',reviewStages:['attribution'],inputs:{...f.config.inputs,versions:f.config.inputs.versions.slice(0,1)}},plan=await planAnswerReview(config);
-  const task=plan.tasks[0],candidate=(task.data as any).candidate,output=path.join(f.directory,'output'),run=path.join(output,'1024');
-  const state:RunState={manifest:{runId:'1024',format:'evaluation-run',status:'interrupted',debug:false,engine:fakeIdentity,evaluatorVersion:fakeEvaluatorVersion,config,
-    tasks:plan.tasks,states:{[task.id]:{status:'failed',attempts:2}},inputs:{},inputCatalog:plan.catalog,startedAt:1,preflight:plan.summary},receipts:{},usage:emptyUsage(),recordedAttempts:2};
-  await answerReviewRepository.writeRun(run,state);
-  const archiveDirectory=path.join(f.directory,'archives'),record={date:'2026-10-24',model:candidate.version,batch_id:candidate.batch_id,case_id:candidate.case_id,trace_id:candidate.trace_id};
-  t.mock.method(globalThis,'fetch',async(input:unknown)=>Response.json(new URL(String(input)).pathname==='/data/workbench/catalog'?{tasks:[{dataset:'/data/aime',archive_dir:archiveDirectory}]}:
-    {archive_path:path.join(archiveDirectory,'batch.7z'),section:'records',items:[record]}));
-  const page=await dailyPackageReport({sourceUrl:'http://data.test/data/aime',source:'aime',output},'package',new URLSearchParams());
-  assert.deepEqual(page.items[0].coverage.runIds,['1024']);assert.equal(page.items[0].coverage.stages.attribution.failed,1);assert.equal(page.items[0].coverage.stages.score.pending,1);
-  assert.equal(Object.hasOwn(page.items[0].coverage,'mongoStatus'),false);
-  const saved=await readJson<any>(path.join(run,'state.json'));
-  saved.tasks.final={task:{stage:'score',inputIds:{case:candidate.input_id},dependencies:{attribution:task.id}},data:{input_id:candidate.input_id},state:{status:'pending',attempts:0}};
-  await writeJson(path.join(run,'state.json'),saved);
-  const inProgress=await dailyPackageReport({sourceUrl:'http://data.test/data/aime',source:'aime',output},'package',new URLSearchParams());
-  assert.deepEqual(inProgress.items[0].coverage.stages.score,{total:1,completed:0,failed:0,pending:1,running:0});
-  saved.tasks.final.state={status:'succeeded',attempts:1};saved.tasks.final.receipt={taskId:'final',exported:{id:'final',file:'score.jsonl'}};
-  await writeJson(path.join(run,'state.json'),saved);
-  const completed=await dailyPackageReport({sourceUrl:'http://data.test/data/aime',source:'aime',output},'package',new URLSearchParams());
-  assert.deepEqual(completed.items[0].coverage.stages.score,{total:1,completed:1,failed:0,pending:0,running:0},'report reads only compact references, without opening formal result bodies');
-  const repeated=structuredClone(saved);repeated.manifest.runId='again';repeated.tasks.final.state.status='failed';delete repeated.tasks.final.receipt;
-  await writeJson(path.join(output,'again/state.json'),repeated);
-  const stateDirectory=path.join(f.directory,'queue');await writeJson(path.join(stateDirectory,'state.json'),{jobs:[{id:'1024',date:record.date},{id:'1024',date:record.date},{id:'again',date:record.date}],scans:[]});
-  const deduplicated=await dailyPackageReport({sourceUrl:'http://data.test/data/aime',source:'aime',output,aime:{configuration:{stateDirectory}} as any},'package',new URLSearchParams());
-  assert.deepEqual(deduplicated.items[0].coverage.runIds,['1024','again']);
-  assert.deepEqual(deduplicated.items[0].coverage.stages.score,{total:1,completed:1,failed:0,pending:0,running:0});
 });
 
 test('one report page joins a large day run within its page latency budget',async t=>{

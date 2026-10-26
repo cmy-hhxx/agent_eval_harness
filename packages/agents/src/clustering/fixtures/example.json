@@ -106,11 +106,7 @@
         "definition": "最终结果没有换算成题目要求的单位。",
         "closest_existing": "class-arithmetic",
         "novelty": "算术错误描述数值错误，本条是单位换算缺失，与数值正确性无关。",
-        "category_paths": [
-          [
-            "计算与逻辑错误"
-          ]
-        ]
+        "category": "计算与逻辑错误"
       }
     ],
     "merges": []

@@ -33,11 +33,16 @@
         "type": "object",
         "additionalProperties": false,
         "required": [
+          "finding_index",
           "affected_unit_indices",
           "diagnostic_indices",
           "final_delivery_affected"
         ],
         "properties": {
+          "finding_index": {
+            "type": "integer",
+            "minimum": 0
+          },
           "affected_unit_indices": {
             "type": "array",
             "minItems": 1,
@@ -107,6 +112,11 @@
     "evaluation": {
       "type": "object",
       "properties": {
+        "unit_index": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 12
+        },
         "applicability": {
           "enum": [
             "both",
@@ -164,6 +174,7 @@
         }
       },
       "required": [
+        "unit_index",
         "applicability",
         "status",
         "score",
@@ -176,6 +187,11 @@
     "diagnostic": {
       "type": "object",
       "properties": {
+        "diagnostic_index": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 24
+        },
         "applicability": {
           "enum": [
             "both",
@@ -208,6 +224,7 @@
         }
       },
       "required": [
+        "diagnostic_index",
         "applicability",
         "status",
         "reason",

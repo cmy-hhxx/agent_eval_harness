@@ -103,15 +103,15 @@ test("switching models discards a late class response and class errors can retry
 
 test("topics show distinct defect counts and select the same existing class", async () => {
   const item = model("af", "A组Fast", 2);
-  const library = { ...item, categories: [{ path: ["指令遵循", "遗漏"], class_ids: ["class-af-1"], occurrences: 1 }],
+  const library = { ...item, categories: [{ category: "指令遵循", class_ids: ["class-af-1"], occurrences: 1 }],
     components: item.components.map(component => ({ ...component, classes: component.classes.map((problem, index) => ({ ...problem,
-      category_paths: index ? [["指令遵循", "遗漏"], ["完整性"]] : [["数值可靠性"]] })) })) };
+      category: index ? "指令遵循" : "数值可靠性" })) })) };
   const view = await page(url => url === "/api/dashboard/library" ? [library] : {
-    ...detail("af"), class: { ...detail("af").class, category_paths: [["数值可靠性"]] },
+    ...detail("af"), class: { ...detail("af").class, category: "数值可靠性" },
   });
   try {
     await view.load();
-    assert.match(view.document.querySelector("#problem-topics").textContent, /指令遵循 \/ 遗漏.*1 次出现/);
+    assert.match(view.document.querySelector("#problem-topics").textContent, /指令遵循.*1 次出现/);
     view.document.querySelector("[data-topic]").click();
     assert.equal(view.document.querySelectorAll("[data-node-kind='class']").length, 1);
     assert.equal(view.document.querySelector("[data-node-kind='class']").dataset.class, "class-af-1");

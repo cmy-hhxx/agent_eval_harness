@@ -209,8 +209,8 @@ export interface ProblemClass {
   status: "active" | "merged";
   merged_into: string | null;
   first_seen: ProblemOrigin | null;
-  /** Optional primary topic path; it organizes classes and does not establish causes. */
-  category_paths?: string[][];
+  /** Optional problem direction; it organizes classes and does not establish causes. */
+  category?: string;
 }
 export interface ProblemOccurrence {
   id: string;
@@ -301,7 +301,7 @@ export interface ProblemProjection {
         finding?: string;
         reason?: string;
       }[];
-      category_paths?: string[][];
+      category?: string;
     }[];
   }[];
 }

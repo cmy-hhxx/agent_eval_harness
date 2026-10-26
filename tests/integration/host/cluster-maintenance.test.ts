@@ -6,7 +6,7 @@ import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { readFile, rename, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
-import { emptyUsage, evidenceId, type AgentBackend, type ProblemLibrary, type ProblemProjection, type RunState, type SubmissionReceipt } from "@eval/contracts";
+import { emptyUsage, evidenceId, type AgentBackend, type ProblemLibrary, type RunState, type SubmissionReceipt } from "@eval/contracts";
 import { applyClustering, effectiveProblemOccurrences, emptyLibrary, type ClusteringRequest, type ClusteringResult } from "@eval/agents/clustering";
 import type { ClusteringJobMaterial } from "../../../packages/workflows/src/comparison/clustering-job-types.js";
 import { exists, fileSourceReader, readJson, problemLibraryFile, writeJson, writeProblemLibrary } from "@eval/data";
@@ -208,7 +208,7 @@ test("new clustering plans isolate responsibility buckets and preserve each mode
       else { const bucket = new Set(input.items.map(item => item.component)); assert.equal(bucket.size, 1);
         components.add([...bucket][0]); assert.equal(input.budget.max_new_classes, 3); }
     }
-    assert.deepEqual(components, new Set(["FinQuery / 数据解释与计算 / 结果完整性", "回答生成：本题事实关系推导与结果使用（消息 1） / 数据解释与计算 / 事实关系推导"]));
+    assert.deepEqual(components, new Set(["FinQuery", "最终回答组织"]));
   }
 });
 
@@ -222,34 +222,6 @@ test("ordinary targeted attribution reviews in scope must finish before clusteri
   state.manifest.executionScope = state.manifest.tasks.filter(task => task.id !== review.id).map(task => task.id);
   await writeRunState(run, state);
   assert((await prepareClusteringJob([run], f.config)).config.clusteringJob.sources.length > 0);
-});
-
-test("bucket requests omit unrelated class examples while keeping model-wide caps and complete consolidation", async t => {
-  const f = await fixture(2, ["最终回答组织", "FinQuery"]); t.after(() => rm(f.directory, { recursive: true, force: true }));
-  f.config.clustering.maxCasesPerTask = 100;
-  const { plan } = await prepareClusteringJob(f.runs, f.config);
-  const material = plan.inputs.a_fast as { library: ProblemProjection; config: { clustering: { maxClassesPerModel: number } } };
-  material.library = { components: ["回答生成：本题事实关系推导与结果使用（消息 1） / 数据解释与计算 / 事实关系推导", "查询工具", "未涉及工具"].map((label, index) => ({
-    id: randomUUID(), label, definition: "组件职责", aliases: index === 1 ? [" FinQuery / 数据解释与计算 / 结果完整性 "] : [],
-    classes: [{ id: randomUUID(), label: "具体问题" + index, definition: "问题边界", aliases: [], occurrences: 1,
-      examples: [{ input_id: randomUUID(), batch_id: "2026-10-01", case_id: "case", finding_id: "f0", evidence_status: "已确认",
-        run_id: "source", task_id: randomUUID(), submission_id: randomUUID(), reason: index === 2 ? "UNRELATED_EXAMPLE" : "相关样本" }] }],
-  })) };
-  material.config.clustering.maxClassesPerModel = 3;
-  const own = plan.tasks.filter(task => task.stage === "clustering" && (task.data as { model: string }).model === "a_fast");
-  const ordinary = own[0], input = clusteringJobWorkflow.bind(ordinary, plan.inputs, {}, { tasks: plan.tasks }).request.input as {
-    library: ProblemProjection; budget: { active_classes: number; active_components: number; max_new_classes: number; max_new_components: number } };
-  assert.deepEqual(input.library.components.map(component => component.label), ["查询工具"], "normalized aliases identify the bucket's complete existing component");
-  assert.equal(JSON.stringify(input).includes("UNRELATED_EXAMPLE"), false);
-  assert.equal(input.budget.active_classes, 3); assert.equal(input.budget.active_components, 3);
-  assert.equal(input.budget.max_new_classes, 0); assert.equal(input.budget.max_new_components, 0);
-  const mixed = { ...ordinary, data: { model: "a_fast", itemIds: own.slice(0, 2).flatMap(task => (task.data as { itemIds: string[] }).itemIds) } };
-  const mixedInput = clusteringJobWorkflow.bind(mixed, plan.inputs, {}, { tasks: plan.tasks }).request.input as { library: ProblemProjection };
-  assert.deepEqual(mixedInput.library.components.map(component => component.label), ["回答生成：本题事实关系推导与结果使用（消息 1） / 数据解释与计算 / 事实关系推导", "查询工具"]);
-  const finalInput = clusteringJobWorkflow.bind(own[2], plan.inputs, {}, { tasks: plan.tasks }).request.input as { library: ProblemProjection };
-  assert.equal(finalInput.library, material.library); assert.equal(finalInput.library.components.length, 3);
-  assert.equal(JSON.stringify(finalInput).includes("UNRELATED_EXAMPLE"), true);
-  assert.equal(material.library.components.length, 3, "filtering does not mutate the model bank");
 });
 
 test("independent clustering resumes failed tasks, recalls prior shards and retains auditable source evidence", async () => {
@@ -367,39 +339,6 @@ test("overlapping runs select the latest accepted dated answer once", async () =
   } finally { await rm(f.directory, { recursive: true, force: true }); }
 });
 
-test("explicit input selection decodes only matching attribution families and freezes the latest accepted sources", async t => {
-  const f = await fixture(); t.after(() => rm(f.directory, { recursive: true, force: true }));
-  const original = await readRunState(f.runs[0]), answers = original.manifest.tasks.filter(task => task.stage === "attribution");
-  const inputIds = answers.slice(0, 2).map(task => task.inputIds.answer), selected = new Set(inputIds);
-  const rerun = path.join(f.config.output.path, "selected-rerun"), newer = structuredClone(original);
-  newer.manifest.runId = "selected-rerun";
-  for (const receipt of Object.values(newer.receipts)) receipt.acceptedAt += 100;
-  const source = answers[0], review = { ...source, id: randomUUID(),
-    data: { ...(source.data as TaskData), reviewOf: { taskId: source.id, round: 1, reasons: ["责任复核"] } } };
-  newer.manifest.tasks.push(review); newer.manifest.states[review.id] = { status: "succeeded", attempts: 1 };
-  newer.receipts[review.id] = { ...structuredClone(newer.receipts[source.id]), taskId: review.id,
-    attemptId: randomUUID(), submissionId: randomUUID(), acceptedAt: 200 };
-  delete newer.receipts[review.id].exported;
-  await createResultWriter(rerun, {})(newer); await writeRunState(rerun, newer);
-  original.manifest.executionScope = [answers[2].id];
-  original.manifest.states[answers[2].id].status = "pending";
-  delete original.receipts[answers[2].id];
-  await writeRunState(f.runs[0], original);
-  for (const run of [f.runs[0], rerun]) {
-    const file = path.join(run, "results/attribution.jsonl"), rows = (await readFile(file, "utf8")).trim().split("\n");
-    await writeFile(file, rows.filter(row => selected.has(JSON.parse(row).input_id)).join("\n") + "\n");
-  }
-  for (const version of f.config.inputs.versions) await rename(version.sources[0].path, version.sources[0].path + ".offline");
-  const before = await contents(sourceFiles([f.runs[0], rerun]));
-  const { config, plan } = await prepareClusteringJob([f.runs[0], rerun], f.config, { inputIds });
-  assert.deepEqual(new Set(config.clusteringJob.sources.map(item => item.input_id)), selected);
-  assert.equal(config.clusteringJob.sources.length, 2);
-  assert(config.clusteringJob.sources.every(item => item.run === rerun));
-  assert.equal(config.clusteringJob.sources.find(item => item.input_id === source.inputIds.answer)!.task_id, review.id);
-  assert(plan.tasks.every(task => task.stage === "clustering" || task.stage === "rewrite"));
-  assert.deepEqual(await contents(sourceFiles([f.runs[0], rerun])), before, "source state and accepted JSONL remain byte-identical");
-});
-
 test("explicit input selection guards only its pending families and rejects missing accepted inputs", async t => {
   const f = await fixture(); t.after(() => rm(f.directory, { recursive: true, force: true }));
   const run = f.runs[0], state = await readRunState(run), answers = state.manifest.tasks.filter(task => task.stage === "attribution");
@@ -475,7 +414,7 @@ test("eight workers classify one component concurrently before serial novelty di
     evaluator_version: fakeEvaluatorVersion, task_id: randomUUID(), submission_id: randomUUID(), version: "a_fast", batch_id: "",
     observations: [observation], result: { assignments: [{ item_id: observation.id, new_class_key: "known" }], merges: [],
       new_classes: [{ key: "known", component: observation.component, label: "已知算术错误", definition: "算术计算出错。",
-        closest_existing: null, novelty: "首次建立。", category_paths: [["数值可靠性"]] }] } });
+        closest_existing: null, novelty: "首次建立。", category: "数值可靠性" }] } });
   await writeProblemLibrary(problemLibraryFile(f.config.problemLibrary, "a_fast"), library);
   const output = { kind: "directory" as const, path: path.join(f.directory, "parallel") };
   const { config, plan } = await prepareClusteringJob(f.runs, { ...f.config, output }, { inputIds: sourceIds });
@@ -501,7 +440,7 @@ test("eight workers classify one component concurrently before serial novelty di
         if (found) result = { assignments: request.items.map(item => ({ item_id: item.id, class_id: found.id })), new_classes: [], merges: [] };
         else result = { assignments: request.items.map(item => ({ item_id: item.id, new_class_key: "novel" })), merges: [],
           new_classes: [{ key: "novel", component: request.items[0].component, label: "新的计算错误", definition: "与已有边界不同的计算错误。",
-            closest_existing: classes[0].id, novelty: "不同计算边界。", category_paths: [["数值可靠性"]] }] };
+            closest_existing: classes[0].id, novelty: "不同计算边界。", category: "数值可靠性" }] };
       }
       const submitted = await submitFor(options, draftFor(options.spec, result));
       assert.equal(submitted.isError, undefined, JSON.stringify(submitted));

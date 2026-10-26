@@ -8,7 +8,7 @@ import {
 } from "@eval/contracts";
 import type { ClusteringRequest, ClusteringResult } from "./types.js";
 import { normalizeLabel } from "./library.js";
-import { categoryPathIssues, temporaryReferenceInDescription, unionCategoryPaths } from "./organization.js";
+import { categoryIssues, temporaryReferenceInDescription, unionCategories } from "./organization.js";
 import { references } from "./references.js";
 import schema from "../../../../schemas/clustering/result.schema.json" with { type: "json" };
 
@@ -87,7 +87,7 @@ export function validateEvaluation(request: AgentRequest, result: unknown, audit
     description(update.label, `${path}/label`);
     description(update.definition, `${path}/definition`);
     if (!update.reason.trim()) issue("clustering_update_reason_empty", `${path}/reason`, "维护理由不能为空。", update.reason);
-    errors.push(...categoryPathIssues(update.category_paths, `${path}/category_paths`));
+    errors.push(...categoryIssues(update.category, `${path}/category`));
     if (update.label && current) {
       const name = normalizeLabel(update.label);
       const collision = classes.find(item => item.id !== current.id && !fromIds.has(item.id) &&
@@ -99,17 +99,19 @@ export function validateEvaluation(request: AgentRequest, result: unknown, audit
   }
   for (const into of intoIds) {
     const index = value.merges.findIndex(merge => merge.into === into);
-    const explicit = value.class_updates?.find(update => update.class_id === into)?.category_paths;
+    const explicit = value.class_updates?.find(update => update.class_id === into)?.category;
     const from = value.merges.filter(merge => merge.into === into).flatMap(merge => merge.from);
-    const paths = explicit ?? unionCategoryPaths(...[into, ...from].map(id => classes.find(item => item.id === id)?.category_paths));
-    if (paths.length > 1) issue("clustering_merge_category_budget", `/merges/${index}`,
-      "合并后只能保留一条主要主题路径；请在 class_updates 中明确整理 into 类的 category_paths。", paths);
+    const categories = explicit === undefined
+      ? unionCategories(...[into, ...from].map(id => classes.find(item => item.id === id)?.category))
+      : [explicit];
+    if (categories.length > 1) issue("clustering_merge_category_budget", `/merges/${index}`,
+      "合并后只能保留一个问题方向；请在 class_updates 中明确整理 into 类的 category。", categories);
   }
   if (input.budget.consolidate) for (const problem of classes.filter(problem => !fromIds.has(problem.id))) {
-    const paths = value.class_updates?.find(update => update.class_id === problem.id)?.category_paths ?? problem.category_paths;
-    if (paths?.length !== 1 || paths[0].length !== 1)
+    const category = value.class_updates?.find(update => update.class_id === problem.id)?.category ?? problem.category;
+    if (!category?.trim())
       issue("clustering_direction_missing", "/class_updates",
-        "全目录整理须为每个保留类指定一个问题方向；请用 class_updates.category_paths 填写一条一级路径。", problem.id);
+        "全目录整理须为每个保留类指定一个问题方向；请用 class_updates.category 填写。", problem.id);
   }
 
   const assigned = new Set<string>();
@@ -170,7 +172,7 @@ export function validateEvaluation(request: AgentRequest, result: unknown, audit
       issue("clustering_new_definition_empty", `/new_classes/${index}/definition`, "问题定义不能为空");
     description(entry.label, `/new_classes/${index}/label`);
     description(entry.definition, `/new_classes/${index}/definition`);
-    errors.push(...categoryPathIssues(entry.category_paths, `/new_classes/${index}/category_paths`));
+    errors.push(...categoryIssues(entry.category, `/new_classes/${index}/category`));
     const key = `${componentKey(entry.component)}\u0000${label}`;
     if (labels.has(key))
       issue("clustering_new_class_duplicate", `/new_classes/${index}/label`, "同一组件内的新类 label 不能重复", entry.label);

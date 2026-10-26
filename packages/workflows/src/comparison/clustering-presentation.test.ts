@@ -19,7 +19,7 @@ function library(): ProblemLibrary {
 function result(): ClusteringResult {
   return { assignments: [{ item_id: "item", new_class_key: "n1" }], merges: [],
     new_classes: [{ key: "n1", component: "模型自身推理", label: "算术核验偏差", definition: "计算中存在错误。",
-      closest_existing: null, novelty: "新的独立现象。", category_paths: [["数值可靠性"]] }] };
+      closest_existing: null, novelty: "新的独立现象。", category: "数值可靠性" }] };
 }
 function receipt(evaluation: unknown, acceptedAt = 1): SubmissionReceipt {
   return { taskId: "clustering", attemptId: "attempt", submissionId: "submission", status: "succeeded", acceptedAt,

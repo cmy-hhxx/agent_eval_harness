@@ -418,10 +418,10 @@ export interface ProblemClassView {
   aliases: string[];
   occurrences: number;
   first_seen: ProblemOrigin | null;
-  category_paths?: string[][];
+  category?: string;
 }
 export interface ProblemCategoryView {
-  path: string[];
+  category: string;
   class_ids: string[];
   occurrences: number;
 }
@@ -454,22 +454,20 @@ async function problemLibraryText(config: EvalConfig, library: ProblemLibrary) {
   catch (error) { return { text: clusteringClassText(library, []), rewrite_error: errorText(error) }; }
 }
 
-/** Prefix topic views share class IDs; counts always refer to distinct source findings. */
+/** Topic views share class IDs; counts always refer to distinct source findings. */
 export function problemCategories(library: ProblemLibrary): ProblemCategoryView[] {
-  const groups = new Map<string, { path: string[]; classes: Set<string> }>();
+  const groups = new Map<string, { category: string; classes: Set<string> }>();
   for (const problem of Object.values(library.classes)) {
     if (problem.status !== "active") continue;
-    for (const path of problem.category_paths ?? [])
-      for (let length = 1; length <= path.length; length++) {
-        const prefix = path.slice(0, length), key = JSON.stringify(prefix.map(segment => segment.trim().replace(/\s+/gu, " ").toLowerCase()));
-        const group = groups.get(key) ?? { path: prefix, classes: new Set<string>() };
-        group.classes.add(problem.id);
-        groups.set(key, group);
-      }
+    if (!problem.category) continue;
+    const key = problem.category.trim().replace(/\s+/gu, " ").toLowerCase();
+    const group = groups.get(key) ?? { category: problem.category, classes: new Set<string>() };
+    group.classes.add(problem.id);
+    groups.set(key, group);
   }
-  return [...groups.values()].map(group => ({ path: group.path, class_ids: [...group.classes],
+  return [...groups.values()].map(group => ({ category: group.category, class_ids: [...group.classes],
     occurrences: countProblemSamples(effectiveProblemOccurrences(library).filter(sample => group.classes.has(sample.class_id))) }))
-    .sort((a, b) => JSON.stringify(a.path).localeCompare(JSON.stringify(b.path)));
+    .sort((a, b) => a.category.localeCompare(b.category));
 }
 
 function mergedClasses(library: ProblemLibrary, text?: Map<string, ClusteringClassText>): ProblemMergeView[] {
@@ -650,7 +648,7 @@ export async function readConfiguredProblemClass(config: EvalConfig, model: stri
       status: problem.status,
       merged_into: problem.merged_into,
       first_seen: problem.first_seen,
-      ...(problem.category_paths === undefined ? {} : { category_paths: problem.category_paths }),
+      ...(problem.category === undefined ? {} : { category: problem.category }),
     },
     component: component
       ? { id: component.id, label: component.label, definition: component.definition }

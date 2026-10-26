@@ -4,7 +4,7 @@ import requestSchema from "../../../../schemas/clustering/request.schema.json" w
 import resultSchema from "../../../../schemas/clustering/result.schema.json" with { type: "json" };
 import submissionSchema from "../../../../schemas/clustering/submission.schema.json" with { type: "json" };
 import { validateEvaluation } from "./validate.js";
-import { categorySegmentRule, categorySegmentAction } from "./organization.js";
+import { categoryRule, categoryAction } from "./organization.js";
 import { references, resolveSubmission } from "./references.js";
 import type { ClusteringRequest } from "./types.js";
 export * from "./types.js";
@@ -27,13 +27,13 @@ export const clusteringProfile: AgentProfile = {
     return prompt.renderPrompt(refs.project(input), policy);
   },
   validationIssueContext(_request, _draft, issue) {
-    if (!["schema_type", "schema_pattern", "clustering_category_characters"].includes(issue.code) || !/^\/(?:new_classes|class_updates)\/\d+\/category_paths(?:\/\d+){0,2}$/.test(issue.path)) return undefined;
+    if (!["schema_type", "schema_pattern", "clustering_category_characters"].includes(issue.code) || !/^\/(?:new_classes|class_updates)\/\d+\/category$/.test(issue.path)) return undefined;
     return {
-      category_paths_example: [["指令遵循"]],
+      category_example: "指令遵循",
       ...(["schema_pattern", "clustering_category_characters"].includes(issue.code) ? {
-        category_paths_rule: categorySegmentRule, category_paths_action: categorySegmentAction,
+        category_rule: categoryRule, category_action: categoryAction,
       } : {}),
-      ...(issue.code === "schema_type" ? { category_paths_rule: "category_paths 填写一个问题方向，形如 [[\"指令遵循\"]]；直接填写字符串，不使用 item 对象或其他包装，不重复组件和具体问题。" } : {}),
+      ...(issue.code === "schema_type" ? { category_rule: "category 直接填写一个问题方向字符串，不使用数组、对象或其他包装，不重复组件和具体问题。" } : {}),
     };
   },
   toolNames: [],

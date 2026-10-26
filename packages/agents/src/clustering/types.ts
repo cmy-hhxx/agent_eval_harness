@@ -56,13 +56,13 @@ export interface ClusteringNewClass {
   /** Most similar active class in the same component; null when that component has no class. */
   closest_existing: string | null;
   novelty: string;
-  category_paths: string[][];
+  category: string;
 }
 export interface ClusteringClassUpdate {
   class_id: string;
   label?: string;
   definition?: string;
-  category_paths?: string[][];
+  category?: string;
   reason: string;
 }
 export interface ClusteringMerge {

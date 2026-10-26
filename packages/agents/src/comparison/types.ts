@@ -120,19 +120,21 @@ export interface ComparisonSlot {
   finding_indices: Record<string, number[]>;
 }
 export interface SubmittedComparison {
+  slot_index: number;
+  kind: "criterion" | "resource";
   importance: "high" | "medium" | "low";
   /** Only commentary rows accept a model direction; resource direction is derived. */
   better_candidate?: string | null;
+  assessments?: { candidate: string; status: CriterionStatus; evidence_status: EvidenceStatus;
+    summary: string; finding_indices: number[] }[];
 }
 /** The model judges fixed requirements and core completion; evidence selections reference accepted problems. */
 export interface ComparisonSubmission {
-  assessments: Record<string, ComparisonAssessment>;
+  assessments: (ComparisonAssessment & { candidate: string })[];
   scope_conflicts?: { slot_index: number; reason: string }[];
   source_reviews?: ComparisonVerificationSubmission["source_reviews"];
-  comparisons: (SubmittedComparison & { assessments?: Record<string, {
-    status: CriterionStatus; evidence_status: EvidenceStatus; summary: string; finding_indices: number[];
-  }> } | null)[];
-  preference?: string | null;
+  comparisons: SubmittedComparison[];
+  quality_winner?: string | null;
   relative_preference: "A" | "B" | null;
   tradeoff: string;
 }

@@ -9,9 +9,23 @@ import { comparisonSlots, comparisonSlotChoices, comparisonSlotCellState, compar
 
 /** Model-facing and local validation share the same program-owned row identities. */
 export function comparisonSubmissionSchema(request: AgentRequest) {
-  const result = structuredClone(schema), slots = comparisonSlots(request);
-  Object.assign(result.properties.comparisons, { minItems: slots.length, maxItems: slots.length,
-    prefixItems: slots.map(slot => ({ $ref: `#/$defs/${slot.kind === "resource" ? "resource" : "commentary"}` })) });
+  const result = structuredClone(schema) as Record<string, any>, slots = comparisonSlots(request);
+  const labels = Object.keys((request.input as unknown as ComparisonInput).candidates);
+  const rowSchemas = slots.map((slot, index) => {
+    const row = structuredClone(slot.kind === "resource" ? schema.$defs.resource : schema.$defs.commentary) as Record<string, any>;
+    row.properties.slot_index = { const: index };
+    row.properties.kind = { const: slot.kind };
+    if (slot.kind === "criterion") {
+      row.properties.better_candidate = { enum: [...labels, null] };
+      row.properties.assessments.items.properties.candidate = { enum: labels };
+    }
+    return row;
+  });
+  const requiredSlots = slots.filter(slot => !slot.optional).length;
+  Object.assign(result.properties.comparisons, { minItems: requiredSlots, maxItems: slots.length, items: { oneOf: rowSchemas } });
+  result.properties.assessments.items.properties.candidate = { enum: labels };
+  result.properties.quality_winner = { enum: [...labels, null] };
+  result.properties.source_reviews.items.properties.candidate = { enum: labels };
   const scopeSlots = slots.flatMap((slot, index) => slot.kind === "criterion" && slot.shared && slot.criterion_ids.length ? [index] : []);
   if (scopeSlots.length) Object.assign(result.properties.scope_conflicts.items.properties.slot_index, { enum: scopeSlots });
   else Object.assign(result.properties.scope_conflicts, { maxItems: 0 });
@@ -36,13 +50,25 @@ export function resolveComparison(request: AgentRequest, draft: unknown): Compar
   const validator = new Ajv2020({ allErrors: true, strict: false }).compile(comparisonSubmissionSchema(request));
   if (!validator(draft)) throw new ValidationError(schemaIssues(validator.errors, draft));
   const value = draft as unknown as ComparisonSubmission, input = request.input as unknown as ComparisonInput;
-  const preference = value.preference ?? null;
+  const qualityWinner = value.quality_winner ?? null;
   const labels = Object.keys(input.candidates), slots = comparisonSlots(request);
+  const rowIssues: ValidationIssue[] = [], submittedAssessments = new Map<string, ComparisonResult["assessments"][string]>();
+  for (const [index, row] of value.assessments.entries()) {
+    if (submittedAssessments.has(row.candidate))
+      rowIssues.push({ category: "decision", code: "comparison_assessment_duplicate", path: `/assessments/${index}/candidate`,
+        message: "每个候选只能提交一次核心完成评估。", actual: row.candidate, expected: labels });
+    const { candidate, ...assessment } = row;
+    submittedAssessments.set(candidate, assessment);
+  }
+  for (const candidate of labels) if (!submittedAssessments.has(candidate))
+    rowIssues.push({ category: "decision", code: "comparison_assessment_missing", path: "/assessments",
+      message: "核心完成评估必须逐候选提交一次。", expected: labels });
+  const assessments = Object.fromEntries(submittedAssessments);
   const reviews = requiredSourceReviews(request);
   const conflicts = value.scope_conflicts ?? [], conflictIssues: ValidationIssue[] = [], selected = new Set<number>();
-  if (conflicts.length && (preference !== null || value.relative_preference !== null))
+  if (conflicts.length && (qualityWinner !== null || value.relative_preference !== null))
     conflictIssues.push({ category: "decision", code: "scope_conflict_preference", path: "/scope_conflicts",
-      message: "共同口径尚未统一时不能同时给出正式或相对偏好；preference 省略或填 null，relative_preference=null。" });
+      message: "共同口径尚未统一时不能同时给出正式或相对偏好；quality_winner 省略或填 null，relative_preference=null。" });
   conflicts.forEach((conflict, index) => {
     if (selected.has(conflict.slot_index)) conflictIssues.push({ category: "decision", code: "scope_conflict_duplicate",
       path: `/scope_conflicts/${index}/slot_index`, message: "同一共同槽位只提交一次口径冲突，合并说明双方采用的不同口径。" });
@@ -52,9 +78,9 @@ export function resolveComparison(request: AgentRequest, draft: unknown): Compar
       finding_indices: [...slot.finding_indices[candidate]], reason: conflict.reason.trim() })));
   });
   const sourceReviews = value.source_reviews ?? [], choices = comparisonSlotChoices(request), selectedReviews = new Set<string>();
-  if (sourceReviews.length && (preference !== null || value.relative_preference !== null))
+  if (sourceReviews.length && (qualityWinner !== null || value.relative_preference !== null))
     conflictIssues.push({ category: "decision", code: "source_review_preference", path: "/source_reviews",
-      message: "决定性归因尚待核实，preference 省略或填 null，relative_preference=null；不得同时保留胜负或相对偏好。" });
+      message: "决定性归因尚待核实，quality_winner 省略或填 null，relative_preference=null；不得同时保留胜负或相对偏好。" });
   sourceReviews.forEach((review, index) => {
     const slot = slots[review.slot_index], choice = choices[review.slot_index], key = `${review.slot_index}:${review.candidate}`;
     if (!choice?.reviewable_candidates.includes(review.candidate)) {
@@ -72,26 +98,47 @@ export function resolveComparison(request: AgentRequest, draft: unknown): Compar
       finding_indices: [...slot.finding_indices[review.candidate]], reason: review.reason.trim() });
   });
   if (conflictIssues.length) throw new ValidationError(conflictIssues);
-  if (reviews.length) return pendingComparison(request, value.assessments, reviews);
-  const rowIssues: ValidationIssue[] = [];
-  const comparisons = value.comparisons.flatMap((row,index) => {
-    const slot = slots[index];
-    if (row === null) {
-      if (slot.optional) return [];
-      rowIssues.push({ category: "decision", code: "comparison_slot_required", path: `/comparisons/${index}`,
-        message: "本槽位为必需要求、优点、中高重要性问题或已记录的资源指标，须保留双方评审；仅 optional 槽可填 null。" });
-      return [];
-    }
+  if (rowIssues.length) throw new ValidationError(rowIssues);
+  if (reviews.length) return pendingComparison(request, assessments, reviews);
+  const submittedRows = new Map<number, { row: ComparisonSubmission["comparisons"][number]; index: number }>();
+  for (const [index, row] of value.comparisons.entries()) {
+    if (submittedRows.has(row.slot_index))
+      rowIssues.push({ category: "decision", code: "comparison_slot_duplicate", path: `/comparisons/${index}/slot_index`,
+        message: "同一比较槽位只能提交一次。", actual: row.slot_index });
+    else submittedRows.set(row.slot_index, { row, index });
+  }
+  for (const [index, slot] of slots.entries()) if (!slot.optional && !submittedRows.has(index))
+    rowIssues.push({ category: "decision", code: "comparison_slot_required", path: "/comparisons",
+      message: "必需要求、优点、中高重要性问题或已记录的资源指标须保留双方评审；仅候选专有槽可省略。",
+      actual: [...submittedRows.keys()], expected: slots.flatMap((item, slotIndex) => item.optional ? [] : [slotIndex]) });
+  const comparisons = slots.flatMap((slot, slotIndex) => {
+    const submitted = submittedRows.get(slotIndex);
+    if (!submitted) return [];
+    const { row, index } = submitted;
     const betterCandidate = slot.kind === "resource" ? comparisonResourceAdvantage(input) : row.better_candidate ?? null;
     if (betterCandidate && !slot.shared) rowIssues.push({ category: "decision", code: "comparison_advantage_scope_mismatch",
       path: `/comparisons/${index}/better_candidate`, message: "该槽位属于候选专有要求；相对优势只可用于共同适用方面，保留本行并填 better_candidate=null。" });
+    let rowAssessments: Record<string, ComparisonResult["decision_basis"]["comparisons"][number]["assessments"][string]>;
+    if (slot.kind === "resource") rowAssessments = Object.fromEntries(labels.map(label => [label,
+      { summary: comparisonResourceText(comparisonResourceMetrics(input,label)), finding_indices:[],
+        ...comparisonSlotCellState(input,label,slot) }]));
+    else {
+      const cells = new Map<string, ComparisonResult["decision_basis"]["comparisons"][number]["assessments"][string]>();
+      for (const [cellIndex, cell] of (row.assessments ?? []).entries()) {
+        if (cells.has(cell.candidate))
+          rowIssues.push({ category: "decision", code: "comparison_cell_duplicate", path: `/comparisons/${index}/assessments/${cellIndex}/candidate`,
+            message: "同一槽位内每个候选只能提交一次评估。", actual: cell.candidate, expected: labels });
+        const { candidate, ...assessment } = cell;
+        cells.set(candidate, assessment);
+      }
+      for (const label of labels) if (!cells.has(label))
+        rowIssues.push({ category: "decision", code: "comparison_cell_missing", path: `/comparisons/${index}/assessments`,
+          message: "同一槽位须逐候选提交评估。", expected: labels });
+      rowAssessments = Object.fromEntries(cells);
+    }
     const resolved = { aspect: slot.aspect, criterion_ids: [...slot.criterion_ids], importance: row.importance,
       better_candidates: betterCandidate ? [betterCandidate] : [],
-      assessments: Object.fromEntries(labels.map(label => {
-        if(slot.kind !== "resource") return [label,structuredClone(row.assessments![label])];
-        return [label,{summary:comparisonResourceText(comparisonResourceMetrics(input,label)),
-          finding_indices:[],...comparisonSlotCellState(input,label,slot)}];
-      })) };
+      assessments: rowAssessments };
     if (betterCandidate && slot.shared && !comparisonAdvantageCandidates(resolved.assessments,
       slot.kind !== 'resource' || comparisonResourcesComparable(input)).includes(betterCandidate))
       rowIssues.push({ category: "decision", code: "comparison_advantage_unproven", path: `/comparisons/${index}/better_candidate`,
@@ -99,7 +146,6 @@ export function resolveComparison(request: AgentRequest, draft: unknown): Compar
     return [resolved];
   });
   if (rowIssues.length) throw new ValidationError(rowIssues);
-  const assessments = structuredClone(value.assessments);
   const unresolved=labels.filter(label=>assessments[label].meets_core===null);
   if(unresolved.length) return pendingComparison(request,assessments,unresolved.map(candidate=>({candidate,
     criterion_ids:input.task_analysis.requirements.filter(item=>criterionAppliesToPair(input,item)).map(item=>item.id),
@@ -109,9 +155,9 @@ export function resolveComparison(request: AgentRequest, draft: unknown): Compar
   let ranking: string[][];
   if (failed.length === labels.length) ranking = [labels];
   else if (failed.length) ranking = [passed, failed];
-  else if (preference && advantages.includes(preference)) ranking = [[preference], labels.filter(label => label !== preference)];
-  else if (preference) throw new ValidationError([{ category: "decision", code: "preference_unproven", path: "/preference",
-    message: "偏好须有该候选已确认的中高重要性共同优势支持；没有实质优势时 preference=null。" }]);
+  else if (qualityWinner && advantages.includes(qualityWinner)) ranking = [[qualityWinner], labels.filter(label => label !== qualityWinner)];
+  else if (qualityWinner) throw new ValidationError([{ category: "decision", code: "quality_winner_unproven", path: "/quality_winner",
+    message: "正式胜者须有该候选已确认的中高重要性共同优势支持；没有实质优势时 quality_winner=null。" }]);
   else ranking = [labels];
   const winner = ranking.length > 1 ? ranking[0][0] : null;
   if (winner && value.relative_preference !== winner) throw new ValidationError([{ category: "decision", code: "relative_preference_winner_mismatch",

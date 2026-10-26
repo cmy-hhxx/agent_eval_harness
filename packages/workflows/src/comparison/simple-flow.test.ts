@@ -20,9 +20,9 @@ test("evaluation with explicit rewrites off has one comparison and no mandatory 
     const comparison = plan.tasks.find(task => task.stage === "comparison")!;
     assert.equal((comparison.data as TaskData).verificationOf, undefined);
     const schema = comparisonProfile.submissionSchema as any;
-    assert.deepEqual(Object.keys(schema.$defs.commentary.properties).sort(), ["assessments", "better_candidate", "importance"],
+    assert.deepEqual(Object.keys(schema.$defs.commentary.properties).sort(), ["assessments", "better_candidate", "importance", "kind", "slot_index"],
       "comparison cells present accepted source facts instead of accepting model-authored summaries");
-    assert.deepEqual(schema.$defs.commentary.required, ["importance", "assessments"]);
+    assert.deepEqual(schema.$defs.commentary.required, ["slot_index", "kind", "importance", "assessments"]);
     assert(!schema.$defs.commentary.properties.source_review);
   } finally { await rm(f.directory, { recursive: true, force: true }); }
 });

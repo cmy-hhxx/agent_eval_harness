@@ -43,7 +43,11 @@ export function comparisonSlotCellState(input: ComparisonInput,candidate:string,
  return comparisonCellState(input,candidate,slot.criterion_ids,slot.finding_indices[candidate]);
 }
 export function comparisonAdvantageCandidates(assessments:Record<string,{status:CriterionStatus;evidence_status:EvidenceStatus}>,shared=true):string[]{
- return shared && Object.values(assessments).every(cell=>cell.evidence_status==='已确认'&&!['unknown','not_applicable'].includes(cell.status))?Object.keys(assessments):[];
+ const entries=Object.entries(assessments);
+ if(!shared||entries.some(([,cell])=>cell.evidence_status!=='已确认'||['unknown','not_applicable'].includes(cell.status)))return [];
+ const rank=(status:CriterionStatus)=>status==='met'?2:status==='partial'?1:0;
+ const best=Math.max(...entries.map(([,cell])=>rank(cell.status)));
+ return entries.filter(([,cell])=>rank(cell.status)===best).map(([candidate])=>candidate);
 }
 export function comparisonSlots(request:AgentRequest):ComparisonSlot[]{
  const input=request.input as unknown as ComparisonInput,labels=Object.keys(input.candidates);

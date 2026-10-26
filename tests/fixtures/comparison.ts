@@ -13,6 +13,7 @@ import type { AttributionResult, ComparisonResult, TaskData } from "@eval/workfl
 import type { RawInput } from "@eval/workflows/inputs";
 import { comparisonSubmission } from "./comparison-submission.js";
 import type { ComparisonSlot } from "@eval/agents/comparison";
+import { responsibilityComponent, type ResponsibilityMaterial } from "@eval/agents/attribution";
 import { comparisonWorkflow } from "@eval/workflows/comparison";
 
 export const fakeIdentity: EngineIdentity = {
@@ -194,7 +195,7 @@ export function taskResult(spec: Pick<AttemptSpec, "evaluation" | "prompt" | "in
           label: first.label,
           definition: `${first.label}。`,
           closest_existing: null,
-          novelty: "库为空，首次建立该类。", category_paths: [["数值可靠性"]],
+          novelty: "库为空，首次建立该类。", category: "数值可靠性",
         },
       ],
       merges: [],
@@ -430,7 +431,17 @@ export function draftFor(spec: Pick<AttemptSpec, "inputs" | "prompt" | "evidence
   if(material.answer&&"Problem" in result){
     const value=result as unknown as AttributionResult;
     const selections=(ids:string[])=>ids.map(id=>choose(id).evidence_index);
-    const boundary=(description:string)=>{if(description==='责任主体未确定')return null;throw new Error('Known-boundary fixtures must use attributionSubmission with the actual request');};
+    const answer=material.answer as unknown as ResponsibilityMaterial & { catalog?: { message_index:number; name?:string|null; role?:string }[] };
+    const messages:Record<string,unknown>[]=[];
+    for(const message of answer.catalog??[])messages[message.message_index]={name:message.name,role:message.role};
+    const raw={messages};
+    const boundary=(description:string)=>{
+      if(description==='责任主体未确定')return null;
+      if(!answer.transitions)throw new Error('Fixture answer lacks responsibilities: '+JSON.stringify(answer));
+      const matches=answer.transitions.filter(transition=>responsibilityComponent(answer,raw,transition.transition_index)===description);
+      if(matches.length!==1)throw new Error('Fixture needs an explicit unique responsibility call');
+      return `boundary:${matches[0].transition_index}`;
+    };
     return {summary:value.summary,...(value.has_standard_answer?{is_correct:value.is_correct,correct_reason:value.correct_reason}:{}),
       Problem:value.Problem.map(item=>({text:item.text,reason:item.reason,evidence_status:item.evidence_status,
         evidence:item.evidence.map(e=>({index:choose(e.evidence_id).evidence_index,purposes:e.purposes})),

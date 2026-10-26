@@ -129,10 +129,12 @@ test(`pi: plain text Responses ${completed ? "accept a completed terminal withou
 for (const streamed of [false, true]) {
 test(`pi: ${streamed ? "fragmented" : "terminal"} Responses preserve current flat comparison arrays and escaped text`, async () => {
   const draft = {
-    a_summary: '原文含 "引号"、\\ 路径和\n换行',
-    b_summary: "B 给出了不同结果。",
-    comparisons: [{importance:"high",better_candidate:"A"},null],
-    preference:"A",relative_preference:"A",tradeoff:"【候选A】给出正确结果4，【候选B】给出错误结果5。",
+    assessments:[{candidate:"A",meets_core:true,summary:'原文含 "引号"、\\ 路径和\n换行',core_failure_refs:[]},
+      {candidate:"B",meets_core:false,summary:"B 给出了不同结果。",core_failure_refs:[]}],
+    comparisons:[{slot_index:0,kind:"criterion",importance:"high",better_candidate:"A",assessments:[
+      {candidate:"A",summary:"正确。",finding_indices:[],status:"met",evidence_status:"已确认"},
+      {candidate:"B",summary:"错误。",finding_indices:[],status:"unmet",evidence_status:"已确认"}]}],
+    quality_winner:"A",relative_preference:"A",tradeoff:"【候选A】给出正确结果4，【候选B】给出错误结果5。",
   };
   const args = JSON.stringify(draft);
   const deltas = streamed ? Array.from(args).map(delta => ({ type: "response.function_call_arguments.delta",

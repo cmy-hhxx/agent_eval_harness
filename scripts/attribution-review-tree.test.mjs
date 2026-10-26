@@ -215,7 +215,7 @@ function libraryFixture(components = ["未命名终稿生成调用（消息 1）
     const componentId = index ? "c80dbbfe-7ae2-448f-9a11-931bb7f107e5" : "a9c41d34-83a7-46fb-9d53-5c6085c943e7", id = nodeIds[index];
     library.components[componentId] = { id: componentId, label, definition: "责任定义", aliases: [], first_seen: null };
     library.classes[id] = { id, component_id: componentId, label: "原类名称", definition: "原类定义", aliases: [], status: "active", merged_into: null,
-      first_seen: null, category_paths: [["不能代替责任的主题"]] };
+      first_seen: null, category: "不能代替责任的主题" };
     classTexts.get("a_fast").set(id, { label: "通俗类名称-" + index, definition: "通俗类定义-" + index });
     library.occurrences.push(...rows.slice(0, 2).map(item => ({ id: "occurrence-" + index + "-" + item.taskId, class_id: id, version: item.model,
       evaluator_version: "cluster", batch_id: item.date, case_id: item.caseId, input_id: item.inputId, run_id: "cluster", task_id: "cluster-task",

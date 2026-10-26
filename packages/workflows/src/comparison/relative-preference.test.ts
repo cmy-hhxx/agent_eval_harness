@@ -56,3 +56,11 @@ test("swapped tradeoff binds each defect and measured resources to the same actu
     "B组Expert没有席位数据却推断具体买方。A组Expert的小单净流入分类可用，机构出货仍须限定为资金类别。A/B类业务标记保持原义。 " +
     "B组Expert：完成耗时：233.442 秒；总 token：215260。 A组Expert：完成耗时：58.071 秒；总 token：58647。");
 });
+
+test("candidate display names replace bracketed and bare blind labels while preserving evidence quotes", () => {
+  assert.deepEqual(
+    display({ summary: "候选A有缺陷，【候选B】更完整，候选C保留原文。", quote: "候选A原文不能替换。" },
+      { A: "B组Fast", B: "A组Fast" }),
+    { summary: "B组Fast有缺陷，A组Fast更完整，候选C保留原文。", quote: "候选A原文不能替换。" },
+  );
+});

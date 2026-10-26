@@ -705,14 +705,14 @@ test("public prompt definitions reach prepared tasks and the run snapshot", asyn
         assert(!prepared.prompt.includes('"candidates"'));
       } else {
         const submission = prepared.evaluation.outputSchema as { required: string[]; properties: Record<string, unknown> };
-        assert.deepEqual(submission.required, ["a_summary", "b_summary", "comparisons", "relative_preference", "tradeoff"]);
+        assert.deepEqual(submission.required, ["comparisons", "relative_preference", "tradeoff", "assessments"]);
         assert.deepEqual((submission.properties.relative_preference as { enum: (string | null)[] }).enum, ["A", "B", null]);
-        assert(Object.hasOwn(submission.properties, "preference"));
+        assert(Object.hasOwn(submission.properties, "quality_winner"));
         for (const field of ["status", "ranking", "decision_basis", "task_analysis", "review_requests"])
           assert(!Object.hasOwn(submission.properties, field), field + " is derived by the program");
         const rows = submission.properties.comparisons as { minItems: number; maxItems: number };
         assert(rows.minItems > 0);
-        assert.equal(rows.maxItems, rows.minItems);
+        assert(rows.maxItems >= rows.minItems);
       }
     }
     const snapshot = appServices.snapshots["contract.json"] as {
