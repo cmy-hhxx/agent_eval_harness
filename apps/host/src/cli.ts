@@ -1,4 +1,3 @@
-import { readAnswerReviewCommand, runAnswerReviewCommand } from "./answer-review-command.js";
 import { configurationSecrets } from "./settings.js";
 import { parseArgs } from "node:util";
 import { stat } from "node:fs/promises";
@@ -8,13 +7,12 @@ import { errorText, redact } from "@eval/contracts";
 import { readJson, exists, runLayout, runLock } from "@eval/data";
 import { boundProfiles, createModelResolver, loadConfig, testEvaluationOutput } from "@eval/host-app/config";
 import { services, agents, logger } from "./composition.js";
-import { comparisonWorkflow, selectDataset, prepareComparisonRewrites, prepareComparisonVerification, prepareDeferredClustering, prepareFailedTasks, reviewProblemOccurrences } from "@eval/workflows/comparison";
+import { comparisonWorkflow, selectDataset, prepareComparisonRewrites, prepareComparisonVerification, prepareDeferredClustering, prepareFailedTasks, readRunTasks, reviewProblemOccurrences } from "@eval/workflows/comparison";
 import { indexDataset, selectDatasetInputs } from "@eval/workflows/inputs";
 import { reportRun, reportStability } from "@eval/workflows/comparison";
 import { runEvaluation } from "@eval/host";
 import { validateRun, validateClusteringJob, reportClusteringJob } from "@eval/workflows/comparison";
 import { runClusteringCommand } from "./clustering-command.js";
-import { readClusteringSource } from "./clustering-sources.js";
 import { runAttributionCommand } from "./attribution-command.js";
 import { readAttributionWorkflowCommand, runAttributionWorkflowCommand } from "./attribution-workflow-command.js";
 import { runStabilityCommand } from "./stability-command.js";
@@ -240,12 +238,10 @@ dashboard: --port 4173 在本机启动控制看板`,
       result =
         checkpoint.kind === "clustering-job"
           ? command === "status" ? checkpoint
-            : command === "validate" ? await validateClusteringJob(run, readClusteringSource)
-            : await reportClusteringJob(run, readClusteringSource)
+            : command === "validate" ? await validateClusteringJob(run, readRunTasks)
+            : await reportClusteringJob(run, readRunTasks)
           : checkpoint.workflow === "attribution"
           ? await readAttributionWorkflowCommand(command as "status" | "validate", run)
-          : checkpoint.workflow === "answer-review"
-          ? await readAnswerReviewCommand(command as "report" | "status" | "validate", run)
           : command === "status"
           ? checkpoint
           : command === "validate"
@@ -274,15 +270,13 @@ dashboard: --port 4173 在本机启动控制看板`,
     values["dashboard-settings"] ? JSON.parse(values["dashboard-settings"]) : undefined,
   );
   logger.addSecrets(...configurationSecrets());
-  if (values.stage && !["answer-review", "attribution"].includes(host.workflow) && command !== "model-probe") throw new Error("--stage 只用于独立评审或model-probe");
+  if (values.stage && host.workflow !== "attribution" && command !== "model-probe") throw new Error("--stage 只用于Attribution或model-probe");
   if (command === "model-probe") {
     const result = await runModelProbe({ configPaths: values.config, stage: values.stage, execute: values.execute });
     console.log(JSON.stringify(result, null, 2));
     if (result.status === "failed") process.exitCode = 2;
     return;
   }
-  if (host.workflow === "answer-review" && !["run", "preflight", "index"].includes(command))
-    throw new Error("独立评审使用 run、preflight、status、report 或 validate");
   if (host.workflow === "attribution" && !["run", "preflight", "index"].includes(command))
     throw new Error("Attribution 使用 run、preflight、status 或 validate");
   if (command === "validate-stability") {
@@ -381,15 +375,6 @@ dashboard: --port 4173 在本机启动控制看板`,
     const limit = Number(values["limit-cases"]);
     if (!Number.isInteger(limit) || limit < 1) throw new Error("limit-cases must be positive");
     config.inputs.limit = limit;
-  }
-  if ("workflow" in config && config.workflow === "answer-review") {
-    process.exitCode = await runAnswerReviewCommand({ ...host, workflow: "answer-review", evaluation: config }, {
-      command, runId: values["run-id"], debug: values.debug, stage: values.stage,
-      workers: values.worker, skipFailed: values["skip-failed"], discoverInputs: values["discover-inputs"],
-      resumeStages: values["resume-stage"], balanceChannels: values["balance-channels"],
-      pilotCases: values["pilot-cases"] === undefined ? undefined : Number(values["pilot-cases"]),
-    });
-    return;
   }
   if ("workflow" in config && config.workflow === "attribution") {
     process.exitCode = await runAttributionWorkflowCommand({ ...host, workflow: "attribution", evaluation: config }, {

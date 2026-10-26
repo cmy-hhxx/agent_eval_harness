@@ -1,5 +1,6 @@
 import type { JsonObject, RunState } from "@eval/contracts";
-import type { AttributionResult, EvalConfig, TaskData } from "./types.js";
+import { sessionProblems, type SessionAttributionResult } from "@eval/agents/attribution";
+import type { EvalConfig, TaskData } from "./types.js";
 
 type Outcome = "win" | "both_good" | "both_bad";
 type ModelResult = Outcome | "loss";
@@ -47,16 +48,16 @@ export function analysisComparisonScope(row: JsonObject, config: EvalConfig): An
   const identity = row.case as { batch_id: string; case_id: string };
   if (typeof identity?.batch_id !== "string" || typeof identity?.case_id !== "string") throw new Error("正式比较缺少题目身份");
   const assessments = row.assessments as Record<string, { meets_core: boolean; summary: string }>;
-  const evaluations = row.evaluations as Record<string, AttributionResult>;
+  const evaluations = row.evaluations as Record<string, SessionAttributionResult>;
   return { comparisonTier, case: { batchId: identity.batch_id, caseId: identity.case_id }, models, comparisons,
     assessments: models.map((model) => {
-      const findings = evaluations?.[model.model]?.Problem;
+      const findings = evaluations?.[model.model] ? sessionProblems(evaluations[model.model]!) : undefined;
       if (!Array.isArray(findings)) throw new Error("正式比较缺少模型归因：" + model.model);
       const dimensions = new Map<string, ProblemDimension>();
       for (const finding of findings) {
-        const value = dimensions.get(finding.text) ?? { dimension: finding.text, established: false, uncertain: false };
-        value[finding.evidence_status === "已确认" ? "established" : "uncertain"] = true;
-        dimensions.set(finding.text, value);
+        const value = dimensions.get(finding.label) ?? { dimension: finding.label, established: false, uncertain: false };
+        value.established = true;
+        dimensions.set(finding.label, value);
       }
       return { model: model.model, modelName: model.modelName, meetsCore: assessments[model.model]!.meets_core,
         summary: assessments[model.model]!.summary, problemDimensions: [...dimensions.values()] };

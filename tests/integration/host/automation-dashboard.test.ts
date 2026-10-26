@@ -113,7 +113,7 @@ test("monitor counts accepted evaluations and rewrites without waiting for defer
     current.status = "running"; current.jobs["2026-09-30"].evaluation = "evaluating";
     for (const task of Object.values(saved.tasks)) { task.status = "pending"; delete task.receipt; }
     const tasks = Object.values(saved.tasks);
-    for (const task of tasks.filter((task) => task.stage === "attribution").slice(0, 2)) task.status = "running";
+    for (const task of tasks.filter((task) => task.stage === "attribution-session").slice(0, 2)) task.status = "running";
     tasks.find((task) => task.stage === "comparison")!.status = "running";
     const retry = tasks.find((task) => task.stage === "rewrite" && task.data.rewriteOf?.stage !== "clustering")!;
     retry.status = "pending"; retry.nextRetryAt = at + hour;

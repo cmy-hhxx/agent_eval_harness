@@ -1,4 +1,4 @@
-import type { AttributionResult, SessionAttributionResult, SessionProblem } from "@eval/agents/attribution";
+import { sessionProblems, type SessionAttributionResult, type SessionProblem } from "@eval/agents/attribution";
 import type { ComparisonAttribution } from "@eval/agents/comparison";
 
 /** Comparison receives accepted problem facts, never private responsibility judgments. */
@@ -16,16 +16,9 @@ function sessionAttribution(result: SessionAttributionResult): ComparisonAttribu
     is_correct: consistent === null ? null : consistent === 1,
     correct_reason: result.turns.map(turn => turn.correct_reason).filter(Boolean).join("\n") || null,
     summary: result.session_summary,
-    Problem: [...result.turns.flatMap(turn => turn.problem), ...result.session_problem].map(sessionFinding) };
+    Problem: sessionProblems(result).map(sessionFinding) };
 }
 
-export function comparisonAttribution(result: AttributionResult | SessionAttributionResult): ComparisonAttribution {
-  if ("session_meta" in result) return sessionAttribution(result);
-  return {
-    has_standard_answer: result.has_standard_answer, is_correct: result.is_correct,
-    correct_reason: result.correct_reason, summary: result.summary,
-    Problem: result.Problem.map(({problem_id,text,reason,evidence_status,evidence}) => ({
-      problem_id,text,reason,evidence_status,evidence: evidence.map(({purposes:_purposes,...item})=>structuredClone(item)),
-    })),
-  };
+export function comparisonAttribution(result: SessionAttributionResult): ComparisonAttribution {
+  return sessionAttribution(result);
 }

@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { rm } from "node:fs/promises";
-import { attributionProfile } from "@eval/agents/attribution";
+import { componentAttributionProfile } from "@eval/agents/attribution";
 import { buildPlan } from "./input.js";
 import { bindTask } from "./binding.js";
 import type { TaskData } from "./types.js";
@@ -24,7 +24,7 @@ test("explicit semantic questions target one business case equally without becom
       assert.deepEqual(binding.request.input.review_context, selected ? { reasons: questions } : undefined);
       const material = binding.modelInput!;
       assert.deepEqual(material.review_context, selected ? { reasons: questions, kind: "unverified_concerns" } : undefined);
-      assert.equal(attributionProfile.renderPrompt!(material).includes(questions[0]), selected);
+      assert.equal(componentAttributionProfile.renderPrompt!(material).includes(questions[0]), selected);
       assert(!JSON.stringify(binding.request.sources).includes(questions[0]), "audit questions must never alter the original evidence");
       assert.equal(data.reviewOf, undefined, "a fresh semantic evaluation does not pretend to reuse an accepted source result");
     }

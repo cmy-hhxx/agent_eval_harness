@@ -6,6 +6,7 @@ import { buildPlan, type PlanOptions } from "./input.js";
 import { contentText, locateRecordStream } from "../inputs/records.js";
 import type { Candidate } from "../inputs/types.js";
 import type { ComparisonResult, EvalConfig, Stage, TaskData } from "./types.js";
+import { sessionProblems, type SessionAttributionResult, type SessionProblem } from "@eval/agents/attribution";
 import type { Checkpoint } from "./checkpoint.js";
 import { verdictSlotId } from "./commentary.js";
 import { countProblemSamples, effectiveProblemOccurrences, problemSampleKey, projectLibrary } from "@eval/agents/clustering";
@@ -165,7 +166,7 @@ const clipEvidence = (value: unknown): unknown =>
       })
     : value;
 /** Sample-view projection of accepted rows, including each comparison model's attribution. */
-export function caseResultView(stage: Stage, row: JsonObject | undefined, versions: Record<string, string> = {}): JsonObject | null {
+export function caseResultView(stage: Stage | "attribution", row: JsonObject | undefined, versions: Record<string, string> = {}): JsonObject | null {
   if (!row) return null;
   if (stage === "comparison" && row.evaluation_type === "comparison_review") {
     const result = row.result as ComparisonResult;
@@ -184,8 +185,9 @@ export function caseResultView(stage: Stage, row: JsonObject | undefined, versio
       verdicts: {},
     };
   }
-  const source = (stage === "attribution" ? row : stage === "clustering" || stage === "criteria" ? row.result : row) as JsonObject;
-  const rewritten = (stage === "attribution" ? (source.meta as JsonObject)?.rewritten : source.rewritten) as { evaluator_version: string; rewrites: { id: string; text: string }[] } | undefined;
+  const attribution = stage === "attribution" || stage === "attribution-session";
+  const source = (attribution ? row : stage === "clustering" || stage === "criteria" ? row.result : row) as JsonObject;
+  const rewritten = source.rewritten as { evaluator_version: string; rewrites: { id: string; text: string }[] } | undefined;
   const paths = new Map<string, string>();
   if (stage === "comparison" && rewritten) {
     paths.set("tradeoff", "decision_basis.tradeoff");
@@ -209,10 +211,16 @@ export function caseResultView(stage: Stage, row: JsonObject | undefined, versio
       return { ...item, path: fieldPath, text: clip(item.text, 8000) };
     }),
   } } : {};
-  if (stage === "attribution") {
-    const value = row;
-    return {...value,meta:{...value.meta as JsonObject,...rewriteView},summary:clip(value.summary,8000),correct_reason:value.correct_reason===null?null:clip(value.correct_reason,8000),
-      Problem:(value.Problem as JsonObject[]??[]).map(item=>({...item,text:clip(item.text,4000),reason:clip(item.reason,4000),evidence:clipEvidence(item.evidence)}))};
+  if (attribution) {
+    const value = row as unknown as SessionAttributionResult;
+    const clipProblems = (problems: SessionProblem[]) => problems.map(item => ({ ...item,
+      problem_phenomena: clip(item.problem_phenomena, 4000), reason: clip(item.reason, 4000),
+      evidence: clipEvidence(item.evidence) as SessionProblem["evidence"] }));
+    return { ...value, ...(rewriteView.rewritten ? { rewritten: rewriteView.rewritten } : {}),
+      session_summary: clip(value.session_summary, 8000),
+      turns: value.turns.map(turn => ({ ...turn, summary: clip(turn.summary, 8000),
+        correct_reason: turn.correct_reason === null ? null : clip(turn.correct_reason, 8000), problem: clipProblems(turn.problem) })),
+      session_problem: clipProblems(value.session_problem) };
   }
 
   if (stage === "clustering" || stage === "criteria") {
@@ -230,7 +238,7 @@ export function caseResultView(stage: Stage, row: JsonObject | undefined, versio
       decision_basis: row.decision_basis,
       assessments: row.assessments,
       evaluations: Object.fromEntries(Object.entries((row.evaluations ?? {}) as Record<string, JsonObject>).map(([version, evaluation]) => {
-        const view = caseResultView("attribution", evaluation)!;
+        const view = caseResultView("attribution-session", evaluation)!;
         return [version,view];
       })),
       verdicts: row.verdicts,
@@ -308,7 +316,7 @@ function taskDetails(saved: Checkpoint, id: string, rewriteIds: Map<string, stri
     last_progress_at: status.lastProgressAt ?? null,
     duration_ms: status.durationMs ?? null,
     versions: scope ? [scope.version]
-      : Object.entries(task.inputIds).filter(([label]) => task.stage !== "attribution" || label === "answer").flatMap(([, inputId]) => saved.inputs[inputId]?.version ?? []),
+      : Object.entries(task.inputIds).filter(([label]) => !task.stage.startsWith("attribution-") || label === "answer").flatMap(([, inputId]) => saved.inputs[inputId]?.version ?? []),
     ...(scope ? { batch_id: scope.batch_id, shard: scope.shard } : {}),
     rewrite_submission_ids: [id, ...(task.stage === "comparison" ? Object.values(task.dependencies) : [])]
       .flatMap((source) => rewriteIds.get(source) ?? []),
@@ -335,17 +343,10 @@ export async function readTaskResult(run: string, taskId: string) {
   let row = state.receipts[taskId]?.exported?.row;
   if (row && task.stage === "comparison") {
     const evaluations = Object.fromEntries(Object.entries(task.dependencies).filter(([label]) => Object.hasOwn(task.inputIds, label)).map(([label, id]) => {
-      const attribution = state.receipts[id]?.exported?.row;
+      const attribution = state.receipts[id]?.evaluation as SessionAttributionResult | undefined;
       if (!attribution) throw new Error(`缺少归因任务结果：${id}`);
       const version = saved.inputs[task.inputIds[label]].version;
-      const evaluation = attribution;
-      const formal = (row!.evaluations as Record<string, JsonObject> | undefined)?.[version];
-      // Attribution owns the accepted text and rewrites; the formal comparison owns trace annotations.
-      const traces = new Map(((formal?.Problem as JsonObject[] | undefined) ?? [])
-        .filter((finding) => finding.stage_trace !== undefined)
-        .map((finding) => [finding.problem_id, finding.stage_trace]));
-      return [version, { ...evaluation, Problem: (evaluation.Problem as JsonObject[]).map((finding) =>
-        traces.has(finding.problem_id) ? { ...finding, stage_trace: traces.get(finding.problem_id) } : finding) }];
+      return [version, attribution];
     }));
     const models = Object.fromEntries(Object.entries(task.inputIds).map(([, id]) => {
       const candidate = saved.inputs[id]!;
@@ -548,7 +549,7 @@ async function sampleRecalls(config: EvalConfig, occurrences: ProblemOccurrence[
     const { saved, directory } = run;
     const candidate = saved.inputs[occurrence.input_id];
     const task = Object.entries(saved.tasks).find(([id, task]) =>
-      task.stage === "attribution" && Object.values(task.inputIds).includes(occurrence.input_id) &&
+      task.stage === "attribution-session" && Object.values(task.inputIds).includes(occurrence.input_id) &&
       (!occurrence.attribution || id === occurrence.attribution.task_id));
     if (!candidate || candidate.version !== occurrence.version || candidate.batch_id !== occurrence.batch_id ||
         candidate.case_id !== occurrence.case_id || !task)
@@ -584,8 +585,8 @@ async function sampleRecalls(config: EvalConfig, occurrences: ProblemOccurrence[
     const { occurrence, saved, directory, candidate, taskId } = item;
     const row = receipts.get(directory!)?.[taskId!]?.exported?.row;
     if (!row) return unavailableRecall("result_missing");
-    const evaluation = row as { Problem?: { problem_id?: string }[] } | undefined;
-    if (!evaluation?.Problem?.some((finding) => finding.problem_id === occurrence.finding_id))
+    const evaluation = row as unknown as SessionAttributionResult | undefined;
+    if (!evaluation || !sessionProblems(evaluation).some((finding) => finding.problem_id === occurrence.finding_id))
       return unavailableRecall("finding_missing");
     const inputKey = JSON.stringify([directory, occurrence.input_id]);
     if (!inputs.has(inputKey)) inputs.set(inputKey, (async () => {

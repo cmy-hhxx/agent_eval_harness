@@ -5,15 +5,15 @@ import os from "node:os";
 import path from "node:path";
 import { DEFAULT_POLICY, emptyUsage, type AttemptSpec, EngineIdentity, ToolAudit, TaskAnalysis, CriteriaInput, PlannedTask, AgentBackend, RunState, SubmissionReceipt } from "@eval/contracts";
 import { criteriaProfile, criteriaSources, type CriterionSource, type CriteriaSubmission } from "@eval/agents/criteria";
-import { evidenceId, hasSourceTextBlock, parseEvidenceCoordinates } from "@eval/tools";
+import { hasSourceTextBlock } from "@eval/tools";
 import { ROOT } from "./services.js";
 import { writeJson, writeJsonl } from "@eval/data";
 import { loadComparisonConfig, createModelResolver } from "@eval/host-app/config";
-import type { AttributionResult, ComparisonResult, TaskData } from "@eval/workflows/comparison";
+import { sessionProblems, type SessionAttributionResult, type SessionProblem } from "@eval/agents/attribution";
+import type { ComparisonResult, TaskData } from "@eval/workflows/comparison";
 import type { RawInput } from "@eval/workflows/inputs";
 import { comparisonSubmission } from "./comparison-submission.js";
 import type { ComparisonSlot } from "@eval/agents/comparison";
-import { responsibilityComponent, type ResponsibilityMaterial } from "@eval/agents/attribution";
 import { comparisonWorkflow } from "@eval/workflows/comparison";
 
 export const fakeIdentity: EngineIdentity = {
@@ -144,29 +144,37 @@ export async function fixtureConfig(
   };
 }
 
-export function attributionResult(correct=true,answer='2+2=4',available=true,inputId='7c4e3ba8-8f7c-46cc-b8fb-3016e10ea2dd'):AttributionResult{
-  const id=evidenceId(inputId,1,'text','/content',0,answer.length);
-  return {meta:{input_id:inputId},summary:correct?'正确给出结果。':'加法结果错误。',has_standard_answer:available,is_correct:available?correct:null,
-    correct_reason:available?(correct?'回答结果4与给定标准4一致。':'回答结果与给定标准4不一致。'):null,
-    Problem:correct?[]:[{problem_id:'p1',text:'加法结果错误',reason:'2+2应为4，实际回答给出了不同的结果。',evidence_status:'已确认',
-      evidence:[{evidence_id:id,message_index:1,quote:answer,purposes:['问题']}],
-      component:'模型自身推理',attribution_reason:'最终回答中的计算结果错误。'}]};
+export function attributionResult(correct=true,answer='2+2=4',available=true,inputId='7c4e3ba8-8f7c-46cc-b8fb-3016e10ea2dd'):SessionAttributionResult{
+  const problem: SessionProblem[] = correct ? [] : [{ problem_id: 'p1', component: '模型自身推理', label: '加法结果错误',
+    definition: '最终回答与给定加法结果不一致。', problem_phenomena: '2+2 应得 4，实际回答给出了不同结果。',
+    reason: '最终回答中的计算结果错误。', evidence: [{ position: 'trace_index 0 / message_index 1 / path /content',
+      component: 'answer: 终稿生成轮', quote: answer, reason: '证明最终回答给出的结果。' }] }];
+  const turn = { meta: { trace_id: `trace-${inputId}` }, summary: correct?'正确给出结果。':'加法结果错误。', problem,
+    is_correct: available ? (correct ? 1 as const : 0 as const) : null,
+    correct_reason: available?(correct?'回答结果4与给定标准4一致。':'回答结果与给定标准4不一致。'):null };
+  return { session_meta: { input_id: inputId, batch_id: 'b1', case_id: 'q1', session_id: `session-${inputId}` },
+    turns: [turn], session_summary: turn.summary, session_problem: [] };
 }
 
 /** Task result; Criteria uses its source-selection submission, other stages use resolved results. */
 export function taskResult(spec: Pick<AttemptSpec, "evaluation" | "prompt" | "inputs">, revealed?: unknown): unknown {
-  if(spec.prompt.startsWith('{')){
-    const review=JSON.parse(spec.prompt);
-    if(review.initial_result){
-      const value=review.initial_result;
-      return {summary:value.summary,Problem:value.Problem.map((p:any,i:number)=>({text:p.text,reason:p.reason,
-        evidence_status:p.evidence_status,attribution_reason:p.attribution_reason,...review.submission_bindings[i],
-        ...(p.uncertainties?{uncertainties:p.uncertainties}:{})})),
-        ...(value.has_standard_answer?{is_correct:value.is_correct,correct_reason:value.correct_reason}:{})};
-    }
-  }
   const properties =
     (spec.evaluation.outputSchema as { properties?: Record<string, unknown> }).properties || {};
+  if ("problems" in properties) {
+    const result = spec.inputs.length ? attributionResult(false) : attributionResult(true);
+    return { problems: sessionProblems(result).map(problem => ({ label: problem.label, definition: problem.definition,
+      problem_phenomena: problem.problem_phenomena, reason: problem.reason,
+      evidence: problem.evidence.map(() => ({ index: 1, reason: "fixture evidence" })),
+      ...(problem.calculations ? { calculations: problem.calculations } : {}) })) };
+  }
+  if ("is_correct" in properties) {
+    const result = attributionResult(false), turn = result.turns[0]!;
+    return { summary: turn.summary, is_correct: turn.is_correct, correct_reason: turn.correct_reason };
+  }
+  if ("session_summary" in properties) {
+    const result = attributionResult(false);
+    return { session_summary: result.session_summary, session_problem: [] };
+  }
   if (spec.evaluation.id === "instruction-review") return {summary:"内部指令检查独立完成。",checks:[]};
   if ("rewrites" in properties) {
     const request = parsedMaterial(spec, revealed) as { items: { id: string; text: string; preference?: string }[] };
@@ -214,12 +222,12 @@ export function taskResult(spec: Pick<AttemptSpec, "evaluation" | "prompt" | "in
     const result = comparisonResult(labels);
     result.task_analysis = fixtureAnalysis(material.task_analysis, spec.inputs);
     for(const label of labels){
-      const failed=material.attributions?.[label]?.Problem.some(item=>item.evidence_status==='已确认');
+      const failed=material.attributions?.[label] && sessionProblems(material.attributions[label]!).length > 0;
       result.assessments[label]={meets_core:!failed,core_failure_refs:failed?[result.task_analysis.requirements[0].id]:[],summary:failed?'关键结果错误。':'正确给出结果。'};
     }
     result.decision_basis.comparisons=[...result.task_analysis.requirements,...result.task_analysis.scoring_points,...result.task_analysis.red_flags].map((criterion)=>({
       aspect:criterion.text,criterion_ids:[criterion.id],importance:'high' as const,better_candidates:[],assessments:Object.fromEntries(labels.map(label=>{
-        const defects=material.attributions?.[label]?.Problem??[],failed=!result.assessments[label].meets_core;
+        const defects=material.attributions?.[label] ? sessionProblems(material.attributions[label]!) : [],failed=!result.assessments[label].meets_core;
         return [label,{status:failed?'unmet':'met',evidence_status:'已确认',summary:failed?'结果与加法规则不符。':'完成受控要求。',finding_indices:defects.map((_,i)=>i)}];
       }))}));
     result.ranking = [labels.filter((label) => result.assessments[label]!.meets_core),
@@ -277,7 +285,7 @@ const materialOf = (spec: { prompt: string }, revealed?: unknown) =>
     ground_truth: { available: boolean; value: unknown };
     task_analysis: ModelTaskAnalysis;
     candidates: Record<string, { question: string; final_answer: string; final_message_index: number }>;
-    attributions?: Record<string, AttributionResult>;
+    attributions?: Record<string, SessionAttributionResult>;
     answer?: { question: string; final_answer: string; final_message_index: number;
       catalog: { message_index: number; name?: string | null; type: string; role?: string }[];
       norm_directory: { norm_index: number; requirement_index: number | null; evidence: { reference: { evidence_index: number } }[] }[];
@@ -381,7 +389,7 @@ export async function inspectFor(options: Parameters<AgentBackend["createSession
 }
 
 /** Build the current model submission, using provided evidence choices and omitting program-derived fields. */
-export function draftFor(spec: Pick<AttemptSpec, "inputs" | "prompt" | "evidenceBank">, value: unknown, revealed?: unknown): unknown {
+export function draftFor(spec: Pick<AttemptSpec, "evaluation" | "inputs" | "prompt" | "evidenceBank">, value: unknown, revealed?: unknown): unknown {
   const result = structuredClone(value) as Record<string, unknown>;
   if (!result || typeof result !== "object") return result;
   if(spec.prompt.startsWith('{')&&JSON.parse(spec.prompt).initial_result)return result;
@@ -418,38 +426,7 @@ export function draftFor(spec: Pick<AttemptSpec, "inputs" | "prompt" | "evidence
     result.new_classes = classes.map(({ key: _programIdentity, ...proposal }) => proposal);
     return result;
   }
-  const choose = (id: string, observation?: string) => {
-    const target = parseEvidenceCoordinates(id)!;
-    const index = spec.evidenceBank.findIndex(id => {
-      const entry = parseEvidenceCoordinates(id);
-      return entry?.input_id === target.input_id && entry.message_index === target.message_index && entry.kind === target.kind &&
-        (entry.kind === "image" || target.kind !== "image" && entry.path === target.path && entry.start <= target.start && entry.end >= target.end);
-    });
-    if (index < 0) throw new Error("Fixture must read material before selecting an unavailable span");
-    return { evidence_index: index + 1, ...(observation === undefined ? {} : { observation }) };
-  };
-  if(material.answer&&"Problem" in result){
-    const value=result as unknown as AttributionResult;
-    const selections=(ids:string[])=>ids.map(id=>choose(id).evidence_index);
-    const answer=material.answer as unknown as ResponsibilityMaterial & { catalog?: { message_index:number; name?:string|null; role?:string }[] };
-    const messages:Record<string,unknown>[]=[];
-    for(const message of answer.catalog??[])messages[message.message_index]={name:message.name,role:message.role};
-    const raw={messages};
-    const boundary=(description:string)=>{
-      if(description==='责任主体未确定')return null;
-      if(!answer.transitions)throw new Error('Fixture answer lacks responsibilities: '+JSON.stringify(answer));
-      const matches=answer.transitions.filter(transition=>responsibilityComponent(answer,raw,transition.transition_index)===description);
-      if(matches.length!==1)throw new Error('Fixture needs an explicit unique responsibility call');
-      return `boundary:${matches[0].transition_index}`;
-    };
-    return {summary:value.summary,...(value.has_standard_answer?{is_correct:value.is_correct,correct_reason:value.correct_reason}:{}),
-      Problem:value.Problem.map(item=>({text:item.text,reason:item.reason,evidence_status:item.evidence_status,
-        evidence:item.evidence.map(e=>({index:choose(e.evidence_id).evidence_index,purposes:e.purposes})),
-        responsibility_boundary:boundary(item.component),attribution_reason:item.attribution_reason,
-        ...(item.uncertainties?{uncertainties:item.uncertainties}:{}),
-        ...(item.related_responsibilities?{related_responsibilities:item.related_responsibilities.map(r=>({responsibility_boundary:boundary(r.component),attribution_reason:r.attribution_reason,evidence_indices:selections(r.evidence_ids)}))}:{}),
-        ...(item.calculations?{calculations:item.calculations.map(calculation=>({...calculation,operands:Object.fromEntries(Object.entries(calculation.operands).map(([name,{evidence_id,...operand}])=>[name,{...operand,evidence_index:choose(evidence_id).evidence_index}]))}))}:{})}))};
-  }
+  if(material.answer&&"session_meta" in result) return taskResult(spec,revealed);
   if ("assessments" in result) {
     const choices = (material as unknown as { comparison_slots: { aspect:string; scope:string; optional:boolean; kind:ComparisonSlot["kind"];
       standards:{text:string}[]; observations:Record<string,{text:string}[]> }[] }).comparison_slots;
@@ -459,7 +436,8 @@ export function draftFor(spec: Pick<AttemptSpec, "inputs" | "prompt" | "evidence
     const slots: ComparisonSlot[] = choices.map(choice => ({ aspect:choice.aspect,kind:choice.kind,optional:choice.optional,shared:choice.scope === "pair",
       criterion_ids:choice.standards.map(standard => criteria.find(criterion => criterion.text === standard.text)!.id),
       finding_indices:Object.fromEntries(Object.entries(choice.observations).map(([candidate,observations]) => [candidate,
-        observations.map(observation => (material.attributions?.[candidate]?.Problem ?? []).findIndex((finding:{text:string}) => finding.text === observation.text))])) }));
+        observations.map(observation => material.attributions?.[candidate]
+          ? sessionProblems(material.attributions[candidate]!).findIndex(finding => finding.problem_phenomena === observation.text) : -1)])) }));
     return comparisonSubmission(result as unknown as ComparisonResult,slots);
   }
   return result;
@@ -467,8 +445,8 @@ export function draftFor(spec: Pick<AttemptSpec, "inputs" | "prompt" | "evidence
 
 /** A complete current submission whose first finding selects beyond the provided bank. */
 export function invalidDraft(spec: Pick<AttemptSpec, "evaluation" | "inputs" | "prompt" | "evidenceBank">): unknown {
-  const draft=draftFor(spec,taskResult(spec)) as {summary:unknown};
-  draft.summary=42;
+  const draft=draftFor(spec,taskResult(spec)) as {session_summary?:unknown; summary?:unknown};
+  if ("session_summary" in draft) draft.session_summary=42; else draft.summary=42;
   return draft;
 }
 

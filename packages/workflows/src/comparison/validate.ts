@@ -15,13 +15,11 @@ import { candidateKey } from "../inputs/records.js";
 import { taskCase } from "./input.js";
 import { Ajv2020 } from "ajv/dist/2020.js";
 import { clusteringSchema, rewrittenSchema, outputSchema } from "./schema.js";
-import { attributionProfile } from "@eval/agents/attribution";
 import { stageResult,stageRewritten, originalResultRow, comparisonRow, attributionRow, rewrittenResult, clusteringRow, encodeResult, acceptedRewriteProjection } from "./results.js";
-import { acceptedAttributionView } from "./accepted-attribution.js";
-import { bindAcceptedAttribution } from "./binding.js";
 import { taskObservations } from "./observations.js";
 import { deliveryCoverage, type DeliveryRequirements } from "./delivery.js";
 import { modelBehavior } from "./model-behavior.js";
+import { sessionAttributionResultSchema } from "@eval/agents/attribution";
 
 export async function validateRun(
   run: string,
@@ -30,7 +28,7 @@ export async function validateRun(
 ) {
   const ajv = new Ajv2020({ allErrors: true, strict: false });
   const outputValidator = ajv.compile(outputSchema),
-    attributionValidator = ajv.compile(attributionProfile.resultSchema!),
+    attributionValidator = ajv.compile(sessionAttributionResultSchema),
     rewrittenValidator = ajv.compile(rewrittenSchema),
     clusteringValidator = ajv.compile(clusteringSchema);
   const state = await readRunState(run),
@@ -97,11 +95,8 @@ export async function validateRun(
         const dependencies = Object.fromEntries(
           Object.entries(task.dependencies).map(([label, id]) => [label, receipts.get(id)]),
         );
-        const binding = task.stage === "attribution" && task.dependencies.criteria
-          ? bindAcceptedAttribution(task, receipt, inputs, { tasks: manifest.tasks },
-              receipts.get(task.dependencies.criteria)!.evaluation as import("@eval/contracts").TaskAnalysis)
-          : bindTask(task, inputs, dependencies, { tasks: manifest.tasks });
-        validate(binding, task.stage === "attribution" ? acceptedAttributionView(receipt, binding.request) : receipt.evaluation, receipt.audit);
+        const binding = bindTask(task, inputs, dependencies, { tasks: manifest.tasks });
+        validate(binding, receipt.evaluation, receipt.audit);
       }
     } catch (error) {
       (task.stage === "rewrite" ? rewriteErrors : evidenceErrors).push(`${task.id}: ${errorText(error)}`);
@@ -149,6 +144,7 @@ export async function validateRun(
         const receipt = receipts.get(task.id)!;
         if (task.stage === "instruction-review") {
           const exported = encodeResult(task, state, inputs);
+          if (!exported) throw new Error("指令检查没有正式结果：" + task.id);
           if (exported.row.source_attribution_task_id !== task.dependencies.source ||
             canonical(exported.row.instruction_review) !== canonical(receipt.evaluation))
             throw new Error("指令检查与原归因或已接受收据不一致");
@@ -158,15 +154,19 @@ export async function validateRun(
         }
         if (task.stage === "criteria" || (task.data as TaskData).verificationAudit || (receipt.evaluation as ComparisonResult).status === "needs_review") {
           const exported = encodeResult(task, state, inputs);
+          if (!exported) throw new Error("阶段没有正式结果：" + task.id);
           if (!expected.has(exported.file!)) expected.set(exported.file!, []);
           expected.get(exported.file!)!.push(canonical(exported.row));
           continue;
         }
-        if (task.stage === "attribution") {
-          const row = receipt.exported?.row || attributionRow(task, receipt,state.manifest.runId);
+        if (task.stage === "attribution-session") {
+          const row = receipt.exported?.row || attributionRow(task, receipt);
+          const session = row.session_meta as Record<string, unknown>;
+          const id = String(session.session_id ?? session.case_id);
           if (
             (!receipt.exported && !attributionValidator(row)) ||
-            canonical(originalResultRow(task.stage, row)) !== canonical(attributionRow(task, receipt,state.manifest.runId))
+            canonical(originalResultRow(task.stage, row)) !== canonical(attributionRow(task, receipt)) ||
+            (receipt.exported && receipt.exported.id !== id)
           )
             throw new Error("归因结果结构或收据不一致");
           const name = "attribution.jsonl";

@@ -9,11 +9,12 @@ import { promisify } from "node:util";
 import { startDashboard } from "../../../apps/host/src/dashboard.js";
 import { toDashboardModels } from "../../../apps/host/src/dashboard-models.js";
 import { loadComparisonConfig, editableDashboardSettings } from "@eval/host-app/config";
-import { emptyUsage, evidenceId, type JsonObject, type ProblemLibrary, type RunState, type SubmissionReceipt } from "@eval/contracts";
+import { emptyUsage, type JsonObject, type ProblemLibrary, type RunState, type SubmissionReceipt } from "@eval/contracts";
 import { exists, fileSourceReader, readJson, runLock, writeJson, writeJsonl } from "@eval/data";
 import { json, listen } from "@eval/runtime/http";
 import { attributionRow, buildPlan, caseResultView, clusteringRow, createResultWriter, listInputInventory, listRunCases, readCaseDetail, readRegisteredInput, readRunTasks, readTaskResult, taskObservations, writeRunState, type Checkpoint, type TaskData } from "@eval/workflows/comparison";
 import { type Candidate } from "@eval/workflows/inputs";
+import { sessionProblems } from "@eval/agents/attribution";
 import { attributionResult, comparisonResult, criteriaResultForTask, emptyAudit, fakeEvaluatorVersion, fakeIdentity, fixtureConfig, raw } from "../../fixtures/comparison.js";
 import { ROOT } from "../../fixtures/services.js";
 
@@ -50,18 +51,20 @@ async function setup(rewrite = false, clustering = false, rows?: Parameters<type
   const plan = await buildPlan(config);
   const run = path.join(config.output.path, "run-one");
   await mkdir(path.join(run, "results"), { recursive: true });
-  const task = plan.tasks.find((item) => item.stage === "attribution" &&
-    (item.data as TaskData).candidates.A.version === "a_fast" &&
-    (item.data as TaskData).candidates.A.case_id === "q1")!;
+  const task = plan.tasks.find((item) => item.stage === "attribution-session" &&
+    (item.data as TaskData).candidate?.version === "a_fast" &&
+    (item.data as TaskData).candidate?.case_id === "q1")!;
+  const candidate = (task.data as TaskData).candidate!;
+  const firstInput = candidate;
   const receipt: SubmissionReceipt = {
     taskId: task.id, attemptId: "attempt-1", submissionId: "submission-1",
-    evaluation: attributionResult(!clustering, clustering ? "2+2=5" : "2+2=4", true, task.inputIds.answer), audit: emptyAudit(), usage: emptyUsage(),
+    evaluation: attributionResult(!clustering, clustering ? "2+2=5" : "2+2=4", true, candidate.input_id), audit: emptyAudit(), usage: emptyUsage(),
     evaluatorVersion: fakeEvaluatorVersion,
     judge: "fixture-model",
     acceptedAt: Date.now(), status: "succeeded",
   };
   const row = attributionRow(task, receipt);
-  receipt.exported = { id: task.id, file: "attribution.jsonl", row };
+  receipt.exported = { id: String((row.session_meta as JsonObject).session_id), file: "attribution.jsonl", row };
   const state: RunState = {
     manifest: {
       format: "evaluation-run", runId: "run-one", status: "interrupted", engine: fakeIdentity,
@@ -77,14 +80,13 @@ async function setup(rewrite = false, clustering = false, rows?: Parameters<type
   };
   await writeJsonl(path.join(run, "results", "attribution.jsonl"), [row]);
   if (clustering) {
-    const firstInput = (plan.catalog as Candidate[]).find((candidate) => candidate.input_id === task.inputIds.answer)!;
     const secondInput = (plan.catalog as Candidate[]).find((candidate) => candidate.version === "a_fast" && candidate.case_id === "q2")!;
-    const secondTask = plan.tasks.find((item) => item.stage === "attribution" && item.inputIds.answer === secondInput.input_id)!;
+    const secondTask = plan.tasks.find((item) => item.stage === "attribution-session" && (item.data as TaskData).candidate?.input_id === secondInput.input_id)!;
     const secondEvaluation = attributionResult(false, "2+2=5", true, secondInput.input_id);
-    secondEvaluation.Problem[0]!.evidence_status = "待核实";
+    secondEvaluation.turns[0]!.problem[0]!.evidence[0]!.reason = "证据待核实。";
     const secondReceipt: SubmissionReceipt = { ...receipt, taskId: secondTask.id, attemptId: "attempt-2",
       submissionId: "submission-2", evaluation: secondEvaluation };
-    secondReceipt.exported = { id: secondTask.id, file: "attribution.jsonl", row: attributionRow(secondTask, secondReceipt) };
+    secondReceipt.exported = { id: String((attributionRow(secondTask, secondReceipt).session_meta as JsonObject).session_id), file: "attribution.jsonl", row: attributionRow(secondTask, secondReceipt) };
     // The accepted metadata remains, while this sample's formal row is deliberately unavailable.
     state.receipts[secondTask.id] = secondReceipt;
     state.manifest.states[secondTask.id] = { status: "succeeded", attempts: 1 };
@@ -358,11 +360,10 @@ test("dashboard accepted task reads align formal traces by model and finding ID 
 
 
 
-      const original = attributionResult(false, "2+2=4", true, candidate.input_id).Problem[0]!;
-      evaluation.Problem = ["第一条资料：4", "第二条资料：4"].map((quote, index) => ({
-        ...structuredClone(original), problem_id: `f${index}`, text: `${candidate.version}正式归因正文${index}`,
-        evidence: [{ evidence_id: evidenceId(candidate.input_id, 2 + index * 2, "text", "/output", 0, quote.length),
-          purposes:["问题"], message_index: 2 + index * 2, quote }],
+      const original = sessionProblems(attributionResult(false, "2+2=4", true, candidate.input_id))[0]!;
+      evaluation.turns[0]!.problem = ["第一条资料：4", "第二条资料：4"].map((quote, index) => ({
+        ...structuredClone(original), problem_id: `f${index}`, problem_phenomena: `${candidate.version}正式归因正文${index}`,
+        evidence: [{ position: `trace_index 0 / message_index ${2 + index * 2} / path /output`, component: "answer: 终稿生成轮", quote, reason: "fixture" }],
       }));
       accept(task.dependencies[label]!, evaluation);
     }
@@ -416,8 +417,8 @@ test("dashboard preserves attribution reassessment lineage and comparison busine
   const readTasks = async (caseId: string) => (await readCaseDetail(fixture.run, "b1", caseId))!.tasks;
   try {
     const checkpoint = await readJson<Checkpoint>(file);
-    const attributions = Object.entries(checkpoint.tasks).filter(([, task]) => task.stage === "attribution" &&
-      checkpoint.inputs[task.inputIds.answer]!.case_id === "q1");
+    const attributions = Object.entries(checkpoint.tasks).filter(([, task]) => task.stage === "attribution-session" &&
+      checkpoint.inputs[(task.data as TaskData).candidate!.input_id]!.case_id === "q1");
     const comparisons = Object.entries(checkpoint.tasks).filter(([, task]) => task.stage === "comparison" &&
       !task.data.verificationAudit);
     const [comparisonId, comparison] = comparisons.find(([, task]) =>
@@ -444,7 +445,7 @@ test("dashboard preserves attribution reassessment lineage and comparison busine
     await writeJson(file, checkpoint);
 
     const tasks = await readTasks("q1");
-    assert.equal(tasks.filter((task) => task.stage === "attribution").length, 4,
+    assert.equal(tasks.filter((task) => task.stage === "attribution-session").length, 4,
       "each accepted attribution and its independent review remain separate tasks");
     for (const { sourceId, taskId } of reviewAttributions) {
       assert.equal(tasks.find((task) => task.id === sourceId)!.status, "succeeded");
@@ -494,19 +495,18 @@ test("dashboard case results include comparison evaluations and preserve attribu
   })!;
   const expectedComparison = attributionResult();
   assert.deepEqual(comparison.evaluations, { a_fast: expectedComparison });
-  assert.ok(attributionResult().Problem[0]!.evidence[0]!.evidence_id, "display projection preserves the stored program coordinate");
+  assert.ok(sessionProblems(attributionResult())[0]!.evidence[0]!.position, "display projection preserves the stored program coordinate");
   assert.equal(Object.hasOwn(comparison, "evaluator_version"), false);
   assert.deepEqual(Object.keys(comparison).sort(), [
     "assessments", "decision_basis", "evaluations", "ground_truth", "models", "ranking", "review_requests", "status", "task_analysis", "verdicts",
   ]);
   const source = attributionResult();
-  source.Problem[0]!.evidence[0]!.quote = "q".repeat(5000);
-  source.Problem[0]!.evidence[0]!.source = "原始材料来源";
-  const attribution = caseResultView("attribution", { evaluation: source })!;
+  sessionProblems(source)[0]!.evidence[0]!.quote = "q".repeat(5000);
+  const attribution = caseResultView("attribution-session", source as unknown as JsonObject)!;
   const expected = structuredClone(source);
-  expected.Problem[0]!.evidence[0]!.quote = `${"q".repeat(4000)}…`;
-  assert.deepEqual(attribution, { evaluation: expected }, "every current Schema field reaches the view, including assessment, problem, dimension and importance");
-  assert.equal(caseResultView("attribution", undefined), null);
+  sessionProblems(expected)[0]!.evidence[0]!.quote = `${"q".repeat(4000)}…`;
+  assert.deepEqual(attribution, expected, "every current Schema field reaches the view, including turn and session problems");
+  assert.equal(caseResultView("attribution-session", undefined), null);
 });
 
 test("dashboard dates respond while source scanning is blocked", async () => {
@@ -684,7 +684,7 @@ test("dashboard keeps rewrite progress but does not list separate rewrite output
     const q1 = page.cases.find((item) => item.case_id === "q1")!;
     assert.deepEqual(Object.keys(q1.stages).sort(), ["attribution", "comparison", "criteria", "rewrite"]);
     const detail = (await readCaseDetail(fixture.run, "b1", "q1"))!;
-    const attributionIds = new Set(detail.tasks.filter((task) => task.stage === "attribution").map((task) => task.id));
+    const attributionIds = new Set(detail.tasks.filter((task) => task.stage === "attribution-session").map((task) => task.id));
     const comparison = detail.tasks.find((task) => task.stage === "comparison")!;
     assert.deepEqual(new Set(comparison.versions), new Set(["a_fast", "b_fast"]));
     const rewrites = detail.tasks.filter((task) => task.stage === "rewrite");

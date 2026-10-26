@@ -4,7 +4,8 @@ import { Ajv2020 } from "ajv/dist/2020.js";
 import type { JsonObject, PlannedTask, SubmissionReceipt, TaskState, Usage } from "@eval/contracts";
 import { atomicWrite, exists, internalPath, locateRun, readJson, writeJson, writeJsonl } from "@eval/data";
 import { canonical } from "@eval/contracts";
-import type { AttributionResult, ComparisonResult, EvalConfig, Finding, TaskData } from "./types.js";
+import { sessionCorrectness, sessionProblems, type SessionAttributionResult } from "@eval/agents/attribution";
+import type { ComparisonResult, EvalConfig, TaskData } from "./types.js";
 import { toRewrites, type Rewrites } from "@eval/agents/rewrite";
 import { outputSchema } from "./schema.js";
 import { comparisonRow, acceptedRewriteProjection } from "./results.js";
@@ -52,7 +53,7 @@ export function summarizeResults(
 ) {
   const cases = new Set([
     ...tasks
-      .filter((task) => task.stage === "attribution" || task.stage === "comparison" && !(task.data as TaskData).verificationAudit)
+      .filter((task) => task.stage === "attribution-session" || task.stage === "comparison" && !(task.data as TaskData).verificationAudit)
       .map((task) => {
         const c = taskCase(task.data as TaskData);
         return canonical([c.batch_id, c.case_id]);
@@ -161,7 +162,7 @@ export function summarizeResults(
   const currentSources = new Map<string, { tasks: Set<string>; inputs: Set<string> }>();
   const proposed = new Set(tasks.filter(task => (task.data as TaskData).standardConflictReview)
     .map(task => (task.data as TaskData).reviewOf!.taskId));
-  for (const task of tasks) if (task.stage === "attribution" && !proposed.has(task.id)) {
+  for (const task of tasks) if (task.stage === "attribution-session" && !proposed.has(task.id)) {
     const candidate = (task.data as TaskData).candidates.A;
     const key = answerKey(candidate.batch_id, candidate.case_id, candidate.version);
     let source = currentSources.get(key);
@@ -323,11 +324,11 @@ export async function reportRun(run: string, options: { details?: boolean } = {}
       );
       continue;
     }
-    if (data.stage === "attribution") {
+    if (data.stage === "attribution-session") {
+      const result = receipt.evaluation as SessionAttributionResult, candidate = (task.data as TaskData).candidate!;
       attribution.push({
-        ...data.candidates.A,
-        ...(receipt.evaluation as AttributionResult),
-        task_id: task.id,
+        task_id: task.id, input_id: task.inputIds.answer, batch_id: candidate.batch_id, case_id: candidate.case_id,
+        version: candidate.version, is_correct: sessionCorrectness(result),
       });
       continue;
     }
@@ -345,10 +346,7 @@ export async function reportRun(run: string, options: { details?: boolean } = {}
     receipt.exported = { id: String(row.comparison_id), row };
     const view = polishComparisonRow(row, task, commentary);
     const analysis = view.task_analysis as ComparisonResult["task_analysis"];
-    const reviews = view.evaluations as Record<
-      string,
-      { summary: string; Problem: (Finding & { stage_trace?: JsonObject })[]; is_correct: boolean | null; correct_reason: string | null }
-    >;
+    const reviews = view.evaluations as Record<string, SessionAttributionResult>;
     const verdicts = view.verdicts as Record<string, JsonObject>;
     const candidates = Object.fromEntries(
       Object.entries(reviews).map(([id, review]) => [
@@ -356,9 +354,9 @@ export async function reportRun(run: string, options: { details?: boolean } = {}
         {
           model: (view.models as JsonObject)[id],
           assessment: (view.assessments as JsonObject)[id],
-          is_correct: review.is_correct,
-          summary: review.summary,
-          Problem: review.Problem,
+          is_correct: sessionCorrectness(review),
+          summary: review.session_summary,
+          Problem: sessionProblems(review),
         },
       ]),
     );
@@ -429,16 +427,13 @@ export async function reportRun(run: string, options: { details?: boolean } = {}
         assessment.summary,
         "",
       );
-      for (const finding of review.Problem) {
+      for (const finding of sessionProblems(review)) {
         markdown.push(
-          `- **问题｜${finding.text}**：${finding.reason}`,
+          `- **问题｜${finding.problem_phenomena}**：${finding.reason}`,
           "",
         );
-        const trace = finding.stage_trace as { tools: string[]; confidence: string } | undefined;
-        if (trace?.tools.length)
-          markdown.push(`工具回溯：${trace.tools.join("、")}（${trace.confidence}）`, "");
         for (const evidence of finding.evidence)
-          markdown.push(`> ${evidence.source_input_id ? "事实核验来源 " + evidence.source_input_id + " " : ""}原始消息 #${evidence.message_index}：${evidence.quote.replaceAll("\n", " ")}`, "");
+          markdown.push(`> ${evidence.component} · ${evidence.position}：${evidence.quote.replaceAll("\n", " ")}`, "");
       }
     }
     markdown.push(

@@ -1,10 +1,8 @@
 import path from "node:path";
 import { assistantRunLocations, readRunOverview, type AssistantRunLocation } from "@eval/data";
-import { readAnswerReviewAnalysis } from "@eval/workflows/answer-review";
 import type { AnalysisRunOverview } from "@eval/workflows/comparison";
 import type { AnalysisDataSource, AnalysisQuery, AnalysisReference, AnalysisCaseLookup, AnalysisReadOptions, JsonObject } from "@eval/contracts";
 import { LocalAnalysisData } from "./assistant-data.js";
-import { AnswerReviewAnalysisData } from "./assistant-answer-review.js";
 
 /** Namespace only navigation projections; formal result and original source fields remain untouched. */
 function navigation(value: unknown, collectionId: string): unknown {
@@ -17,7 +15,7 @@ function navigation(value: unknown, collectionId: string): unknown {
 export class CatalogAnalysisData implements AnalysisDataSource {
   constructor(private root: string, private publication?: { stateFile: string; logFile: string; deliveryFile: string }) {}
   private data(location: AssistantRunLocation) {
-    return location.workflow === "answer-review" ? new AnswerReviewAnalysisData(path.dirname(location.directory)) : new LocalAnalysisData(path.dirname(location.directory), this.publication);
+    return new LocalAnalysisData(path.dirname(location.directory), this.publication);
   }
   private async locate(reference: { collectionId?: string; runId: string }) {
     if (!reference.collectionId) throw new Error("缺少 collectionId；请沿用运行目录的完整引用");
@@ -36,16 +34,9 @@ export class CatalogAnalysisData implements AnalysisDataSource {
     for (const location of inventory.runs) {
       if (query.collectionId && query.collectionId !== location.collectionId) continue;
       try {
-        let summary: JsonObject, evaluatorVersion: string;
-        if (location.workflow === "answer-review") {
-          const view = await readAnswerReviewAnalysis(location.directory);
-          if (view.state.manifest.runId !== location.runId) throw new Error("运行目录与状态身份不一致");
-          summary = view.summary; evaluatorVersion = view.state.manifest.evaluatorVersion;
-        } else {
-          const overview = await readRunOverview<AnalysisRunOverview>(location.directory);
-          if (overview.runId !== location.runId || !overview.summary?.formalComparisonStats) throw new Error("运行统计索引无效；停止运行后重建 overview");
-          summary = overview.summary; evaluatorVersion = overview.evaluatorVersion;
-        }
+        const overview = await readRunOverview<AnalysisRunOverview>(location.directory);
+        if (overview.runId !== location.runId || !overview.summary) throw new Error("运行统计索引无效；停止运行后重建 overview");
+        const summary: JsonObject = overview.summary, evaluatorVersion = overview.evaluatorVersion;
         if (typeof summary.status !== "string" || !["running", "finished", "interrupted"].includes(summary.status) || typeof evaluatorVersion !== "string" || !evaluatorVersion) throw new Error("运行概要状态无效");
         for (const field of ["startedAt", "inputCount", "caseCount"]) {
           const value = summary[field];

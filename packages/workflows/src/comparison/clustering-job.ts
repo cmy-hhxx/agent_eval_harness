@@ -1,4 +1,4 @@
-import { responsibilityLabels } from "@eval/agents/attribution";
+import { sessionProblems, type SessionAttributionResult } from "@eval/agents/attribution";
 import path from "node:path";
 import { isDeepStrictEqual } from "node:util";
 import { canonical, type PlannedTask, type ProblemObservationRef, type RunRepository, type RunState, type TaskPlan, type WorkflowDefinition } from "@eval/contracts";
@@ -12,7 +12,7 @@ import { clusteringJobStorage } from "./clustering-job-codec.js";
 import { allClusteringJobSources, clusteringJobItems, jobBatchIds, jobMaterial, jobObservations, type ClusteringJobConfig, type ClusteringJobMaterial, type ClusteringJobSource, type ClusteringJobTask, type ClusteringRunReader } from "./clustering-job-types.js";
 import { acceptedClusteringOrder, discoverAfterAssignments, parallelClusteringAssignments } from "./clustering-job-parallel.js";
 import { planClusteringTasks, planDeferredRecall } from "./clustering-job-plan.js";
-import type { AttributionResult, EvalConfig, TaskData } from "./types.js";
+import type { EvalConfig, TaskData } from "./types.js";
 import { recallProblemLibrary } from "./problem-library-recall.js";
 import { projectClusteringTree } from "./clustering-tree.js";
 
@@ -21,7 +21,7 @@ export type { ClusteringJobConfig, ClusteringJobSource, ClusteringRunReader } fr
 
 /** Answer selection is frozen only by scopes containing attribution tasks, not rewrite or audit scopes. */
 function clusteringAttributionIds(tasks: Pick<PlannedTask, "id" | "stage" | "inputIds">[], executionScope?: string[], inputIds?: ReadonlySet<string>): string[] {
-  const ids = tasks.filter(task => task.stage === "attribution" && (!inputIds || inputIds.has(task.inputIds.answer))).map(task => task.id);
+  const ids = tasks.filter(task => task.stage === "attribution-session" && (!inputIds || inputIds.has(task.inputIds.answer))).map(task => task.id);
   if (inputIds) return ids;
   const selected = executionScope && new Set(executionScope);
   return selected && ids.some(id => selected.has(id)) ? ids.filter(id => selected.has(id)) : ids;
@@ -59,7 +59,7 @@ export async function readClusteringJobSources(sources: ClusteringJobSource[], r
   for (const source of sources) {
     const state = states.get(source.run)!, task = state.manifest.tasks.find(task => task.id === source.task_id);
     const receipt = state.receipts[source.task_id], candidate = (task?.data as TaskData | undefined)?.candidates.A;
-    if (state.manifest.runId !== source.run_id || task?.stage !== "attribution" || !receipt ||
+    if (state.manifest.runId !== source.run_id || task?.stage !== "attribution-session" || !receipt ||
       state.manifest.states[task.id].status !== "succeeded" || receipt.submissionId !== source.submission_id ||
       receipt.evaluatorVersion !== source.evaluator_version || candidate?.input_id !== source.input_id ||
       candidate.version !== source.model || candidate.batch_id !== source.batch_id || candidate.case_id !== source.case_id ||
@@ -74,28 +74,27 @@ export async function loadClusteringJobInputs(config: ClusteringJobConfig, readS
   const primary = new Set(config.clusteringJob.sources.map(source => source.input_id));
   const recalled = new Set((config.clusteringJob.recall ?? []).map(problemSampleKey));
   for (const ref of config.clusteringJob.recall ?? []) {
-    const finding = (states.get(ref.attribution.run)!.receipts[ref.attribution.task_id].evaluation as AttributionResult)
-      .Problem.find(item => item.problem_id === ref.finding_id);
-    if (!finding || canonical(responsibilityLabels(finding)) !== canonical(ref.components) ||
-        finding.evidence_status !== ref.evidence_status)
+    const finding = sessionProblems(states.get(ref.attribution.run)!.receipts[ref.attribution.task_id].evaluation as SessionAttributionResult)
+      .find(item => item.problem_id === ref.finding_id);
+    if (!finding || canonical(finding.component.split(" / ")) !== canonical(ref.components))
       throw new Error("待观察引用的原发现已缺失或改变：" + ref.input_id + "/" + ref.finding_id);
   }
   for (const model of [...new Set(config.clusteringJob.sources.map(source => source.model))].sort()) {
     const pending: ProblemObservationRef[] = [];
     const observations = groupObservations(sources.filter(source => source.model === model).map(source => {
-      const findings = (states.get(source.run)!.receipts[source.task_id].evaluation as AttributionResult).Problem
+      const findings = sessionProblems(states.get(source.run)!.receipts[source.task_id].evaluation as SessionAttributionResult)
         .filter(finding => primary.has(source.input_id) || recalled.has(problemSampleKey({ input_id: source.input_id, finding_id: finding.problem_id })));
       for (const finding of findings) pending.push({ version: model,
         input_id: source.input_id, finding_id: finding.problem_id, batch_id: source.batch_id, case_id: source.case_id,
         source: source.source, attribution: { run: source.run, run_id: source.run_id, task_id: source.task_id,
           submission_id: source.submission_id, evaluator_version: source.evaluator_version },
-        components: responsibilityLabels(finding), evidence_status: finding.evidence_status,
-        summary: finding.text });
+        components: finding.component.split(" / "), evidence_status: "已确认",
+        summary: finding.problem_phenomena });
       return {
       input_id: source.input_id, case_id: source.case_id, batch_id: source.batch_id, source: source.source,
       attribution: { run: source.run, run_id: source.run_id, task_id: source.task_id,
         submission_id: source.submission_id, evaluator_version: source.evaluator_version },
-      Problem:findings,
+      problems: findings,
     }; }));
     const library = await readProblemLibrary(problemLibraryFile(config.problemLibrary, model)) ?? emptyLibrary(model);
     if (library.model !== model) throw new Error("问题库模型身份不一致：" + model);
@@ -116,14 +115,13 @@ export async function prepareClusteringJob(runs: string[], base: EvalConfig, opt
   for (const run of directories) {
     const state = await stableSource(run, undefined, requested, options.readSource), tasks = state.manifest.tasks;
     const selected = new Set(clusteringAttributionIds(tasks, state.manifest.executionScope, requested));
-    const pending = tasks.filter(task => task.stage === "attribution" &&
+    const pending = tasks.filter(task => task.stage === "attribution-session" &&
       selected.has(task.id) &&
       ["pending", "running"].includes(state.manifest.states[task.id].status));
     if (pending.length && !options.acceptedOnly) throw new Error("来源 run 的归因尚未全部结束：" + run);
-    const proposals = new Set(tasks.filter(task => (task.data as TaskData).standardConflictReview)
-      .map(task => (task.data as TaskData).reviewOf!.taskId));
+    const proposals = new Set<string>();
     for (const task of tasks) {
-      if (task.stage !== "attribution" || (!requested && !options.acceptedOnly && proposals.has(task.id))) continue;
+      if (task.stage !== "attribution-session" || (!requested && !options.acceptedOnly && proposals.has(task.id))) continue;
       if (!selected.has(task.id)) { outsideScope++; continue; }
       const receipt = state.receipts[task.id], candidate = (task.data as TaskData).candidates.A;
       if (!receipt || state.manifest.states[task.id].status !== "succeeded") { excluded++; continue; }

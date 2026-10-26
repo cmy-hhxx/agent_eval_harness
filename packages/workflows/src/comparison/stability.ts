@@ -4,8 +4,9 @@ import { Ajv2020 } from "ajv/dist/2020.js";
 import { canonical, type Engine, type ModelConfig, type PlannedTask, type RunState, type SubmissionReceipt, type TaskPlan, type WorkflowDefinition } from "@eval/contracts";
 import { fileSourceReader } from "@eval/data";
 import { criteriaProfile } from "@eval/agents/criteria";
-import { attributionProfile } from "@eval/agents/attribution";
+import { sessionAttributionProfile } from "@eval/agents/attribution";
 import { comparisonProfile } from "@eval/agents/comparison";
+import { planAttributionUnit } from "@eval/workflows/attribution";
 import { adapt, candidateKey } from "../inputs/records.js";
 import { assertComparableGroups } from "./input.js";
 import { bindTask } from "./binding.js";
@@ -70,21 +71,24 @@ async function loadExperimentInputs(manifest: RunState["manifest"], taskIds?: Re
 function task(stage: TaskData["stage"], candidates: Record<string, Candidate>, reference: unknown,
   dependencies: Record<string, string>, trial: StabilityTrial, extra: Partial<TaskData> = {}): PlannedTask {
   return { id: randomUUID(), stage, dependencies,
-    inputIds: Object.fromEntries(Object.entries(candidates).map(([label, candidate]) => [stage === "attribution" ? "answer" : label, candidate.input_id])),
+    inputIds: Object.fromEntries(Object.entries(candidates).map(([label, candidate]) => [label, candidate.input_id])),
     data: { stage, candidates, reference, ...extra, stability: structuredClone(trial) } satisfies StabilityTaskData };
 }
 
 function chain(candidates: Record<string, Candidate>, reference: unknown, trial: StabilityTrial, config: EvalConfig) {
   const criteriaScope = canonical([trial.case_key, trial.purpose, trial.repeat]);
   const criteria = task("criteria", candidates, reference, {}, trial, { criteriaScope });
-  const attributes = Object.entries(candidates).map(([label, candidate]) => ({ label,
-    task: task("attribution", { A: candidate }, reference, { criteria: criteria.id }, trial,
-      { criteriaScope, initialContextChars: config.execution.initialContextChars, standardAnswerReview: false }) }));
+  const attributes = Object.entries(candidates).map(([label, candidate]) => {
+    const unit = planAttributionUnit(candidate, { data: { stage: "attribution-component", candidates: { A: candidate }, reference,
+      criteriaScope, initialContextChars: config.execution.initialContextChars, standardAnswerReview: false },
+      dependencies: { criteria: criteria.id }, identity: criteria.id });
+    return { label, tasks: unit.tasks, task: unit.session };
+  });
   const comparison = task("comparison", candidates, reference,
     { criteria: criteria.id, ...Object.fromEntries(attributes.map(item => [item.label, item.task.id])) }, trial,
     { criteriaScope, group: Object.values(candidates).map(candidate => candidate.version), comparisonId: "cmp_" + randomUUID(),
       initialContextChars: config.execution.initialContextChars });
-  return { tasks: [criteria, ...attributes.map(item => item.task), comparison], comparison };
+  return { tasks: [criteria, ...attributes.flatMap(item => item.tasks), comparison], comparison };
 }
 
 function comparisonTrial(source: PlannedTask, trial: StabilityTrial, external: boolean) {
@@ -138,7 +142,7 @@ function sourceComparison(state: RunState, item: StabilityCase): PlannedTask {
   if (matches.length !== 1) throw new Error("Source case needs one unambiguous accepted comparison: " + stabilityCaseKey(item));
   const selected = matches[0]!;
   const ajv = new Ajv2020({ strict: false, allErrors: true });
-  const profiles = { criteria: criteriaProfile, attribution: attributionProfile, comparison: comparisonProfile };
+  const profiles = { criteria: criteriaProfile, "attribution-session": sessionAttributionProfile, comparison: comparisonProfile };
   for (const id of [selected.id, ...Object.values(selected.dependencies)]) {
     const source = state.manifest.tasks.find(candidate => candidate.id === id), receipt = state.receipts[id];
     if (!source || !receipt || !(source.stage in profiles)) throw new Error("Source experiment dependency is unavailable: " + id);

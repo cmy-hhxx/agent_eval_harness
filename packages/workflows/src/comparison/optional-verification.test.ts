@@ -32,8 +32,8 @@ async function setup() {
     states: Object.fromEntries(plan.tasks.map(task => [task.id, { status: "pending", attempts: 0 }])) },
     receipts: {}, usage: emptyUsage(), recordedAttempts: 0 } as unknown as RunState;
   state.receipts[criteria.id] = receiptFor(criteria, analysis);
-  for (const task of plan.tasks.filter(task => task.stage === "attribution")) {
-    const result = attributionResult(true, "2+2=4", true, (task.data as TaskData).candidates.A.input_id);
+  for (const task of plan.tasks.filter(task => task.stage === "attribution-session")) {
+    const result = attributionResult(true, "2+2=4", true, (task.data as TaskData).candidate!.input_id);
     state.receipts[task.id] = receiptFor(task, result);
   }
   const result = comparisonResult(); result.task_analysis = analysis;
@@ -99,7 +99,7 @@ test("optional verification has its own durable envelope and strict source ident
       assert.throws(() => encodeResult(invalid, invalidState, f.plan.inputs), /必须同时声明/);
       assert.throws(() => comparisonCodec.encode(invalidState), /必须同时声明/);
     }
-    const exported = encodeResult(check, state, f.plan.inputs);
+    const exported = encodeResult(check, state, f.plan.inputs)!;
     assert.equal(exported.id, id);
     assert.equal(exported.file, "comparison-verification.jsonl");
     assert.equal(exported.row.evaluation_type, "comparison_verification");
@@ -121,7 +121,7 @@ test("optional verification has its own durable envelope and strict source ident
     const restored = comparisonCodec.decode(checkpoint, ref => rows.get(ref.file + ":" + ref.id)!);
     assert.deepEqual(restored.receipts[id], state.receipts[id]);
     assert.deepEqual(restored.receipts[f.source.id], before);
-    assert.deepEqual(encodeResult(check, restored, {}).row, exported.row);
+    assert.deepEqual(encodeResult(check, restored, {})!.row, exported.row);
     assert.throws(() => comparisonCodec.decode(checkpoint, ref => ref.id === id
       ? { ...exported.row, source_task_id: "wrong" } : rows.get(ref.file + ":" + ref.id)!), /可选复核来源身份/);
     checkpoint.tasks[id].receipt!.exported!.file = "comparison.jsonl";

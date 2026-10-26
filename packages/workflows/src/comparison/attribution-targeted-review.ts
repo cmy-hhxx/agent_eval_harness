@@ -6,6 +6,8 @@ import type { AttributionJobConfig } from "./attribution-job.js";
 import { readRunState, writeRunState } from "./run-data.js";
 import { pendingTaskProgress } from "../review/task-progress.js";
 import type { TaskData } from "./types.js";
+import { planAttributionUnit } from "@eval/workflows/attribution";
+import { attributionRewritePlaceholder } from "./attribution-rewrite-planning.js";
 
 export interface AttributionTargetedReviewSelection {
   reviews: { taskId: string; reasons: string[] }[];
@@ -22,29 +24,29 @@ export async function prepareAttributionTargetedReviews(run: string, selection: 
     const state = await readRunState(run), tasks = state.manifest.tasks;
     if (!(state.manifest.config as AttributionJobConfig).attributionJob) throw new Error("只能准备独立归因作业的定向复核");
     const latest = new Map<string, PlannedTask>();
-    for (const task of tasks) if (task.stage === "attribution" && state.receipts[task.id] && state.manifest.states[task.id]?.status === "succeeded") {
-      const inputId = (task.data as TaskData).candidates.A.input_id, previous = latest.get(inputId);
+    for (const task of tasks) if (task.stage === "attribution-session" && state.receipts[task.id] && state.manifest.states[task.id]?.status === "succeeded") {
+      const inputId = (task.data as TaskData).candidate!.input_id, previous = latest.get(inputId);
       if (!previous || state.receipts[previous.id]!.acceptedAt <= state.receipts[task.id]!.acceptedAt) latest.set(inputId, task);
     }
     const chosen = new Set<string>();
     const plans = selection.reviews.map(({ taskId, reasons }) => {
       const requested = tasks.find(task => task.id === taskId);
-      if (requested?.stage !== "attribution" || !state.receipts[taskId] || state.manifest.states[taskId]?.status !== "succeeded")
+      if (requested?.stage !== "attribution-session" || !state.receipts[taskId] || state.manifest.states[taskId]?.status !== "succeeded")
         throw new Error("只能复核已接受归因任务：" + taskId);
-      const original = (requested.data as TaskData).candidates.A, source = latest.get(original.input_id)!;
-      const candidate = (source.data as TaskData).candidates.A;
+      const original = (requested.data as TaskData).candidate!, source = latest.get(original.input_id)!;
+      const candidate = (source.data as TaskData).candidate!;
       if (candidate.version !== original.version || candidate.batch_id !== original.batch_id || candidate.case_id !== original.case_id ||
         source.inputIds.answer !== candidate.input_id) throw new Error("同一输入的归因身份不一致：" + taskId);
       if (chosen.has(candidate.input_id)) throw new Error("重复选择同一回答：" + candidate.input_id);
       chosen.add(candidate.input_id);
-      const pending = tasks.filter(task => task.stage === "attribution" && !state.receipts[task.id] &&
+      const pending = tasks.filter(task => task.stage === "attribution-session" && !state.receipts[task.id] &&
         (task.data as TaskData).reviewOf?.taskId === source.id);
       if (pending.length > 1 || pending.some(task => !isDeepStrictEqual((task.data as TaskData).reviewOf!.reasons, reasons)))
         throw new Error("该回答已有其他未完成归因复核：" + source.id);
       return { requested: taskId, source, review: pending[0], reasons: [...reasons] };
     });
     const selected = plans.map(plan => {
-      const data = plan.source.data as TaskData, candidate = data.candidates.A;
+      const data = plan.source.data as TaskData, candidate = data.candidate!;
       return { requested_task_id: plan.requested, source_task_id: plan.source.id, review_task_id: plan.review?.id ?? null,
         input_id: candidate.input_id, model: candidate.version, batch_id: candidate.batch_id, case_id: candidate.case_id,
         round: data.reviewOf ? data.reviewOf.round + 1 : 1, reasons: plan.reasons,
@@ -54,13 +56,24 @@ export async function prepareAttributionTargetedReviews(run: string, selection: 
     if (selection.apply) {
       const scope = state.manifest.executionScope && new Set(state.manifest.executionScope);
       for (const [index, plan] of plans.entries()) {
-        const review = plan.review ?? { ...plan.source, id: randomUUID(), inputIds: { ...plan.source.inputIds },
-          dependencies: {},
-          data: { ...structuredClone(plan.source.data as TaskData), revision: 1,
-            reviewOf: { taskId: plan.source.id, round: selected[index]!.round, reasons: plan.reasons } } satisfies TaskData };
+        let review = plan.review;
         if (!plan.review) {
-          tasks.push(review);
-          state.manifest.states[review.id] = { ...pendingTaskProgress(), revision: 1 };
+          const sourceData = plan.source.data as TaskData, candidate = sourceData.candidate!;
+          const unit = planAttributionUnit(candidate, { data: { ...structuredClone(sourceData),
+            candidates: { A: candidate }, revision: 1,
+            reviewOf: { taskId: plan.source.id, round: selected[index]!.round, reasons: plan.reasons } },
+            dependencies: { ...(plan.source.dependencies.criteria ? { criteria: plan.source.dependencies.criteria } : {}) },
+            identity: randomUUID() });
+          review = unit.session; tasks.push(...unit.tasks);
+          for (const task of unit.tasks) state.manifest.states[task.id] = { ...pendingTaskProgress(), revision: 1 };
+          const config = state.manifest.config as AttributionJobConfig;
+          if (config.rewrite.attribution) {
+            const polish = attributionRewritePlaceholder(review.id, {
+              rewriteNames: { A: candidate.name },
+              case: { batch_id: candidate.batch_id, case_id: candidate.case_id, question: candidate.question },
+            });
+            tasks.push(polish); state.manifest.states[polish.id] = { ...pendingTaskProgress(), revision: 1 };
+          }
         }
         scope?.add(review.id);
         selected[index]!.review_task_id = review.id;

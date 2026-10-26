@@ -7,10 +7,6 @@
       "types": "./comparison.d.ts",
       "import": "./comparison.js"
     },
-    "./answer-review": {
-      "types": "./answer-review.d.ts",
-      "import": "./answer-review.js"
-    },
     "./attribution": {
       "types": "./attribution.d.ts",
       "import": "./attribution.js"

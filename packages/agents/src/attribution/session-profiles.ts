@@ -1,8 +1,8 @@
 import { Ajv2020 } from "ajv/dist/2020.js";
 import { ValidationError, resolveEvidenceSelection, schemaIssues, type AgentProfile, type AgentRequest, type JsonObject, type ToolAudit } from "@eval/contracts";
-import { agentPrompt } from "@eval/prompts";
+import { agentPrompt, attributionConditionalRules } from "@eval/prompts";
 import { parseEvidenceCoordinates } from "@eval/tools";
-import componentRequestSchema from "../../../../schemas/attribution/request.schema.json" with { type: "json" };
+import componentRequestSchema from "../../../../schemas/attribution/component-request.schema.json" with { type: "json" };
 import componentSubmissionSchema from "../../../../schemas/attribution/component-submission.schema.json" with { type: "json" };
 import componentResultSchema from "../../../../schemas/attribution/component-result.schema.json" with { type: "json" };
 import problemSchema from "../../../../schemas/attribution/problem.schema.json" with { type: "json" };
@@ -11,6 +11,8 @@ import traceResultSchema from "../../../../schemas/attribution/trace-result.sche
 import sessionSubmissionSchema from "../../../../schemas/attribution/session-summary-submission.schema.json" with { type: "json" };
 import sessionResultSchema from "../../../../schemas/attribution/session-result.schema.json" with { type: "json" };
 import { resolveAttributionEvidence } from "./source-evidence.js";
+import { investigationMaterial } from "./investigation-material.js";
+import { numericReferenceDirectory } from "./units.js";
 import type { ComponentReviewResult, SessionAttributionResult, SessionProblem, TraceAttributionResult } from "./types.js";
 
 const componentTools = [
@@ -22,6 +24,12 @@ const tracePrompt = agentPrompt("attribution", [], { profile: "trace", fileSubmi
 const sessionPrompt = agentPrompt("attribution", [], { profile: "session", fileSubmission: false });
 const componentSchema = new Ajv2020({ allErrors: true, strict: false }).compile(componentSubmissionSchema);
 const copy = <T>(value: T): T => structuredClone(value);
+const inline = <T>(value: T): T => {
+  const result = copy(value) as Record<string, unknown>;
+  delete result.$id;
+  delete result.$schema;
+  return result as T;
+};
 const bareProblem = copy(problemSchema) as Record<string, unknown>;
 delete bareProblem.$id;
 delete bareProblem.$schema;
@@ -29,9 +37,13 @@ const componentResult = copy(componentResultSchema) as any;
 componentResult.properties.problems.items = copy(bareProblem);
 const traceResult = copy(traceResultSchema) as any;
 traceResult.properties.problem.items = copy(bareProblem);
-const sessionResult = copy(sessionResultSchema) as any;
-sessionResult.properties.turns.items = copy(traceResult);
-sessionResult.properties.session_problem.items = copy(bareProblem);
+export const sessionAttributionResultSchema = copy(sessionResultSchema) as any;
+delete sessionAttributionResultSchema.$id;
+delete sessionAttributionResultSchema.$schema;
+const inlineTraceResult = inline(traceResult) as any;
+inlineTraceResult.properties.problem.items = copy(bareProblem);
+sessionAttributionResultSchema.properties.turns.items = inlineTraceResult;
+sessionAttributionResultSchema.properties.session_problem.items = copy(bareProblem);
 const requiredComponentRequest = structuredClone(componentRequestSchema) as { required: string[] };
 requiredComponentRequest.required.push("component", "trace_index");
 
@@ -98,7 +110,18 @@ export const componentAttributionProfile: AgentProfile = {
   evidenceSelections: true,
   ...componentPrompt,
   renderPrompt(input, policy, failure) {
-    return componentPrompt.renderPrompt({ ...input, component: input.component, trace_index: input.trace_index }, policy, failure);
+    const analysis = input.task_analysis as { requirements: Record<string, unknown>[]; scoring_points: Record<string, unknown>[]; red_flags: Record<string, unknown>[] };
+    const answer = input.answer as Record<string, unknown>, truth = input.ground_truth as { available: boolean; value: unknown };
+    const requirements = analysis.requirements.map((item, index) => ({ ...item, requirement_index: Number(item.requirement_index ?? index) + 1 }));
+    const numeric = truth.available ? numericReferenceDirectory(truth.value) : [];
+    const tables = answer.table_check_results as { rows: unknown[] }[] | undefined;
+    const images = answer.final_images as { image_count: number } | undefined;
+    const rules = attributionConditionalRules({ standardAnswer: truth.available, numeric: numeric.length > 0,
+      tableDoubts: Number(answer.table_check_count ?? 0) > 0 || (tables?.some(table => table.rows.length > 0) ?? false),
+      images: (images?.image_count ?? 0) > 0, captureGaps: Array.isArray(answer.capture_gaps) && answer.capture_gaps.length > 0 });
+    const shown = { ...input, component: input.component, trace_index: input.trace_index, task_analysis: { ...analysis, requirements } };
+    return (rules ? rules + "\n\n" : "") + componentPrompt.renderPrompt(investigationMaterial({ ...shown,
+      numeric_references: numeric.map(item => ({ ...item, reference_index: item.reference_index + 1 })) }), policy, failure);
   },
   toolNames: componentTools,
   resolve: componentReview,
@@ -124,7 +147,7 @@ export const sessionAttributionProfile: AgentProfile = {
   id: "session",
   requestSchema: { type: "object", required: ["session_meta", "qa", "turns"], additionalProperties: true },
   submissionSchema: sessionSubmissionSchema,
-  resultSchema: sessionResult,
+  resultSchema: sessionAttributionResultSchema,
   ...sessionPrompt,
   toolNames: [],
   resolve(request, draft) {

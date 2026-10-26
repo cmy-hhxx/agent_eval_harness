@@ -14,6 +14,7 @@ import {
   fileSourceReader, problemLibraryFile, readJson, withProblemLibraryLock, writeJson, writeJsonl,
 } from "@eval/data";
 import { applyClustering, type ClusteringResult, type ProblemOccurrenceReviewDecision } from "@eval/agents/clustering";
+import { sessionProblems } from "@eval/agents/attribution";
 import { buildPlan, createResultWriter, listConfiguredProblemLibrary, readConfiguredProblemClass, readRunState, reviewProblemOccurrences, syncProblemLibrary, taskObservations, writeRunState, type TaskData } from "@eval/workflows/comparison";
 import { type Candidate } from "@eval/workflows/inputs";
 import { ROOT } from "../../fixtures/services.js";
@@ -305,11 +306,11 @@ test("review rejects a same-label finding that has no original accepted observat
     const attrId = f.cluster.dependencies[occurrence.input_id]!;
     const original = f.state.receipts[attrId]!.exported!.row;
     const row = structuredClone(original);
-    const evaluation = row.evaluation as ReturnType<typeof attributionResult>;
-    const added = structuredClone(evaluation.Problem[0]!);
+    const evaluation = (row.session_meta ? row : row.evaluation) as ReturnType<typeof attributionResult>;
+    const added = structuredClone(sessionProblems(evaluation)[0]!);
     added.problem_id = "never-clustered";
     added.reason = "\uffffAnother independent problem definition absent from the original clustering request.";
-    evaluation.Problem.push(added);
+    evaluation.turns[0]!.problem.push(added);
     await writeJsonl(path.join(f.run, "results", "attribution.jsonl"),
       Object.values(f.state.receipts).filter(receipt => receipt.exported?.file === "attribution.jsonl")
         .map(receipt => receipt.taskId === attrId ? row : receipt.exported!.row));

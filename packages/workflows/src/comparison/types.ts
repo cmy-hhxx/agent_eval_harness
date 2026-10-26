@@ -40,7 +40,8 @@ export interface BatchPreflight {
   skipped_groups: number;
   input_issues: number;
 }
-export type Stage = "criteria" | "attribution" | "comparison" | "rewrite" | "clustering" | "instruction-review";
+export type Stage = "criteria" | "attribution-component" | "attribution-trace" | "attribution-session" |
+  "comparison" | "rewrite" | "clustering" | "instruction-review";
 /** The accepted result a rewrite task polishes. */
 export interface RewriteSource {
   stage: "attribution" | "comparison" | "clustering";
@@ -69,6 +70,8 @@ export interface ClusteringScope {
   budget: ClusteringBudget;
 }
 export interface TaskData {
+  /** Canonical attribution unit input, retained alongside the comparison candidates map. */
+  candidate?: Candidate;
   /** Independent answer retained even when no comparison consumes it. */
   standalone?: boolean;
   initialContextChars?: number;
@@ -113,4 +116,4 @@ export interface TaskData {
   revision?: number;
 }
 export type { Finding, TaskAnalysis, ComparisonResult } from "@eval/agents/comparison";
-export type { AttributionFinding, AttributionResult } from "@eval/agents/attribution";
+export type { ComponentReviewResult, SessionAttributionResult, SessionProblem, TraceAttributionResult } from "@eval/agents/attribution";

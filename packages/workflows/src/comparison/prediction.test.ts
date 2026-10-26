@@ -4,7 +4,7 @@ import path from "node:path";
 import { rm } from "node:fs/promises";
 import { writeJsonl } from "@eval/data";
 import { emptyUsage } from "@eval/contracts";
-import { attributionProfile } from "@eval/agents/attribution";
+import { componentAttributionProfile } from "@eval/agents/attribution";
 import { Ajv2020 } from "ajv/dist/2020.js";
 import { buildPlan } from "./input.js";
 import { bindTask } from "./binding.js";
@@ -56,7 +56,7 @@ test("prediction plan selects accepted pairs, supplies outcome evidence and pres
   assert.deepEqual(plan.inputs[task.inputIds.answer], input);
   const binding = bindTask(task, plan.inputs, {}, { tasks: plan.tasks });
   assert.equal((binding.request.input.ground_truth as { available: boolean }).available, true);
-  assert(attributionProfile.renderPrompt!(binding.modelInput!).includes("事前预测"));
+  assert(componentAttributionProfile.renderPrompt!(binding.modelInput!).includes("事前预测"));
   assert(!JSON.stringify(binding.request.sources).includes("old-comparison"));
   const comparison = plan.tasks.find(item => item.stage === "comparison")!;
   const receipts = new Map(plan.tasks.filter(item => item.stage === "attribution").map(item => [item.id, {

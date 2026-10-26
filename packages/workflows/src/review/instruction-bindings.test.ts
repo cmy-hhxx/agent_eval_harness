@@ -58,8 +58,8 @@ test("reference changes leave Criteria material unchanged and remain complete in
     const receipt: SubmissionReceipt = { taskId: criteriaTask.id, attemptId: randomUUID(), submissionId: randomUUID(),
       acceptedAt: 1, status: "succeeded", evaluatorVersion: "fixture", judge: "fixture", evaluation: analysis,
       audit: emptyAudit(), usage: emptyUsage() };
-    const task: PlannedTask = { id: randomUUID(), stage: "attribution", inputIds: { answer: candidates.A.input_id },
-      dependencies: { criteria: criteriaTask.id }, data: { stage: "attribution", candidates: { A: candidates.A }, reference } satisfies TaskData };
+    const task: PlannedTask = { id: randomUUID(), stage: "attribution-component", inputIds: { answer: candidates.A.input_id },
+      dependencies: { criteria: criteriaTask.id }, data: { stage: "attribution-component", candidate: candidates.A, candidates: { A: candidates.A }, reference } satisfies TaskData };
     const attribution = bindTask(task, inputs, { criteria: receipt }, { tasks: [criteriaTask, task] });
     const material = attribution.request.input.answer as { final_message_index: number; final_answer: string;
       final_evidence: { message_index: number; quote: string }[] };
@@ -92,9 +92,9 @@ for (const normFirst of [true, false]) test(`accepted merged Criteria retains no
   const receipt: SubmissionReceipt = { taskId: criteriaTask.id, attemptId: randomUUID(), submissionId: randomUUID(),
     acceptedAt: 1, status: "succeeded", evaluatorVersion: "fixture", judge: "fixture", evaluation: rubric,
     audit: emptyAudit(), usage: emptyUsage() };
-  const task: PlannedTask = { id: randomUUID(), stage: "attribution", inputIds: { answer: candidates.A!.input_id },
+  const task: PlannedTask = { id: randomUUID(), stage: "attribution-component", inputIds: { answer: candidates.A!.input_id },
     dependencies: { criteria: criteriaTask.id },
-    data: { stage: "attribution", candidates: { A: candidates.A! }, reference: null } satisfies TaskData };
+    data: { stage: "attribution-component", candidate: candidates.A!, candidates: { A: candidates.A! }, reference: null } satisfies TaskData };
   const binding = bindTask(task, inputs, { criteria: receipt }, { tasks: [criteriaTask, task] });
   const answer = binding.request.input.answer as { norm_directory: AttributionNorm[]; criterion_instruction_sources: Record<string, {
     message_index: number; path: string; quote: string }[]> };
@@ -140,8 +140,9 @@ test("01868 public USER leaf closes attribution without absorbing its private jo
   const receipt: SubmissionReceipt = { taskId: criteriaTask.id, attemptId: randomUUID(), submissionId: randomUUID(),
     acceptedAt: 1, status: "succeeded", evaluatorVersion: "fixture", judge: "fixture", evaluation: rubric,
     audit: emptyAudit(), usage: emptyUsage() };
-  const task: PlannedTask = { id: randomUUID(), stage: "attribution", inputIds: { answer: candidates.A!.input_id },
-    dependencies: { criteria: criteriaTask.id }, data: { stage: "attribution", candidates: { A: candidates.A! },
+  const task: PlannedTask = { id: randomUUID(), stage: "attribution-component", inputIds: { answer: candidates.A!.input_id },
+    dependencies: { criteria: criteriaTask.id }, data: { stage: "attribution-component", candidate: candidates.A!,
+      candidates: { A: candidates.A! },
       reference: "-0.6个百分点" } satisfies TaskData };
   const binding = bindTask(task, inputs, { criteria: receipt }, { tasks: [criteriaTask, task] });
   const answer = binding.request.input.answer as { norm_directory: AttributionNorm[]; criterion_instruction_sources: Record<string, {

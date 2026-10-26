@@ -2,7 +2,7 @@ import { readdir, stat } from "node:fs/promises";
 import path from "node:path";
 import { readJson } from "./files.js";
 
-export interface AssistantRunLocation { collectionId: string; runId: string; directory: string; workflow: "comparison" | "answer-review" }
+export interface AssistantRunLocation { collectionId: string; runId: string; directory: string; workflow: "comparison" | "attribution" }
 /** Only inspect known output categories and their task/run directories, never input or result trees. */
 export async function assistantRunLocations(root: string, includeTests = false) {
   if (!(await stat(root)).isDirectory()) throw new Error("评测数据根目录不是目录");
@@ -21,8 +21,8 @@ export async function assistantRunLocations(root: string, includeTests = false) 
           else {
             const state = await readJson<{ workflow?: string; kind?: string }>(path.join(directory, "state.json"));
             if (state.kind === "clustering-job") return;
-            if (state.workflow !== "answer-review") throw new Error("Comparison 运行缺少 overview.json");
-            runs.push({ collectionId, runId, directory, workflow: "answer-review" });
+            if (state.workflow !== "attribution") throw new Error("Comparison 运行缺少 overview.json");
+            runs.push({ collectionId, runId, directory, workflow: "attribution" });
           }
           return;
         }

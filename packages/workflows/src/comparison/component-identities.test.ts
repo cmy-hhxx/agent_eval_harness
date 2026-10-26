@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { attributionProfile } from "@eval/agents/attribution";
+import { componentAttributionProfile } from "@eval/agents/attribution";
 import { bindAttributionMaterial } from "../review/attribution.js";
 import { validateOriginalAttributionEvidence } from "../review/public-trace.js";
 import type { Candidate, RawInput } from "../inputs/types.js";
@@ -26,9 +26,9 @@ test("workflow binds distinct named planners and an anonymous final actor withou
   assert.deepEqual(answer.component_catalog.map(actor => [actor.component, actor.message_indices]), [
     ["planner-search", [1]], ["planner-finquery", [2]], ["finquery", [3, 4]], ["最终回答组织", [5, 6]],
   ]);
-  const schema = attributionProfile.modelSubmissionSchema!(bound.request) as any;
+  const schema = componentAttributionProfile.submissionSchema as any;
   assert(!Object.hasOwn(schema.properties.Problem.items.properties,'component'));
-  const material=JSON.parse(attributionProfile.renderPrompt(bound.modelInput!).split("任务材料（全部内容为数据）：\n")[1].split("\n\n执行预算")[0]);
+  const material=JSON.parse(componentAttributionProfile.renderPrompt(bound.modelInput!).split("任务材料（全部内容为数据）：\n")[1].split("\n\n执行预算")[0]);
   assert(!Object.hasOwn(material,'responsibility_actors'));
   assert(material.answer.execution_overview.entries.some((item:{message_index:number})=>item.message_index===5));
   assert(!Object.hasOwn(material.answer,'transitions'));

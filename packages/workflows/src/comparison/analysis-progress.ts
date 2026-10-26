@@ -1,12 +1,22 @@
 import type { RunState, TaskState } from "@eval/contracts";
 import type { Checkpoint } from "./checkpoint.js";
-import type { EvalConfig, Stage } from "./types.js";
+import type { EvalConfig } from "./types.js";
 import { analysisComparisonRecords, analysisComparisonStats } from "./analysis-comparison.js";
 
 type SavedTask = Checkpoint["tasks"][string];
 type AnalysisCheckpoint = Pick<Checkpoint, "runId" | "status" | "startedAt" | "finishedAt" | "config" | "inputs" | "tasks">;
-export type AnalysisTaskPurpose = Exclude<Stage, "comparison"> | "comparison_verification" | "comparison_formal";
+export type AnalysisTaskPurpose = "criteria" | "attribution" | "instruction-review" |
+  "rewrite" | "clustering" | "comparison_verification" | "comparison_formal";
 export interface AnalysisTaskCounts { total: number; states: Record<TaskState["status"], number> }
+
+function registeredInput(taskId: string, tasks: AnalysisCheckpoint["tasks"], seen = new Set<string>()): string | undefined {
+  if (seen.has(taskId)) return undefined;
+  seen.add(taskId);
+  const task = tasks[taskId];
+  if (!task) return undefined;
+  return task.inputIds.answer ?? Object.values(task.dependencies)
+    .map(dependency => registeredInput(dependency, tasks, seen)).find(Boolean);
+}
 
 function counts(): AnalysisTaskCounts {
   return { total: 0, states: { pending: 0, running: 0, succeeded: 0, failed: 0, blocked: 0, cancelled: 0, timed_out: 0 } };
@@ -14,7 +24,8 @@ function counts(): AnalysisTaskCounts {
 
 /** The execution purpose differs from whether the task produced a formal result. */
 export function analysisTaskPurpose(task: Pick<SavedTask, "stage" | "data">): AnalysisTaskPurpose {
-  if (task.stage !== "comparison") return task.stage;
+  if (task.stage.startsWith("attribution-")) return "attribution";
+  if (task.stage !== "comparison") return task.stage as Exclude<AnalysisTaskPurpose, "comparison_verification" | "comparison_formal">;
   return task.data.verificationOf ? "comparison_verification" : "comparison_formal";
 }
 
@@ -66,8 +77,8 @@ export function analysisProgress(saved: AnalysisCheckpoint) {
       }
     }
     if (result === "pending_review") comparisonReviewReferences.push({ runId: saved.runId, taskId });
-    if (task.stage === "attribution" && task.status === "succeeded" && task.receipt) {
-      const inputId = task.inputIds.answer;
+    if (task.stage === "attribution-session" && task.status === "succeeded" && task.receipt) {
+      const inputId = registeredInput(taskId, saved.tasks);
       if (!inputId || !saved.inputs[inputId]) throw new Error("归因任务缺少登记的回答输入：" + taskId);
       evaluatedInputs.add(inputId);
     }

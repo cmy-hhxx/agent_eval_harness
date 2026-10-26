@@ -1,4 +1,5 @@
 import { isDeepStrictEqual } from "node:util";
+import { sessionCorrectness, sessionProblems } from "@eval/agents/attribution";
 
 const key = (sample) => JSON.stringify([sample.case.batch_id, sample.case.case_id, sample.versions]);
 const caseKey = (sample) => JSON.stringify([sample.case.batch_id, sample.case.case_id]);
@@ -24,7 +25,7 @@ function validateDecision(versions, assessments, outcome, winner) {
 }
 function decisiveBasis(row, versions) {
   return row.decision_basis.decisive_findings.filter((ref) => versions.includes(ref.candidate)).map((ref) => {
-    const finding = row.evaluations[ref.candidate]?.Problem?.[ref.finding_index];
+    const finding = row.evaluations[ref.candidate] ? sessionProblems(row.evaluations[ref.candidate])[ref.finding_index] : undefined;
     if (!finding) throw new Error("Decisive finding reference does not exist");
     const { stage_trace: _trace, ...value } = finding;
     return { candidate: ref.candidate, finding: value };
@@ -51,7 +52,7 @@ export function pairSamples(rows, traceByComparison = new Map()) {
     if (row.ground_truth?.available !== row.has_standard_answer || !Object.hasOwn(row.ground_truth, "value"))
       throw new Error("Standard-answer availability differs from the bound reference");
     for (const version of versions) {
-      const correct = row.evaluations[version].is_correct;
+      const correct = sessionCorrectness(row.evaluations[version]);
       if ((correct !== null && typeof correct !== "boolean") || (!row.has_standard_answer && correct !== null))
         throw new Error("Correctness requires an objective, explicitly judged answer");
     }
@@ -78,7 +79,7 @@ export function pairSamples(rows, traceByComparison = new Map()) {
         has_standard_answer: row.has_standard_answer,
         ground_truth: structuredClone(row.ground_truth),
         common_criteria: commonCriteria(row.task_analysis),
-        is_correct: Object.fromEntries(pair.map((version) => [version, row.evaluations[version].is_correct])),
+        is_correct: Object.fromEntries(pair.map((version) => [version, sessionCorrectness(row.evaluations[version])])),
         trace,
         decision_basis: {
           tradeoff: row.decision_basis.tradeoff,

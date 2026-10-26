@@ -3,7 +3,6 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { Ajv2020 } from "ajv/dist/2020.js";
 import type { ModelConfig, ToolResult } from "@eval/contracts";
-import type { AttributionSubmission } from "@eval/agents/attribution";
 import type { ComparisonSubmission } from "@eval/agents/comparison";
 import type { ClusteringSubmission } from "@eval/agents/clustering";
 import { activeToolNames, contentToolName, inlineToolSchema, providerConfig, transformPayload } from "./sdk-utils.js";
@@ -99,9 +98,6 @@ test("tool schema references preserve sibling constraints through conjunction an
 
 // These payloads exercise the model-facing schema transport; Agent tests own business validation.
 const submissions = {
-  attribution: {
-    summary: "回答完成计算。", is_correct: true, correct_reason: "与标准一致。", Problem: [],
-  } satisfies AttributionSubmission,
   comparison: {
     assessments: [{candidate:"A",meets_core:true,summary:"已完成。",core_failure_refs:[]},{candidate:"B",meets_core:true,summary:"已完成。",core_failure_refs:[]}], quality_winner: null, relative_preference: "A",
     tradeoff: "双方均完成核心要求。",

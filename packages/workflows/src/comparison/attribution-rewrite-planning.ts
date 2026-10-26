@@ -4,7 +4,7 @@ import type { RewriteResult } from "@eval/agents/rewrite";
 import { attributionRewriteGroups, attributionSlots } from "./commentary.js";
 import { sourceRewriteTasks } from "./rewrite-projection.js";
 import { pendingTaskProgress } from "../review/task-progress.js";
-import type { AttributionResult, EvalConfig, TaskData } from "./types.js";
+import type { EvalConfig, SessionAttributionResult, TaskData } from "./types.js";
 
 /** The result determines groups only after acceptance; this task reserves its first group. */
 export function attributionRewritePlaceholder(
@@ -19,8 +19,8 @@ export function attributionRewritePlaceholder(
 export function planAttributionRewriteGroups(
   source: PlannedTask, receipt: SubmissionReceipt, state: RunState, rewrites = sourceRewriteTasks(state.manifest.tasks, source.id),
 ): ReturnType<NonNullable<WorkflowDefinition["advance"]>> {
-  if (source.stage !== "attribution" || !(state.manifest.config as EvalConfig).rewrite.attribution) return { tasks: [] };
-  const result = receipt.evaluation as AttributionResult;
+  if (source.stage !== "attribution-session" || !(state.manifest.config as EvalConfig).rewrite.attribution) return { tasks: [] };
+  const result = receipt.evaluation as SessionAttributionResult;
   const filled = new Set(rewrites.filter(task => state.receipts[task.id]).flatMap(task =>
     (state.receipts[task.id]!.evaluation as RewriteResult).rewrites.map(item => item.id)));
   const claimed = new Set(rewrites.filter(task => !state.receipts[task.id]).flatMap(task => (task.data as TaskData).rewriteSlotIds ?? []));
@@ -61,8 +61,8 @@ export function supersededAttributionRewriteIds(state: RunState): Set<string> {
   }
   const superseded = new Set<string>();
   for (const [sourceId, rewrites] of bySource) {
-    if (sources.get(sourceId)?.stage !== "attribution" || !state.receipts[sourceId]) continue;
-    const slots = attributionSlots(state.receipts[sourceId]!.evaluation as AttributionResult).map(slot => slot.id);
+    if (sources.get(sourceId)?.stage !== "attribution-session" || !state.receipts[sourceId]) continue;
+    const slots = attributionSlots(state.receipts[sourceId]!.evaluation as SessionAttributionResult).map(slot => slot.id);
     const owners = new Set(latestAttributionRewriteTasks(rewrites, sourceId, slots).map(task => task.id));
     for (const task of rewrites) if (!state.receipts[task.id] && !owners.has(task.id)) superseded.add(task.id);
   }
@@ -80,7 +80,7 @@ export function reconcileAttributionRewriteGroups(state: RunState, preserveCompl
     if (data.standardConflictReview) proposals.add(data.reviewOf!.taskId);
   }
   for (const source of [...state.manifest.tasks]) {
-    if (source.stage !== "attribution" || !state.receipts[source.id]) continue;
+    if (source.stage !== "attribution-session" || !state.receipts[source.id]) continue;
     const rewrites = bySource.get(source.id) ?? [];
     if (preserveCompletedResults && rewrites.length && rewrites.every(task => state.receipts[task.id])) continue;
     if (scope && !scope.has(source.id) && !rewrites.some(task => scope.has(task.id))) continue;

@@ -3,7 +3,7 @@ import { instructionReviewAgent } from "@eval/agents/instruction-review";
 import { configurationSecrets } from "./settings.js";
 import { AgentRegistry } from "@eval/host";
 import { comparisonAgent, comparisonProfile } from "@eval/agents/comparison";
-import { attributionAgent, attributionProfile } from "@eval/agents/attribution";
+import { attributionAgent, componentAttributionProfile, sessionAttributionProfile, traceAttributionProfile } from "@eval/agents/attribution";
 import { rewriteAgent, rewriteProfile } from "@eval/agents/rewrite";
 import { clusteringAgent, clusteringProfile } from "@eval/agents/clustering";
 import { criteriaAgent, criteriaProfile } from "@eval/agents/criteria";
@@ -31,7 +31,9 @@ export const services = {
       profiles: Object.fromEntries(
         Object.entries({
           criteria: criteriaProfile,
-          attribution: attributionProfile,
+          "attribution-component": componentAttributionProfile,
+          "attribution-trace": traceAttributionProfile,
+          "attribution-session": sessionAttributionProfile,
           comparison: comparisonProfile,
           rewrite: rewriteProfile,
           clustering: clusteringProfile,

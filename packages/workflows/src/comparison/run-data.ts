@@ -80,10 +80,10 @@ export async function reconcileRun(_run: string, state: RunState, current: unkno
     const data = task.data as TaskData;
     if (data.standardConflictReview && data.reviewOf && !state.receipts[task.id]) dependencies.add(data.reviewOf.taskId);
   }
-  for (const task of tasks.values()) if (task.stage === "attribution" && !state.receipts[task.id])
+  for (const task of tasks.values()) if (task.stage === "attribution-session" && !state.receipts[task.id])
     (task.data as TaskData).standardAnswerReview = selected.standardAnswerReview === true;
   for (const [id, task] of tasks)
-    if (task.stage === "attribution" && !dependencies.has(id) && !state.receipts[id] &&
+    if (task.stage === "attribution-session" && !dependencies.has(id) && !state.receipts[id] &&
       !(task.data as TaskData).standardConflictReview && !(task.data as TaskData).standalone) tasks.delete(id);
   // Unfinished tasks whose source records are no longer available are dropped with a diagnostic
   // instead of aborting the run; accepted work is never affected.
@@ -117,7 +117,7 @@ export async function reconcileRun(_run: string, state: RunState, current: unkno
     if (task.stage === "criteria" && !state.receipts[id] && !requiredCriteria.has(id)) tasks.delete(id);
   plan.tasks = [...tasks.values()];
   plan.summary.issues = issues;
-  plan.summary.attribution_tasks = plan.tasks.filter((task) => task.stage === "attribution").length;
+  plan.summary.attribution_tasks = plan.tasks.filter((task) => task.stage === "attribution-session").length;
   plan.summary.criteria_tasks = plan.tasks.filter((task) => task.stage === "criteria").length;
   plan.summary.comparison_tasks = plan.tasks.filter((task) => task.stage === "comparison" && !(task.data as TaskData).verificationAudit).length;
   plan.summary.comparison_verification_tasks = plan.tasks.filter(task => !!(task.data as TaskData).verificationAudit).length;
@@ -125,7 +125,7 @@ export async function reconcileRun(_run: string, state: RunState, current: unkno
   plan.summary.clustering_tasks = plan.tasks.filter((task) => task.stage === "clustering").length;
   for (const [batch, counts] of Object.entries(plan.summary.by_batch as Record<string, BatchPreflight>)) {
     const selected = plan.tasks.filter((task) => taskIdentity(task.data as TaskData).batch_id === batch);
-    counts.attribution_tasks = selected.filter((task) => task.stage === "attribution").length;
+    counts.attribution_tasks = selected.filter((task) => task.stage === "attribution-session").length;
     counts.comparison_verification_tasks = selected.filter(task => !!(task.data as TaskData).verificationAudit).length;
     counts.comparison_tasks = selected.filter((task) => task.stage === "comparison" && !(task.data as TaskData).verificationAudit).length;
   }

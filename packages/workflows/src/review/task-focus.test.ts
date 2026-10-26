@@ -3,7 +3,8 @@ import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
 import { emptyUsage, type PlannedTask, type SubmissionReceipt, type TaskAnalysis } from "@eval/contracts";
 import { agentPrompt } from "@eval/prompts";
-import { cite, evidenceSources, parseEvidenceCoordinates, resolveEvidence } from "@eval/tools";
+import { componentAttributionProfile } from "@eval/agents/attribution";
+import { parseEvidenceCoordinates, resolveEvidence } from "@eval/tools";
 import { comparisonWorkflow } from "../comparison/workflow.js";
 import { taskAnalysisPresentation, taskFocus } from "./task-focus.js";
 import { attributionResult, comparisonResult, criteriaResult, emptyAudit } from "../../../../tests/fixtures/comparison.js";
@@ -109,23 +110,22 @@ test("public judgment bindings keep global indices and separate blind originals 
     evaluation, audit: emptyAudit(), usage: emptyUsage() });
   const criterionReceipt = receipt(criteriaTask.id, analysis);
   for (const mode of ["attribution", "comparison", "verification"] as const) {
-    const stage = mode === "attribution" ? "attribution" : "comparison";
-    const chosen = stage === "attribution" ? { A: candidates.A! } : candidates;
+    const stage = mode === "attribution" ? "attribution-component" : "comparison";
+    const chosen = mode === "attribution" ? { A: candidates.A! } : candidates;
     const task: PlannedTask = { id: randomUUID(), stage, dependencies: { criteria: criteriaTask.id },
-      inputIds: stage === "attribution" ? { answer: candidates.A!.input_id }
+      inputIds: mode === "attribution" ? { answer: candidates.A!.input_id }
         : Object.fromEntries(Object.entries(chosen).map(([label, candidate]) => [label, candidate.input_id])),
-      data: { stage, candidates: chosen, reference: null, ...(stage === "comparison" ? { group: ["version-A", "version-B"] } : {}) } satisfies TaskData };
+      data: { stage, candidate: candidates.A!, candidates: chosen, reference: null, ...(stage === "comparison" ? { group: ["version-A", "version-B"] } : {}) } satisfies TaskData };
     const dependencies: Record<string, SubmissionReceipt> = { criteria: criterionReceipt };
-    if (stage === "comparison") for (const label of ["A", "B"]) {
-      task.dependencies[label] = randomUUID();
-      const attribution = attributionResult(true, `${label} 完整最终回答。`, false, candidates[label]!.input_id);
-      const owner = candidates[label]!.input_id, actual = inputs[owner];
-      const answer = cite(owner, 2, evidenceSources(actual.messages[2]).find(source => source.kind === "text" && source.path === "/content")!, 0, `${label} 完整最终回答。`.length);
-      const question = cite(owner, 1, evidenceSources(actual.messages[1]).find(source => source.kind === "text" && source.path === "/content")!, 0, candidates[label]!.question.length);
-      if(attribution.Problem.length)attribution.Problem[0]!.evidence = [answer,question].map(e=>({...e,purposes:["问题"]}));
-      dependencies[label] = receipt(task.dependencies[label]!, attribution);
-    }
     const contextTasks = [criteriaTask, task];
+    if (stage === "comparison") for (const label of ["A", "B"]) {
+      const sourceId = randomUUID();
+      task.dependencies[label] = sourceId;
+      const attribution = attributionResult(true, `${label} 完整最终回答。`, false, candidates[label]!.input_id);
+      contextTasks.push({ id: sourceId, stage: "attribution-session", dependencies: { criteria: criteriaTask.id }, inputIds: {},
+        data: { stage: "attribution-session", candidate: candidates[label]!, candidates: { [label]: candidates[label]! }, reference: null } });
+      dependencies[label] = receipt(sourceId, attribution);
+    }
     if (mode === "verification") {
       const primaryTask: PlannedTask = { ...task, id: randomUUID(), dependencies: { ...task.dependencies },
         data: { ...(task.data as TaskData) } satisfies TaskData };
@@ -183,17 +183,17 @@ test("public judgment bindings keep global indices and separate blind originals 
     const focus = shown.task_focus as ReturnType<typeof taskFocus> | undefined;
     assert.deepEqual((shown.task_analysis as ReturnType<typeof taskAnalysisPresentation>).requirements.map(item => item.requirement_index), [0, 1, 2, 3]);
     const answer = shown.answer as { question: string; final_evidence: { quote: string }[] } | undefined;
-    const finalAnswer = stage === "attribution" ? answer!.final_evidence.map(item => item.quote).join("") : focus!.answers.A!.final_answer;
-    const question = stage === "attribution" ? answer!.question : focus!.question;
+    const finalAnswer = mode === "attribution" ? answer!.final_evidence.map(item => item.quote).join("") : focus!.answers.A!.final_answer;
+    const question = mode === "attribution" ? answer!.question : focus!.question;
     assert.equal(finalAnswer, "A 完整最终回答。");
-    if (stage === "attribution") assert(!Object.hasOwn(shown, "task_focus"));
+    if (mode === "attribution") assert(!Object.hasOwn(shown, "task_focus"));
     else {
       assert(!Object.hasOwn(focus!, "goal"));
       assert(!Object.hasOwn(focus!, "common_requirements"));
       assert(!JSON.stringify(focus).includes(analysis.requirements[1]!.text));
       assert.equal(focus!.answers.A!.question_timestamp, "2026-09-24T22:07:25.270Z");
     }
-    const profile = agentPrompt(stage, [], { fileSubmission: false });
+    const profile = mode === "attribution" ? componentAttributionProfile : agentPrompt("comparison", [], { fileSubmission: false });
     const prompt = profile.renderPrompt(shown);
     assert(profile.systemPrompt.includes(profile.instructions), "fixed stage instructions belong to the system prompt");
     assert(prompt.indexOf(JSON.stringify(question)) >= 0);

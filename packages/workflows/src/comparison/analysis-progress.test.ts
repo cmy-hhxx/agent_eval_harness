@@ -41,9 +41,9 @@ test("whole-run progress counts business identities and accepted outputs without
     },
     tasks: {
       criteria: task("criteria", "pending"),
-      attribution: task("attribution", "succeeded", { reference: null }, { answer: "own", peer_B: "peer" }, "attribution.jsonl"),
-      repeatedAttribution: task("attribution", "succeeded", { reference: null }, { answer: "own" }, "attribution.jsonl"),
-      timedOut: task("attribution", "timed_out"),
+      attribution: task("attribution-session", "succeeded", { reference: null }, { answer: "own", peer_B: "peer" }, "attribution.jsonl"),
+      repeatedAttribution: task("attribution-session", "succeeded", { reference: null }, { answer: "own" }, "attribution.jsonl"),
+      timedOut: task("attribution-session", "timed_out"),
       audit: task("comparison", "succeeded", { reference: null, verificationAudit: true, verificationOf: { taskId: "acceptedComparison" } }, {}, "comparison-verification.jsonl"),
       acceptedComparison: task("comparison", "succeeded", { reference: null }, {}, ""),
       failedVerification: task("comparison", "failed", { reference: null, verificationAudit: true, verificationOf: { taskId: "acceptedComparison" } }),

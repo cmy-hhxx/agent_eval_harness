@@ -45,5 +45,5 @@ test("an explicitly empty return remains readable process evidence instead of an
   const returned = chain.checkpoints.find((point: any) => point.step === "原始返回及字段含义");
   assert.equal(returned.availability, "available");
   assert(returned.evidence.some((item: any) => /"output":\s*""/u.test(item.quote)));
-  assert.equal(attributionAgent.profiles.default.requiredReads,undefined);
+  assert.equal(attributionAgent.profiles.component!.requiredReads,undefined);
 });

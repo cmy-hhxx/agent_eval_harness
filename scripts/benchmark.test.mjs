@@ -32,14 +32,15 @@ test("draft collection uses loaded JSON for either current submission mode and s
 
 const inputIds = { a: "11111111-1111-4111-8111-111111111111", b: "22222222-2222-4222-8222-222222222222", c: "33333333-3333-4333-8333-333333333333" };
 const problem = (version) => ({
-  problem_id: "p1", text: "回答结果不完整", reason: "回答没有给出最终数值。", evidence_status: "已确认",
-  evidence: [{ evidence_id: `ev_${inputIds[version]}_1_text_0_1_/content`, message_index: 1, quote: "4", purposes: ["问题"] }],
-  component: "模型自身推理", attribution_reason: "模型自身生成结果缺少最终数值。",
+  problem_id: "p1", component: "模型自身推理", label: "回答结果不完整", definition: "最终回答缺少所求数值。",
+  problem_phenomena: "回答没有给出最终数值。", reason: "最终回答缺少结果。",
+  evidence: [{ position: "trace_index 0 / message_index 1 / path /content", component: "answer: 终稿生成轮", quote: "4", reason: "证明最终回答。" }],
 });
 function row(caseId = "one", versions = ["a", "b"], winner = null) {
   const evaluations = Object.fromEntries(versions.map((version) => [version, {
-    meta: { input_id: inputIds[version] }, summary: "完成查询", has_standard_answer: false,
-    is_correct: null, correct_reason: null, Problem: [problem(version)],
+    session_meta: { input_id: inputIds[version], batch_id: "batch", case_id: caseId, session_id: `session-${caseId}-${version}` },
+    turns: [{ meta: {}, summary: "完成查询", problem: [problem(version)], is_correct: null, correct_reason: null }],
+    session_summary: "完成查询", session_problem: [],
   }]));
   const verdicts = {};
   for (let i = 0; i < versions.length; i++) for (const second of versions.slice(i + 1)) {
@@ -70,7 +71,7 @@ test("current pair exports drive stable/change/missing comparisons and reject in
   const before = row(), samples = pairSamples([before]);
   assert.equal(samples.size, 1);
   const changed = structuredClone(before);
-  changed.evaluations.a.Problem[0].text = "另一种问题描述";
+  changed.evaluations.a.turns[0].problem[0].problem_phenomena = "另一种问题描述";
   const report = compareSamples(samples, pairSamples([changed]));
   assert.equal(report.stable, 1);
   assert.equal(report.samples[0].decisive_basis_changed, true);
@@ -80,7 +81,7 @@ test("current pair exports drive stable/change/missing comparisons and reject in
     ["duplicate pair", () => pairSamples([before, { ...structuredClone(before), comparison_id: "other" }]), /duplicate case\/model pair/],
     ["missing verdict", () => { const value = structuredClone(before); delete value.verdicts.a__vs__b; return pairSamples([value]); }, /Missing or duplicate verdict/],
     ["orphan finding", () => { const value = structuredClone(before); value.decision_basis.decisive_findings[0].finding_index = 9; return pairSamples([value]); }, /reference does not exist/],
-    ["invalid correctness", () => { const value = structuredClone(before); value.evaluations.a.is_correct = true; return pairSamples([value]); }, /Correctness requires/],
+    ["invalid correctness", () => { const value = structuredClone(before); value.evaluations.a.turns[0].is_correct = 1; return pairSamples([value]); }, /Correctness requires/],
     ["invalid envelope", () => pairSamples([{ case: before.case, verdict: before.verdicts.a__vs__b }]), /current comparison.jsonl envelope/],
   ];
   for (const [, invoke, expected] of cases) assert.throws(invoke, expected);
@@ -92,9 +93,8 @@ test("summary counts answers once by case, separates correctness, and keeps cont
     value.has_standard_answer = true;
     value.ground_truth = { available: true, value: "4" };
     for (const version of Object.keys(value.evaluations)) {
-      value.evaluations[version].has_standard_answer = true;
-      value.evaluations[version].is_correct = version === "b" ? false : version === "c" ? null : true;
-      value.evaluations[version].correct_reason = "按给定标准核对。";
+      value.evaluations[version].turns[0].is_correct = version === "b" ? 0 : version === "c" ? null : 1;
+      value.evaluations[version].turns[0].correct_reason = "按给定标准核对。";
     }
   }
   const summary = summarizeSamples(pairSamples([...objective, subjective]), { rounds: 100 });

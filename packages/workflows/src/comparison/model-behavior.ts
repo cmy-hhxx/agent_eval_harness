@@ -1,6 +1,6 @@
-import { responsibilityLabels as technicalResponsibilityLabels } from "@eval/agents/attribution";
+import { sessionProblems, type SessionAttributionResult } from "@eval/agents/attribution";
 import { canonical, type PlannedTask, type SubmissionReceipt } from "@eval/contracts";
-import type { AttributionResult, TaskData } from "./types.js";
+import type { TaskData } from "./types.js";
 
 export type ResponsibilityGroup = "known" | "unknown" | "unconfirmed";
 export const responsibilityLabels: Record<ResponsibilityGroup, string> = {
@@ -37,7 +37,7 @@ export function modelBehavior(tasks: readonly PlannedTask[], receipts: Readonly<
   const comparisons = tasks.filter(task => task.stage === "comparison" && !(task.data as TaskData).verificationAudit);
   const referenced = new Set(comparisons.flatMap(task => Object.keys((task.data as TaskData).candidates).map(label => task.dependencies[label])));
   const comparedInputs = new Set(comparisons.flatMap(task => Object.values(task.inputIds)));
-  const attributionTasks = tasks.filter(task => task.stage === "attribution");
+  const attributionTasks = tasks.filter(task => task.stage === "attribution-session");
   const byId = new Map(attributionTasks.map(task => [task.id, task]));
   // A consumer can already point to a pending review; retain its last accepted same-input source.
   for (const id of [...referenced]) {
@@ -77,11 +77,10 @@ export function modelBehavior(tasks: readonly PlannedTask[], receipts: Readonly<
     if (!row) rows.set(candidate.input_id, row = { input_id: candidate.input_id, batch_id: candidate.batch_id,
       case_id: candidate.case_id, version: candidate.version, sources: [], findings: [] });
     row.sources.push(source);
-    for (const finding of (receipt.evaluation as AttributionResult).Problem) {
-      const components = technicalResponsibilityLabels(finding).sort();
-      const responsibility: ResponsibilityGroup = finding.evidence_status !== "已确认" ? "unconfirmed"
-        : !components.length ? "unknown" : "known";
-      const observation = { finding_id: finding.problem_id, responsibility, components, text: finding.text,
+    for (const finding of sessionProblems(receipt.evaluation as SessionAttributionResult)) {
+      const components = finding.component.split(" / ").filter(Boolean).sort();
+      const responsibility: ResponsibilityGroup = !components.length ? "unknown" : "known";
+      const observation = { finding_id: finding.problem_id, responsibility, components, text: finding.problem_phenomena,
         impact: finding.reason, source_conflict: false };
       const existing = row.findings.find(item => item.finding_id === finding.problem_id);
       if (!existing) row.findings.push({ ...observation, sources: [source] });

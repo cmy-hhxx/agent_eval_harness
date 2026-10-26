@@ -53,8 +53,8 @@ test("Workflow binding preserves coordinate-shaped business fields in actual ori
       source_unit: "seconds", source_values: {}, source_fields: {} } };
   const criteria: PlannedTask = { id: "criteria", stage: "criteria", inputIds: { A: id }, dependencies: {},
     data: { stage: "criteria", candidates: { A: candidate }, reference: business } satisfies TaskData };
-  const task: PlannedTask = { id: "attribution", stage: "attribution", inputIds: { answer: id }, dependencies: { criteria: criteria.id },
-    data: { stage: "attribution", candidates: { A: candidate }, reference: business } satisfies TaskData };
+  const task: PlannedTask = { id: "attribution", stage: "attribution-component", inputIds: { answer: id }, dependencies: { criteria: criteria.id },
+    data: { stage: "attribution-component", candidate, candidates: { A: candidate }, reference: business } satisfies TaskData };
   const source = { messages: [{ role: "system", content: business }, { role: "user", content: business }, { role: "assistant", content: "回答。" }] };
   const receipt: SubmissionReceipt = { taskId: criteria.id, status: "succeeded", attemptId: "prior", submissionId: "accepted", acceptedAt: 1,
     evaluatorVersion: "fixture", judge: "fixture", evaluation: criteriaResult(), audit: emptyAudit(), usage: emptyUsage() };
@@ -83,8 +83,8 @@ function bindMaterial(source: RawInput, initialContextChars: number) {
     final_index: source.messages.length - 1, answer_timing: { finish_seconds: 1 } } as Candidate;
   const criteria: PlannedTask = { id: "criteria", stage: "criteria", inputIds: { A: id }, dependencies: {},
     data: { stage: "criteria", candidates: { A: candidate }, reference: null } satisfies TaskData };
-  const task: PlannedTask = { id: "attribution", stage: "attribution", inputIds: { answer: id }, dependencies: { criteria: criteria.id },
-    data: { stage: "attribution", candidates: { A: candidate }, reference: null, initialContextChars } satisfies TaskData };
+  const task: PlannedTask = { id: "attribution", stage: "attribution-component", inputIds: { answer: id }, dependencies: { criteria: criteria.id },
+    data: { stage: "attribution-component", candidate, candidates: { A: candidate }, reference: null, initialContextChars } satisfies TaskData };
   const receipt: SubmissionReceipt = { taskId: criteria.id, status: "succeeded", attemptId: "prior", submissionId: "accepted", acceptedAt: 1,
     evaluatorVersion: "fixture", judge: "fixture", evaluation: criteriaResult(), audit: emptyAudit(), usage: emptyUsage() };
   return comparisonWorkflow.bind(task, { [id]: source }, { criteria: receipt }, { tasks: [criteria, task] });
