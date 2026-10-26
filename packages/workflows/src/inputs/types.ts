@@ -78,6 +78,8 @@ export interface EvaluationInputs {
 
 export type EvaluationExecution = Policy & {
   concurrency: number;
+  /** Local task slots; model permits stay global when shared by concurrent day runs. */
+  taskConcurrency?: number;
   retries: number;
   retryDelaySeconds: number;
   initialContextChars: number;

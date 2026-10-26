@@ -42,7 +42,7 @@ async function command(executable:string,args:string[],env:NodeJS.ProcessEnv,sig
     child.once('error',error=>{cleanup();reject(error);});child.once('close',(code,stopped)=>{cleanup();code===0?resolve():reject(Error(`${executable} exited ${code??stopped}: ${stderr}`));});
   });
 }
-export function aimeScopedHost(base:HostConfig,job:AimeJob,concurrency:number):AnswerReviewHostConfig{
+export function aimeScopedHost(base:HostConfig,job:AimeJob,concurrency:number,taskConcurrency?:number):AnswerReviewHostConfig{
   const source=structuredClone(base),models=new Set(job.records.map(r=>r.model));
   const inputs={timing_unit:source.evaluation.inputs.timing_unit,
     versions:source.evaluation.inputs.versions.filter(v=>models.has(v.id)).map(v=>({...v,
@@ -51,7 +51,7 @@ export function aimeScopedHost(base:HostConfig,job:AimeJob,concurrency:number):A
   if(inputs.versions.length!==models.size)throw Error('AIME模型组未在当前配置登记');
   return {...source,workflow:'answer-review',evaluation:{workflow:'answer-review',inputs,
     output:{kind:'directory',path:path.dirname(job.output)},rewrite:{attribution:false},
-    execution:{...source.evaluation.execution,concurrency}}};
+    execution:{...source.evaluation.execution,concurrency,...(taskConcurrency?{taskConcurrency}:{})}}};
 }
 export interface AimeRunOptions {
   signal:AbortSignal;pauseSignal?:AbortSignal;modelRequests?:ModelRequestControl;watch?:boolean;manualRetry?:boolean;
@@ -66,7 +66,6 @@ export async function runAimeEvaluation(c:AimeConfiguration,options:AimeRunOptio
   try{release=await runLock(c.stateDirectory);}
   catch(error){if(await hasLiveRunOwner(c.stateDirectory))throw Error('AIME正由另一个进程运行，请先停止原aime-auto或CLI进程，再从工作台启动');throw error;}
   let firstCycle=true;
-  let activeJobs=0;
   try{
     const settings=await readSettings(c.settingsFile);
     const bypass=[settings.environment.no_proxy||settings.environment.NO_PROXY||process.env.no_proxy||process.env.NO_PROXY,'127.0.0.1','localhost','::1'].filter(Boolean).join(',');
@@ -94,9 +93,9 @@ export async function runAimeEvaluation(c:AimeConfiguration,options:AimeRunOptio
         ...(firstCycle?{async existingRecords(){const file=path.join(c.stateDirectory,'catalog.json');await invoke('catalog',file);
           const catalog=await readJson<{records:AimeRecord[];exclusions:typeof historicalExclusions}>(file);historicalExclusions=catalog.exclusions;return catalog.records;}}:{}),
         async evaluate(job,capacity,signal){
-          activeJobs++;
           try{
-          const host=aimeScopedHost(await getHost(),job,capacity),config={...host.evaluation,workflow:'answer-review' as const,reviewStages:['score','attribution'] as ('score'|'attribution')[]},
+          const modelConcurrency=Math.max(1,options.modelRequests?.concurrency()??c.concurrency),taskConcurrency=Math.max(1,capacity*2);
+          const host=aimeScopedHost(await getHost(),job,modelConcurrency,taskConcurrency),config={...host.evaluation,workflow:'answer-review' as const,reviewStages:['score','attribution'] as ('score'|'attribution')[]},
             file=path.join(job.output,'state.json'),traceIds=new Set(job.records.map(r=>r.trace_id));
           if(await exists(file))await appendAnswerReviewInputs(job.output,config);
           else{const plan=await planAnswerReview(config);if(plan.catalog.length!==job.records.length||plan.tasks.length!==2*job.records.length||(plan.summary.issues as unknown[]).length)throw Error('AIME全量范围校验失败');}
@@ -115,7 +114,7 @@ export async function runAimeEvaluation(c:AimeConfiguration,options:AimeRunOptio
             host.evaluation.inputs.records=host.evaluation.inputs.records!.filter(r=>eligible.has(r.trace_id!));
             launched=before?pendingBefore.filter(task=>eligible.has((task.data as {candidate:{trace_id:string}}).candidate.trace_id)).length:job.records.length*2;
             if(launched){const {runAnswerReviewCommand}=await import('./answer-review-command.js');
-              const requests=options.modelRequests&&{concurrency:()=>Math.max(1,Math.ceil(options.modelRequests!.concurrency()/Math.max(1,activeJobs))),acquire:options.modelRequests.acquire.bind(options.modelRequests)};
+              const requests=options.modelRequests;
               code=await runAnswerReviewCommand(host,{command:'run',runId:job.id,engine:options.engine?.()??c.engine,signal,pauseSignal:options.pauseSignal,
                 modelRequests:requests,debug:options.debug?.(),resumeTaskIds:resumeTaskIds&&[...resumeTaskIds]});}
           }
@@ -128,7 +127,7 @@ export async function runAimeEvaluation(c:AimeConfiguration,options:AimeRunOptio
           return {launched:started.length,succeeded,failures,exit_code:failures.length?2:code,output:job.output,
             stages:Object.fromEntries(['score','attribution'].map(stage=>[stage,{launched:started.filter(task=>task.stage===stage).length,
               succeeded:progress.filter(row=>traceIds.has(row.traceId??'')&&row.stages[stage].status==='succeeded').length}]))} satisfies AimeEvaluationResult;
-          }finally{activeJobs--;}
+          }catch(error){throw error;}
         },
       });
       if(historicalExclusions.length){summary.quarantined+=historicalExclusions.length;summary.quarantine.push(...historicalExclusions);summary.exit_code=options.signal.aborted?130:2;}

@@ -68,6 +68,7 @@ export async function runAnswerReviewCommand(host: AnswerReviewHostConfig, optio
       repository: answerReviewRepository, report: reportAnswerReview, runId: options.runId,
       output: config.output, engine: options.engine as "pi" | "prime", evaluatorVersion: host.evaluatorVersion,
       config, plan, taskIds, policy: config.execution, concurrency: config.execution.concurrency,
+      taskConcurrency: config.execution.taskConcurrency,
       retries: config.execution.retries, retryDelaySeconds: config.execution.retryDelaySeconds,
       skipFailed: options.skipFailed, discoverInputs: options.discoverInputs, resumeStages: options.resumeStages,
       workerUrls: options.workers, failureGuard: config.execution.failureGuard, signal: controller.signal,
