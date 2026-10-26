@@ -171,13 +171,16 @@ class AgentDataset(app.Dataset):
                     if re.fullmatch(r"\.\d{4}-\d{2}-\d{2}\.[a-z0-9_]{8}\.tmp", path.name):
                         path.unlink()
 
-    def process_archives(self, signature: list[dict[str, object]], *, retry_failed: bool = False) -> None:
+    def process_archives(self, signature: list[dict[str, object]], *, retry_failed: bool = False,
+                         stop_requested=None, on_archive_start=None, newest_first=True) -> None:
         temporary_root = self.state_dir / "tmp"
         temporary_root.mkdir(parents=True, exist_ok=True)
         with tempfile.TemporaryDirectory(prefix=f"ths-ingest-{self.provider}-", dir=temporary_root) as folder:
             self.staging = Path(folder)
             try:
-                super().process_archives(signature, retry_failed=retry_failed)
+                super().process_archives(signature, retry_failed=retry_failed,
+                                         stop_requested=stop_requested, on_archive_start=on_archive_start,
+                                         newest_first=newest_first)
             finally:
                 self.staging = None
 

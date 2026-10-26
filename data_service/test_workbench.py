@@ -123,6 +123,25 @@ class WorkbenchTest(unittest.TestCase):
         failed = next(batch for batch in self.discover_batches() if batch["name"] == "bad.7z")
         self.assertTrue(self.catalog.report(failed["id"], {})["summary"]["error"])
 
+    def test_task_clean_batches_same_day_packages_and_syncs_each_report(self):
+        for name, case_id in (("one.7z", "one"), ("two.7z", "two"), ("three.7z", "three")):
+            self.package(name, [archive_row("b_fast", case_id)])
+        task_id = self.discover_batches()[0]["task_id"]
+        dataset = self.datasets["/data/post_training_model"]
+        prepare = dataset.prepare_archive_files
+        calls = 0
+        def count_prepare(staging):
+            nonlocal calls
+            calls += 1
+            return prepare(staging)
+        with patch.object(dataset, "prepare_archive_files", side_effect=count_prepare):
+            result = self.catalog.start_task_clean(task_id, {}, background=False)
+        self.assertEqual((result["status"], result["completed"], result["remaining"]), ("finished", 3, 0))
+        self.assertEqual(calls, 1)
+        batches = self.discover_batches()
+        self.assertEqual({batch["status"] for batch in batches}, {"cleaned"})
+        self.assertEqual([self.catalog.report(batch["id"], {})["summary"]["accepted"] for batch in batches], [1, 1, 1])
+
     def test_metadata_issues_are_paginated_locatable_and_do_not_exclude_answers(self):
         self.package(rows=[archive_row("b_fast", f"case-{index}", meta_fields={
             "rued": {"R": "1", "U": 0, "E": 0, "D": 1}, "first_token_time_cost": -1,
@@ -276,13 +295,17 @@ class WorkbenchTest(unittest.TestCase):
         self.package("second.7z", [archive_row("b_fast", "second")])
         task_id = self.discover_batches()[0]["task_id"]
         dataset = self.datasets["/data/post_training_model"]
-        process = dataset.process_archives
-        def stop_after_current(signature, **kwargs):
-            process(signature, **kwargs)
-            if signature:
+        read = dataset.read_archive_records
+        stopped = False
+        def stop_after_current(info):
+            nonlocal stopped
+            result = read(info)
+            if not stopped:
+                stopped = True
                 self.assertEqual(self.catalog.start_task_clean(task_id, {})["status"], "running")
                 self.assertEqual(self.catalog.stop_task_clean(task_id, {})["status"], "stopping")
-        with patch.object(dataset, "process_archives", side_effect=stop_after_current):
+            return result
+        with patch.object(dataset, "read_archive_records", side_effect=stop_after_current):
             result = self.catalog.start_task_clean(task_id, {}, background=False)
         self.assertEqual((result["status"], result["completed"], result["remaining"]), ("stopped", 1, 1))
         self.assertEqual(sorted(batch["status"] for batch in self.discover_batches()), ["cleaned", "ready"])
@@ -293,8 +316,8 @@ class WorkbenchTest(unittest.TestCase):
         task_id = self.discover_batches()[0]["task_id"]
         dataset = self.datasets["/data/post_training_model"]
         prepare = dataset.prepare_archive_files
-        def cancel_before_commit(changes):
-            result = prepare(changes)
+        def cancel_before_commit(staging):
+            result = prepare(staging)
             self.assertEqual(self.catalog.stop_task_clean(task_id, {}, cancel=True)["status"], "cancelling")
             return result
         with patch.object(dataset, "prepare_archive_files", side_effect=cancel_before_commit):

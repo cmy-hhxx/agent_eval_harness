@@ -17,7 +17,7 @@ from contextlib import contextmanager
 from datetime import date, datetime, timedelta, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path, PurePosixPath
-from typing import NamedTuple, Protocol, cast
+from typing import NamedTuple, Protocol, cast, Callable
 from urllib.parse import parse_qs, urlsplit
 
 CODE_DIR = Path(__file__).resolve().parent
@@ -300,6 +300,13 @@ class IncomingRecord(Protocol):
     def archive(self) -> str: ...
     @property
     def member(self) -> str: ...
+
+
+class PreparedArchive(NamedTuple):
+    sequence: int
+    info: dict[str, object]
+    skipped: CleaningReport
+    error: str | None
 
 
 class ArchiveReadError(ValueError):
@@ -765,8 +772,14 @@ class Dataset:
         return records, skipped
 
 
-    def prepare_archive_files(self, changes: dict[RecordKey, IncomingRecord]) -> tuple[dict, list[dict]]:
-        affected = {(record.day, key[1]) for key, record in changes.items()}
+    def prepare_archive_files(self, staging: sqlite3.Connection) -> tuple[dict, list[dict]]:
+        affected = {
+            (row[0], row[1]) for row in staging.execute('''
+                SELECT DISTINCT c.day, c.model
+                FROM candidates c JOIN packages p ON p.sequence = c.package_no
+                WHERE c.status = 'accepted'
+            ''')
+        }
         ready = {}
         artifacts = []
         temporary_paths = []
@@ -791,6 +804,13 @@ class Dataset:
                 stage = Path(name)
                 temporary_paths.append(stage)
                 offsets = []
+                accepted_keys = {
+                    (row[0], row[1], row[2]) for row in staging.execute('''
+                        SELECT c.source, c.batch_id, c.case_id
+                        FROM candidates c JOIN packages p ON p.sequence = c.package_no
+                        WHERE c.status = 'accepted' AND c.day = ? AND c.model = ?
+                    ''', (day, model))
+                }
                 with os.fdopen(fd, "wb") as output:
                     if target.exists():
                         before = target.stat()
@@ -798,7 +818,8 @@ class Dataset:
                             for raw in source:
                                 self.check_clean_cancelled()
                                 if raw.strip():
-                                    if self.record_identity(json.loads(raw), model) in changes:
+                                    identity = self.record_identity(json.loads(raw), model)
+                                    if (identity[0], identity[2], identity[3]) in accepted_keys:
                                         raise ValueError("published identity is missing from the archive index; refusing to overwrite")
                                     offsets.append([output.tell(), len(raw)])
                                     # A valid last JSON value without a newline must not join the next append.
@@ -809,14 +830,24 @@ class Dataset:
                         after = target.stat()
                         if (before.st_size, before.st_mtime_ns) != (after.st_size, after.st_mtime_ns):
                             raise ValueError(f"published file changed while merging: {target}")
-                    for key, record in changes.items():
+                    positions = {}
+                    rows = staging.execute('''
+                        SELECT c.package_no, c.row_no, c.payload
+                        FROM candidates c JOIN packages p ON p.sequence = c.package_no
+                        WHERE c.status = 'accepted' AND c.day = ? AND c.model = ?
+                        ORDER BY c.package_no, c.row_no
+                    ''', (day, model))
+                    for package_no, row_no, payload in rows:
                         self.check_clean_cancelled()
-                        if (record.day, key[1]) == (day, model):
-                            raw = (json.dumps(record.row, ensure_ascii=False, separators=(",", ":")) + "\n").encode("utf-8")
-                            offsets.append([output.tell(), len(raw)])
-                            output.write(raw)
+                        raw = payload.encode("utf-8") + b"\n"
+                        positions[(package_no, row_no)] = len(offsets)
+                        offsets.append([output.tell(), len(raw)])
+                        output.write(raw)
                     output.flush()
                     os.fsync(output.fileno())
+                for (package_no, row_no), input_index in positions.items():
+                    staging.execute("UPDATE candidates SET input_index = ? WHERE package_no = ? AND row_no = ?",
+                                    (input_index, package_no, row_no))
                 stat = stage.stat()
                 metadata = {"size_bytes": stat.st_size, "mtime_ns": stat.st_mtime_ns}
                 artifacts.append({"stage": str(stage), "target": str(target), **metadata})
@@ -840,7 +871,124 @@ class Dataset:
             raise
 
 
-    def process_archives(self, signature: list[dict[str, object]], *, retry_failed: bool = False) -> None:
+    def classify_published_candidates(self, staging: sqlite3.Connection,
+                                      packages: dict[int, PreparedArchive]) -> None:
+        locations = list(staging.execute('''
+            SELECT DISTINCT c.prior_day, c.prior_model
+            FROM candidates c JOIN packages p ON p.sequence = c.package_no
+            WHERE c.status = 'published'
+            ORDER BY c.prior_day, c.prior_model
+        '''))
+        for prior_day, prior_model in locations:
+            before = self.ready_state(prior_day)
+            if before is None:
+                raise ValueError("published input is not ready")
+            target = self.output_dir / prior_model / f"{prior_day}.jsonl"
+            with target.open() as stream:
+                for raw in stream:
+                    self.check_clean_cancelled()
+                    if not raw.strip():
+                        continue
+                    previous_row = json.loads(raw)
+                    key = self.record_identity(previous_row, prior_model)
+                    candidates = list(staging.execute('''
+                        SELECT c.package_no, c.row_no, c.payload
+                        FROM candidates c JOIN packages p ON p.sequence = c.package_no
+                        WHERE c.status = 'published' AND c.prior_day = ? AND c.prior_model = ?
+                          AND c.source = ? AND c.model = ? AND c.batch_id = ? AND c.case_id = ?
+                    ''', (prior_day, prior_model, key[0], key[1], key[2], key[3])))
+                    for package_no, row_no, payload in candidates:
+                        current_row = json.loads(payload)
+                        reason = "duplicate_case" if comparable_row(previous_row) == comparable_row(current_row) else "identity_conflict"
+                        staging.execute("UPDATE candidates SET status = 'excluded' WHERE package_no = ? AND row_no = ?",
+                                        (package_no, row_no))
+                        packages[package_no].skipped.exclude_row(key[1], reason, current_row)
+            if self.ready_state(prior_day) != before:
+                raise ValueError("published input changed while checking duplicates")
+            remaining = staging.execute('''
+                SELECT 1 FROM candidates c JOIN packages p ON p.sequence = c.package_no
+                WHERE c.status = 'published' AND c.prior_day = ? AND c.prior_model = ? LIMIT 1
+            ''', (prior_day, prior_model)).fetchone()
+            if remaining:
+                raise ValueError("published business record missing from source")
+
+
+    def archive_batch_reports(self, staging: sqlite3.Connection,
+                              packages: list[PreparedArchive]) -> dict[int, dict]:
+        reports = {}
+        for package in packages:
+            accepted = []
+            rows = staging.execute('''
+                SELECT source, model, batch_id, case_id, day, input_index, payload
+                FROM candidates
+                WHERE package_no = ? AND status = 'accepted'
+                ORDER BY row_no
+            ''', (package.sequence,))
+            for source, model, batch_id, case_id, day, input_index, payload in rows:
+                row = json.loads(payload)
+                accepted.append({"model": model, "batch_id": batch_id, "case_id": case_id,
+                                 "date": day, "input_index": input_index, **row["_source"],
+                                 "input_file": str(self.output_dir / model / f"{day}.jsonl")})
+            reports[package.sequence] = package.skipped.finish(accepted, self.pairs, package.error)
+        return reports
+
+
+    def publish_archive_batch(self, db: sqlite3.Connection, staging: sqlite3.Connection,
+                              packages: list[PreparedArchive]) -> None:
+        by_sequence = {package.sequence: package for package in packages}
+        self.classify_published_candidates(staging, by_sequence)
+        ready, artifacts = self.prepare_archive_files(staging)
+        durable = False
+        try:
+            reports = self.archive_batch_reports(staging, packages)
+            root = self.load_archive_state()
+            receipts = {item["name"]: item for item in root["archives"]}
+            failures = {item["name"]: item for item in root["failed_archives"]}
+            for package in packages:
+                info = package.info
+                receipts[str(info["name"])] = info
+                if package.error is None:
+                    failures.pop(str(info["name"]), None)
+                else:
+                    failures[str(info["name"])] = {"name": info["name"], "error": package.error}
+            root = {"archives": sorted(receipts.values(), key=lambda item: item["name"]),
+                    "dates": sorted(set(root["dates"]) | set(ready)),
+                    "failed_archives": sorted(failures.values(), key=lambda item: item["name"])}
+            plan = {"files": artifacts, "ready": ready, "root": root}
+            self.check_clean_cancelled()
+            accepted = list(staging.execute('''
+                SELECT c.source, c.model, c.batch_id, c.case_id, c.day, c.archive, c.member
+                FROM candidates c JOIN packages p ON p.sequence = c.package_no
+                WHERE c.status = 'accepted' ORDER BY c.package_no, c.row_no
+            '''))
+            with db:
+                for package in packages:
+                    info = package.info
+                    db.execute("INSERT OR REPLACE INTO cleaning_reports VALUES (?, ?, ?, ?)",
+                               (info["name"], info["size"], info["mtime_ns"],
+                                json.dumps(reports[package.sequence], ensure_ascii=False)))
+                for row in accepted:
+                    db.execute("INSERT INTO records VALUES (?, ?, ?, ?, ?, ?, ?)", row)
+                db.execute("INSERT INTO pending VALUES (1, ?)", (json.dumps(plan, separators=(",", ":")),))
+                self.check_clean_cancelled()
+            durable = True
+            self.publish_pending(db)
+            for package in packages:
+                skipped_summary = ", ".join(f"{model}/{reason}={count}"
+                                            for (model, reason), count in sorted(package.skipped.items())) or "none"
+                print(f"processed archive {self.archive_dir / str(package.info['name'])}: "
+                      f"{reports[package.sequence]['accepted']} merged rows; "
+                      f"skipped: {skipped_summary}; error: {package.error or 'none'}", flush=True)
+        finally:
+            if not durable:
+                for artifact in artifacts:
+                    Path(artifact["stage"]).unlink(missing_ok=True)
+
+
+    def process_archives(self, signature: list[dict[str, object]], *, retry_failed: bool = False,
+                         stop_requested: Callable[[], bool] | None = None,
+                         on_archive_start: Callable[[dict[str, object]], None] | None = None,
+                         newest_first: bool = True) -> None:
         db = self.open_archive_index()
         try:
             self.publish_pending(db)
@@ -848,91 +996,107 @@ class Dataset:
             if retry_failed:
                 failed = {item["name"] for item in self.load_archive_state()["failed_archives"]}
                 pending = [info for info in signature if info in pending or info["name"] in failed]
-            for info in reversed(pending):
-                self.check_clean_cancelled()
-                archive_path = self.archive_dir / str(info["name"])
-                if file_signature(archive_path) != info:
-                    continue
-                error = None
-                try:
-                    records, skipped = self.read_archive_records(info)
-                except ArchiveReadError as exc:
-                    records, skipped = {}, CleaningReport()
-                    error = str(exc)
-                if file_signature(archive_path) != info:
-                    print(f"archive {archive_path.name} changed while reading; deferred", flush=True)
-                    continue
-                changes = {}
+            if not pending:
+                return
+            temporary_root = Path(os.environ.get("TEMP_ROOT", tempfile.gettempdir()))
+            temporary_root.mkdir(parents=True, exist_ok=True)
+            with tempfile.TemporaryDirectory(prefix="publication-batch-", dir=temporary_root) as folder:
+                staging = sqlite3.connect(Path(folder) / "candidates.sqlite")
+                staging.executescript('''
+                    CREATE TABLE packages (
+                        sequence INTEGER PRIMARY KEY,
+                        name TEXT NOT NULL,
+                        error TEXT
+                    );
+                    CREATE TABLE candidates (
+                        package_no INTEGER NOT NULL,
+                        row_no INTEGER NOT NULL,
+                        source TEXT NOT NULL,
+                        model TEXT NOT NULL,
+                        batch_id TEXT NOT NULL,
+                        case_id TEXT NOT NULL,
+                        day TEXT NOT NULL,
+                        archive TEXT NOT NULL,
+                        member TEXT NOT NULL,
+                        payload TEXT NOT NULL,
+                        status TEXT NOT NULL,
+                        prior_day TEXT,
+                        prior_model TEXT,
+                        input_index INTEGER,
+                        PRIMARY KEY(package_no, row_no)
+                    );
+                    CREATE INDEX candidate_identity ON candidates
+                        (source, model, batch_id, case_id, package_no, row_no);
+                    CREATE INDEX candidate_prior ON candidates
+                        (status, prior_day, prior_model, source, model, batch_id, case_id);
+                ''')
+                packages: list[PreparedArchive] = []
+                seen_new: dict[RecordKey, tuple[int, int]] = {}
                 local_days = {
                     marker.name.removesuffix(".ready.json") for marker in self.state_dir.glob("*.ready.json")
                     if json.loads(marker.read_text()).get("source") == "local_import"
                 }
-                existing_rows = {}
-                for key, record in records.items():
-                    self.check_clean_cancelled()
-                    if record.day in local_days:
-                        skipped.exclude_row(key[1], "local_import_overlap", record.row)
-                        continue
-                    old = db.execute("SELECT day, archive, member FROM records WHERE source = ? AND model = ? AND batch_id = ? AND case_id = ?", key).fetchone()
-                    if old:
-                        location = (old[0], key[1])
-                        if location not in existing_rows:
-                            before = self.ready_state(old[0])
-                            if before is None:
-                                raise ValueError("published input is not ready")
-                            matches = {}
-                            with (self.output_dir / key[1] / f"{old[0]}.jsonl").open() as stream:
-                                for raw in stream:
-                                    if not raw.strip():
-                                        continue
-                                    previous_row = json.loads(raw)
-                                    previous_key = self.record_identity(previous_row, key[1])
-                                    if previous_key in records:
-                                        matches[previous_key] = comparable_row(previous_row) == comparable_row(records[previous_key].row)
-                            if self.ready_state(old[0]) != before:
-                                raise ValueError("published input changed while checking duplicates")
-                            existing_rows[location] = matches
-                        identical = existing_rows[location].get(key)
-                        if identical is None:
-                            raise ValueError("published business record missing from source")
-                        reason = "duplicate_case" if identical else "identity_conflict"
-                        skipped.exclude_row(key[1], reason, record.row)
-                        continue
-                    changes[key] = record
-                ready, artifacts = self.prepare_archive_files(changes)
-                durable = False
+                interrupted = False
                 try:
-                    if file_signature(archive_path) != info:
-                        print(f"archive {archive_path.name} changed before publication; deferred", flush=True)
-                        continue
-                    root = self.load_archive_state()
-                    receipts = {item["name"]: item for item in root["archives"]}
-                    receipts[info["name"]] = info
-                    failures = {item["name"]: item for item in root["failed_archives"]}
-                    failures.pop(info["name"], None)
-                    if error is not None:
-                        failures[info["name"]] = {"name": info["name"], "error": error}
-                    root = {"archives": sorted(receipts.values(), key=lambda item: item["name"]),
-                            "dates": sorted(set(root["dates"]) | set(ready)),
-                            "failed_archives": sorted(failures.values(), key=lambda item: item["name"])}
-                    plan = {"files": artifacts, "ready": ready, "root": root}
-                    report = skipped.finish(changes, self.pairs, self.output_dir, ready, error)
-                    self.check_clean_cancelled()
-                    with db:
-                        db.execute("INSERT OR REPLACE INTO cleaning_reports VALUES (?, ?, ?, ?)",
-                                   (info["name"], info["size"], info["mtime_ns"], json.dumps(report, ensure_ascii=False)))
-                        for key, record in changes.items():
-                            db.execute("INSERT INTO records VALUES (?, ?, ?, ?, ?, ?, ?)", (*key, record.day, record.archive, record.member))
-                        db.execute("INSERT INTO pending VALUES (1, ?)", (json.dumps(plan, separators=(",", ":")),))
+                    ordered = reversed(pending) if newest_first else pending
+                    for sequence, info in enumerate(ordered, 1):
+                        if stop_requested is not None and stop_requested():
+                            break
                         self.check_clean_cancelled()
-                    durable = True
-                    self.publish_pending(db)
-                finally:
-                    if not durable:
-                        for artifact in artifacts:
-                            Path(artifact["stage"]).unlink(missing_ok=True)
-                skipped_summary = ", ".join(f"{model}/{reason}={count}" for (model, reason), count in sorted(skipped.items())) or "none"
-                print(f"processed archive {archive_path}: {len(changes)} merged rows, {len(artifacts) // 2} output files; skipped: {skipped_summary}; error: {error or 'none'}", flush=True)
+                        if on_archive_start is not None:
+                            on_archive_start(info)
+                        archive_path = self.archive_dir / str(info["name"])
+                        if file_signature(archive_path) != info:
+                            continue
+                        error = None
+                        try:
+                            records, skipped = self.read_archive_records(info)
+                        except ArchiveReadError as exc:
+                            records, skipped = {}, CleaningReport()
+                            error = str(exc)
+                        if file_signature(archive_path) != info:
+                            print(f"archive {archive_path.name} changed while reading; deferred", flush=True)
+                            continue
+                        row_no = 0
+                        for key, record in records.items():
+                            self.check_clean_cancelled()
+                            if record.day in local_days:
+                                skipped.exclude_row(key[1], "local_import_overlap", record.row)
+                                continue
+                            payload = json.dumps(record.row, ensure_ascii=False, separators=(",", ":"))
+                            old = db.execute("SELECT day, archive, member FROM records WHERE source = ? AND model = ? AND batch_id = ? AND case_id = ?", key).fetchone()
+                            if old:
+                                row_no += 1
+                                staging.execute('''
+                                    INSERT INTO candidates VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'published', ?, ?, NULL)
+                                ''', (sequence, row_no, *key, record.day, record.archive, record.member, payload, old[0], key[1]))
+                                continue
+                            prior = seen_new.get(key)
+                            if prior is not None:
+                                saved = staging.execute("SELECT payload FROM candidates WHERE package_no = ? AND row_no = ?",
+                                                        prior).fetchone()
+                                if saved is None:
+                                    raise ValueError("staged business record missing from source")
+                                reason = ("duplicate_case"
+                                          if comparable_row(json.loads(saved[0])) == comparable_row(record.row)
+                                          else "identity_conflict")
+                                skipped.exclude_row(key[1], reason, record.row)
+                                continue
+                            row_no += 1
+                            staging.execute('''
+                                INSERT INTO candidates VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'accepted', NULL, NULL, NULL)
+                            ''', (sequence, row_no, *key, record.day, record.archive, record.member, payload))
+                            seen_new[key] = (sequence, row_no)
+                        staging.execute("INSERT INTO packages VALUES (?, ?, ?)",
+                                        (sequence, str(info["name"]), error))
+                        packages.append(PreparedArchive(sequence, info, skipped, error))
+                except InterruptedError:
+                    interrupted = True
+                if packages:
+                    self.publish_archive_batch(db, staging, packages)
+                staging.close()
+                if interrupted:
+                    raise InterruptedError("清洗已取消")
         finally:
             db.close()
 

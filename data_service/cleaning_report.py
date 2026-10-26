@@ -35,18 +35,10 @@ class CleaningReport(Counter):
         archive, _, member = source["original_file"].partition("/")
         self.exclude(model, reason, archive, member, source.get("original_line"), source.get("original_item"), row)
 
-    def finish(self, changes, pairs, output_dir, ready, error=None):
-        accepted = []
+    def finish(self, accepted, pairs, error=None):
         cases = {}
-        counts = Counter((record.day, key[1]) for key, record in changes.items())
-        positions = {scope: ready[scope[0]]["rows"][scope[1]] - count for scope, count in counts.items()}
-        for key, record in changes.items():
-            row = record.row
-            accepted.append({"model": key[1], "batch_id": key[2], "case_id": key[3],
-                             "date": record.day, "input_index": positions[(record.day, key[1])], **row["_source"],
-                             "input_file": str(output_dir / key[1] / f"{record.day}.jsonl")})
-            positions[(record.day, key[1])] += 1
-            cases.setdefault((key[2], key[3]), set()).add(key[1])
+        for record in accepted:
+            cases.setdefault((record["batch_id"], record["case_id"]), set()).add(record["model"])
         pair_counts = {name: sum(left in models and right in models for models in cases.values())
                        for name, (left, right) in pairs.items()}
         return {"read": self.read, "accepted": len(accepted), "excluded": len(self.excluded),

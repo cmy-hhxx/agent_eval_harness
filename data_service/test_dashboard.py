@@ -819,6 +819,93 @@ class DashboardTest(unittest.TestCase):
             self.assertTrue(self.data.is_ready(day))
             self.assertEqual(self.data.pending_archives(signature), [])
 
+    def test_multiple_archives_same_day_publish_each_model_once(self):
+        day = "2026-09-29"
+
+        def write_archive(name, case_ids):
+            payload = {}
+            for model in self.data.models:
+                payload[f"answers_{model.upper()}.jsonl"] = "\n".join(
+                    json.dumps(archive_row(model, f"{case_id}-{model}")) for case_id in case_ids
+                ) + "\n"
+            (self.data.archive_dir / name).write_text(json.dumps(payload), encoding="utf-8")
+
+        for name in ("one.7z", "two.7z", "three.7z"):
+            write_archive(name, [name.removesuffix(".7z")])
+        prepare = self.data.prepare_archive_files
+        calls = 0
+        def count_prepare(staging):
+            nonlocal calls
+            calls += 1
+            return prepare(staging)
+        with patch.object(self.data, "prepare_archive_files", side_effect=count_prepare), \
+             patch.object(app, "SevenZipFile", FakeArchive):
+            self.data.process_archives(app.archive_signature(self.data.archive_dir))
+        self.assertEqual(calls, 1)
+        self.assertTrue(self.data.is_ready(day))
+        self.assertEqual(self.data.ready_state(day)["rows"], {model: 3 for model in self.data.models})
+        root_state = json.loads(self.data.root_archive_state_file.read_text())
+        self.assertEqual(len(root_state["archives"]), 3)
+        self.assertEqual(root_state["failed_archives"], [])
+        index = self.data.open_archive_index()
+        try:
+            self.assertEqual(index.execute("SELECT COUNT(*) FROM cleaning_reports").fetchone()[0], 3)
+        finally:
+            index.close()
+
+    def test_same_batch_duplicate_and_conflict_preserve_first_archive(self):
+        def write_archive(name, answer):
+            row = archive_row("a_fast", "shared", answer=answer)
+            (self.data.archive_dir / name).write_text(
+                json.dumps({"answers_A-fast.jsonl": json.dumps(row) + "\n"}), encoding="utf-8")
+
+        write_archive("0123456789abcdef_20261001_010000.7z", "same")
+        write_archive("0123456789abcdef_20261001_020000.7z", "different")
+        write_archive("0123456789abcdef_20261001_030000.7z", "same")
+        with patch.object(app, "SevenZipFile", FakeArchive):
+            self.data.process_archives(app.archive_signature(self.data.archive_dir))
+        index = self.data.open_archive_index()
+        try:
+            reports = {
+                name: json.loads(report)
+                for name, report in index.execute("SELECT name, report FROM cleaning_reports ORDER BY name")
+            }
+        finally:
+            index.close()
+        self.assertEqual(reports["0123456789abcdef_20261001_010000.7z"]["reasons"][0]["reason"], "duplicate_case")
+        self.assertEqual(reports["0123456789abcdef_20261001_020000.7z"]["reasons"][0]["reason"], "identity_conflict")
+        self.assertEqual(reports["0123456789abcdef_20261001_030000.7z"]["accepted"], 1)
+        rows = [json.loads(line) for line in (self.data.output_dir / "a_fast/2026-09-29.jsonl").read_text().splitlines()]
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]["messages"][-1]["content"], "same")
+
+    def test_batch_publication_recovers_all_reports_without_reextracting(self):
+        for name, case_id in (("one.7z", "one"), ("two.7z", "two"), ("three.7z", "three")):
+            row = archive_row("a_fast", case_id)
+            (self.data.archive_dir / name).write_text(
+                json.dumps({"answers_A-fast.jsonl": json.dumps(row) + "\n"}), encoding="utf-8")
+        signature = app.archive_signature(self.data.archive_dir)
+        publish = self.data.publish_pending
+        def interrupt(db):
+            if db.execute("SELECT 1 FROM pending").fetchone():
+                raise RuntimeError("interrupted publication")
+            publish(db)
+        with patch.object(app, "SevenZipFile", FakeArchive), \
+             patch.object(self.data, "publish_pending", side_effect=interrupt):
+            with self.assertRaisesRegex(RuntimeError, "interrupted publication"):
+                self.data.process_archives(signature)
+        with patch.object(app, "SevenZipFile", side_effect=AssertionError("must not extract again")):
+            self.data.process_archives(app.archive_signature(self.data.archive_dir))
+        self.assertEqual(self.get_json("/records/2026-09-29/a_fast")["total"], 3)
+        root_state = json.loads(self.data.root_archive_state_file.read_text())
+        self.assertEqual(len(root_state["archives"]), 3)
+        index = self.data.open_archive_index()
+        try:
+            self.assertIsNone(index.execute("SELECT 1 FROM pending").fetchone())
+            self.assertEqual(index.execute("SELECT COUNT(*) FROM cleaning_reports").fetchone()[0], 3)
+        finally:
+            index.close()
+
     def test_changed_archive_excludes_conflicts_without_removing_previous_rows(self):
         name = "0123456789abcdef_20261019_010000.7z"
 

@@ -542,60 +542,111 @@ class WorkbenchCatalog:
         return expected
 
     def clean(self, identifiers, job=None):
+        attempted = set()
+        started = set()
+        active_id = None
+        cancelled = False
         try:
-            for identifier in identifiers:
+            if job:
                 with self.lock:
-                    if job and (self.stop.is_set() or job["_stop"]):
-                        break
-                    if job:
-                        job["status"] = "running"
-                        job["current_batch_id"] = identifier
+                    job["status"] = "running"
+            with self.lock, self.db() as db:
+                rows = []
+                tasks = {}
+                blocked = {}
+                for identifier in identifiers:
+                    batch = dict(db.execute("SELECT * FROM batches WHERE id=?", (identifier,)).fetchone())
+                    rows.append(batch)
+                    task = dict(db.execute("SELECT * FROM tasks WHERE id=?", (batch["task_id"],)).fetchone())
+                    tasks[batch["task_id"]] = task
+                    collision = db.execute("SELECT 1 FROM batches WHERE task_id=? AND name=? AND origin<>? LIMIT 1",
+                                           (batch["task_id"], batch["name"], batch["origin"])).fetchone()
+                    if collision:
+                        blocked[identifier] = "任务已有来自其他目录的同名包，请使用独立任务区分"
+            groups = {}
+            for batch in rows:
+                if batch["id"] in blocked:
+                    continue
+                task = tasks[batch["task_id"]]
                 try:
-                    with self.lock, self.db() as db:
-                        batch = dict(db.execute("SELECT * FROM batches WHERE id=?", (identifier,)).fetchone())
-                        task = dict(db.execute("SELECT * FROM tasks WHERE id=?", (batch["task_id"],)).fetchone())
-                        collision = db.execute("SELECT 1 FROM batches WHERE task_id=? AND name=? AND origin<>? LIMIT 1",
-                                               (task["id"], batch["name"], batch["origin"])).fetchone()
-                        if collision:
-                            raise Conflict("任务已有来自其他目录的同名包，请使用独立任务区分")
-                        db.execute("UPDATE batches SET status='cleaning',updated_at=? WHERE id=?", (self.now(), identifier))
-                    dataset = copy(self.dataset(task))
-                    dataset.clean_cancel = job["_cancel"] if job else None
-                    dataset.check_clean_cancelled()
                     info = self.check_file(batch)
+                except Exception as exc:
+                    blocked[batch["id"]] = str(exc)
+                    continue
+                groups.setdefault(batch["task_id"], (task, []))[1].append((batch, info))
+            for identifier, error in blocked.items():
+                with self.lock, self.db() as db:
+                    db.execute("UPDATE batches SET status='failed',error=?,updated_at=? WHERE id=?",
+                               (error, self.now(), identifier))
+                attempted.add(identifier)
+
+            for task, items in groups.values():
+                active_id = None
+                dataset = copy(self.dataset(task))
+                dataset.clean_cancel = job["_cancel"] if job else None
+                origin = items[0][0]["origin"]
+                identifiers_by_name = {info["name"]: batch["id"] for batch, info in items}
+
+                def on_archive_start(info, *, mapping=identifiers_by_name):
+                    nonlocal active_id
+                    active_id = mapping[str(info["name"])]
+                    started.add(active_id)
+                    if job:
+                        with self.lock:
+                            job["current_batch_id"] = active_id
+
+                def should_stop():
+                    return bool(job and (job["_stop"] or job["_cancel"].is_set() or self.stop.is_set()))
+
+                try:
                     with dataset.archive_lock():
                         original_archive_dir = dataset.archive_dir
                         try:
-                            dataset.archive_dir = self.origins[batch["origin"]].archive_dir
+                            dataset.archive_dir = self.origins[origin].archive_dir
                             dataset.recover()
-                            dataset.check_clean_cancelled()
-                            dataset.process_archives([info], retry_failed=True)
-                            db = dataset.open_archive_index()
-                            try:
-                                saved = db.execute("SELECT report FROM cleaning_reports WHERE name=? AND size=? AND mtime_ns=?",
-                                                   (info["name"], info["size"], info["mtime_ns"])).fetchone()
-                            finally:
-                                db.close()
+                            dataset.process_archives([info for _, info in items], retry_failed=True,
+                                                     stop_requested=should_stop, on_archive_start=on_archive_start,
+                                                     newest_first=False)
                         finally:
                             dataset.archive_dir = original_archive_dir
-                    if not saved:
-                        raise Conflict("没有本批次清洗报告；输入可能已变化，不能推测处理结果")
-                    report = json.loads(saved[0])
-                    with self.lock, self.db() as db:
-                        self.save_report(db, identifier, report)
                 except InterruptedError:
-                    with self.lock, self.db() as db:
-                        db.execute("UPDATE batches SET status='interrupted',error='清洗已取消',updated_at=? WHERE id=?", (self.now(), identifier))
-                    break
+                    cancelled = True
+                    if active_id:
+                        with self.lock, self.db() as db:
+                            db.execute("UPDATE batches SET status='interrupted',error='清洗已取消',updated_at=? WHERE id=?",
+                                       (self.now(), active_id))
                 except Exception as exc:
-                    print(f"cleaning batch {identifier} failed: {exc}", file=sys.stderr, flush=True)
-                    with self.lock, self.db() as db:
-                        db.execute("UPDATE batches SET status='failed',error=?,updated_at=? WHERE id=?", (str(exc), self.now(), identifier))
-                with self.lock:
-                    if job:
-                        job["completed"] += 1
-                        job["remaining"] -= 1
-                        job["current_batch_id"] = None
+                    print(f"cleaning batch {active_id or task['id']} failed: {exc}", file=sys.stderr, flush=True)
+                    if active_id:
+                        with self.lock, self.db() as db:
+                            db.execute("UPDATE batches SET status='failed',error=?,updated_at=? WHERE id=?",
+                                       (str(exc), self.now(), active_id))
+                        attempted.add(active_id)
+
+                source = dataset.open_archive_index()
+                try:
+                    if source.execute("SELECT 1 FROM pending").fetchone():
+                        continue
+                    root = dataset.load_archive_state()
+                    receipts = {item["name"]: item for item in root["archives"]}
+                    for batch, info in items:
+                        if batch["id"] not in started or batch["id"] in attempted:
+                            continue
+                        expected = {key: info[key] for key in ("name", "size", "mtime_ns")}
+                        if receipts.get(str(info["name"])) != expected:
+                            continue
+                        saved = source.execute("SELECT report FROM cleaning_reports WHERE name=? AND size=? AND mtime_ns=?",
+                                               (info["name"], info["size"], info["mtime_ns"])).fetchone()
+                        if saved is None:
+                            continue
+                        report = json.loads(saved[0])
+                        if any(dataset.ready_state(day) is None for day in {record["date"] for record in report["records"]}):
+                            continue
+                        with self.lock, self.db() as db:
+                            self.save_report(db, batch["id"], report)
+                        attempted.add(batch["id"])
+                finally:
+                    source.close()
         finally:
             try:
                 with self.lock, self.db() as db:
@@ -603,7 +654,10 @@ class WorkbenchCatalog:
                         db.execute("UPDATE batches SET status='ready',updated_at=? WHERE id=? AND status='queued'", (self.now(), identifier))
                     if job:
                         job["current_batch_id"] = None
-                        job["status"] = "cancelled" if job["_cancel"].is_set() else "stopped" if job["_stop"] or self.stop.is_set() else "finished"
+                        job["completed"] = len(attempted)
+                        job["remaining"] = len(identifiers) - len(attempted)
+                        job["status"] = ("cancelled" if cancelled or job["_cancel"].is_set()
+                                         else "stopped" if job["_stop"] or self.stop.is_set() else "finished")
             finally:
                 self.cleaning.release()
 
