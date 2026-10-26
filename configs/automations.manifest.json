@@ -8,7 +8,7 @@
     {
       "name": "AIME日常全量",
       "config": "aime-ingest-and-attribute.json",
-      "workflow": "answer-review"
+      "workflow": "attribution"
     }
   ]
 }

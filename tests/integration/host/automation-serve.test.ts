@@ -98,3 +98,69 @@ test("serve starts no source work on startup or restart; only the selected run s
     await rm(directory, { recursive: true, force: true });
   }
 });
+
+test("an invalid source workflow is isolated while the dashboard and valid sources stay ready", { timeout: 15000 }, async () => {
+  const directory = await mkdtemp(path.join(tmpdir(), "automation-source-isolation-"));
+  let child: ChildProcess | undefined, output = "", discoveries = 0;
+  const remote = createServer((_req, res) => { discoveries++; res.setHeader("content-type", "application/json"); res.end('{"dates":[]}'); });
+  await new Promise<void>(resolve => remote.listen(0, "127.0.0.1", resolve));
+  const probe = createServer();
+  await new Promise<void>(resolve => probe.listen(0, "127.0.0.1", resolve));
+  const port = (probe.address() as { port: number }).port;
+  await new Promise<void>(resolve => probe.close(() => resolve()));
+  const url = `http://127.0.0.1:${port}`;
+  const stop = async () => {
+    if (!child || child.exitCode !== null) return;
+    const exited = once(child, "exit"); child.kill("SIGTERM"); await exited;
+  };
+  try {
+    const ini = await writeTestSettings(directory);
+    const hostFile = path.join(directory, "host.json");
+    await writeJson(hostFile, { output: { kind: "directory", path: path.join(directory, "runs") }, models: { judge: { model: "fixture" } } });
+    const base = JSON.parse(await readFile(path.join(ROOT, "configs/automations.json"), "utf8"));
+    const sourceUrl = `http://127.0.0.1:${(remote.address() as { port: number }).port}/data/wencai`;
+    await writeJson(path.join(directory, "good.json"), { ...base, id: "good", sourceUrl,
+      hostConfigs: [path.join(ROOT, "configs/host.json"), hostFile], stateDirectory: path.join(directory, "good/state"),
+      sourceDirectory: path.join(directory, "good/input"), runPrefix: "good-", channelConcurrency: {}, autoClean: false,
+      publishMongo: false, publishProgress: false, publishStatisticsLog: false,
+      publication: { ...base.publication, mongoUriEnv: "WORKBENCH_TEST_MONGO_MISSING" } });
+    await writeJson(path.join(directory, "bad.json"), {});
+    const manifest = path.join(directory, "manifest.json");
+    await writeJson(manifest, { sources: [
+      { name: "有效来源", config: "good.json", workflow: "comparison" },
+      { name: "非法来源", config: "bad.json", workflow: "answer-review" },
+    ] });
+    child = spawn(process.execPath, [path.join(ROOT, "dist/apps/host/src/automations.js"), "serve", "--port", String(port),
+      "--manifest", manifest, "--config-dir", directory], {
+      cwd: ROOT, env: { ...process.env, EVAL_CONFIG_FILE: ini, EVAL_LOG_DIR: path.join(directory, "log"),
+        EVAL_LOG_LOCK_DIR: path.join(directory, "log-lock"), EVAL_AUTOMATION_SCHEDULING_FILE: path.join(directory, "scheduling.json"),
+        EVAL_STATISTICS_DELIVERY_FILE: path.join(directory, "delivery.json") }, stdio: ["ignore", "pipe", "pipe"],
+    });
+    child.stdout!.on("data", chunk => { output += chunk; }); child.stderr!.on("data", chunk => { output += chunk; });
+    await waitForTestState(async () => {
+      try { return { ready: (await fetch(url + "/api/health")).ok, output }; }
+      catch { return { ready: false, output }; }
+    }, state => state.ready, "automation health becomes ready with an invalid source", 10000);
+    const failed = await (await fetch(url + "/api/status?source=bad")).json() as { status: string; error: string; available: boolean };
+    assert.equal(failed.status, "failed");
+    assert.equal(failed.available, false);
+    assert.match(failed.error, /answer-review.*attribution/);
+    const valid = await (await fetch(url + "/api/status?source=good")).json() as { id: string; sources: { id: string }[] };
+    assert.equal(valid.id, "good");
+    assert.deepEqual(valid.sources.map(source => source.id).sort(), ["bad", "good"]);
+    const daily = await (await fetch(url + "/api/daily")).json() as { sources: { id: string; readError?: boolean; error?: string }[] };
+    assert.equal(daily.sources.find(source => source.id === "good")?.readError, undefined);
+    const invalidDaily = daily.sources.find(source => source.id === "bad");
+    assert.equal(invalidDaily?.readError, true);
+    assert.match(invalidDaily?.error ?? "", /answer-review.*attribution/);
+    assert.equal(child.exitCode, null);
+    const response = await fetch(url + "/api/control", { method: "POST", headers: { origin: url, "content-type": "application/json" },
+      body: JSON.stringify({ sourceId: "good", action: "run" }) });
+    assert.equal(response.status, 200);
+    for (let attempt = 0; attempt < 100 && discoveries === 0; attempt++) await delay(10);
+    assert.ok(discoveries > 0, output);
+  } finally {
+    await stop(); await new Promise<void>(resolve => remote.close(() => resolve()));
+    await rm(directory, { recursive: true, force: true });
+  }
+});

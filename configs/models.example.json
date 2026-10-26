@@ -1,6 +1,7 @@
 {
   "models": {
     "judge": {
+      "channel": "evaluation-gateway",
       "model": "your-gateway-model-id",
       "thinking": "medium"
     }

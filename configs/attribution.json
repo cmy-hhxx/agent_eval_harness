@@ -1,0 +1,12 @@
+{
+  "workflow": "attribution",
+  "bindings": {
+    "attribution": {
+      "profile": "judge"
+    }
+  },
+  "execution": {
+    "concurrency": 256,
+    "maxToolCalls": 8
+  }
+}

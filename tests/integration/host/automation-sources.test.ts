@@ -18,7 +18,7 @@ const configFiles = async (command: string, configured?: string[]) =>
 
 test("automation registers both daily workflows", async () => {
   for (const command of ["run", "check", "status"])
-    assert.deepEqual((await automationSourceFiles({ command })).map(source => source.workflow), ["comparison", "answer-review"]);
+    assert.deepEqual((await automationSourceFiles({ command })).map(source => source.workflow), ["comparison", "attribution"]);
   for (const command of ["publish-log", "resolve-log", "retry"])
     await assert.rejects(configFiles(command), /one --config/);
 });

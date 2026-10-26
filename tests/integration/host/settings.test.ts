@@ -166,6 +166,31 @@ test("evaluation routing enforces explicit model and effort catalogs before infe
   assert.throws(() => resolve("comparison"), /not supported/);
 });
 
+test("every configured model is checked against its channel declaration before dispatch", async () => {
+  const directory = await mkdtemp(path.join(tmpdir(), "model-catalog-preflight-"));
+  try {
+    const file = path.join(directory, "models.json");
+    const settings = parseSettings(`[channel.evaluation-gateway]
+base_url = https://first.example/v1
+api_key = first
+models = deepseek-v4.1-flash
+[channel.evaluation-gateway-2]
+base_url = https://second.example/v1
+api_key = second
+models = deepseek-v4.1-flash
+`);
+    await writeFile(file, JSON.stringify({ models: { judge: { channel: "evaluation-gateway-2", model: "deepseek" } } }));
+    await assert.rejects(loadConfig([path.join(ROOT, "configs/host.json"), file], settings), error =>
+      error instanceof Error &&
+      /channel "evaluation-gateway-2"/.test(error.message) &&
+      /Model "deepseek"/.test(error.message) &&
+      /available models: deepseek-v4\.1-flash/.test(error.message));
+    await writeFile(file, JSON.stringify({ models: { judge: { channel: "evaluation-gateway-2", model: "deepseek-v4.1-flash" } } }));
+    const host = await loadConfig([path.join(ROOT, "configs/host.json"), file], settings);
+    assert.equal(createModelResolver(host.models)("comparison").provider, "evaluation-gateway-2");
+  } finally { await rm(directory, { recursive: true, force: true }); }
+});
+
 test("settings come only from the selected INI file; missing files and missing channels fail explicitly", async () => {
   const directory = await mkdtemp(path.join(tmpdir(), "ini-settings-"));
   try {

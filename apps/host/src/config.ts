@@ -11,6 +11,7 @@ import { inputAdapterIds } from "@eval/workflows/inputs";
 import {
   THINKING_LEVELS,
   DEFAULT_THINKING,
+  assertDeclaredModel,
   type ModelCatalog,
   type ModelProfile,
   type StageBinding,
@@ -325,11 +326,13 @@ function buildModels(source: ConfigObject, configuration: ApplicationSettings): 
     const channel = channelId ? configuration.channels[channelId] : undefined;
     if (!channel) throw new Error(`Unknown models.${name}.channel in config.ini`);
     if (channel.api !== "openai-responses") throw new Error(`Evaluation channel "${channelId}" requires openai-responses`);
-    models[name] = {
+    const profile = {
       ...channel,
       model: optionalString(value.model, `models.${name}.model`) ?? channel.model,
       thinking: optionalThinking(value.thinking, `models.${name}.thinking`) ?? channel.thinking,
     };
+    if (profile.model) assertDeclaredModel(profile, profile.model);
+    models[name] = profile;
   }
   const bindings: Record<string, StageBinding> = {};
   for (const [stage, value] of Object.entries(rawBindings)) {
@@ -342,10 +345,15 @@ function buildModels(source: ConfigObject, configuration: ApplicationSettings): 
     if (channel && !configuration.channels[channel]) throw new Error(`Unknown bindings.${stage}.channel in config.ini`);
     if (channel && configuration.channels[channel].api !== "openai-responses")
       throw new Error(`Evaluation channel "${channel}" requires openai-responses`);
+    const model = optionalString(value.model, `bindings.${stage}.model`);
+    const routed = channel ? { ...models[value.profile], provider: channel,
+      models: configuration.channels[channel].models } : models[value.profile];
+    const effectiveModel = model ?? routed.model;
+    if (effectiveModel) assertDeclaredModel(routed, effectiveModel);
     bindings[stage] = {
       ...(channel ? { channel } : {}),
       profile: value.profile,
-      model: optionalString(value.model, `bindings.${stage}.model`),
+      model,
       thinking: optionalThinking(value.thinking, `bindings.${stage}.thinking`),
     };
   }

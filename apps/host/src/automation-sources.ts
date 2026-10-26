@@ -6,7 +6,7 @@ import type { AutomationConfig } from "./automation-config.js";
 export interface AutomationSourceFile {
   name: string;
   file: string;
-  workflow?: "comparison" | "answer-review" | "attribution";
+  workflow?: string;
 }
 
 /** Bind delivery receipts to an evaluation task and destination without storing credentials. */
@@ -58,12 +58,12 @@ async function manifestSources(manifestFile: string, configDirectory: string): P
   return value.sources.map((entry): AutomationSourceFile => {
     if (!entry || typeof entry !== "object" || Array.isArray(entry) ||
         Object.keys(entry).some(key => !["name", "config", "workflow"].includes(key)) ||
-        entry.workflow !== undefined && entry.workflow !== "comparison" && entry.workflow !== "answer-review" && entry.workflow !== "attribution" ||
+        entry.workflow !== undefined && (typeof entry.workflow !== "string" || !entry.workflow.trim()) ||
         typeof entry.name !== "string" || !entry.name.trim() ||
         typeof entry.config !== "string" || !entry.config.trim())
       throw new Error("Invalid automation manifest source");
     return { name: entry.name.trim(), file: path.resolve(directory, entry.config),
-      ...(entry.workflow ? { workflow: entry.workflow as "comparison" | "answer-review" | "attribution" } : {}) };
+      ...(entry.workflow ? { workflow: entry.workflow.trim() } : {}) };
   });
 }
 

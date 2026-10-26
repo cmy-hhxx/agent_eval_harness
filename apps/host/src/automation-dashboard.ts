@@ -19,6 +19,7 @@ export interface AutomationDashboardSource {
   name: string; config: AutomationConfig; output: string; state: () => AutomationState; settings: AutomationMonitorSettings;
   monitor?: ReturnType<typeof createAutomationMonitor>;
 }
+export interface AutomationUnavailableSource { id: string; name: string; workflow?: string; error: string }
 
 export async function automationSnapshot(config: AutomationConfig, output: string, state: AutomationState, settings: AutomationMonitorSettings,
   monitor = createAutomationMonitor(output, config.dailyComparisonLimitPerTier),
@@ -67,6 +68,7 @@ export async function startAutomationDashboard(options: {
   runtimeLogFile?: string;
   control?: ReturnType<typeof createAutomationControl>;
   daily?: (req: IncomingMessage, res: ServerResponse, url: URL) => Promise<boolean>;
+  unavailable?: () => readonly AutomationUnavailableSource[];
 }) {
   const observations = new Map<AutomationDashboardSource, {
     sampledAt: number; snapshot?: ReturnType<typeof automationSnapshot>;
@@ -77,6 +79,17 @@ export async function startAutomationDashboard(options: {
     res.setHeader("cache-control", "no-store");
     if (await options.daily?.(req, res, url)) return;
     const sources = options.sources();
+    const unavailable = options.unavailable?.() ?? [];
+    const sourceList = () => [
+      ...sources.map(source => {
+        const current = source.state();
+        const control = options.control?.snapshot(source.config.id);
+        return { id: source.config.id, name: source.name, available: true,
+          status: control ? control.status === "running" || control.status === "stopping" ? "running" : "stopped" : current.status,
+          ...(control && { control }), dateCount: Object.keys(current.jobs).length };
+      }),
+      ...unavailable.map(source => ({ id: source.id, name: source.name, available: false, status: "failed", error: source.error, dateCount: 0 })),
+    ];
     const send = (value: unknown) => json(res, JSON.parse(redact(JSON.stringify(value),
       [...sources.map(source => process.env[source.config.publication.mongoUriEnv] ?? ""), ...configurationSecrets()])));
     if (req.method === "POST" && ["/api/llm-concurrency", "/api/control"].includes(url.pathname)) {
@@ -150,11 +163,18 @@ export async function startAutomationDashboard(options: {
       throw new HttpError(400, "Invalid statistics resolution");
     }
     if (req.method !== "GET") throw new HttpError(405, "Method not allowed");
-    if (url.pathname === "/api/health") return json(res, { ok: true, sources: sources.length });
+    if (url.pathname === "/api/health") return json(res, { ok: true, sources: sources.length + unavailable.length });
     if (url.pathname === "/api/status" || url.pathname === "/api/errors") {
       const id = url.searchParams.get("source");
+      const failed = id ? unavailable.find(source => source.id === id) : sources.length ? undefined : unavailable[0];
+      if (failed) {
+        if (url.pathname === "/api/errors") return send({ items: [], total: 0, sourceId: failed.id, sourceName: failed.name, error: failed.error });
+        return send({ id: failed.id, name: failed.name, sourceName: failed.name, status: "failed", available: false, error: failed.error,
+          ...(options.control && { control: options.control.snapshot(failed.id) }), sources: sourceList(), llm: options.llm.snapshot() });
+      }
       const source = id ? sources.find(source => source.config.id === id) : sources[0];
-      if (!source) throw new HttpError(sources.length ? 404 : 503, sources.length ? "Unknown automation source" : "自动化来源正在初始化");
+      if (!source) throw new HttpError(sources.length + unavailable.length ? 404 : 503,
+        sources.length + unavailable.length ? "Unknown automation source" : "自动化来源正在初始化");
       const { config, output, state, settings } = source;
       const sourceName = source.name;
       let observation = observations.get(source);
@@ -173,15 +193,9 @@ export async function startAutomationDashboard(options: {
       try {
         const result = await snapshot;
         const control = options.control?.snapshot(config.id);
-        send({ ...result, ...(control && { status: control.status === "running" || control.status === "stopping" ? "running" : "stopped", control }), sourceName, llm: options.llm.snapshot(),
+        send({ ...result, available: true, ...(control && { status: control.status === "running" || control.status === "stopping" ? "running" : "stopped", control }), sourceName, llm: options.llm.snapshot(),
           statisticsDeliveries: options.statistics ? await options.statistics.list(statisticsSources, false) : [],
-          sources: sources.map(source => {
-          const current = source.state();
-          const control = options.control?.snapshot(source.config.id);
-          return { id: source.config.id, name: source.name,
-            status: control ? control.status === "running" || control.status === "stopping" ? "running" : "stopped" : current.status,
-            ...(control && { control }), dateCount: Object.keys(current.jobs).length };
-        }) });
+          sources: sourceList() });
       } catch (error) { if (observation.snapshot === snapshot) observation.snapshot = undefined; throw error; }
       return;
     }

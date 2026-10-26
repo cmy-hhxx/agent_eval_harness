@@ -4,7 +4,7 @@ import { HttpError, errorText, redact } from "@eval/contracts";
 import { localFiles, listRunArtifacts } from "@eval/data";
 import { body, json } from "@eval/runtime/http";
 import { configurationSecrets } from "./settings.js";
-import { automationSnapshot, type AutomationDashboardSource } from "./automation-dashboard.js";
+import { automationSnapshot, type AutomationDashboardSource, type AutomationUnavailableSource } from "./automation-dashboard.js";
 import type { createAutomationControl } from "./automation-control.js";
 import type { automationLlm } from "./automation-llm.js";
 import { dailySettingsView, saveDailySettings } from "./daily-settings.js";
@@ -17,6 +17,7 @@ import { combineEvaluationAnalytics } from "./daily-evaluation-analytics.js";
 type Aime = Awaited<ReturnType<typeof loadAimeWorkbench>>;
 export function dailyWorkbench(options: {
   sources: () => readonly AutomationDashboardSource[];
+  unavailable?: () => readonly AutomationUnavailableSource[];
   aime?: Aime;
   control: ReturnType<typeof createAutomationControl>;
   llm: Awaited<ReturnType<typeof automationLlm>>;
@@ -94,6 +95,12 @@ export function dailyWorkbench(options: {
             error: errorText(error), concurrency: allocation.concurrency, activeRequests: allocation.active, waitingRequests: allocation.waiting,
             settings: {}, stages: {}, runs: [], packages: { items: [], total: 0, page: 1, pageSize: 50 }, readError: true };
         }
+      }));
+      sources.push(...(options.unavailable?.() ?? []).map(source => {
+        const allocation = options.llm.snapshot().sources.find(item => item.sourceId === source.id);
+        return { id: source.id, name: source.name, status: "failed", error: source.error, readError: true,
+          concurrency: allocation?.concurrency ?? 0, activeRequests: allocation?.active ?? 0, waitingRequests: allocation?.waiting ?? 0,
+          settings: {}, stages: {}, runs: [], packages: { items: [], total: 0, page: 1, pageSize: 50 } };
       }));
       const llm = options.llm.snapshot();
       const requests = llm.active.map(call => ({ ...call, sourceId: call.sourceId === wencai()?.config.id ? "wencai" : call.sourceId }));

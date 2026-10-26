@@ -37,6 +37,11 @@ export interface ModelCatalog {
   bindings: Record<string, StageBinding>;
 }
 
+export function assertDeclaredModel(profile: Pick<ModelProfile, "provider" | "models">, model: string): void {
+  if (profile.models && !profile.models.includes(model))
+    throw new Error(`Model "${model}" is not declared in channel "${profile.provider}"; available models: ${profile.models.join(", ")}`);
+}
+
 function routedProfile(catalog: ModelCatalog, binding: StageBinding): ModelProfile {
   const profile = catalog.models[binding.profile];
   if (!profile) throw new Error(`Unknown model profile "${binding.profile}"`);
@@ -67,8 +72,7 @@ export function createModelResolver(catalog: ModelCatalog): (stage: string) => M
       );
     const thinking = binding.thinking ?? profile.thinking ?? DEFAULT_THINKING;
     if (!THINKING_LEVELS.includes(thinking)) throw new Error(`Invalid thinking for stage "${stage}"`);
-    if (profile.models && !profile.models.includes(model))
-      throw new Error(`Model "${model}" is not declared in channel "${profile.provider}"`);
+    assertDeclaredModel(profile, model);
     if (profile.efforts && !profile.efforts.includes(thinking))
       throw new Error(`Thinking "${thinking}" is not supported by channel "${profile.provider}"`);
     const contextWindow = profile.contextWindow ?? 524288;
