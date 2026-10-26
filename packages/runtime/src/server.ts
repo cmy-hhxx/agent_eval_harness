@@ -194,11 +194,15 @@ export async function startWorker(
       if (failure.review) audit.review = structuredClone(failure.review);
       runtime.context.persistEvidenceBank = async bank => {
         // The tool's reference-bearing operations share one queue. Save a directory before exposing any new choice.
-        validateEvidenceBank(bank, failure.evidenceBank ?? []);
+        const previous = failure.evidenceBank ?? [];
+        validateEvidenceBank(bank, previous);
+        const append = bank.length >= previous.length && previous.every((id, index) => bank[index] === id)
+          ? bank.slice(previous.length) : undefined;
         for (let retry = 0; retry < 3; retry++) {
           try {
             const saved = await request<{ evidenceBank: EvidenceBank }>(`${spec.hostUrl}/api/evidence-bank`, "POST",
-              { taskId: spec.taskId, attemptId: spec.attemptId, evidenceBank: bank }, controller.signal);
+              append ? { taskId: spec.taskId, attemptId: spec.attemptId, append } : { taskId: spec.taskId, attemptId: spec.attemptId, evidenceBank: bank },
+              controller.signal);
             validateEvidenceBank(saved.evidenceBank, bank);
             failure.evidenceBank = [...saved.evidenceBank];
             record.evidenceBank = [...saved.evidenceBank];

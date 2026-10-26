@@ -647,5 +647,7 @@ export interface RewrittenResult {
 export interface EvidenceBankUpdate {
   taskId: string;
   attemptId: string;
-  evidenceBank: import("./evidence-selection.js").EvidenceBank;
+  evidenceBank?: import("./evidence-selection.js").EvidenceBank;
+  /** Entries appended since the last persisted directory; never replaces earlier choices. */
+  append?: import("./evidence-selection.js").EvidenceBank;
 }

@@ -404,13 +404,15 @@ export class RunStore {
       const state = this.manifest.states[value.taskId], spec = this.attempts.get(value.attemptId);
       if (!state || state.status !== "running" || state.attemptId !== value.attemptId || !spec || this.deadline(spec) < Date.now())
         throw new HttpError(409, "Attempt is cancelled, expired, or superseded");
-      this.validateBank(spec, value.evidenceBank, state.failure?.evidenceBank ?? spec.evidenceBank);
-      if (canonical(state.failure?.evidenceBank) !== canonical(value.evidenceBank)) {
+      const previous = state.failure?.evidenceBank ?? spec.evidenceBank;
+      const next = value.append ? [...previous, ...value.append] : value.evidenceBank ?? [];
+      this.validateBank(spec, next, previous);
+      if (canonical(previous) !== canonical(next)) {
         state.failure = { errors: [], contentSubmissions: 0, fileErrors: 0, repeatedErrors: 0, stopped: false,
-          ...(state.failure ?? {}), attemptId: value.attemptId, evidenceBank: [...value.evidenceBank] };
+          ...(state.failure ?? {}), attemptId: value.attemptId, evidenceBank: [...next] };
         await this.save(value.taskId);
       }
-      return { evidenceBank: [...value.evidenceBank] };
+      return { evidenceBank: [...next] };
     });
   }
   async checkpoint(taskId: string, failure: FailureContext): Promise<void> {
