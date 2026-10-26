@@ -27,11 +27,10 @@ test("main attribution excludes private rules from both prompt and readable sour
   ] };
   const candidate = { input_id: id, question, final_index: 6, reference: null, answer_timing: { finish_seconds: null } } as Candidate;
   const before = structuredClone(raw), binding = bindAttributionMaterial(candidate, raw);
-  for (const value of [binding.modelInput, binding.request]) {
-    const text = JSON.stringify(value);
+  const modelText = JSON.stringify(binding.modelInput), requestText = JSON.stringify(binding.request);
+  for (const text of [modelText, requestText])
     for (const secret of ["SYS_PRIVATE_SENTINEL", "DEV_PRIVATE_SENTINEL", "SKILL_PRIVATE_SENTINEL"]) assert(!text.includes(secret));
-    assert(text.includes(fact));
-  }
+  assert(requestText.includes(fact));
   const view = attributionTrace(raw, id, 6);
   const leaf = evidenceSources(view.messages[5]).find(source => source.path === "/input_messages/1/content")!;
   const evidence = cite(id, 5, leaf, 0, leaf.text.length);

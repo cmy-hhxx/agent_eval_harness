@@ -149,7 +149,7 @@ export function attributionResult(correct=true,answer='2+2=4',available=true,inp
     correct_reason:available?(correct?'回答结果4与给定标准4一致。':'回答结果与给定标准4不一致。'):null,
     Problem:correct?[]:[{problem_id:'p1',text:'加法结果错误',reason:'2+2应为4，实际回答给出了不同的结果。',evidence_status:'已确认',
       evidence:[{evidence_id:id,message_index:1,quote:answer,purposes:['问题']}],
-      component:'责任主体未确定',attribution_reason:'实际交付错误，形成记录未采集。',uncertainties:['实际生成输入输出未采集，无法定位形成主体。']}]};
+      component:'模型自身推理',attribution_reason:'最终回答中的计算结果错误。'}]};
 }
 
 /** Task result; Criteria uses its source-selection submission, other stages use resolved results. */

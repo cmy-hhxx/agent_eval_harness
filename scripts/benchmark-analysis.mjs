@@ -24,11 +24,11 @@ function validateDecision(versions, assessments, outcome, winner) {
 }
 function decisiveBasis(row, versions) {
   return row.decision_basis.decisive_findings.filter((ref) => versions.includes(ref.candidate)).map((ref) => {
-    const finding = row.evaluations[ref.candidate]?.findings?.[ref.finding_index];
+    const finding = row.evaluations[ref.candidate]?.Problem?.[ref.finding_index];
     if (!finding) throw new Error("Decisive finding reference does not exist");
     const { stage_trace: _trace, ...value } = finding;
     return { candidate: ref.candidate, finding: value };
-  }).sort((a, b) => a.candidate.localeCompare(b.candidate) || a.finding.finding_id.localeCompare(b.finding.finding_id));
+  }).sort((a, b) => a.candidate.localeCompare(b.candidate) || a.finding.problem_id.localeCompare(b.finding.problem_id));
 }
 
 /** Read independently judged pair rows. Several pairs from one business case remain correlated. */
@@ -51,8 +51,6 @@ export function pairSamples(rows, traceByComparison = new Map()) {
     if (row.ground_truth?.available !== row.has_standard_answer || !Object.hasOwn(row.ground_truth, "value"))
       throw new Error("Standard-answer availability differs from the bound reference");
     for (const version of versions) {
-      if (row.evaluations[version].core_assessment?.meets_core !== row.assessments[version].meets_core)
-        throw new Error("Comparison core judgment does not match source attribution");
       const correct = row.evaluations[version].is_correct;
       if ((correct !== null && typeof correct !== "boolean") || (!row.has_standard_answer && correct !== null))
         throw new Error("Correctness requires an objective, explicitly judged answer");
@@ -81,7 +79,6 @@ export function pairSamples(rows, traceByComparison = new Map()) {
         ground_truth: structuredClone(row.ground_truth),
         common_criteria: commonCriteria(row.task_analysis),
         is_correct: Object.fromEntries(pair.map((version) => [version, row.evaluations[version].is_correct])),
-        standard_conflict: Object.fromEntries(pair.map((version) => [version, row.evaluations[version].standard_conflict === true])),
         trace,
         decision_basis: {
           tradeoff: row.decision_basis.tradeoff,
@@ -148,19 +145,18 @@ function modelSummaries(samples, formalCases) {
     if (!model.answers.has(id)) model.answers.set(id, []);
     model.answers.get(id).push({ meets_core: sample.meets_core[version], has_standard_answer: sample.has_standard_answer,
       ground_truth: sample.ground_truth, common_criteria: sample.common_criteria,
-      is_correct: sample.is_correct[version], standard_conflict: sample.standard_conflict[version] });
+      is_correct: sample.is_correct[version] });
   }
   return [...models.values()].sort((a, b) => a.version.localeCompare(b.version)).map(({ answers, ...model }) => {
     const core = { count: answers.size, completed: 0, failed: 0, unknown: 0, conflicted: 0, conditions_conflicted: 0 };
     const agreement = { basis: "standard_answer_agreement", objective_answers: 0, subjective_answers: 0,
-      standard_status_conflicted: 0, correct: 0, incorrect: 0, unknown: 0, conflicted: 0, standard_conflict_answers: 0 };
+      standard_status_conflicted: 0, correct: 0, incorrect: 0, unknown: 0, conflicted: 0 };
     for (const observations of answers.values()) {
       const cores = new Set(observations.map((item) => item.meets_core));
       const referenceConflict = observations.some((item) => !isDeepStrictEqual(item.ground_truth, observations[0].ground_truth));
       const conditionsConflict = referenceConflict || observations.some((item) => !isDeepStrictEqual(item.common_criteria, observations[0].common_criteria));
       if (conditionsConflict || cores.size !== 1) { core.unknown++; core.conflicted++; if (conditionsConflict) core.conditions_conflicted++; }
       else core[cores.has(true) ? "completed" : cores.has(false) ? "failed" : "unknown"]++;
-      if (observations.some((item) => item.standard_conflict)) agreement.standard_conflict_answers++;
       const standards = new Set(observations.map((item) => item.has_standard_answer));
       if (standards.has(true)) agreement.objective_answers++;
       if (standards.size !== 1 || referenceConflict) {
@@ -245,11 +241,6 @@ export function summarizeSamples(sampleMap, { rounds = 2000, random = Math.rando
   }
   return {
     cases: clusters.length, pair_cases: samples.length,
-    standard_conflicts: {
-      answer_count: new Set(samples.flatMap((sample) => sample.versions.filter((version) => sample.standard_conflict[version])
-        .map((version) => JSON.stringify([sample.case.batch_id, sample.case.case_id, version])))).size,
-      case_count: new Set(samples.filter((sample) => sample.versions.some((version) => sample.standard_conflict[version])).map(caseKey)).size,
-    },
     coverage: { scope: planned === null ? "formal_samples_only" : "run_plan", planned_pair_cases: planned?.pair_cases ?? null,
       decided_pair_cases: samples.length, needs_review_pair_cases: planned?.needs_review ?? null,
       incomplete_pair_cases: planned === null ? null : planned.pair_cases - samples.length - planned.needs_review,

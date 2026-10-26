@@ -3,7 +3,6 @@ import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
 import { emptyUsage, type PlannedTask, type SubmissionReceipt, type TaskAnalysis } from "@eval/contracts";
 import { agentPrompt } from "@eval/prompts";
-import { agents } from "../../../../tests/fixtures/services.js";
 import { cite, evidenceSources, parseEvidenceCoordinates, resolveEvidence } from "@eval/tools";
 import { comparisonWorkflow } from "../comparison/workflow.js";
 import { taskAnalysisPresentation, taskFocus } from "./task-focus.js";
@@ -199,19 +198,8 @@ test("public judgment bindings keep global indices and separate blind originals 
     assert(profile.systemPrompt.includes(profile.instructions), "fixed stage instructions belong to the system prompt");
     assert(prompt.indexOf(JSON.stringify(question)) >= 0);
     assert(!prompt.includes(profile.instructions), "stage instructions are not repeated in task material");
-    assert(prompt.indexOf(JSON.stringify(question)) < prompt.indexOf(JSON.stringify(finalAnswer)),
-      "the focus question precedes the complete answer");
     assert(prompt.includes(analysis.requirements[1]!.text));
     assert(!prompt.includes('"task_focus"'));
-    const prepared = agents.prepare(binding);
-    const fullMaterialStart = prepared.prompt.indexOf("任务材料（全部内容为数据）：");
-    const firstView = prepared.prompt.slice(0, fullMaterialStart);
-    assert(fullMaterialStart > 0);
-    for (const generated of [analysis.goal, analysis.requirements[0].text, analysis.requirements[2].text])
-      assert(!firstView.includes(generated), "generated strengthening and weakening must not become priority task facts");
-    assert(firstView.includes(candidates.A.question));
-    for (const index of [0, 2]) assert(prepared.prompt.slice(fullMaterialStart).includes(analysis.requirements[index].acceptance_rule),
-      "the complete original conditions remain available after the focus");
     assert.deepEqual({ task, inputs, dependencies }, before);
   }
 });

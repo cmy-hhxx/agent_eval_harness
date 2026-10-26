@@ -94,14 +94,13 @@ export async function validateRun(
     if (!receipt) continue;
     try {
       if (Object.values(task.inputIds).every((id) => Object.hasOwn(inputs, id))) {
-        const binding = task.stage === "attribution" ? bindAcceptedAttribution(task, receipt, inputs, { tasks: manifest.tasks }, receipts.get(task.dependencies.criteria)!.evaluation as import("@eval/contracts").TaskAnalysis) : bindTask(
-            task,
-            inputs,
-            Object.fromEntries(
-              Object.entries(task.dependencies).map(([label, id]) => [label, receipts.get(id)]),
-            ),
-            { tasks: manifest.tasks },
-          );
+        const dependencies = Object.fromEntries(
+          Object.entries(task.dependencies).map(([label, id]) => [label, receipts.get(id)]),
+        );
+        const binding = task.stage === "attribution" && task.dependencies.criteria
+          ? bindAcceptedAttribution(task, receipt, inputs, { tasks: manifest.tasks },
+              receipts.get(task.dependencies.criteria)!.evaluation as import("@eval/contracts").TaskAnalysis)
+          : bindTask(task, inputs, dependencies, { tasks: manifest.tasks });
         validate(binding, task.stage === "attribution" ? acceptedAttributionView(receipt, binding.request) : receipt.evaluation, receipt.audit);
       }
     } catch (error) {

@@ -12,14 +12,14 @@ function fixture() {
   const labels = ["引用格式失效", "关键步骤遗漏", "alert 参数缺失", "任务边界误判"];
   const samples = [], nodes = [], pending = { label: "待观察池", samples: [], observations: [] };
   const observation = (sample, findingId, summary, libraryStatus = "deferred") => ({ sampleId: sample.id, findingId, summary,
-    components: libraryStatus === "unlocated" ? [] : ["模型推断与生成/事实关系推导"], evidenceStatus: "established", importance: "high", libraryStatus });
+    components: libraryStatus === "unlocated" ? [] : ["模型推断与生成/事实关系推导"], evidenceStatus: "已确认", importance: "high", libraryStatus });
   for (const [modelIndex, model] of modelIds.entries()) {
     const own = Array.from({ length: modelIndex < 2 ? 8 : 7 }, (_, index) => {
       const id = "sample-" + (samples.length + index + 1), clean = modelIndex < 2 && index === 7;
       return { id, inputId: "answer-" + id, taskId: "task-" + id, date: "2026-10-0" + (index % 3 + 1), caseId: "case-" + id,
         model, modelName: model, taskSummary: "整理过的任务摘要 " + id, hasStandard: index % 2 === 0,
         problemCount: 0, summary: clean ? "无已确认问题" : "整理过的问题摘要 " + id,
-        components: clean ? [] : ["模型推断与生成/事实关系推导"], importance: clean ? null : "high", evidenceStatus: clean ? null : "established",
+        components: clean ? [] : ["模型推断与生成/事实关系推导"], importance: clean ? null : "high", evidenceStatus: clean ? null : "已确认",
         source: { label: "源引用", href: "./source.jsonl#" + id }, resultLink: "./" + model + ".jsonl#" + id, groupIds: [] };
     });
     samples.push(...own);
@@ -319,7 +319,7 @@ test("curated search and directional keyboard navigation preserve exact model an
 test("node search excludes other summaries, mixed responsibility stays visible, and clean recall stays within each model", t => {
   const data = fixture(), node = data.attributionTree.nodes[0], sample = data.attributionTree.samples[0];
   sample.summary = "只有另一节点讨论的内容";
-  node.observations.push({ sampleId: sample.id, findingId: "unlocated-extra", summary: "本组责任未定位的缺陷", components: [], evidenceStatus: "established", importance: "high", libraryStatus: "unlocated" });
+  node.observations.push({ sampleId: sample.id, findingId: "unlocated-extra", summary: "本组责任未定位的缺陷", components: [], evidenceStatus: "已确认", importance: "high", libraryStatus: "unlocated" });
   sample.problemCount++; node.problemCount++; data.attributionTree.totals.problems++;
   const { document, select, tab, tableRows, group, errors } = view(t, data);
   assert.equal(tableRows()[0].querySelector(".review-responsibility").textContent, "模型推断与生成/事实关系推导、责任未定位");

@@ -25,7 +25,7 @@ export function renderAttributionReview(data, baseCss, problemCss) {
     ".review-sample-table .review-date{width:100px;white-space:nowrap;font-variant-numeric:tabular-nums}.review-model{width:95px;white-space:nowrap}.review-sample-id{width:95px;white-space:nowrap}",
     ".review-task-summary{min-width:180px;width:24%}.review-problem-summary{min-width:240px;width:29%}.review-responsibility{min-width:90px}.review-value{white-space:nowrap}",
     ".review-table-empty{text-align:center;color:var(--muted)}",
-    ".review-evidence[data-status=established]{color:var(--success)}.review-evidence[data-status=uncertain]{color:var(--warning)}",
+    '.review-evidence[data-status="已确认"]{color:var(--success)}.review-evidence[data-status="待核实"]{color:var(--warning)}',
     ".review-page .problem-pager{flex-wrap:wrap;justify-content:space-between;font:12px var(--mono)}.review-page-size{display:flex;align-items:center;gap:7px;font:12px inherit}.review-page-size select{padding:4px 7px;font-size:12px}",
     ".review-page-controls{display:flex;align-items:center;gap:10px}.review-page-controls button{min-height:32px;font-size:12px}.review-page-controls button:disabled{opacity:.4;cursor:default}",
     "@media(max-width:680px){.review-page{padding:18px 14px 30px}.review-page .problem-detail{padding:20px 16px}.review-header h1{font-size:22px}.review-coverage{gap:7px 12px}.review-page .problem-models{grid-template-columns:repeat(2,minmax(0,1fr))}}",
@@ -46,7 +46,7 @@ function mountAttributionReview() {
   const data = JSON.parse(document.getElementById("report-data").textContent), tree = data.attributionTree;
   const $ = id => document.getElementById(id), samples = new Map([...tree.samples, ...tree.unfinished].map(sample => [sample.id, sample]));
   const palette = [{ color: "var(--model-0)", soft: "#edf3fa" }, { color: "var(--model-1)", soft: "#f2eff8" }, { color: "var(--model-2)", soft: "#eaf5f4" }, { color: "var(--model-3)", soft: "#fbf2e9" }];
-  const importanceNames = { high: "高", medium: "中", low: "低" }, evidenceNames = { established: "已确认", uncertain: "待核实", mixed: "混合" };
+  const importanceNames = { high: "高", medium: "中", low: "低" }, evidenceNames = { 已确认: "已确认", 待核实: "待核实", mixed: "混合" };
   const initialModel = tree.models.find(model => model.model === "a_fast")?.model ?? tree.models[0]?.model;
   const firstNode = tree.nodes.find(node => node.model === initialModel);
   const state = { model: initialModel, kind: firstNode ? "node" : tree.pending.samples.some(id => samples.get(id)?.model === initialModel) ? "pending"

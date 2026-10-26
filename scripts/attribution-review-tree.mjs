@@ -17,9 +17,9 @@ export function selectedAttributionEntries(state, entries) {
   if (!Array.isArray(chosen) || !chosen.length) throw new Error("归因审阅缺少冻结回答选择");
   const scope = state.manifest.executionScope && new Set(state.manifest.executionScope), byTask = new Map(), latest = new Map();
   for (const entry of entries) {
-    const row = entry.value;
-    if (row.evaluation_type !== "attribution" || !row.task_id || byTask.has(row.task_id)) throw new Error("归因 JSONL 任务身份缺失或重复");
-    byTask.set(row.task_id, entry);
+    const meta = entry.value.meta;
+    if (!meta?.task_id || byTask.has(meta.task_id)) throw new Error("归因 JSONL 任务身份缺失或重复");
+    byTask.set(meta.task_id, entry);
   }
   for (const task of state.manifest.tasks) {
     const receipt = state.receipts[task.id];
@@ -33,12 +33,12 @@ export function selectedAttributionEntries(state, entries) {
     inputs.add(answer.input_id);
     const task = latest.get(answer.input_id);
     if (!task) return [];
-    const entry = byTask.get(task.id), row = entry?.value, candidate = task.data.candidates.A;
-    if (!row || !candidate) throw new Error("冻结回答缺少已接受归因：" + answer.input_id);
+    const entry = byTask.get(task.id), row = entry?.value, meta = row?.meta, candidate = task.data.candidates.A;
+    if (!row || !meta || !candidate) throw new Error("冻结回答缺少已接受归因：" + answer.input_id);
     const receipt = state.receipts[task.id];
-    if (task.inputIds.answer !== answer.input_id || row.input_id !== answer.input_id || row.version !== answer.version || candidate.version !== answer.version ||
-      row.case.batch_id !== answer.batch_id || candidate.batch_id !== answer.batch_id || row.case.case_id !== answer.case_id || candidate.case_id !== answer.case_id ||
-      row.submission_id !== receipt.submissionId || row.evaluator_version !== receipt.evaluatorVersion)
+    if (task.inputIds.answer !== answer.input_id || meta.input_id !== answer.input_id || meta.version !== answer.version || candidate.version !== answer.version ||
+      meta.batch_id !== answer.batch_id || candidate.batch_id !== answer.batch_id || meta.case_id !== answer.case_id || candidate.case_id !== answer.case_id ||
+      meta.submission_id !== receipt.submissionId || meta.evaluator_version !== receipt.evaluatorVersion)
       throw new Error("冻结回答与正式归因身份不一致：" + task.id);
     return [entry];
   });
@@ -51,8 +51,9 @@ export function pinnedAttributionEntries(sources, states, entriesByRun) {
   for (const [run, entries] of entriesByRun) {
     const byTask = new Map();
     for (const entry of entries) {
-      if (entry.value.evaluation_type !== "attribution" || !entry.value.task_id || byTask.has(entry.value.task_id)) throw new Error("归因 JSONL 任务身份缺失或重复：" + run);
-      byTask.set(entry.value.task_id, entry);
+      const meta = entry.value.meta;
+      if (!meta?.task_id || byTask.has(meta.task_id)) throw new Error("归因 JSONL 任务身份缺失或重复：" + run);
+      byTask.set(meta.task_id, entry);
     }
     indexes.set(run, byTask);
   }
@@ -60,12 +61,12 @@ export function pinnedAttributionEntries(sources, states, entriesByRun) {
     if (inputs.has(source.input_id)) throw new Error("聚类审阅输入重复：" + source.input_id);
     inputs.add(source.input_id);
     const state = states.get(source.run), task = state?.manifest.tasks.find(task => task.id === source.task_id), receipt = state?.receipts[source.task_id];
-    const entry = indexes.get(source.run)?.get(source.task_id), row = entry?.value, candidate = task?.data.candidates.A;
+    const entry = indexes.get(source.run)?.get(source.task_id), row = entry?.value, meta = row?.meta, candidate = task?.data.candidates.A;
     if (!row || !state || state.manifest.runId !== source.run_id || task?.stage !== "attribution" || !candidate || !receipt || state.manifest.states[task.id]?.status !== "succeeded" ||
-      receipt.submissionId !== source.submission_id || receipt.evaluatorVersion !== source.evaluator_version || row.submission_id !== source.submission_id ||
-      row.evaluator_version !== source.evaluator_version || row.input_id !== source.input_id || task.inputIds.answer !== source.input_id || candidate.input_id !== source.input_id ||
-      row.version !== source.model || candidate.version !== source.model || row.case.batch_id !== source.batch_id || candidate.batch_id !== source.batch_id ||
-      row.case.case_id !== source.case_id || candidate.case_id !== source.case_id || candidate.source !== source.source.file || candidate.line !== source.source.line)
+      !meta || receipt.submissionId !== source.submission_id || receipt.evaluatorVersion !== source.evaluator_version || meta.submission_id !== source.submission_id ||
+      meta.evaluator_version !== source.evaluator_version || meta.input_id !== source.input_id || task.inputIds.answer !== source.input_id || candidate.input_id !== source.input_id ||
+      meta.version !== source.model || candidate.version !== source.model || meta.batch_id !== source.batch_id || candidate.batch_id !== source.batch_id ||
+      meta.case_id !== source.case_id || candidate.case_id !== source.case_id || candidate.source !== source.source.file || candidate.line !== source.source.line)
       throw new Error("冻结聚类来源与正式归因不一致：" + source.run + "/" + source.task_id);
     return { source, entry };
   });
@@ -84,23 +85,23 @@ export function projectProblemLibraryTree(rows, libraries, classTexts, unfinishe
       if (!occurrence.attribution) throw new Error("问题库样本缺少正式归因来源：" + occurrence.id);
       const row = byTask.get(occurrence.attribution.task_id);
       if (!row) continue;
-      const finding = row.raw.findings.find(item => item.finding_id === occurrence.finding_id);
-      const component = (finding?.problem ? responsibilityLabels(finding.problem) : []).find(value => [target.component.label, ...target.component.aliases].some(label => normalizeLabel(label) === normalizeLabel(value)));
+      const finding = row.raw.Problem.find(item => item.problem_id === occurrence.finding_id);
+      const component = (finding ? responsibilityLabels(finding) : []).find(value => [target.component.label, ...target.component.aliases].some(label => normalizeLabel(label) === normalizeLabel(value)));
       if (library.model !== row.model || occurrence.version !== row.model || occurrence.input_id !== row.inputId ||
         occurrence.batch_id !== row.date || occurrence.case_id !== row.caseId || occurrence.attribution.run !== row.attribution.run ||
         occurrence.attribution.run_id !== row.attribution.run_id || occurrence.attribution.submission_id !== row.attribution.submission_id ||
         occurrence.attribution.evaluator_version !== row.attribution.evaluator_version || occurrence.source.file !== row.sourceRecord.file ||
-        occurrence.source.line !== row.sourceRecord.line || !finding || finding.type !== "problem" || !component ||
-        occurrence.evidence_status !== finding.assessment.evidence_status || !finding.evidence.some(item => item.source === undefined && item.source_input_id === undefined &&
+        occurrence.source.line !== row.sourceRecord.line || !finding || !component ||
+        occurrence.evidence_status !== finding.evidence_status || !finding.evidence.some(item => item.source === undefined && item.source_input_id === undefined &&
           item.message_index === occurrence.message_index))
         throw new Error("问题库引用与当前正式归因不一致：" + occurrence.attribution.task_id + "/" + occurrence.finding_id);
-      const coordinate = JSON.stringify([row.inputId, finding.finding_id, target.component.id]), previous = claimed.get(coordinate);
+      const coordinate = JSON.stringify([row.inputId, finding.problem_id, target.component.id]), previous = claimed.get(coordinate);
       if (previous && previous !== target.problem.id) throw new Error("同责任问题重复归类：" + coordinate);
       if (previous) continue;
       claimed.set(coordinate, target.problem.id);
-      row.classes.push({ findingId: finding.finding_id, component, id: target.problem.id });
+      row.classes.push({ findingId: finding.problem_id, component, id: target.problem.id });
       members.set(target.problem.id, [...members.get(target.problem.id) ?? [], {
-        taskId: row.taskId, findingId: finding.finding_id, components: [component], summary: row.problemSummaries.get(finding.finding_id),
+        taskId: row.taskId, findingId: finding.problem_id, components: [component], summary: row.problemSummaries.get(finding.problem_id),
       }]);
     }
     for (const [id, selected] of members) {
@@ -108,11 +109,10 @@ export function projectProblemLibraryTree(rows, libraries, classTexts, unfinishe
       nodes.push({ id, model: library.model, category: component.label, label: display.label, definition: display.definition, members: selected });
     }
   }
-  const pending = assigned.flatMap(row => row.raw.findings.flatMap(finding => {
-    if (finding.type !== "problem") return [];
-    const components = responsibilityLabels(finding.problem).filter(component => !row.classes.some(item => item.findingId === finding.finding_id && item.component === component));
-    return components.length || !responsibilityLabels(finding.problem).length ? [{ taskId: row.taskId, findingId: finding.finding_id,
-      components, summary: row.problemSummaries.get(finding.finding_id) }] : [];
+  const pending = assigned.flatMap(row => row.raw.Problem.flatMap(finding => {
+    const components = responsibilityLabels(finding).filter(component => !row.classes.some(item => item.findingId === finding.problem_id && item.component === component));
+    return components.length || !responsibilityLabels(finding).length ? [{ taskId: row.taskId, findingId: finding.problem_id,
+      components, summary: row.problemSummaries.get(finding.problem_id) }] : [];
   }));
   return projectAttributionTree(assigned, { nodes, pending, samples: assigned.map(row => ({ taskId: row.taskId, taskSummary: row.taskSummary })) }, unfinished);
 }
@@ -129,15 +129,14 @@ export function projectAttributionTree(rows, grouping, unfinished = []) {
     if (!row.inputId || byTask.has(row.taskId) || bySample.has(row.id) || inputIds.has(row.inputId))
       throw new Error(`归因审阅样本身份缺失或重复：${row.taskId}`);
     byTask.set(row.taskId, row); bySample.set(row.id, row); inputIds.add(row.inputId);
-    for (const finding of row.raw?.findings ?? []) {
-      if (finding.type !== "problem") continue;
-      const coordinate = key(row.taskId, finding.finding_id);
+    for (const finding of row.raw?.Problem ?? []) {
+      const coordinate = key(row.taskId, finding.problem_id);
       if (problems.has(coordinate)) throw new Error(`归因审阅问题坐标重复：${coordinate}`);
-      const components = responsibilityLabels(finding.problem);
+      const components = responsibilityLabels(finding);
       const statusByComponent = new Map(components.map(component => [component,
-        (row.classes ?? []).some(item => item.findingId === finding.finding_id && item.component === component) ? "classified" :
-          finding.assessment.evidence_status === "uncertain" ? "uncertain" :
-            (row.deferred ?? []).some(item => item.findingId === finding.finding_id && item.component === component) ? "deferred" : "unclassified"]));
+        (row.classes ?? []).some(item => item.findingId === finding.problem_id && item.component === component) ? "classified" :
+          finding.evidence_status === "待核实" ? "uncertain" :
+            (row.deferred ?? []).some(item => item.findingId === finding.problem_id && item.component === component) ? "deferred" : "unclassified"]));
       const statuses = components.length ? unique([...statusByComponent.values()]) : ["unlocated"];
       for (const status of statuses) totals[status]++;
       const libraryStatus = statuses.length === 1 ? statuses[0] : "mixed";
@@ -155,17 +154,17 @@ export function projectAttributionTree(rows, grouping, unfinished = []) {
     const coordinate = key(member.taskId, member.findingId), problem = problems.get(coordinate);
     if (!problem) throw new Error(`归因审阅成员缺失或重复：${coordinate}`);
     const { row, finding, libraryStatus: findingLibraryStatus, statusByComponent } = problem;
-    const components = member.components ?? responsibilityLabels(finding.problem), seen = claimed.get(coordinate) ?? new Set();
-    if (!Array.isArray(components) || new Set(components).size !== components.length || components.some(component => !responsibilityLabels(finding.problem).includes(component)) ||
-      (!components.length && responsibilityLabels(finding.problem).length) || (components.length ? components : [null]).some(component => seen.has(component)))
+    const components = member.components ?? responsibilityLabels(finding), seen = claimed.get(coordinate) ?? new Set();
+    if (!Array.isArray(components) || new Set(components).size !== components.length || components.some(component => !responsibilityLabels(finding).includes(component)) ||
+      (!components.length && responsibilityLabels(finding).length) || (components.length ? components : [null]).some(component => seen.has(component)))
       throw new Error(`归因审阅成员缺失或重复：${coordinate}`);
     for (const component of components.length ? components : [null]) seen.add(component);
     claimed.set(coordinate, seen);
     const statuses = components.length ? unique(components.map(component => statusByComponent.get(component))) : ["unlocated"];
     const libraryStatus = statuses.length === 1 ? statuses[0] : "mixed";
-    return { sampleId: row.id, findingId: finding.finding_id, summary: text(member.summary, "问题摘要"),
-      components: [...components], evidenceStatus: finding.assessment.evidence_status,
-      importance: finding.importance, libraryStatus, findingLibraryStatus };
+    return { sampleId: row.id, findingId: finding.problem_id, summary: text(member.summary, "问题摘要"),
+      components: [...components], evidenceStatus: finding.evidence_status,
+      importance: null, libraryStatus, findingLibraryStatus };
   };
   const sampleCount = observations => new Set(observations.map(item => bySample.get(item.sampleId).inputId)).size;
   const nodes = grouping.nodes.map(node => {
@@ -184,19 +183,17 @@ export function projectAttributionTree(rows, grouping, unfinished = []) {
   });
   const pendingObservations = grouping.pending.map(observe);
   if (claimed.size !== problems.size || [...problems.entries()].some(([coordinate, problem]) =>
-    claimed.get(coordinate)?.size !== Math.max(1, responsibilityLabels(problem.finding.problem).length))) throw new Error("归因审阅问题覆盖不完整");
+    claimed.get(coordinate)?.size !== Math.max(1, responsibilityLabels(problem.finding).length))) throw new Error("归因审阅问题覆盖不完整");
   const observations = [...nodes.flatMap(node => node.observations), ...pendingObservations];
   const samples = rows.map(row => {
     const own = [...new Map(observations.filter(item => item.sampleId === row.id).map(item => [item.findingId, item])).values()];
-    const priority = ["high", "medium", "low"].find(value => own.some(item => item.importance === value)) ?? null;
     const evidence = unique(own.map(item => item.evidenceStatus)), raw = row.raw;
     return { id: row.id, inputId: row.inputId, taskId: row.taskId, date: row.date, caseId: row.caseId,
       model: row.model, modelName: row.modelName ?? modelNames[row.model] ?? row.model, taskSummary: curatedSamples.get(row.taskId),
       hasStandard: raw?.has_standard_answer ?? row.hasStandard,
-      coreStatus: raw?.core_assessment?.meets_core === true ? "met" : raw?.core_assessment?.meets_core === false ? "unmet" : "unknown",
-      correctnessStatus: raw?.standard_conflict === true ? "conflict" : raw?.has_standard_answer === false ? "not_applicable" : raw?.is_correct === true ? "correct" : raw?.is_correct === false ? "incorrect" : "unknown",
+      correctnessStatus: raw?.has_standard_answer === false ? "not_applicable" : raw?.is_correct === true ? "correct" : raw?.is_correct === false ? "incorrect" : "unknown",
       problemCount: own.length, summary: own.length ? own.map(item => item.summary).join("；") : "无已确认问题",
-      components: unique(observations.filter(item => item.sampleId === row.id).flatMap(item => item.components)), importance: priority,
+      components: unique(observations.filter(item => item.sampleId === row.id).flatMap(item => item.components)), importance: null,
       evidenceStatus: evidence.length === 1 ? evidence[0] : evidence.length ? "mixed" : null,
       groupIds: nodes.filter(node => node.samples.includes(row.id)).map(node => node.id),
       source: row.source ? { label: row.source.label, href: row.source.href } : null, resultLink: row.resultLink };

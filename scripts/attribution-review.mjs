@@ -55,18 +55,18 @@ if (clusterRuns.length) {
 } else {
   const [state, entries] = await Promise.all([readRunState(run), readFile(path.join(run, "results", "attribution.jsonl"), "utf8").then(jsonl)]);
   selected = selectedAttributionEntries(state, entries).map(entry => {
-    const row = entry.value, candidate = state.manifest.tasks.find(task => task.id === row.task_id).data.candidates.A;
-    return { entry, source: { run, run_id: state.manifest.runId, task_id: row.task_id, submission_id: row.submission_id, evaluator_version: row.evaluator_version,
-      input_id: row.input_id, model: row.version, batch_id: row.case.batch_id, case_id: row.case.case_id, source: { file: candidate.source, line: candidate.line } } };
+    const row = entry.value, meta = row.meta, candidate = state.manifest.tasks.find(task => task.id === meta.task_id).data.candidates.A;
+    return { entry, source: { run, run_id: state.manifest.runId, task_id: meta.task_id, submission_id: meta.submission_id, evaluator_version: meta.evaluator_version,
+      input_id: meta.input_id, model: meta.version, batch_id: meta.batch_id, case_id: meta.case_id, source: { file: candidate.source, line: candidate.line } } };
   });
   targets = state.manifest.preflight.selected_answers; displayConfig = state.manifest.config;
 }
 if (selectedModel) {
-  selected = selected.filter(({ entry }) => entry.value.version === selectedModel);
+  selected = selected.filter(({ entry }) => entry.value.meta.version === selectedModel);
   targets = targets.filter(answer => answer.version === selectedModel);
   if (!targets.length) throw new Error("所选模型没有归因来源：" + selectedModel);
 }
-const byTask = new Map(selected.map(({ entry }) => [entry.value.task_id, entry]));
+const byTask = new Map(selected.map(({ entry }) => [entry.value.meta.task_id, entry]));
 const titles = new Map();
 for (const sample of summaries.samples) {
   const inputId = sample.inputId;
@@ -78,16 +78,16 @@ const classTexts = new Map(await Promise.all(libraries.map(async (library, index
   return [library.model, await readClusteringClassText(displayConfig, library)];
 })));
 const rows = selected.map(({ entry, source }, index) => {
-  const row = entry.value, model = models.find(model => model.id === row.version);
-  if (!model) throw new Error("归因 JSONL 模型无效：" + row.version);
-  const raw = originalResultRow("attribution", row).evaluation;
-  const rewrites = toRewrites(row.evaluation.rewritten ?? { rewrites: [] });
-  return { id: `sample-${index + 1}`, inputId: row.input_id, taskId: row.task_id,
-    date: row.case.batch_id, caseId: row.case.case_id, model: row.version, modelName: model.label,
-    hasStandard: raw.has_standard_answer, raw, taskSummary: titles.get(row.input_id),
-    problemSummaries: new Map(raw.findings.flatMap((finding, index) => finding.type === "problem" ? [[finding.finding_id,
-      rewrites[`findings.${index}.text`]?.trim() || rewrites[`findings.${index}.problem.label`]?.trim() || finding.problem.label]] : [])),
-    attribution: { run: source.run, run_id: source.run_id, task_id: row.task_id, submission_id: row.submission_id, evaluator_version: row.evaluator_version },
+  const row = entry.value, meta = row.meta, model = models.find(model => model.id === meta.version);
+  if (!model) throw new Error("归因 JSONL 模型无效：" + meta.version);
+  const raw = originalResultRow("attribution", row);
+  const rewrites = toRewrites(row.meta.rewritten ?? { rewrites: [] });
+  return { id: `sample-${index + 1}`, inputId: meta.input_id, taskId: meta.task_id,
+    date: meta.batch_id, caseId: meta.case_id, model: meta.version, modelName: model.label,
+    hasStandard: raw.has_standard_answer, raw, taskSummary: titles.get(meta.input_id),
+    problemSummaries: new Map(raw.Problem.map((problem, index) => [problem.problem_id,
+      rewrites[`Problem.${index}.text`]?.trim() || problem.text])),
+    attribution: { run: source.run, run_id: source.run_id, task_id: meta.task_id, submission_id: meta.submission_id, evaluator_version: meta.evaluator_version },
     sourceRecord: { ...source.source }, deferred: [],
     source: { label: model.label + " JSONL", href: href(path.join(run, "models", model.id + ".jsonl")) },
     resultLink: href(path.join(run, "models", model.id + ".jsonl")) };
@@ -112,10 +112,10 @@ for (const clusterRun of clusterRuns) {
       for (const ref of item.refs) {
         const row = selected.get(ref.attribution?.task_id);
         if (!row || row.inputId !== ref.input_id) continue;
-        const finding = row.raw.findings.find(item => item.finding_id === ref.finding_id);
+        const finding = row.raw.Problem.find(item => item.problem_id === ref.finding_id);
         if (ref.attribution.run !== row.attribution.run || ref.attribution.run_id !== row.attribution.run_id ||
           ref.attribution.submission_id !== row.attribution.submission_id || ref.attribution.evaluator_version !== row.attribution.evaluator_version ||
-          !finding || finding.type !== "problem" || !responsibilityLabels(finding.problem).includes(item.component))
+          !finding || !responsibilityLabels(finding).includes(item.component))
           throw new Error("聚类待观察引用与当前归因不一致：" + row.taskId + "/" + ref.finding_id);
         if (assignment.deferred_reason) row.deferred.push({ findingId: ref.finding_id, component: item.component, reason: assignment.deferred_reason });
       }

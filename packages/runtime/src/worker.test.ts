@@ -1473,7 +1473,7 @@ for (const reason of ["idle", "deadline", "cancel"] as const)
     );
     try {
       // Allow session setup IO under load before testing deadline-driven disposal.
-      if (reason === "deadline") fixture.spec.deadline = Date.now() + 2000;
+      if (reason === "deadline") fixture.spec.deadline = Date.now() + 1000;
       await fixture.start();
       if (reason === "cancel") {
         await waitForTestState(async () => ({ running, disposed }), state => state.running,
@@ -1980,7 +1980,7 @@ for (const method of ["accept", "inspect"] as const)
       if (method === "accept") fixture.store.accept = async value => { entered = true; await gate; return accept(value); };
       else fixture.store.inspect = async value => { entered = true; await gate; return inspect(value); };
       try {
-        fixture.spec.deadline = Date.now() + 5000;
+        fixture.spec.deadline = Date.now() + 2500;
         await fixture.start();
         await waitForTestState(async () => entered, Boolean, "submission reaches the Host");
         await new Promise(resolve => setTimeout(resolve, 1100));

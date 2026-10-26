@@ -65,8 +65,7 @@ test("optional verification previews without mutation, freezes only audit work a
     assert.deepEqual(prepared.manifest.tasks.find(task => task.id === f.source.id), f.state.manifest.tasks.find(task => task.id === f.source.id));
     assert.deepEqual(prepared.receipts, f.state.receipts);
     assert.deepEqual(f.source, sourceData);
-    const failure = { attemptId: randomUUID(), contentSubmissions: 3, fileErrors: 1, repeatedErrors: 0, stopped: true,
-      evidenceBank: [], errors: [] };
+    const failure = { attemptId: randomUUID(), contentSubmissions: 3, fileErrors: 1, repeatedErrors: 0, stopped: true, errors: [] };
     prepared.manifest.states[id] = { status: "failed", attempts: 2, reason: "provider failure", failure };
     await writeRunState(f.run, prepared);
     const repeated = await prepareComparisonVerification(f.run, { ...selection, apply: true });

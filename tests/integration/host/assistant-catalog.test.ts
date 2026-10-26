@@ -13,7 +13,7 @@ test("catalog reads current AIME without overviews, namespaces equal run IDs and
   const f = await fixtureConfig([[row], [], [], []]); t.after(() => rm(f.directory, { recursive: true, force: true }));
   const config: AnswerReviewConfig = { ...f.config, workflow: "answer-review", reviewStages: ["attribution"], rewrite: { ...f.config.rewrite, attribution: false }, inputs: { ...f.config.inputs, versions: f.config.inputs.versions.slice(0, 1) } };
   const plan = await planAnswerReview(config), task = plan.tasks[0];
-  const inputId = answerReviewTaskInput(task), evaluation = attributionResult(true,"答案😀正确",true,inputId);
+  const inputId = answerReviewTaskInput(task), evaluation = attributionResult(false,"答案😀正确",true,inputId);
   const sourceId = evaluation.Problem[0].evidence[0].evidence_id;
   const state: RunState = { manifest: { format: "evaluation-run", debug: false, runId: "same", status: "finished", engine: fakeIdentity,
     evaluatorVersion: fakeEvaluatorVersion, config, tasks: plan.tasks, inputCatalog: plan.catalog, inputs: {},

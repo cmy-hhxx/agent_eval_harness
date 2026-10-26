@@ -658,12 +658,14 @@ export async function writeOverview(
       links.push(`[${label}](_internal/diagnostics/${name}.jsonl)`);
   const summaryVersions = (summary.evaluator_versions as string[]).join("、") || "无已接受结果";
   const coverage = summary.coverage as { planned: number; decided: number; pending: number; incomplete: number } | undefined;
+  const standardConflicts = (summary.standard_conflicts as unknown[] | undefined)?.length ?? 0;
   await atomicWrite(
     locateRun(run).report,
     `# 评测运行 ${summary.run_id}\n\n状态：${summary.status}；评测器：${summaryVersions}；完成比较：${summary.completed_comparisons}。\n\n` +
       `执行失败：${failures}；依赖阻塞：${statuses.blocked || 0}；已取消：${statuses.cancelled || 0}；输入跳过对比组：${skipped}。\n\n` +
       (coverage
-        ? `比较覆盖：已决 ${coverage.decided}；待核 ${coverage.pending}；未完成 ${coverage.incomplete}（计划 ${coverage.planned}）。\n\n`
+        ? `比较覆盖：已决 ${coverage.decided}；待核 ${coverage.pending}；未完成 ${coverage.incomplete}（计划 ${coverage.planned}）。` +
+          (standardConflicts ? `标准冲突待核：${standardConflicts} 例（见 stats.json）。` : "") + "\n\n"
         : "") +
       `离线校验：${validation ? (validation.valid ? "通过" : `未通过（${validation.errors.length} 项错误）`) : "尚未校验"}。` +
       (validation

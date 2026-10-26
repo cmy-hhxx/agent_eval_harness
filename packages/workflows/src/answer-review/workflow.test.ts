@@ -143,15 +143,13 @@ test('independent samples share one concurrency limit of sixteen',async t=>{
  const rows=Array.from({length:18},(_,index)=>({...sessionRaw('case'+index),batch_id:'b1'}));
  const f=await fixtureConfig([rows as any,[],[],[]]);t.after(()=>rm(f.directory,{recursive:true,force:true}));
  const config={...f.config,workflow:'answer-review',reviewStages:['attribution'],rewrite:{...f.config.rewrite,attribution:false},inputs:{...f.config.inputs,versions:f.config.inputs.versions.slice(0,1)}} as AnswerReviewConfig;
- const plan=await planAnswerReview(config);let active=0,peak=0,started=0,reviews=0,checks=0,release!:()=>void;
+ const plan=await planAnswerReview(config);let active=0,peak=0,started=0,checks=0,release!:()=>void;
  const gate=new Promise<void>(resolve=>{release=resolve;});
  const backend:AgentBackend={identity:fakeIdentity,async createSession(options){return {async run(){
   active++;peak=Math.max(peak,active);
   try{
-   if(options.spec.evaluation.id==='attribution'){
-    if(options.spec.evaluation.toolNames.length===0)reviews++;
-    else{started++;if(started===16)release();await gate;}
-   }else checks++;
+   if(options.spec.evaluation.id==='attribution'){started++;if(started===16)release();await gate;}
+   else checks++;
    await new Promise(resolve=>setTimeout(resolve,15));
    const result=await submitFor(options,draftFor(options.spec,taskResult(options.spec)));assert.notEqual(result.isError,true,JSON.stringify(result));
   }finally{active--;}
@@ -160,7 +158,7 @@ test('independent samples share one concurrency limit of sixteen',async t=>{
  await runEvaluation({...services,taskSource:answerReviewWorkflow,repository:answerReviewRepository,report:reportAnswerReview,
   runId:'concurrency',output:config.output,config,plan,engine:'pi',identity:fakeIdentity,evaluatorVersion:fakeEvaluatorVersion,
   modelForStage:f.modelForStage,policy:config.execution,concurrency:16,retries:0,retryDelaySeconds:0,workerUrls:workers.map(worker=>worker.url)});
- assert.equal(peak,16);assert.equal(started,18);assert.equal(reviews,18);assert.equal(checks,0);
+ assert.equal(peak,16);assert.equal(started,18);assert.equal(checks,0);
  const state=await answerReviewRepository.readRun(path.join(config.output.path,'concurrency'));
  assert.equal(Object.keys(state.receipts).length,18,JSON.stringify({tasks:state.manifest.tasks.map(task=>task.stage),receipts:Object.keys(state.receipts)}));assert.equal(active,0);
 });

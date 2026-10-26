@@ -5,15 +5,18 @@ import { emptyLibrary } from "@eval/agents/clustering";
 
 const nodeIds = ["7130973d-a74b-4d0f-9f9e-cd7ea279e404", "54d14743-bbfc-4c02-ae07-c6750484a2bb"];
 function row(model, taskId, options = {}) {
-  const findings = options.clean ? [] : ["f0", ...(options.second ? ["f1"] : [])].map(finding_id => ({
-    finding_id, type: "problem", importance: options.low ? "low" : "high",
-    assessment: { evidence_status: options.uncertain ? "uncertain" : "established" },
-    problem: { component: (options.components ?? ["未命名终稿生成调用（消息 1） / 数据解释与计算 / 事实关系推导"]).map(label=>{const [component,chain_step,functional_component]=label.split(" / ");return {role:"primary",component,chain_step,functional_component,technical_domain:component.startsWith("未命名")?"模型推断与生成":"工具业务实现"};}), label: "不复制原名称", definition: "不复制原定义" },
+  const findings = options.clean ? [] : ["f0", ...(options.second ? ["f1"] : [])].map(problem_id => ({
+    problem_id, evidence_status: options.uncertain ? "待核实" : "已确认",
+    attribution_reason: "真实责任结论。",
+    ...(() => {
+      const [component = "责任主体未确定", ...related] = options.components ?? ["未命名终稿生成调用（消息 1） / 数据解释与计算 / 事实关系推导"];
+      return { component, related_responsibilities: related.map(item => ({ component: item, attribution_reason: "共同影响最终交付。" })) };
+    })(),
     text: "不复制原点评", evidence: [{ message_index: 1, quote: "不复制证据全文" }] }));
   return { id: `sample-${taskId}`, inputId: `input-${taskId}`, taskId, model, date: "2026-10-14", caseId: taskId,
     question: "不复制完整提问", standard: "不复制标准全文", text: { summary: "不复制改写全文" },
-    raw: { findings, summary: "不复制原总结", has_standard_answer: !!options.standard, standard_conflict: !!options.conflict,
-      is_correct: options.standard ? !!options.correct : null, core_assessment: { meets_core: !options.unmet } },
+    raw: { Problem: findings, summary: "不复制原总结", has_standard_answer: !!options.standard,
+      is_correct: options.standard ? !!options.correct : null },
     hasStandard: !options.standard, classes: options.classes ?? [], deferred: options.deferred ?? [],
     source: { label: "source.jsonl:2", href: "./source.jsonl", extra: "不复制来源额外字段" }, resultLink: "./result.jsonl" };
 }
@@ -22,10 +25,10 @@ const candidate = (model, members, index = 0) => ({ id: nodeIds[index], model, c
 function snapshot(rows) {
   const nodes = [], pending = [];
   for (const model of new Set(rows.map(row => row.model))) {
-    const own = rows.filter(row => row.model === model && row.raw.findings.length);
+    const own = rows.filter(row => row.model === model && row.raw.Problem.length);
     if (own.length >= 2) nodes.push(candidate(model, own.map(row => member(row)), nodes.length));
     else pending.push(...own.map(row => member(row)));
-    pending.push(...own.filter(row => row.raw.findings.length > 1).map(row => member(row, "f1")));
+    pending.push(...own.filter(row => row.raw.Problem.length > 1).map(row => member(row, "f1")));
   }
   return { nodes, pending, samples: rows.map(row => ({ taskId: row.taskId, taskSummary: `任务摘要-${row.taskId}` })) };
 }
@@ -51,11 +54,10 @@ test("each model's representative nodes count its own independent answers with s
 });
 
 test("sample rows expose curated prose and references and derive judgments from original results", () => {
-  const rows = [row("a_fast", "correct", { standard: true, correct: true }), row("a_fast", "incorrect", { standard: true, unmet: true }), row("b_fast", "clean", { clean: true }), row("b_expert", "conflict", { standard: true, correct: true, conflict: true })];
+  const rows = [row("a_fast", "correct", { standard: true, correct: true }), row("a_fast", "incorrect", { standard: true, unmet: true }), row("b_fast", "clean", { clean: true })];
   const tree = projectAttributionTree(rows, snapshot(rows));
-  assert.deepEqual(tree.samples.map(sample => sample.correctnessStatus), ["correct", "incorrect", "not_applicable", "conflict"]);
-  assert.deepEqual(tree.samples.map(sample => sample.coreStatus), ["met", "unmet", "met", "met"]);
-  assert.deepEqual(tree.samples.map(sample => sample.hasStandard), [true, true, false, true]);
+  assert.deepEqual(tree.samples.map(sample => sample.correctnessStatus), ["correct", "incorrect", "not_applicable"]);
+  assert.deepEqual(tree.samples.map(sample => sample.hasStandard), [true, true, false]);
   assert.equal(tree.samples[2].summary, "无已确认问题");
   assert.equal(tree.samples[2].problemCount, 0);
   assert.equal(tree.samples[2].importance, null);
@@ -95,8 +97,8 @@ test("deferred requires component coordinates, and uncertain evidence remains vi
   const tree = projectAttributionTree(rows, snapshot(rows));
   assert.deepEqual(tree.nodes[0].observations.map(item => item.libraryStatus), ["unclassified", "uncertain"]);
   assert.equal(tree.totals.deferred, 0);
-  assert.equal(tree.samples[1].evidenceStatus, "uncertain");
-  assert.equal(tree.samples[1].importance, "low");
+  assert.equal(tree.samples[1].evidenceStatus, "待核实");
+  assert.equal(tree.samples[1].importance, null);
 });
 
 test("formal class subsets retain their UUID with one supporting input, and empty nodes or duplicate inputs are rejected", () => {
@@ -179,8 +181,8 @@ test("frozen inputs use the latest in-scope accepted review and preserve its exa
     data: { candidates: { A: { input_id: input, version, batch_id: "2026-10-01", case_id: "case" } } } });
   const tasks = [task("original"), task("review"), task("outside-review"), task("unselected", "other")];
   tasks[1].data.reviewOf = { taskId: "original", round: 1, reasons: ["核验疑点"] };
-  const entries = tasks.map(item => ({ value: { evaluation_type: "attribution", task_id: item.id, input_id: item.inputIds.answer,
-    version: "a_fast", case: { batch_id: "2026-10-01", case_id: "case" }, submission_id: "submission-" + item.id, evaluator_version: "judge" },
+  const entries = tasks.map(item => ({ value: { meta: { task_id: item.id, input_id: item.inputIds.answer,
+    version: "a_fast", batch_id: "2026-10-01", case_id: "case", submission_id: "submission-" + item.id, evaluator_version: "judge" } },
     line: '{  "task_id": "' + item.id + '", "original": "原行字面不改" }' }));
   const state = { manifest: { tasks, executionScope: ["original", "review", "unselected"],
     preflight: { selected_answers: [{ input_id: "input", version: "a_fast", batch_id: "2026-10-01", case_id: "case", task_id: "original" }] },
@@ -194,7 +196,7 @@ test("frozen inputs use the latest in-scope accepted review and preserve its exa
   delete state.receipts.original;
   assert.deepEqual(selectedAttributionEntries(state, entries), [], "unaccepted inputs do not reject the completed subset");
   assert.throws(() => selectedAttributionEntries(before.state, []), /缺少已接受归因/, "an accepted receipt still requires its formal result row");
-  const wrong = structuredClone(before); wrong.entries[1].value.submission_id = "wrong";
+  const wrong = structuredClone(before); wrong.entries[1].value.meta.submission_id = "wrong";
   assert.throws(() => selectedAttributionEntries(wrong.state, wrong.entries), /身份不一致/);
   wrong.entries[1] = before.entries[1]; wrong.state.manifest.preflight.selected_answers.push(before.state.manifest.preflight.selected_answers[0]);
   assert.throws(() => selectedAttributionEntries(wrong.state, wrong.entries), /冻结回答重复/);
@@ -204,7 +206,7 @@ function libraryFixture(components = ["未命名终稿生成调用（消息 1）
   const rows = [row("a_fast", "one", { components }), row("a_fast", "two", { components }), row("a_fast", "unknown", { components: [] }), row("b_fast", "clean", { clean: true })];
   for (const item of rows) {
     item.taskSummary = "高层任务摘要-" + item.taskId;
-    item.problemSummaries = new Map(item.raw.findings.map(finding => [finding.finding_id, "通俗问题摘要-" + item.taskId]));
+    item.problemSummaries = new Map(item.raw.Problem.map(finding => [finding.problem_id, "通俗问题摘要-" + item.taskId]));
     item.attribution = { run: "/fixture/attribution", run_id: "attribution", task_id: item.taskId, submission_id: "source-" + item.taskId, evaluator_version: "judge" };
     item.sourceRecord = { file: "/fixture/source.jsonl", line: 2 };
   }
@@ -217,7 +219,7 @@ function libraryFixture(components = ["未命名终稿生成调用（消息 1）
     classTexts.get("a_fast").set(id, { label: "通俗类名称-" + index, definition: "通俗类定义-" + index });
     library.occurrences.push(...rows.slice(0, 2).map(item => ({ id: "occurrence-" + index + "-" + item.taskId, class_id: id, version: item.model,
       evaluator_version: "cluster", batch_id: item.date, case_id: item.caseId, input_id: item.inputId, run_id: "cluster", task_id: "cluster-task",
-      submission_id: "cluster-submission", finding_id: "f0", evidence_status: "established", message_index: 1,
+      submission_id: "cluster-submission", finding_id: "f0", evidence_status: "已确认", message_index: 1,
       source: item.sourceRecord, attribution: item.attribution, classification: "created", previous_class_id: null, at: "2026-10-14T00:00:00Z" })));
   }
   return { rows, library, classTexts };
@@ -265,7 +267,7 @@ test("library projection rejects wrong receipt, evidence, component and duplicat
     const wrong = structuredClone(library); change(wrong.occurrences[0]);
     assert.throws(() => projectProblemLibraryTree(rows, [wrong], classTexts), /来源|不一致/);
   }
-  const borrowed = structuredClone(rows); borrowed[0].raw.findings[0].evidence[0].source_input_id = "another-input";
+  const borrowed = structuredClone(rows); borrowed[0].raw.Problem[0].evidence[0].source_input_id = "another-input";
   assert.throws(() => projectProblemLibraryTree(borrowed, [library], classTexts), /不一致/, "a message index from borrowed evidence cannot prove an owned occurrence");
   const wrong = structuredClone(library); wrong.components[Object.keys(wrong.components)[0]].label = "错误工具";
   assert.throws(() => projectProblemLibraryTree(rows, [wrong], classTexts), /不一致/);
