@@ -37,7 +37,10 @@ wencai.stateDirectory = path.resolve(config, wencai.stateDirectory);
 wencai.sourceDirectory = path.resolve(config, wencai.sourceDirectory);
 wencai.publication.logFile = path.join(runtime, "log/comparison-statistics-log.jsonl");
 await write(path.join(config, "automations.json"), wencai);
-aime.hostConfigs = [hostFile, ...aime.hostConfigs.filter(file => path.basename(file) !== "host.json" && path.resolve(config, file) !== hostFile)];
+const checkouts = path.join(runtime, "checkouts");
+aime.hostConfigs = [hostFile, path.join(code, "configs/answer-review.json"),
+  ...aime.hostConfigs.filter(file => !["host.json", "answer-review.json"].includes(path.basename(file)) &&
+    path.resolve(config, file) !== hostFile && !path.resolve(config, file).startsWith(checkouts + path.sep))];
 aime.archiveDirectory = path.join(dataRoot, "1_aime/1_7z_data/online_data");
 aime.inputDirectory = path.join(dataRoot, "1_aime/2_daily_eval_input");
 aime.outputDirectory = path.join(dataRoot, "1_aime/eval_output/0_daily_eval");
