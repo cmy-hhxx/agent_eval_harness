@@ -43,6 +43,8 @@ export interface EvaluationSpec {
   toolNames: string[];
   /** Whether this profile explicitly submits existing workspace JSON files instead of JSON values. */
   fileSubmission: boolean;
+  /** Resolve already applies the profile's final semantic validation; Host still checks the result schema. */
+  resolveValidatesResult?: boolean;
   /** Reserve file drafting inside the existing exploration/repair allowance, not in addition to it. */
   draftWriteInCallLimit?: boolean;
   /** Transport the final JSON body as one string to avoid provider object-array coercion. */
@@ -447,6 +449,8 @@ export interface AgentProfile {
   };
   /** Schema for the accepted result after optional submission resolution. */
   resultSchema?: JsonSchema;
+  /** Resolve already applies the profile's final semantic validation; Host still checks the result schema. */
+  resolveValidatesResult?: boolean;
   systemPrompt: string;
   instructions: string;
   submissionNudge: string;
