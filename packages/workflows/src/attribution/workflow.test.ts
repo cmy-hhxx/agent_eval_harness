@@ -2,17 +2,17 @@ import test, { type TestContext } from "node:test";
 import assert from "node:assert/strict";
 import { readFile, readdir, rm } from "node:fs/promises";
 import path from "node:path";
-import { emptyUsage, type RunState } from "@eval/contracts";
+import { emptyUsage, ValidationError, type RunState } from "@eval/contracts";
 import { AgentRegistry } from "@eval/host";
 import { cite, evidenceSources } from "@eval/tools";
 import { attributionAgent } from "@eval/agents/attribution";
 import { fixtureConfig, emptyAudit, fakeEvaluatorVersion, fakeIdentity } from "../../../../tests/fixtures/comparison.js";
-import { planAttribution, bindAttribution, attributionRepository, type AttributionConfig } from "./index.js";
+import { planAttribution, bindAttribution, attributionRepository, type AttributionConfig, type AttributionTaskData } from "./index.js";
 import type { RawInput } from "../inputs/types.js";
 
-function trace(question: string, answer: string, tools: string) {
+function trace(sessionId: string, question: string, answer: string, tools: string) {
   return {
-    meta: { trace_id: `trace-${question}`, session_id: "session-1", n_messages: 4, tool_names_text: tools, skill_names_text: "" },
+    meta: { trace_id: `${sessionId}-trace-${question}`, session_id: sessionId, n_messages: 4, tool_names_text: tools, skill_names_text: "" },
     messages: [
       { type: "user_question", role: "user", content: question },
       { type: "llm_turn", name: "expert", input_messages: [{ role: "user", content: question }],
@@ -23,10 +23,10 @@ function trace(question: string, answer: string, tools: string) {
   };
 }
 
-function session(): RawInput {
-  return { batch_id: "batch", case_id: "session-1", has_standard_answer: false,
-    meta: { session_id: "session-1", case_id: "session-1", n_traces: 2, n_messages: 8 },
-    traces: [trace("第一问", "第一答", "FinQuery,Search"), trace("第二问", "第二答", " web_search ")] } as unknown as RawInput;
+function session(sessionId = "session-1"): RawInput {
+  return { batch_id: "batch", case_id: sessionId, has_standard_answer: false,
+    meta: { session_id: sessionId, case_id: sessionId, n_traces: 2, n_messages: 8 },
+    traces: [trace(sessionId, "第一问", "第一答", "FinQuery,Search"), trace(sessionId, "第二问", "第二答", " web_search ")] } as unknown as RawInput;
 }
 
 async function fixture(t: TestContext) {
@@ -99,6 +99,47 @@ test("trace and session tasks declare no worker sources and therefore pass sourc
   }
 });
 
+test("a completed session is appended before the run ends and resume does not duplicate it", async t => {
+  const f = await fixtureConfig([[session("session-1"), session("session-2")], [], [], []]);
+  t.after(() => rm(f.directory, { recursive: true, force: true }));
+  const config = { ...f.config, workflow: "attribution", inputs: { ...f.config.inputs,
+    versions: f.config.inputs.versions.slice(0, 1) } } as AttributionConfig;
+  const plan = await planAttribution(config), run = path.join(config.output.path, "incremental-run");
+  const state: RunState = { manifest: { format: "evaluation-run", debug: false, runId: "incremental-run", status: "running",
+    engine: fakeIdentity, evaluatorVersion: fakeEvaluatorVersion, config, tasks: plan.tasks, inputCatalog: plan.catalog,
+    inputs: {}, states: Object.fromEntries(plan.tasks.map(task => [task.id, { status: "pending", attempts: 0 }])),
+    preflight: plan.summary, startedAt: 1 }, receipts: {}, usage: emptyUsage(), recordedAttempts: 0 };
+  const sessionTasks = plan.tasks.filter(task => task.stage === "attribution-session");
+  const complete = (taskId: string, sessionId: string) => {
+    state.receipts[taskId] = { taskId, attemptId: `attempt-${taskId}`, submissionId: `submission-${taskId}`,
+      evaluatorVersion: fakeEvaluatorVersion, judge: "fixture", status: "succeeded", acceptedAt: 1,
+      evaluation: { session_meta: { session_id: sessionId }, turns: [
+        { meta: {}, summary: "第一轮完成。", problem: [], is_correct: null, correct_reason: "无给定标准。" },
+        { meta: {}, summary: "第二轮完成。", problem: [], is_correct: null, correct_reason: "无给定标准。" },
+      ], session_summary: `${sessionId} 完成。`, session_problem: [] }, audit: emptyAudit(), usage: emptyUsage() };
+    state.manifest.states[taskId] = { status: "succeeded", attempts: 1 };
+  };
+  const ids = plan.catalog!.map(candidate => (candidate as { input_id: string }).input_id);
+  const first = sessionTasks.find(task => (task.data as AttributionTaskData).candidate.input_id === ids[0])!;
+  const second = sessionTasks.find(task => (task.data as AttributionTaskData).candidate.input_id === ids[1])!;
+  complete(first.id, "session-1");
+  await attributionRepository.createResultWriter(run, plan.inputs)(state);
+  assert.equal(state.manifest.status, "running");
+  assert.equal((await readFile(path.join(run, "results", "attribution.jsonl"), "utf8")).trim().split("\n").length, 1);
+
+  await attributionRepository.writeRun(run, state);
+  const resumed = await attributionRepository.readRun(run);
+  assert.equal(resumed.receipts[first.id]?.exported?.file, "attribution.jsonl");
+  complete(second.id, "session-2");
+  resumed.receipts[second.id] = state.receipts[second.id];
+  resumed.manifest.states[second.id] = state.manifest.states[second.id]!;
+  await attributionRepository.createResultWriter(run, plan.inputs)(resumed);
+  await attributionRepository.createResultWriter(run, plan.inputs)(resumed);
+  const rows = (await readFile(path.join(run, "results", "attribution.jsonl"), "utf8")).trim().split("\n")
+    .map(line => JSON.parse(line) as { session_meta: { session_id: string } });
+  assert.deepEqual(rows.map(row => row.session_meta.session_id), ["session-1", "session-2"]);
+});
+
 test("component review resolves evidence into readable position, tool component and a short exact quote", async t => {
   const f = await fixture(t);
   const config = { ...f.config, workflow: "attribution", inputs: { ...f.config.inputs,
@@ -118,4 +159,7 @@ test("component review resolves evidence into readable position, tool component 
   assert.equal(result.problems[0]!.evidence[0]!.component, "tool_call: finquery 取数服务");
   assert.match(result.problems[0]!.evidence[0]!.position, /^trace_index 0 \/ message_index 2 \/ path \//u);
   assert.equal(result.problems[0]!.evidence[0]!.quote, evidence.quote);
+  assert.throws(() => registry.resolve(binding, { problems: [{ label: "tmp", definition: "tmp",
+    problem_phenomena: "tmp", reason: "tmp", evidence: [{ index: 1, reason: "tmp" }] }] }, audit),
+  (error: unknown) => error instanceof ValidationError && error.issues!.some(issue => issue.code === "placeholder_content"));
 });

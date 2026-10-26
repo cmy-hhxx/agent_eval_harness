@@ -492,6 +492,15 @@ export interface AgentBinding {
   /** Workflow-owned identity binding after submission validation; the Agent still validates the formal result. */
   resolveSubmission?(value: unknown): unknown;
 }
+export interface WorkflowScheduling {
+  /** Finite session admission derived from task states; lower stage priorities run first. */
+  sessionAdmission?: {
+    id(task: PlannedTask): string | undefined;
+    window: number;
+    completed(task: PlannedTask): boolean;
+  };
+  stagePriority?(stage: string): number;
+}
 export interface WorkflowDefinition {
   id: string;
   plan(config: unknown, options?: unknown): Promise<TaskPlan>;
@@ -513,6 +522,8 @@ export interface WorkflowDefinition {
   canStart?(task: PlannedTask, manifest: RunManifest): boolean;
   /** Independent optional checks must not pause the primary task stage. */
   observesFailures?(task: PlannedTask): boolean;
+  /** Optional workflow-owned ordering and finite session admission. */
+  scheduling?: WorkflowScheduling;
 }
 export interface RunRepository {
   readRun(run: string): Promise<RunState>;

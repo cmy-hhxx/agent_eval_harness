@@ -59,9 +59,14 @@ export function boundProfiles(catalog: ModelCatalog): ModelProfile[] {
   return Object.values(catalog.bindings).map(binding => routedProfile(catalog, binding));
 }
 
+/** Attribution fan-out stages share the single configured attribution binding. */
+export function modelBindingStage(stage: string): string {
+  return stage.startsWith("attribution-") ? "attribution" : stage;
+}
+
 export function createModelResolver(catalog: ModelCatalog): (stage: string) => ModelConfig {
   return (stage) => {
-    const binding = catalog.bindings[stage];
+    const supportedStage = modelBindingStage(stage), binding = catalog.bindings[supportedStage];
     if (!binding) throw new Error(`No model binding configured for stage "${stage}"`);
     const profile = routedProfile(catalog, binding);
     if (profile.api !== "openai-responses") throw new Error(`Evaluation channel "${profile.provider}" requires openai-responses`);

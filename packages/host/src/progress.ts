@@ -1,6 +1,8 @@
-import type { RunState } from "@eval/contracts";
+import type { RunState, WorkflowScheduling } from "@eval/contracts";
+import { sessionAdmissionSnapshot } from "./scheduling.js";
 
-export function progressSnapshot(state: RunState, now = Date.now(), preparing: ReadonlySet<string> = new Set()) {
+export function progressSnapshot(state: RunState, now = Date.now(), preparing: ReadonlySet<string> = new Set(),
+  sessionAdmission?: WorkflowScheduling["sessionAdmission"]) {
   const repairing = (id: string) => state.manifest.states[id].status === "running" &&
     !preparing.has(id) && state.manifest.states[id].failure?.draft !== undefined;
   const stages: Record<string, { queued: number; ready: number; preparing: number; running: number; repairing: number; accepted: number; failed: number; recent_completed_per_minute: number }> = {};
@@ -55,6 +57,7 @@ export function progressSnapshot(state: RunState, now = Date.now(), preparing: R
   const longest = running.sort(
     (a, b) => (a.lastProgressAt || a.startedAt || now) - (b.lastProgressAt || b.startedAt || now),
   )[0];
+  const sessions = sessionAdmission ? sessionAdmissionSnapshot(state.manifest.tasks, state.manifest.states, sessionAdmission) : undefined;
   return {
     updated_at: new Date(now).toISOString(),
     usage: { archived_tokens: state.usage.totalTokens, archived_attempts: state.recordedAttempts,
@@ -83,5 +86,13 @@ export function progressSnapshot(state: RunState, now = Date.now(), preparing: R
       : null,
     eta,
     eta_status: state.manifest.pausedStages?.length ? "paused" : eta ? "estimated" : "insufficient_samples",
+    ...(sessions ? {
+      total_sessions: sessions.total_sessions,
+      active_sessions: sessions.active_sessions,
+      completed_sessions: sessions.completed_sessions,
+      waiting_sessions: sessions.waiting_sessions,
+      failed_sessions: sessions.failed_sessions,
+      blocked_sessions: sessions.blocked_sessions,
+    } : {}),
   };
 }

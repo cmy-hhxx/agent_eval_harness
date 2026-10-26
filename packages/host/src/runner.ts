@@ -39,7 +39,7 @@ import { loadIdentity } from "@eval/runtime/client";
 import type { FailureContext } from "@eval/contracts";
 import { progressSnapshot } from "./progress.js";
 import { RunStore, type EvaluationServices } from "./store.js";
-import { createScopeMembership, scheduleTasks } from "./scheduling.js";
+import { createScopeMembership, scheduleTasks, sessionAdmissionSnapshot } from "./scheduling.js";
 import { FailureGuard } from "./failure-guard.js";
 import { cumulativeAttempts, executionStopReason } from "./run-limits.js";
 import { consumeEvents, spawnWorker, createRunWorkspace } from "@eval/runtime/client";
@@ -273,7 +273,7 @@ export async function runEvaluation(options: RunOptions): Promise<Record<string,
     }, 5 * 60 * 1000);
     const current = store;
     const preparing = new Set<string>();
-    const snapshot = () => ({ ...progressSnapshot(saved, Date.now(), preparing), in_flight_tasks: busy.size,
+    const snapshot = () => ({ ...progressSnapshot(saved, Date.now(), preparing, options.taskSource.scheduling?.sessionAdmission), in_flight_tasks: busy.size,
       checkpoint: { ...current.checkpointMetrics }, outbox: current.outboxStatus() });
     // A task may expose a stage-specific view of its source without persisting a second input.
     const attemptSources = new Map<string, Map<string, unknown>>();
@@ -918,7 +918,9 @@ export async function runEvaluation(options: RunOptions): Promise<Record<string,
         }
       }
       let scheduled = false, blocked = false;
-      for (const task of scheduleTasks(manifest.tasks.filter(dispatchable), manifest.states)) {
+      const sessionAdmission = options.taskSource.scheduling?.sessionAdmission,
+        admission = sessionAdmission ? sessionAdmissionSnapshot(manifest.tasks, manifest.states, sessionAdmission) : undefined;
+      for (const task of scheduleTasks(manifest.tasks.filter(dispatchable), manifest.states, options.taskSource.scheduling?.stagePriority)) {
         if (controller.signal.aborted || options.pauseSignal?.aborted || executionStopReason(manifest)) break;
         if (!dispatchable(task)) continue;
         if (manifest.states[task.id].status !== "pending" || running.has(task.id) ||
@@ -932,6 +934,8 @@ export async function runEvaluation(options: RunOptions): Promise<Record<string,
           continue;
         }
         if (dependencies.some((id) => manifest.states[id]?.status !== "succeeded")) continue;
+        const sessionId = sessionAdmission?.id(task);
+        if (sessionId && !admission!.admitted.has(sessionId)) continue;
         if (options.taskSource.canStart?.(task, manifest) === false) continue;
         if (running.size >= taskConcurrency() || eligible.every((worker) => busy.has(worker) || unavailable.has(worker))) break;
         const acceptedDependencies = await current.dependencies(task);

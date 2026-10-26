@@ -1,7 +1,20 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import type { PlannedTask, RunManifest } from "@eval/contracts";
-import { createScopeMembership, scheduleTasks } from "./scheduling.js";
+import { attributionScheduling } from "@eval/workflows/attribution";
+import { createScopeMembership, scheduleTasks, sessionAdmissionSnapshot } from "./scheduling.js";
+
+function attributionSessionTasks(session: string): PlannedTask[] {
+  const components = ["query", "search"].map(component => ({ id: `${session}-component-${component}`,
+    stage: "attribution-component", inputIds: {}, dependencies: {},
+    data: { stage: "attribution-component", candidate: { input_id: session }, component } }));
+  const trace = { id: `${session}-trace`, stage: "attribution-trace", inputIds: {},
+    dependencies: Object.fromEntries(components.map((task, index) => [`component${index}`, task.id])),
+    data: { stage: "attribution-trace", candidate: { input_id: session } } };
+  const summary = { id: `${session}-session`, stage: "attribution-session", inputIds: {},
+    dependencies: { trace: trace.id }, data: { stage: "attribution-session", candidate: { input_id: session } } };
+  return [...components, trace, summary] as PlannedTask[];
+}
 
 test("large execution scopes are indexed once and track follow-ups and rollback", () => {
   let reads = 0;
@@ -63,4 +76,71 @@ test("ready continuations within a stage finish existing work before opening new
   const states: RunManifest["states"] = Object.fromEntries(tasks.map(task => [task.id, { status: "pending", attempts: 0 }]));
   states.evidence.status = states.axes.status = "succeeded";
   assert.deepEqual(scheduleTasks(tasks, states).slice(0, 4).map(task => task.id), ["final", "next-axes", "new-1", "new-2"]);
+});
+
+test("a finite session window advances only when a foreground session completes or fails", () => {
+  const tasks = Array.from({ length: 10 }, (_, index) => attributionSessionTasks(`session-${index + 1}`)).flat();
+  const states: RunManifest["states"] = Object.fromEntries(tasks.map(task => [task.id, { status: "pending", attempts: 0 }]));
+  const policy = attributionScheduling.sessionAdmission!;
+  let snapshot = sessionAdmissionSnapshot(tasks, states, policy);
+  assert.deepEqual({ total: snapshot.total_sessions, active: snapshot.active_sessions, completed: snapshot.completed_sessions,
+    waiting: snapshot.waiting_sessions, failed: snapshot.failed_sessions, blocked: snapshot.blocked_sessions },
+  { total: 10, active: 8, completed: 0, waiting: 2, failed: 0, blocked: 0 });
+  assert.equal(snapshot.admitted.has("session-9"), false);
+
+  states["session-1-session"]!.status = "succeeded";
+  snapshot = sessionAdmissionSnapshot(tasks, states, policy);
+  assert.equal(snapshot.completed_sessions, 1);
+  assert.equal(snapshot.active_sessions, 8);
+  assert.equal(snapshot.waiting_sessions, 1);
+  assert.equal(snapshot.admitted.has("session-9"), true);
+
+  states["session-2-component-query"]!.status = "failed";
+  snapshot = sessionAdmissionSnapshot(tasks, states, policy);
+  assert.equal(snapshot.failed_sessions, 1);
+  assert.equal(snapshot.active_sessions, 8);
+  assert.equal(snapshot.waiting_sessions, 0);
+  assert.equal(snapshot.admitted.has("session-2"), true, "failed sessions drain without holding an open window slot");
+  assert.equal(snapshot.admitted.has("session-10"), true);
+});
+
+test("session admission and foreground selection resume from durable task states", () => {
+  const tasks = Array.from({ length: 5 }, (_, index) => attributionSessionTasks(`session-${index + 1}`)).flat();
+  const states: RunManifest["states"] = Object.fromEntries(tasks.map(task => [task.id, { status: "pending", attempts: 0 }]));
+  states["session-1-component-query"] = { status: "succeeded", attempts: 1 };
+  states["session-2-component-query"] = { status: "running", attempts: 1 };
+  const policy = { ...attributionScheduling.sessionAdmission!, window: 2 };
+  const snapshot = sessionAdmissionSnapshot(tasks, states, policy);
+  assert.deepEqual([...snapshot.admitted].sort(), ["session-1", "session-2"]);
+  assert.equal(snapshot.active_sessions, 2);
+  assert.equal(snapshot.waiting_sessions, 3);
+
+  states["session-1-session"] = { status: "succeeded", attempts: 1 };
+  states["session-2-component-search"] = { status: "blocked", attempts: 1 };
+  const resumed = sessionAdmissionSnapshot(tasks, states, policy);
+  assert.equal(resumed.completed_sessions, 1);
+  assert.equal(resumed.blocked_sessions, 1);
+  assert.equal(resumed.active_sessions, 2);
+  assert.equal(resumed.waiting_sessions, 1);
+  assert.deepEqual([...resumed.admitted].sort(), ["session-1", "session-2", "session-3", "session-4"]);
+});
+
+test("resume bounds a partially started backlog back to the foreground window", () => {
+  const tasks = Array.from({ length: 10 }, (_, index) => attributionSessionTasks(`session-${index + 1}`)).flat();
+  const states: RunManifest["states"] = Object.fromEntries(tasks.map(task => [task.id, { status: "pending", attempts: 0 }]));
+  for (let index = 1; index <= 10; index++) states[`session-${index}-component-query`] = { status: "succeeded", attempts: 1 };
+  const snapshot = sessionAdmissionSnapshot(tasks, states, { ...attributionScheduling.sessionAdmission!, window: 3 });
+  assert.equal(snapshot.active_sessions, 3);
+  assert.equal(snapshot.waiting_sessions, 7);
+  assert.deepEqual([...snapshot.admitted].sort(), ["session-1", "session-2", "session-3"]);
+});
+
+test("ready attribution trace and session tasks outrank another session's component backlog", () => {
+  const tasks = [...attributionSessionTasks("session-1"), ...attributionSessionTasks("session-2")];
+  const states: RunManifest["states"] = Object.fromEntries(tasks.map(task => [task.id, { status: "pending", attempts: 0 }]));
+  states["session-1-component-query"]!.status = "succeeded";
+  states["session-1-component-search"]!.status = "succeeded";
+  assert.equal(scheduleTasks(tasks, states, attributionScheduling.stagePriority)[0]!.id, "session-1-trace");
+  states["session-1-trace"]!.status = "succeeded";
+  assert.equal(scheduleTasks(tasks, states, attributionScheduling.stagePriority)[0]!.id, "session-1-session");
 });

@@ -8,8 +8,9 @@
 
 # 输出
 
-- label 是可复用的短问题名；definition 说明触发范围和可见结果。
-- problem_phenomena 写本回答的具体现象；reason 写证据如何证明该技术问题。
-- evidence 选择本次读取得到的证据编号，每项写 reason。程序负责补 position、quote 和 component。
+- 提交前合并同一技术原因、同一证据链且会由同一修复消除的重叠问题；保留一个完整问题并收齐全部证据。原因、影响范围或修复动作不同的缺陷仍分开，不能只按同一组件或同一工具机械合并。
+- label 是可复用的短问题名；definition 概括该类问题的触发范围和可见结果，不重复本次个案细节。
+- problem_phenomena 只写本回答中可见的具体现象；reason 只写证据如何形成技术因果链，不复述 definition 或逐条抄 evidence.reason。
+- evidence 选择本次读取得到的证据编号，每项 reason 只说明该段原文直接证明了什么，不复述 problem_phenomena 或 reason。程序负责补 position、quote 和 component。
 - 计算错误只写 calculations[].text，说明错误算式、正确结果或偏差方向，不再填写操作数结构。
 - 没有问题时提交空 problems；不得为了凑数制造问题。

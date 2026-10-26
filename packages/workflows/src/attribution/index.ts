@@ -1,7 +1,7 @@
 import path from "node:path";
 import { randomUUID } from "node:crypto";
 import { Ajv2020 } from "ajv/dist/2020.js";
-import { canonical, type AgentBinding, type JsonObject, type PlannedTask, type RunManifest, type RunState, type SubmissionReceipt, type TaskAnalysis, type WorkflowDefinition } from "@eval/contracts";
+import { canonical, type AgentBinding, type JsonObject, type PlannedTask, type RunManifest, type RunState, type SubmissionReceipt, type TaskAnalysis, type WorkflowDefinition, type WorkflowScheduling } from "@eval/contracts";
 import { createRunRepository, readJson, type RunCodec } from "@eval/data";
 import { attributionComponentLabel, type ComponentReviewResult, type TraceAttributionResult } from "@eval/agents/attribution";
 import { collectInputs, contentText, loadRunInputs, normalizeInput, normalizeTraceInput, type Candidate, type EvaluationConfig, type RawInput } from "@eval/workflows/inputs";
@@ -25,6 +25,7 @@ export interface AttributionUnitOptions {
   /** Changes the unit identity when upstream material changes, such as a revised criteria task. */
   identity?: string;
 }
+export const ATTRIBUTION_SESSION_WINDOW = 8;
 
 const sourceTrace = Symbol("attribution source trace");
 const validateSession = new Ajv2020({ allErrors: true, strict: false })
@@ -122,11 +123,21 @@ export function bindAttribution(task: PlannedTask, inputs: Record<string, unknow
   throw new Error("未知 Attribution 任务阶段：" + task.stage);
 }
 
+export const attributionScheduling: WorkflowScheduling = {
+  sessionAdmission: {
+    id: task => (task.data as AttributionTaskData).candidate.input_id,
+    window: ATTRIBUTION_SESSION_WINDOW,
+    completed: task => task.stage === "attribution-session",
+  },
+  stagePriority: stage => stage === "attribution-session" ? 0 : stage === "attribution-trace" ? 1 : 2,
+};
+
 export const attributionWorkflow: WorkflowDefinition = {
   id: "attribution",
   plan: config => planAttribution(config as AttributionConfig),
   bind: bindAttribution,
   observesFailures: () => true,
+  scheduling: attributionScheduling,
   advance(task, receipt, _state, inputs) {
     if (task.stage === "attribution-component") {
       const data = task.data as AttributionTaskData, session = (inputs[data.candidate.input_id] as { [sourceTrace]: RawInput })[sourceTrace];
