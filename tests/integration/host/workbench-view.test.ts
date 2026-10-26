@@ -30,7 +30,7 @@ test('four-module workbench defaults to both daily sources and keeps results and
       if(file==='problems.html'&&failProblems){failProblems=false;return new Response('Unavailable',{status:503});}
       if(file==='tabler.css')return new Response(await readFile(path.join(ROOT,'node_modules/@tabler/core/dist/css/tabler.min.css'),'utf8'));
       const dataFiles:Record<string,string>={'data.html':'dashboard.html','data.css':'dashboard.css','records.html':'records.html'};
-      return new Response(await readFile(Object.hasOwn(dataFiles,file)?path.join(ROOT,'server_dashboard_ths',dataFiles[file]):path.join(directory,file),'utf8'));
+      return new Response(await readFile(Object.hasOwn(dataFiles,file)?path.join(ROOT,'data_service',dataFiles[file]):path.join(directory,file),'utf8'));
     }
     if(url==='/health')return json({ok:true});
     if(url==='/session')return json({authenticated:false});

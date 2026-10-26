@@ -73,7 +73,7 @@ export async function runAimeEvaluation(c:AimeConfiguration,options:AimeRunOptio
     logger.addSecrets(...configurationSecrets());
     const getHost=options.host??(()=>loadConfig(c.hostConfigs,settings));
     const concurrency=()=>options.concurrency?.()??c.concurrency;
-    const stateFile=path.join(c.stateDirectory,'state.json'),helper=path.join(ROOT,'server_dashboard_ths/aime_ingest_once.py');
+    const stateFile=path.join(c.stateDirectory,'state.json'),helper=path.join(ROOT,'data_service/aime_ingest_once.py');
     const env={...process.env,...(c.pythonPath?{PYTHONPATH:[c.pythonPath,process.env.PYTHONPATH].filter(Boolean).join(path.delimiter)}:{})};
     const invoke=async(operation:'scan'|'process'|'catalog',output:string,namesFile?:string)=>{
       const args=[helper,operation,'--archive-dir',c.archiveDirectory,'--input-dir',c.inputDirectory,'--data-state',c.dataStateDirectory,

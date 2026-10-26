@@ -1,6 +1,6 @@
 # 评测工作台产品契约
 
-[返回首页](../README.md) · [界面规则](../PRODUCT.md) · [数据服务](../server_dashboard_ths/README.md) · [运行与恢复](usage.md#运行与恢复)
+[返回首页](../README.md) · [界面规则](../PRODUCT.md) · [数据服务](../data_service/README.md) · [运行与恢复](usage.md#运行与恢复)
 
 工作台围绕收到数据、清洗、评测、定位失败、查看结果和按需聚类组织。本文维护已确认的产品行为；具体已开放的操作和接口以数据服务与使用指南为准，不把产品要求当成已实现接口。
 
@@ -25,7 +25,7 @@ AIME 扫描 `1_aime/1_7z_data/online_data`，Fast、Expert 每条有效单轮回
 
 日常来源的统计日志生成和上报关闭。专项与手动范围操作保留在「更多」，清洗报告、任务归属和聚类继续可单独操作。
 
-清洗整理结构、检查可评测性、规整 meta 并计算 RUED 难度分数；保留明确难度标签。原包保留，规范输入按来源组织，运行引用输入。字段口径见[标签与效率清洗](../server_dashboard_ths/docs/metadata.md)。
+清洗整理结构、检查可评测性、规整 meta 并计算 RUED 难度分数；保留明确难度标签。原包保留，规范输入按来源组织，运行引用输入。字段口径见[标签与效率清洗](../data_service/docs/metadata.md)。
 
 ## 清洗与批次报告
 
@@ -80,7 +80,7 @@ AIME 问句、回答与阶段任务分别计数，只有两阶段都成功才显
 
 聚类只纳入选定范围的已完成归因，显示未完成数量，不重复纳入同一份归因；新增结果等待下一次主动选择。问题库每模型共享，区分本次分析范围和当前共享类。
 
-源区保留原包和规范输入；生产 runtime 复用 `data/sources/` 必要共享快照、`data/input-catalog/` 索引和 `data/problems/` 问题库。运行产物只放在来源的 `eval_output/`：日常运行在 `0_daily_eval/<YYYY-MM-DD>/`，专项在 `1_task_eval/<任务 UUID>/<run UUID>/`。任务与批次只增加轻量关联，清洗明细是业务结果，不复制正文。确切路径见[部署](deployment.md#目录)、[数据服务](../server_dashboard_ths/README.md#当前布局)和[运行产物](usage.md#运行产物)。
+源区保留原包和规范输入；生产 runtime 复用 `data/sources/` 必要共享快照、`data/input-catalog/` 索引和 `data/problems/` 问题库。运行产物只放在来源的 `eval_output/`：日常运行在 `0_daily_eval/<YYYY-MM-DD>/`，专项在 `1_task_eval/<任务 UUID>/<run UUID>/`。任务与批次只增加轻量关联，清洗明细是业务结果，不复制正文。确切路径见[部署](deployment.md#目录)、[数据服务](../data_service/README.md#当前布局)和[运行产物](usage.md#运行产物)。
 
 运行日志仍为 `runtime.log` 与 `evaluation.log`；完整提示词、原始模型响应等排查材料仅在 debug 下保存，开启 debug 不补造历史。统计交付继续使用冻结 Schema，不加入任务、批次或清洗字段，落盘与上传均严格校验。
 

@@ -62,7 +62,7 @@
 
 标准读取 `meta.ground_truth / meta.std_answer`；同题有效候选的非空标准须一致，可共享其中一方提供的标准。`ok=false`、无法解析或没有完整最终回答的记录不参评。重复身份、题目冲突或标准冲突只使受影响对局失效，不任取一份。
 
-工作台清洗入口会补齐 `meta.info` 中的业务标签、按 RUED 计算完整精度 `meta.difficulty_score` 并补缺失的 `meta.difficulty`，同时规整毫秒耗时与 `usage`。既有难度冲突、非法可选指标写入清洗报告，不因此排除有效回答；`ask_time` 不作为请求时间。字段优先级与未知值规则见[标签与效率清洗](../server_dashboard_ths/docs/metadata.md)。
+工作台清洗入口会补齐 `meta.info` 中的业务标签、按 RUED 计算完整精度 `meta.difficulty_score` 并补缺失的 `meta.difficulty`，同时规整毫秒耗时与 `usage`。既有难度冲突、非法可选指标写入清洗报告，不因此排除有效回答；`ask_time` 不作为请求时间。字段优先级与未知值规则见[标签与效率清洗](../data_service/docs/metadata.md)。
 
 适配器 `a` 读取 OpenAI 风格消息及 GPT 采集的 `span`（`reasoning` 元数据，以及带 `output` 的 `thinking` 或 `tool-*` 记录）；工具 span 的输出参与证据导航，`reasoning` 元数据和思考 span 不作为工具返回，不改写原消息或证据坐标。`b` 读取显式轮次，两者与模型厂商无关。统一入口也接受 `{meta,traces:[{meta,messages}]}`，当前要求恰好一个 trace；多 trace、与顶层 messages 并存、计数或身份不一致均拒绝。不重排消息、不拼造最终回答。外层题目与标准优先；模型、trace、耗时和 usage 取本 trace，缺失不以会话总量补齐。
 

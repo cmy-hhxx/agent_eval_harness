@@ -12,7 +12,7 @@ test('daily date table shows full-range completion, both AIME stages and indepen
   dom.window.HTMLDialogElement.prototype.showModal = function() { this.setAttribute('open',''); };
   dom.window.HTMLDialogElement.prototype.close = function() { this.removeAttribute('open'); this.dispatchEvent(new dom.window.Event('close')); };
   const bundle = await build({entryPoints:[path.join(directory,'daily-data.js')],bundle:true,write:false,format:'iife',globalName:'Data',platform:'browser'});
-  const recordsTemplate = await readFile(path.join(ROOT,'server_dashboard_ths/records.html'),'utf8');
+  const recordsTemplate = await readFile(path.join(ROOT,'data_service/records.html'),'utf8');
   const days = Array.from({length:16},(_,index)=>`2026-10-${String(index+1).padStart(2,'0')}`), requests:string[] = [], results:string[] = [];
   let completed = 300, aimeComplete = false, failure = false;
   const counts = (complete:number,total:number) => ({total,completed:complete,partial:total-complete,pending:0,running:0,failed:0});

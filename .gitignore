@@ -19,5 +19,5 @@ vendor/**/build/
 vendor/deepseek/benchmarks/.dsh-report/
 .servers.conf
 tmp/
-server_dashboard_ths/records.bundle.js
+data_service/records.bundle.js
 outputs/

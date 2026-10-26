@@ -1,4 +1,4 @@
-import { mountRecords } from '../../../server_dashboard_ths/records.js';
+import { mountRecords } from '../../../data_service/records.js';
 
 const format = value => Number.isFinite(value) ? value.toLocaleString('zh-CN') : '—';
 const names = { a_fast:'A Fast', b_fast:'AA Fast', a_expert:'A Expert', b_expert:'AA Expert', aime_fast:'Fast', aime_expert:'Expert' };

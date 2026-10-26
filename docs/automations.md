@@ -12,7 +12,7 @@
 
 增加来源只修改外部自动化配置并登记清单，然后重启工作台；`workbench.sh` 和调度实现不保存来源名称列表。显式 `--config` 只用于开发、测试或单来源 CLI；生产不传 `--config`。
 
-日常评测在手动运行后自动清洗并持续评测；专项任务独立导入、核对后再按需执行。后训练专项在数据与任务区选择批次清洗，操作见[数据服务](../server_dashboard_ths/README.md)。来源范围、模型、推理档位、并发和交付开关以[专项来源配置](../configs/automations-post-training.json)及其 `hostConfigs` 为准，不登记到日常清单。单独启动时，将工作台的 `runtime.manifest` 指向 checkout 外仅登记该专项的清单；看板按独立任务显示进度，点击该来源「运行」后才执行。
+日常评测在手动运行后自动清洗并持续评测；专项任务独立导入、核对后再按需执行。后训练专项在数据与任务区选择批次清洗，操作见[数据服务](../data_service/README.md)。来源范围、模型、推理档位、并发和交付开关以[专项来源配置](../configs/automations-post-training.json)及其 `hostConfigs` 为准，不登记到日常清单。单独启动时，将工作台的 `runtime.manifest` 指向 checkout 外仅登记该专项的清单；看板按独立任务显示进度，点击该来源「运行」后才执行。
 
 Comparison 自动化来源必须显式配置 `publishMongo`。问财日常为 `true`；后训练专项为 `false`，输入校验和本地评测不依赖 MongoDB，结果与恢复状态仍正常落盘，监控显示“本地保存”。关闭时不执行输入上传、增量结果上传或日期交付，也不要求 MongoDB 凭据；预测替换任务必须启用该项。此开关与 `publishStatisticsLog` 独立，开启交付时仍严格报错，不因权限或连接失败自动切换为本地模式。AIME 使用独立执行器，只落盘正式结果，不走 MongoDB 交付。
 

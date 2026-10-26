@@ -1,4 +1,4 @@
-# 同花顺远程数据服务
+# 评测数据服务
 
 [返回首页](../README.md) · [工作台部署](../docs/deployment.md) · [接口](../docs/handoff.md) · [服务文档](docs/handoff.md)
 
@@ -76,7 +76,7 @@ AIME 的“扫描→清洗→增量归因”入口见[AIME 增量归因](../docs
 DATA_ROOT=/mnt/fin_bench/eval_data \
 STATE_ROOT=/mnt/aigc_team/user_workspace/chenmingyang/eval_harness/runtime/state/data-service \
 PYTHONPATH=/mnt/aigc_team/user_workspace/chenmingyang/eval_harness/runtime/python-packages \
-python3 server_dashboard_ths/app.py --process-archives post_training_model
+python3 data_service/app.py --process-archives post_training_model
 ```
 
 只扫描各已登记收包目录的顶层 `.7z`，不递归读临时目录。后训练日期优先取 `meta.testset_name` 中唯一有效日期，否则取请求的北京时间日期，原 `request_time` 保留。
@@ -106,13 +106,13 @@ python3 server_dashboard_ths/app.py --process-archives post_training_model
 ## 本地验证
 
 ```bash
-python3 -m unittest discover -s server_dashboard_ths -p 'test_*.py'
-node --test server_dashboard_ths/dashboard.test.mjs
+python3 -m unittest discover -s data_service -p 'test_*.py'
+node --test data_service/dashboard.test.mjs
 ```
 
 本地直接启动时也必须提供外部数据与状态目录：
 
 ```bash
 DATA_ROOT=/tmp/eval_data STATE_ROOT=/tmp/eval-state \
-  PORT=8081 HOST=127.0.0.1 python3 server_dashboard_ths/app.py
+  PORT=8081 HOST=127.0.0.1 python3 data_service/app.py
 ```

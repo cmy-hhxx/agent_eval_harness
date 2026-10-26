@@ -92,7 +92,7 @@ function lineWriter(service: ServiceName, stream: "stdout" | "stderr", write: (.
 function launchService(name: ServiceName): ChildProcess {
   const command = name === "data" ? "python3" : process.execPath;
   const child = name === "data"
-    ? spawn(command, [path.join(ROOT, "server_dashboard_ths/app.py")], { cwd: ROOT, env: childEnvironment({
+    ? spawn(command, [path.join(ROOT, "data_service/app.py")], { cwd: ROOT, env: childEnvironment({
       DATA_ROOT: config.data.root, STATE_ROOT: config.data.stateRoot, TEMP_ROOT: path.join(config.data.stateRoot, "tmp"),
       PYTHONPATH: config.data.pythonPackages, HOST: config.data.host, PORT: String(config.data.port),
     }), detached: true, stdio: ["ignore", "pipe", "pipe"] })
@@ -145,7 +145,7 @@ async function preparePython(): Promise<void> {
   if (await python(["-c", "import py7zr"], "ignore") === 0) return;
   console.log("Installing Python data-service dependencies into the persistent runtime");
   const status = await python(["-m", "pip", "install", "--disable-pip-version-check", "--no-input",
-    "--target", config.data.pythonPackages, "-r", path.join(ROOT, "server_dashboard_ths/requirements.txt")],
+    "--target", config.data.pythonPackages, "-r", path.join(ROOT, "data_service/requirements.txt")],
     "inherit");
   if (status !== 0) throw new Error("Python dependency installation failed");
 }
@@ -202,7 +202,7 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
   if (url.pathname.startsWith("/workbench-assets/")) {
     const name = url.pathname.slice("/workbench-assets/".length);
     const file = workbenchAssets.has(name) ? path.join(ASSETS, name) : Object.hasOwn(dataAssets, name)
-      ? path.join(ROOT, "server_dashboard_ths", dataAssets[name]) : undefined;
+      ? path.join(ROOT, "data_service", dataAssets[name]) : undefined;
     if (!file) return sendJson(res, 404, { error: "Not found" });
     res.writeHead(200, { "content-type": name.endsWith(".css") ? "text/css; charset=utf-8" : name.endsWith(".js") ? "text/javascript; charset=utf-8" : "text/html; charset=utf-8", "cache-control": "no-store" });
     res.end(await readFile(file)); return;

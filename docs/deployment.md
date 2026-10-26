@@ -1,6 +1,6 @@
 # 远程工作台部署与运行
 
-[返回首页](../README.md) · [自动化](automations.md) · [数据服务](../server_dashboard_ths/README.md)
+[返回首页](../README.md) · [自动化](automations.md) · [数据服务](../data_service/README.md)
 
 ## 目录
 
@@ -142,11 +142,11 @@ npm run report:relay -- --resolve <traceId> --outcome retry
 `/mnt/fin_bench/eval_data` 当前按来源组织：
 
 - `0_wencai/1_7z_data/A_AA_comparision_data` 与 `0_wencai/2_daily_eval_input/<model>/<date>.jsonl`
-- 后训练专项：`0_wencai/1_7z_data/post_train_model` 与 `0_wencai/5_multi_task_eval_input/post_train_model_eval/<model>/<date>.jsonl`；在[数据与任务](../server_dashboard_ths/README.md#任务压缩包批次与清洗)中点击清洗发布，不加入日常自动评测清单。
+- 后训练专项：`0_wencai/1_7z_data/post_train_model` 与 `0_wencai/5_multi_task_eval_input/post_train_model_eval/<model>/<date>.jsonl`；在[数据与任务](../data_service/README.md#任务压缩包批次与清洗)中点击清洗发布，不加入日常自动评测清单。
 - `1_aime/1_7z_data/online_data` 与 `1_aime/2_daily_eval_input/<model>/<date>.jsonl`
 - `2_ifind/1_7z_data` 与 `2_ifind/2_daily_eval_input/<model>/<date>.jsonl`
 
-工作台发现登记目录中的包并保存持久批次；日常来源手动启动后自动清洗积压并持续接入新包，专项由页面选择批次并手动清洗。AIME 接管时核对已有规范输入与增量收据，分别补齐评分和归因覆盖。新任务创建独立收包与输出目录，目录和状态说明见[数据服务](../server_dashboard_ths/README.md)。外部状态位于 `runtime/state/data-service`，SQLite、ready、偏移索引、进度和临时解压目录均不在 checkout。
+工作台发现登记目录中的包并保存持久批次；日常来源手动启动后自动清洗积压并持续接入新包，专项由页面选择批次并手动清洗。AIME 接管时核对已有规范输入与增量收据，分别补齐评分和归因覆盖。新任务创建独立收包与输出目录，目录和状态说明见[数据服务](../data_service/README.md)。外部状态位于 `runtime/state/data-service`，SQLite、ready、偏移索引、进度和临时解压目录均不在 checkout。
 
 Host 热状态默认写入 `~/.cache/eval-agent-harness/hot`。该目录必须位于服务器本机 SSD，并通过 `EVAL_HOT_STATE_ROOT` 或服务环境调整；不要把热日志放到 `/mnt/aigc_team` 的 Ceph。正式 JSONL、`progress.jsonl`、报告和 `state.json` 仍写评测产物目录。
 

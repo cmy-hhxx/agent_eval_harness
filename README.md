@@ -104,7 +104,7 @@ npm run automations -- run --once
 | 人工复核与评测实验 | [评测质量](docs/quality.md) |
 | 提示词与工具描述 | [Prompts](packages/prompts/README.md) |
 | 界面规则 | [PRODUCT.md](PRODUCT.md) |
-| 同花顺数据服务 | [服务源码](server_dashboard_ths/README.md) |
+| 评测数据服务 | [服务源码](data_service/README.md) |
 | Eris 对话、数据与工具 | [Agent 说明](agent/README.md) |
 | 离线汇报与历史快照 | [汇报模块](evaluation-report/README.md) |
 

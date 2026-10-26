@@ -28,7 +28,7 @@
 | Tools | 证据、分页、图片、计算、代码与搜索 | [index.ts](../../packages/tools/src/index.ts) |
 | Prompts | 全部模型可见规则与工具文案 | [说明](../../packages/prompts/README.md) |
 | Schemas | 集中 JSON 资源，构建时复制 | [说明](../../schemas/README.md) |
-| 数据服务 | `/data/` 任务/压缩包批次、清洗报告、输入发布、ready、样本与同机进度 | [app.py](../../server_dashboard_ths/app.py)、[任务批次](../../server_dashboard_ths/workbench_catalog.py)、[清洗报告](../../server_dashboard_ths/cleaning_report.py) |
+| 数据服务 | `/data/` 任务/压缩包批次、清洗报告、输入发布、ready、样本与同机进度 | [app.py](../../data_service/app.py)、[任务批次](../../data_service/workbench_catalog.py)、[清洗报告](../../data_service/cleaning_report.py) |
 | evaluation-report | 独立离线汇报与历史快照 | [说明](../../evaluation-report/README.md) |
 
 批次启动关联与接口由 `apps/host/src/dashboard-batches.ts`、`dashboard.ts` 组装；运行错误业务坐标由 Workflow 的 `run-errors.ts` 投影，统一日志由 Data 的 RuntimeLogReader 读取。页面不解释判词，也不写正式结果。
