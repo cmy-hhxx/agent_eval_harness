@@ -1,7 +1,7 @@
 import type { JsonSchema, JsonObject, ModelConfig, ToolResult, TraceRead, FailureCategory, ValidationIssue } from "./primitives.js";
 export type * from "./primitives.js";
 export { presentSource, type SourcePresentation } from "./source-presentation.js";
-export type Engine = "pi" | "prime";
+export type Engine = "pi";
 export { evidenceId, evidenceSources, messageContentSources, evidenceImageAvailable, imagePlaceholder, overlapsImagePlaceholder, parseEvidenceCoordinates, type EvidenceCoordinates } from "./evidence.js";
 export * from "./evidence-selection.js";
 export { mergeRequiredReadRanges, extendRequiredReadRanges, requiredReadCallLimit, toolBudgetMetadataChars, validationRequiredReads } from "./required-reading.js";

@@ -76,20 +76,18 @@ try {
   await writeFile(path.join(bin, "npm"), `#!/bin/sh\nexec '${npm.replaceAll("'", "'\\''")}' "$@"\n`, {
     mode: 0o755,
   });
-  console.log("Clean checkout with only Node/npm/uv/Python on PATH; no global pi or prime-agent.");
+  console.log("Clean checkout with only Node/npm/uv/Python on PATH; no global pi-agent.");
   await run("npm", ["run", "bootstrap"]);
   await recordStage("bootstrap");
   // Build each adapter independently before the full host is built.
   await run("npm", ["run", "build:pi"]);
   await recordStage("pi");
-  await run("npm", ["run", "build:prime"]);
-  await recordStage("prime");
   await run("npm", ["run", "build:app"]);
   await recordStage("app");
   await run("npm", ["run", "doctor"]);
   await run("npm", ["test"]);
   await run("npm", ["run", "test:integration"]);
-  console.log("Clean build, isolated adapters, doctor and all TypeScript/SDK tests passed.");
+  console.log("Clean build, isolated Pi adapter, doctor and all TypeScript/SDK tests passed.");
 } finally {
   if (debug) {
     await recordStage("finished");

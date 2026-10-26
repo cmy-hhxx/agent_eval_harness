@@ -20,7 +20,6 @@
   "stateDirectory": "../data/automations/remote-six-model-evaluation",
   "sourceDirectory": "../data/sources/automations/remote-six-model-evaluation",
   "runPrefix": "daily-six-",
-  "engine": "pi",
   "pollMs": 15000,
   "refreshMs": 1800000,
   "retryMs": 30000,

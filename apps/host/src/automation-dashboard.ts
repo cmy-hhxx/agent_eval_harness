@@ -1,7 +1,5 @@
 import { configurationSecrets } from "./settings.js";
 import path from "node:path";
-import { readFile } from "node:fs/promises";
-import { fileURLToPath } from "node:url";
 import { errorText, HttpError, redact } from "@eval/contracts";
 import { body, json, listen } from "@eval/runtime/http";
 import type { AutomationState } from "@eval/automations";
@@ -16,7 +14,6 @@ import { statisticsSource, type StatisticsDeliveryStore } from "./statistics-del
 import type { createAutomationControl } from "./automation-control.js";
 import type { IncomingMessage, ServerResponse } from "node:http";
 
-const ASSETS = path.join(path.dirname(fileURLToPath(import.meta.url)), "../dashboard");
 export interface AutomationMonitorSettings { evaluatorVersion: string; concurrency: number }
 export interface AutomationDashboardSource {
   name: string; config: AutomationConfig; output: string; state: () => AutomationState; settings: AutomationMonitorSettings;
@@ -76,14 +73,6 @@ export async function startAutomationDashboard(options: {
     state: AutomationDashboardSource["state"];
     monitor: ReturnType<typeof createAutomationMonitor>; errors: ReturnType<typeof automationErrors>;
   }>();
-  const assets: Record<string, [string, string]> = {
-    "/": ["automations.html", "text/html"],
-    "/dashboard.css": ["dashboard.css", "text/css"],
-    "/automations.css": ["automations.css", "text/css"],
-    "/automations.js": ["automations.js", "text/javascript"],
-    "/errors": ["automation-errors.html", "text/html"],
-    "/automation-errors.js": ["automation-errors.js", "text/javascript"],
-  };
   return listen(async (req, res, url) => {
     res.setHeader("cache-control", "no-store");
     if (await options.daily?.(req, res, url)) return;
@@ -196,9 +185,6 @@ export async function startAutomationDashboard(options: {
       } catch (error) { if (observation.snapshot === snapshot) observation.snapshot = undefined; throw error; }
       return;
     }
-    const asset = assets[url.pathname];
-    if (!asset) throw new HttpError(404, "Not found");
-    res.writeHead(200, { "content-type": asset[1] + "; charset=utf-8" });
-    res.end(await readFile(path.join(ASSETS, asset[0]), "utf8"));
+    throw new HttpError(404, "Not found");
   }, options.port);
 }

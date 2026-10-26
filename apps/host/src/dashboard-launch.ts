@@ -67,14 +67,12 @@ function selection(value: Record<string, unknown>) {
 }
 
 async function prepare(options: LaunchOptions, value: Record<string, unknown>, launch: boolean) {
-  if (Object.keys(value).some((key) => !["runId", "engine", "batch", "case", "limitCases", "debug", "settings"].includes(key)))
+  if (Object.keys(value).some((key) => !["runId", "batch", "case", "limitCases", "debug", "settings"].includes(key)))
     throw new HttpError(400, "Unknown launch field");
   if (typeof value.runId !== "string") throw new HttpError(400, "runId is required");
   let runId: string;
   try { runId = safeId(value.runId); }
   catch { throw new HttpError(400, "Invalid runId"); }
-  const engine = value.engine ?? "pi";
-  if (engine !== "pi" && engine !== "prime") throw new HttpError(400, "engine must be pi or prime");
   const chosen = selection(value);
   let settings: ReturnType<typeof dashboardSettings>;
   let host: Awaited<ReturnType<typeof loadComparisonConfig>>;
@@ -112,7 +110,7 @@ async function prepare(options: LaunchOptions, value: Record<string, unknown>, l
     if (chosen.limitCases) config.inputs.limit = chosen.limitCases;
   }
   const plan = resuming ? undefined : await options.plan(config);
-  return { runId, engine, chosen, settings, resuming, plan, run, config };
+  return { runId, chosen, settings, resuming, plan, run, config };
 }
 
 function summarize(summary: JsonObject) {
@@ -153,7 +151,7 @@ export async function previewRun(options: LaunchOptions, value: Record<string, u
 
 /** A child runs the same CLI reconciliation and run lock rules as terminal launches. */
 export async function startRun(options: LaunchOptions, value: Record<string, unknown>) {
-  const { runId, engine, chosen, settings, resuming, plan, run, config } = await prepare(options, value, true);
+  const { runId, chosen, settings, resuming, plan, run, config } = await prepare(options, value, true);
   if (!resuming && !plan?.tasks.length) throw new HttpError(400, "没有可评对比组，请先查看预检诊断");
   if (!resuming && config.inputs.workbench && (plan?.summary.issues as unknown[] | undefined)?.length && plan?.tasks.length)
     throw new HttpError(409, "输入预检存在异常，请修复后启动");
@@ -164,7 +162,7 @@ export async function startRun(options: LaunchOptions, value: Record<string, unk
   const args = [CLI_ENTRY, "run"];
   if (options.discoverInputs) args.push("--discover-inputs");
   for (const config of options.configPaths) args.push("--config", config);
-  args.push("--engine", engine, "--run-id", runId, "--dashboard-settings", JSON.stringify(settings));
+  args.push("--run-id", runId, "--dashboard-settings", JSON.stringify(settings));
   if (!resuming) {
     for (const name of ["batch", "case"] as const)
       for (const item of chosen[name] || []) args.push(`--${name}`, item);

@@ -17,7 +17,6 @@
   "stateDirectory": "../data/automations/remote-post-training-evaluation",
   "sourceDirectory": "../data/sources/automations/remote-post-training-evaluation",
   "runPrefix": "task-post-training-",
-  "engine": "pi",
   "pollMs": 15000,
   "refreshMs": null,
   "retryMs": 30000,

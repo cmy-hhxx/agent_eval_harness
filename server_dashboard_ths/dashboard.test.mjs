@@ -8,7 +8,7 @@ import { JSDOM } from "jsdom";
 
 const html = await readFile(new URL("dashboard.html", import.meta.url), "utf8");
 const source = await readFile(new URL("dashboard.js", import.meta.url), "utf8");
-const recordsSource = (await build({ entryPoints: [fileURLToPath(new URL("records.js", import.meta.url))], bundle: true, write: false, format: "iife", platform: "browser" })).outputFiles[0].text;
+const recordsSource = (await build({ entryPoints: [fileURLToPath(new URL("records.js", import.meta.url))], bundle: true, write: false, format: "iife", globalName: "DataRecords", platform: "browser" })).outputFiles[0].text;
 const done = { total_cases: 90, completed_cases: 90, running_cases: 0, queued_cases: 0, failed_cases: 0, skipped_cases: 0 };
 const processing = {
   received_at: Date.parse("2026-10-19T05:47:00Z"), published_at: Date.parse("2026-10-19T05:48:00Z"),
@@ -30,6 +30,7 @@ async function render(status, stale = false, counts = done, catalogDates = null,
   }) });
   dom.window.setInterval = () => 0;
   vm.runInContext(source.replace(/^export /gm, ""), dom.getInternalVMContext());
+  dom.window.mountData(dom.window.document);
   await new Promise(setImmediate);
   return dom;
 }
@@ -210,6 +211,7 @@ for (const [provider, models] of [["aime", ["aime_fast", "aime_expert"]], ["ifin
     dom.window.setInterval = () => 0;
     try {
       vm.runInContext(source.replace(/^export /gm, ""), dom.getInternalVMContext());
+      dom.window.mountData(dom.window.document);
       await new Promise(setImmediate);
       const doc = dom.window.document;
       assert.deepEqual(requests, [`/data/${provider}/dashboard-data`, `/data/${provider}/processing-status`]);
@@ -244,6 +246,7 @@ test("session sample viewer keeps all rounds and scoped pagination", async () =>
   dom.window.scrollTo = () => {};
   try {
     vm.runInContext(recordsSource, dom.getInternalVMContext());
+    vm.runInContext("DataRecords.mountRecords(document)", dom.getInternalVMContext());
     await new Promise(setImmediate);
     const doc = dom.window.document;
     assert.equal(doc.querySelector(".session-title").textContent, "Session · 3 轮");
@@ -271,6 +274,7 @@ async function samplePage(items, clipboard, questionHeight = () => 18) {
     scrollHeight: { get() { return this.classList.contains("question-text") ? questionHeight(this) : 0; } },
   });
   vm.runInContext(recordsSource, dom.getInternalVMContext());
+  vm.runInContext("DataRecords.mountRecords(document)", dom.getInternalVMContext());
   await new Promise(setImmediate);
   return dom;
 }
@@ -359,7 +363,7 @@ test("post-training task shows exactly two original model labels and opens sampl
     dates:[{ date:'2026-10-19', ready:true, models:{ b_fast:{ ready:true,row_count:720 }, b_post_train_fast:{ ready:true,row_count:745 } } }], evaluation:null,
   } });
   try {
-    vm.runInContext(source.replace(/^export /gm, '').replace(/if \(globalThis\.document\?\.querySelector\("#dataset-range"\)\) \{[\s\S]*$/, ''), dom.getInternalVMContext());
+    vm.runInContext(source.replace(/^export /gm, ''), dom.getInternalVMContext());
     dom.window.mountData(dom.window.document, { dataset:'post_training_model', onSamples:selection => selections.push(selection) });
     await new Promise(setImmediate);
     const doc=dom.window.document;

@@ -105,7 +105,7 @@ test("public package boundaries, independent Agents and acyclic implementation a
       !file.includes("/adapters/") && !file.endsWith("/server.ts"),
       `Client eagerly loads Worker or SDK: ${file}`,
     );
-    assert(!/#(?:pi|prime)-sdk/.test(await readFile(path.join(root, file), "utf8")), file);
+    assert(!/#pi-sdk/.test(await readFile(path.join(root, file), "utf8")), file);
   }
   for (const entry of ["inputs", "review", "answer-review"]) {
     reachable.clear();

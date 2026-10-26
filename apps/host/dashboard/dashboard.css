@@ -449,7 +449,6 @@ label { display: grid; gap: 3px; color: var(--muted); font-size: 12px; }
 .workspace-nav { display: grid; gap: 6px; margin: 0 0 28px; }
 .workspace-nav a { display: flex; align-items: center; gap: 12px; min-height: 44px; padding: 11px 12px; color: var(--muted); border-radius: var(--radius); text-decoration: none; font-size: 13px; white-space: nowrap; }
 .workspace-nav a::before { content: ""; width: 17px; height: 17px; flex: none; background: currentColor; mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath d='M3 3h7v7H3zm11 0h7v7h-7zM3 14h7v7H3zm11 0h7v7h-7z' fill='none' stroke='black' stroke-width='1.5'/%3E%3C/svg%3E") center / contain no-repeat; }
-.workspace-nav a[href="/reference"]::before { mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath d='M5 4h14v16H5zM8 8h8M8 12h8M8 16h5' fill='none' stroke='black' stroke-width='1.5'/%3E%3C/svg%3E"); }
 .workspace-nav a[href="/problems"]::before { mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath d='M5 4v12h6M5 9h6M11 6h9v6h-9zM11 15h9v5h-9z' fill='none' stroke='black' stroke-width='1.5'/%3E%3C/svg%3E"); }
 .workspace-nav a:hover { color: var(--text); background: var(--soft); }
 .workspace-nav a[aria-current="page"] { color: var(--accent); background: var(--accent-soft); font-weight: 600; }

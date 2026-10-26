@@ -120,14 +120,14 @@ SIGINT/SIGTERM: 停止接收任务并等待 Host 保存进度；下次 run 自�
       dashboard = await startAutomationDashboard({ port, llm: llm!, statistics: statisticsStore, control,
         sources: () => configs.map(config => scope.dashboards.get(config.id)!),
         daily: dailyWorkbench({ sources: () => configs.map(config => scope.dashboards.get(config.id)!), aime, control, llm: llm! }) });
-      console.log(`自动化看板：${dashboard.url} · 等待手动运行`);
+      console.log(`自动化 API：${dashboard.url} · 等待手动运行`);
       if (!controller.signal.aborted) await new Promise<void>(resolve => controller.signal.addEventListener("abort", () => resolve(), { once: true }));
       return;
     }
     if (values.dashboard) {
       dashboard = await startAutomationDashboard({ port, llm: llm!, statistics: statisticsStore,
         sources: () => scope.dashboards.size === configs.length ? configs.map(config => scope.dashboards.get(config.id)!) : [] });
-      console.log(`自动化看板：${dashboard.url}`);
+      console.log(`自动化 API：${dashboard.url}`);
     }
     const results = await Promise.allSettled([
       ...configs.map(config => executeAutomationCommand(command, values, config, scope)
@@ -256,7 +256,7 @@ async function executeAutomationCommand(
         dates.push(view.progress);
       }
       if (config.publishProgress && available)
-        await remote!.publish(remoteProgress(current, config.engine, dates), signal);
+        await remote!.publish(remoteProgress(current, "pi", dates), signal);
     };
     console.log(`Automations ${config.id}: ${config.fromDate} → ${config.sourceUrl}\n状态：${file}`);
     await runPipeline(state, { ...config, mongoTarget: automationMongoTarget(config), once: values.once }, {

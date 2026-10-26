@@ -267,4 +267,3 @@ next.addEventListener("click", () => setPage(page + 1));
 const ready = loadPage();
 return { ready, destroy() { disposed = true; request?.abort(); } };
 }
-if (globalThis.document?.querySelector("#records-list")) mountRecords(document);

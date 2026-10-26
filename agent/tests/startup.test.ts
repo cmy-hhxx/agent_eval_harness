@@ -12,7 +12,7 @@ async function launch(args: string[], fail = false) {
     await mkdir(path.join(root, "agent")); await mkdir(path.join(root, "bin"));
     await mkdir(path.join(root, "node_modules")); await mkdir(path.join(root, ".runtime"));
     await cp(path.join(ROOT, "agent/run.sh"), path.join(root, "agent/run.sh"));
-    await writeFile(path.join(root, ".runtime/pi.json"), "{}"); await writeFile(path.join(root, ".runtime/prime.json"), "{}");
+    await writeFile(path.join(root, ".runtime/pi.json"), "{}");
     await writeFile(path.join(root, "config.json"), "{}");
     const commands = path.join(root, "commands");
     for (const command of ["node", "npm"]) await writeFile(path.join(root, "bin", command), `#!/bin/sh

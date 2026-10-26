@@ -3,7 +3,6 @@ import { configurationSecrets } from "./settings.js";
 import { parseArgs } from "node:util";
 import { stat } from "node:fs/promises";
 import path from "node:path";
-import type { Engine } from "@eval/contracts";
 import { ROOT } from "./paths.js";
 import { errorText, redact } from "@eval/contracts";
 import { readJson, exists, runLayout, runLock } from "@eval/data";
@@ -30,7 +29,6 @@ async function main(): Promise<void> {
     allowPositionals: true,
     options: {
       config: { type: "string", multiple: true, default: [path.join(ROOT, "configs/host.json")] },
-      engine: { type: "string", default: "pi" },
       "run-id": { type: "string" },
       run: { type: "string", multiple: true },
       output: { type: "string" },
@@ -84,7 +82,7 @@ async function main(): Promise<void> {
   if (values.help || !command) {
     console.log(
       `eval index|preflight|run|reattribute|status|validate|report|cluster|verify-comparisons|validate-stability|model-probe|retry-failed|recluster|review-problem-occurrences|rewrite-comparisons|rewrite-review|concurrency|progress|dashboard [--config FILE ...]
-run: --engine pi|prime --run-id ID [--debug] [--worker URL ...]
+run: --run-id ID [--debug] [--worker URL ...]
 配置文件按顺序深度合并；具体模型放在不入库的 --config 中
 相同 run-id 自动续跑，已完成结果保留；--debug 额外保存 _internal/
 selection: --batch ID --case ID --limit-cases N
@@ -106,7 +104,7 @@ channels: run|reattribute|cluster --balance-channels 按 traffic_weight 加权�
 verify-comparisons: --run PATH [--result ID ...] [--apply] 独立复核已接受的对局
 validate-stability: --cases FILE|--run PATH --run-id EXPERIMENT [--execute] [--max-attempts N]
   [--stop-starting-at ISO_DATE_WITH_OFFSET] [--seed N]；默认预览，重复同一实验 ID 续跑
-model-probe: --engine pi|prime [--stage comparison] [--execute]；默认只显示脱敏计划
+model-probe: [--stage comparison] [--execute]；默认只显示脱敏计划
 recluster: --run PATH [--task ID ...|--all] [--apply] 重新归类已接受的延期观察
 review-problem-occurrences: --review-file FILE [--apply] 默认只读预览，--apply 仅追加明确来源复核事件
 rewrite-comparisons: --run PATH [--scope items|verdicts] [--mode missing|refresh]
@@ -275,9 +273,7 @@ dashboard: --port 4173 在本机启动控制看板`,
   logger.addSecrets(...configurationSecrets());
   if (values.stage && host.workflow !== "answer-review" && command !== "model-probe") throw new Error("--stage 只用于独立评审或model-probe");
   if (command === "model-probe") {
-    if (!["pi", "prime"].includes(values.engine)) throw new Error("--engine must be pi or prime");
-    const result = await runModelProbe({ configPaths: values.config, engine: values.engine as Engine,
-      stage: values.stage, execute: values.execute });
+    const result = await runModelProbe({ configPaths: values.config, stage: values.stage, execute: values.execute });
     console.log(JSON.stringify(result, null, 2));
     if (result.status === "failed") process.exitCode = 2;
     return;
@@ -291,7 +287,7 @@ dashboard: --port 4173 在本机启动控制看板`,
     if (deadline && !/(Z|[+-]\d\d:\d\d)$/u.test(deadline)) throw new Error("--stop-starting-at 须包含 Z 或时区偏移");
     process.exitCode = await runStabilityCommand(host, { cases: values.cases, sourceRun: selectedRun,
       runId: values["run-id"], output: values.output, apply: values.execute,
-      engine: values.engine, debug: values.debug, workers: values.worker, resumeStages: values["resume-stage"],
+      debug: values.debug, workers: values.worker, resumeStages: values["resume-stage"],
       maxAttempts: values["max-attempts"] === undefined ? undefined : Number(values["max-attempts"]),
       stopStartingAt: deadline === undefined ? undefined : Date.parse(deadline),
       seed: values.seed === undefined ? undefined : Number(values.seed) });
@@ -303,7 +299,7 @@ dashboard: --port 4173 在本机启动控制看板`,
     process.exitCode = await runAttributionCommand(host, { runs: values.run, runId: values["run-id"],
       output: values.output, fromDate: values["from-date"], pilotAnswers: values["pilot-answers"] === undefined ? undefined : Number(values["pilot-answers"]),
       pilotPerModel: values["pilot-per-model"] === undefined ? undefined : Number(values["pilot-per-model"]),
-      apply: values.apply, engine: values.engine, debug: values.debug, workers: values.worker,
+      apply: values.apply, debug: values.debug, workers: values.worker,
       resumeStages: values["resume-stage"], discoverInputs: values["discover-inputs"], balanceChannels: values["balance-channels"] });
     return;
   }
@@ -312,7 +308,7 @@ dashboard: --port 4173 在本机启动控制看板`,
     if (values.input || values.batch || values.case || values["limit-cases"] || values.dataset)
       throw new Error("cluster 通过多个 --run 选择已接受归因，不接受原始输入筛选");
     process.exitCode = await runClusteringCommand(host, { selectionFile: values["clustering-selection"], runs: values.run, runId: values["run-id"],
-      output: values.output, apply: values.apply, engine: values.engine, debug: values.debug,
+      output: values.output, apply: values.apply, debug: values.debug,
       workers: values.worker, resumeStages: values["resume-stage"], balanceChannels: values["balance-channels"] });
     return;
   }
@@ -383,7 +379,7 @@ dashboard: --port 4173 在本机启动控制看板`,
   }
   if ("workflow" in config && config.workflow === "answer-review") {
     process.exitCode = await runAnswerReviewCommand({ ...host, workflow: "answer-review", evaluation: config }, {
-      command, runId: values["run-id"], engine: values.engine, debug: values.debug, stage: values.stage,
+      command, runId: values["run-id"], debug: values.debug, stage: values.stage,
       workers: values.worker, skipFailed: values["skip-failed"], discoverInputs: values["discover-inputs"],
       resumeStages: values["resume-stage"], balanceChannels: values["balance-channels"],
       pilotCases: values["pilot-cases"] === undefined ? undefined : Number(values["pilot-cases"]),
@@ -412,8 +408,7 @@ dashboard: --port 4173 在本机启动控制看板`,
     !(values["run-id"] && (await exists(runLayout(config.output, values["run-id"]).stateFile)))
   )
     throw new Error("没有可评对比组，请先查看 preflight");
-  const engine = values.engine as Engine;
-  if (!["pi", "prime"].includes(engine)) throw new Error("--engine must be pi or prime");
+  const engine = "pi" as const;
   const routing = values["balance-channels"] ? createBalancedModels(host.models) : { modelForStage: createModelResolver(host.models) };
   const { modelForStage } = routing;
   for (const stage of Object.keys(host.models.bindings)) modelForStage(stage);

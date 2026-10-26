@@ -3,10 +3,9 @@ import assert from "node:assert/strict";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { DEFAULT_POLICY, object, type AttemptSpec, type Engine } from "@eval/contracts";
+import { DEFAULT_POLICY, object, type AttemptSpec } from "@eval/contracts";
 import { body, listen } from "@eval/runtime/http";
 import { piBackend } from "@eval/runtime/pi";
-import { primeBackend } from "@eval/runtime/prime";
 import { fakeIdentity } from "../fixtures/comparison.js";
 
 const call = (id: string, args = "") => ({
@@ -23,7 +22,7 @@ const terminal = (output: Record<string, unknown>[]) => ({
       input_tokens_details: { cached_tokens: 3 }, output_tokens_details: { reasoning_tokens: 2 } } },
 });
 
-async function replay(engine: Engine, events: Record<string, unknown>[], debug = false) {
+async function replay(events: Record<string, unknown>[], debug = false) {
   const directory = await mkdtemp(path.join(tmpdir(), "eval-pi-responses-"));
   const requests: Record<string, unknown>[] = [], executed: unknown[] = [];
   const errors: string[] = [], ended: unknown[] = [], messages: Record<string, unknown>[] = [];
@@ -41,7 +40,7 @@ async function replay(engine: Engine, events: Record<string, unknown>[], debug =
   process.env[keyName] = "local-fixture-secret";
   process.env.PI_OFFLINE = "1";
   try {
-    const identity = { ...fakeIdentity, engine };
+    const identity = { ...fakeIdentity, engine: "pi" as const };
     const spec: AttemptSpec = {
       runId: "responses-test", debug, taskId: "task", attemptId: "attempt", inputRevision: 1,
       engine: identity, evidenceBank: [],
@@ -52,7 +51,7 @@ async function replay(engine: Engine, events: Record<string, unknown>[], debug =
         model: "fixture", thinking: "off", contextWindow: 10000, maxOutputTokens: 1000 },
       policy: DEFAULT_POLICY, prompt: "fixture", inputs: [], hostUrl: gateway.url, deadline: Date.now() + 10000,
     };
-    const session = await (engine === "pi" ? piBackend : primeBackend)(identity).createSession({
+    const session = await piBackend(identity).createSession({
       spec, workdir: directory,
       tools: [{ name: "submit_evaluation", description: "Submit the value.",
         inputSchema: { type: "object", properties: { value: { type: "string" } }, required: ["value"], additionalProperties: false },
@@ -92,7 +91,7 @@ test(`pi: only debug records original malformed arguments in ${status} Responses
   const args = '{"value":"unterminated';
   for (const debug of [false, true]) {
     const response = terminal([call("raw", args)]).response;
-    const result = await replay("pi", [itemEvent("added", 0, call("raw")), itemEvent("done", 0, call("raw", args)),
+    const result = await replay([itemEvent("added", 0, call("raw")), itemEvent("done", 0, call("raw", args)),
       { type: `response.${status}`, response: { ...response, status,
         ...(status === "incomplete" ? { incomplete_details: { reason: "max_output_tokens" } } : {}) } }], debug);
     assert.deepEqual(result.executed, []);
@@ -103,9 +102,8 @@ test(`pi: only debug records original malformed arguments in ${status} Responses
   }
 });
 
-for (const engine of ["pi", "prime"] as const) {
 for (const completed of [false, true]) {
-test(`${engine}: plain text Responses ${completed ? "accept a completed terminal without usage" : "reject EOF without a terminal event"}`, async () => {
+test(`pi: plain text Responses ${completed ? "accept a completed terminal without usage" : "reject EOF without a terminal event"}`, async () => {
   const message = { type: "message", id: "msg_text", role: "assistant", status: "completed",
     content: [{ type: "output_text", text: "complete-looking text", annotations: [] }] };
   const events: Record<string, unknown>[] = [
@@ -113,7 +111,7 @@ test(`${engine}: plain text Responses ${completed ? "accept a completed terminal
   ];
   // Both variants lack usage; only an authoritative terminal event makes the SDK successful.
   if (completed) events.push({ type: "response.completed", response: { id: "resp_text", status: "completed", output: [message] } });
-  const result = await replay(engine, events);
+  const result = await replay(events);
   assert.equal(result.requests.length, 1);
   assert.deepEqual(result.executed, []);
   assert.deepEqual(result.ended, []);
@@ -129,7 +127,7 @@ test(`${engine}: plain text Responses ${completed ? "accept a completed terminal
 }
 
 for (const streamed of [false, true]) {
-test(`${engine}: ${streamed ? "fragmented" : "terminal"} Responses preserve current flat comparison arrays and escaped text`, async () => {
+test(`pi: ${streamed ? "fragmented" : "terminal"} Responses preserve current flat comparison arrays and escaped text`, async () => {
   const draft = {
     a_summary: '原文含 "引号"、\\ 路径和\n换行',
     b_summary: "B 给出了不同结果。",
@@ -139,21 +137,21 @@ test(`${engine}: ${streamed ? "fragmented" : "terminal"} Responses preserve curr
   const args = JSON.stringify(draft);
   const deltas = streamed ? Array.from(args).map(delta => ({ type: "response.function_call_arguments.delta",
     output_index: 0, item_id: "fc_nested", delta })) : [];
-  const result = await replay(engine, [itemEvent("added", 0, call("nested")), ...deltas,
+  const result = await replay([itemEvent("added", 0, call("nested")), ...deltas,
     { type: "response.function_call_arguments.done", output_index: 0, item_id: "fc_nested", arguments: args },
     itemEvent("done", 0, call("nested", args)), terminal([call("nested", args)])], true);
   assert.deepEqual(result.errors, []);
   assert.deepEqual(result.executed, [draft], "the SDK must dispatch the complete current payload without changing field order or text");
   assert.deepEqual(result.ended, result.executed);
   assert.equal(result.requests.length, 2);
-  if (engine === "pi") assert.equal(object((result.providerArguments[0].calls as Record<string, unknown>[])[0]).arguments, args);
+  assert.equal(object((result.providerArguments[0].calls as Record<string, unknown>[])[0]).arguments, args);
 });
 }
 
-test(`${engine}: terminal Responses arguments reach the tool when a gateway sends item.done before its delta`, async () => {
+test(`pi: terminal Responses arguments reach the tool when a gateway sends item.done before its delta`, async () => {
   // Minimal event ordering from the captured MiniMax stream; no evaluation material is needed.
   const args = '{"value":"accepted"}';
-  const result = await replay(engine, [
+  const result = await replay([
     itemEvent("added", 0, call("late")),
     { type: "response.function_call_arguments.done", output_index: 0, item_id: "fc_late", arguments: "" },
     itemEvent("done", 0, call("late")),
@@ -166,12 +164,12 @@ test(`${engine}: terminal Responses arguments reach the tool when a gateway send
   assert.equal(result.requests.length, 2);
 });
 
-test(`${engine}: terminal Responses calls match by identity while interleaved tools, text, reasoning and usage survive`, async () => {
+test(`pi: terminal Responses calls match by identity while interleaved tools, text, reasoning and usage survive`, async () => {
   const a = '{"value":"first"}', b = '{"value":"second"}';
   const thinking = { type: "reasoning", id: "rs_fixture", summary: [{ type: "summary_text", text: "checked" }] };
   const message = { type: "message", id: "msg_fixture", role: "assistant", status: "completed",
     content: [{ type: "output_text", text: "ready", annotations: [] }] };
-  const result = await replay(engine, [
+  const result = await replay([
     itemEvent("added", 0, thinking), itemEvent("done", 0, thinking),
     itemEvent("added", 1, call("a")), itemEvent("added", 2, call("b")),
     { type: "response.function_call_arguments.delta", output_index: 2, item_id: "fc_b", delta: b },
@@ -192,8 +190,8 @@ test(`${engine}: terminal Responses calls match by identity while interleaved to
 });
 
 for (const argumentsJson of ['{"value":', "null", "[]", '"text"', ""]) {
-  test(`${engine}: rejects malformed terminal tool arguments ${JSON.stringify(argumentsJson)} without executing partial values`, async () => {
-    const result = await replay(engine, [
+  test(`pi: rejects malformed terminal tool arguments ${JSON.stringify(argumentsJson)} without executing partial values`, async () => {
+    const result = await replay([
       itemEvent("added", 0, call("invalid")),
       itemEvent("done", 0, call("invalid", '{"value":"must not run"}')),
       terminal([call("invalid", argumentsJson)]),
@@ -207,8 +205,8 @@ for (const argumentsJson of ['{"value":', "null", "[]", '"text"', ""]) {
 }
 
 for (const changed of [{ call_id: "call_other" }, { id: "fc_other" }]) {
-test(`${engine}: rejects terminal function identity conflicts in ${Object.keys(changed)[0]}`, async () => {
-  const result = await replay(engine, [
+test(`pi: rejects terminal function identity conflicts in ${Object.keys(changed)[0]}`, async () => {
+  const result = await replay([
     itemEvent("added", 0, call("identity")),
     itemEvent("done", 0, call("identity", '{"value":"must not run"}')),
     terminal([{ ...call("identity", '{"value":"wrong call"}'), ...changed }]),
@@ -221,9 +219,9 @@ test(`${engine}: rejects terminal function identity conflicts in ${Object.keys(c
 }
 
 for (const changed of [{ call_id: "call_other" }, { id: "fc_other" }, { name: "different_tool" }]) {
-test(`${engine}: rejects function identity changes between item.added and item.done in ${Object.keys(changed)[0]}`, async () => {
+test(`pi: rejects function identity changes between item.added and item.done in ${Object.keys(changed)[0]}`, async () => {
   const completed = { ...call("changed", '{"value":"must not run"}'), ...changed };
-  const result = await replay(engine, [
+  const result = await replay([
     itemEvent("added", 0, call("changed")), itemEvent("done", 0, completed), terminal([completed]),
   ]);
   assert.deepEqual(result.executed, []);
@@ -233,9 +231,9 @@ test(`${engine}: rejects function identity changes between item.added and item.d
 });
 }
 
-test(`${engine}: rejects duplicate streamed function identities before an overwritten call can execute`, async () => {
+test(`pi: rejects duplicate streamed function identities before an overwritten call can execute`, async () => {
   const args = '{"value":"must not run"}';
-  const result = await replay(engine, [
+  const result = await replay([
     itemEvent("added", 0, call("duplicate")), itemEvent("added", 1, call("duplicate")),
     itemEvent("done", 0, call("duplicate", args)), itemEvent("done", 1, call("duplicate", args)),
     terminal([call("duplicate", args)]),
@@ -246,9 +244,9 @@ test(`${engine}: rejects duplicate streamed function identities before an overwr
   assert.match(result.errors[0], /duplicate.*function.*identity/i);
 });
 
-test(`${engine}: rejects a tool call without item.done even when the terminal response contains arguments`, async () => {
+test(`pi: rejects a tool call without item.done even when the terminal response contains arguments`, async () => {
   const args = '{"value":"must not run"}';
-  const result = await replay(engine, [
+  const result = await replay([
     itemEvent("added", 0, call("unfinished")),
     { type: "response.function_call_arguments.delta", output_index: 0, item_id: "fc_unfinished", delta: args },
     terminal([call("unfinished", args)]),
@@ -258,10 +256,10 @@ test(`${engine}: rejects a tool call without item.done even when the terminal re
   assert.match(result.errors[0], /unfinished tool call|function call was not finalized/i);
 });
 
-test(`${engine}: incomplete Responses retain length status and never execute a tool`, async () => {
+test(`pi: incomplete Responses retain length status and never execute a tool`, async () => {
   const args = '{"value":"must not run"}';
   const response = terminal([call("truncated", args)]).response;
-  const result = await replay(engine, [
+  const result = await replay([
     itemEvent("added", 0, call("truncated")),
     itemEvent("done", 0, call("truncated", args)),
     { type: "response.incomplete", response: { ...response, status: "incomplete",
@@ -271,4 +269,3 @@ test(`${engine}: incomplete Responses retain length status and never execute a t
   assert.deepEqual(result.errors, []);
   assert.equal(result.messages[0].stopReason, "length");
 });
-}

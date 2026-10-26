@@ -10,8 +10,7 @@ import { body, json, listen } from "@eval/runtime/http";
 import { fixtureConfig } from "../fixtures/comparison.js";
 import { services } from "../fixtures/services.js";
 
-for (const engine of ["pi", "prime"] as const)
-    test(`${engine}: Responses falls back on quota exhaustion and preserves original JSON and tool validation`, { timeout: 60000 }, async () => {
+    test(`pi: Responses falls back on quota exhaustion and preserves original JSON and tool validation`, { timeout: 60000 }, async () => {
       const { directory, config, models } = await fixtureConfig();
       const invalid = { count: "7", enabled: "true", text: 9, note: null, satisfies: false };
       const valid = { count: 7, enabled: true, text: "nine", note: null, satisfies: true };
@@ -102,11 +101,11 @@ for (const engine of ["pi", "prime"] as const)
         models.models.judge!.thinking = "off";
         models.channels.openai = { ...models.models.judge, provider: "openai", baseUrl: gateway.url + "/preferred",
           apiKeyEnv: "SDK_QUOTA_TEST_KEY" };
-        const runId = `submission-${engine}`;
+        const runId = "submission-pi";
         const routing = createAutomationModels(models, ["openai", "evaluation-gateway"]);
         await runEvaluation({
           runId, output: config.output, config, plan: { tasks: [{ id: "structured-task", stage: "structured", inputIds: {}, dependencies: {}, data: {} }], inputs: {}, summary: {} },
-          engine, evaluatorVersion: "fixture", modelForStage: () => routing.modelForStage("attribution"),
+          engine: "pi", evaluatorVersion: "fixture", modelForStage: () => routing.modelForStage("attribution"),
           modelForTask: (task, previousChannel) => routing.modelForTask({ ...task, stage: "attribution" }, previousChannel),
           onModelQuotaExhausted: (model, task) => routing.onModelQuotaExhausted(model, { ...task, stage: "attribution" }),
           policy: { ...config.execution, repairAttempts: 2 }, concurrency: 1, retries: 0, retryDelaySeconds: 0,

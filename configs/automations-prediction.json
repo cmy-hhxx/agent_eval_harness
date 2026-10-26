@@ -20,7 +20,6 @@
   "stateDirectory": "../data/automations/prediction-evaluation",
   "sourceDirectory": "../data/sources/automations/prediction-evaluation",
   "runPrefix": "prediction-",
-  "engine": "pi",
   "pollMs": 15000,
   "refreshMs": 1800000,
   "retryMs": 30000,

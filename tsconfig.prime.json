@@ -1,8 +1,0 @@
-{
-  "extends": "./tsconfig.json",
-  "include": [
-    "packages/runtime/src/adapters/prime.ts",
-    "packages/runtime/src/server.ts",
-    "apps/worker/src/**/*.ts"
-  ]
-}
