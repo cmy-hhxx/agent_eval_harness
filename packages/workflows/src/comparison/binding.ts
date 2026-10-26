@@ -159,14 +159,16 @@ function bindSourceTask(
     throw new Error("对比组至少需要两个候选");
   const attribution = data.stage === "attribution";
   const criteria = dependencies.criteria;
-  if (!acceptedAnalysis && (!criteria || criteria.taskId !== task.dependencies.criteria || criteria.status !== "succeeded"))
+  if (!acceptedAnalysis && !attribution && (!criteria || criteria.taskId !== task.dependencies.criteria || criteria.status !== "succeeded"))
     throw new Error("缺少已接受的共同验收基准");
-  const criteriaTask = context.tasks.find(item => item.id === task.dependencies.criteria && item.stage === "criteria");
-  if (!criteriaTask) throw new Error("缺少共同验收基准的任务上下文");
-  const criteriaBlind = blindMaterials((criteriaTask.data as TaskData).candidates);
-  const blind = criteriaBlind;
+  const criteriaTask = task.dependencies.criteria
+    ? context.tasks.find(item => item.id === task.dependencies.criteria && item.stage === "criteria") : undefined;
+  if (!attribution && !criteriaTask) throw new Error("缺少共同验收基准的任务上下文");
+  const blind = criteriaTask ? blindMaterials((criteriaTask.data as TaskData).candidates)
+    : attribution ? blindMaterials(data.candidates) : undefined;
   const reference = structuredClone(data.reference);
-  const task_analysis = structuredClone(acceptedAnalysis ?? criteria!.evaluation);
+  const task_analysis = acceptedAnalysis ? structuredClone(acceptedAnalysis)
+    : criteriaTask && criteria ? structuredClone(criteria.evaluation) : undefined;
   if (attribution) for (const [key, peer] of Object.entries(data.referenceCandidates ?? {})) {
     const own = data.candidates.A;
     const registered = context.tasks.flatMap(item => Object.values((item.data as TaskData).candidates))
@@ -180,7 +182,7 @@ function bindSourceTask(
   }
   if (attribution) {
     const binding = bindAttributionMaterial(data.candidates.A, inputs[data.candidates.A.input_id] as RawInput,
-      task_analysis as TaskAnalysis, { reference, initialContextChars: data.initialContextChars });
+      task_analysis as TaskAnalysis | undefined, { reference, initialContextChars: data.initialContextChars });
     const reviewReasons = [...(data.reviewOf?.reasons ?? []), ...(data.reviewQuestions ?? [])];
     const additions = { allow_standard_conflict: data.standardAnswerReview === true,
       ...(reviewReasons.length ? { review_context: { reasons: reviewReasons } } : {}) };

@@ -331,7 +331,6 @@ export async function buildPlan(
           Number(
             !!oldCheck &&
               (!isDeepStrictEqual(oldCheck.reference, reference) ||
-                old!.dependencies.criteria !== criteria.id ||
                 !isDeepStrictEqual(oldCheck.reviewQuestions, data.reviewQuestions) ||
                 oldCheck.candidates.A.input_id !== record.input_id),
           );
@@ -339,7 +338,7 @@ export async function buildPlan(
         checks.set(checkKey, {
           id: checkId,
           stage: "attribution",
-          dependencies: { criteria: criteria.id },
+          dependencies: {},
           inputIds: { answer: record.input_id },
           data,
         });
@@ -408,7 +407,7 @@ export async function buildPlan(
     criteriaTasks.set(criteriaScope, criteria);
     const key = canonical([record.batch_id, record.case_id, "attribution", [record.version], criteriaScope]);
     const prior = oldTasks.get(key);
-    const task: PlannedTask = { id: prior?.id || randomUUID(), stage: "attribution", dependencies: { criteria: criteria.id },
+    const task: PlannedTask = { id: prior?.id || randomUUID(), stage: "attribution", dependencies: {},
       inputIds: { answer: record.input_id }, data: { stage: "attribution", standalone: true, candidates: { A: record },
         reference: record.reference, criteriaScope, initialContextChars: config.execution.initialContextChars,
         standardAnswerReview: config.standardAnswerReview === true } satisfies TaskData };

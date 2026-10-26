@@ -45,7 +45,7 @@ function reviewRewrite(template: PlannedTask, sourceTaskId: string): PlannedTask
 }
 
 /** Accepted answers are reused when their original standard is exactly the new shared standard. */
-const advanceCriteria: NonNullable<WorkflowDefinition["advance"]> = (task, receipt, state, inputs) => {
+const advanceCriteria: NonNullable<WorkflowDefinition["advance"]> = (task, _receipt, state, inputs) => {
   const data = task.data as TaskData, tasks: PlannedTask[] = [], replace = new Map<string, PlannedTask>();
   const reviews = new Map<string, PlannedTask>();
   for (const comparison of state.manifest.tasks.filter((item) => item.stage === "comparison" &&
@@ -55,18 +55,17 @@ const advanceCriteria: NonNullable<WorkflowDefinition["advance"]> = (task, recei
       const sourceId = deps[label]!, source = state.receipts[sourceId];
       if (!source) continue;
       const original = state.manifest.tasks.find((item) => item.id === sourceId)!;
-      if (isDeepStrictEqual(state.receipts[original.dependencies.criteria]?.evaluation, receipt.evaluation) &&
-        isDeepStrictEqual((original.data as TaskData).reference, data.reference)) {
-        const check: PlannedTask = { ...original, inputIds: { answer: candidate.input_id }, dependencies: { criteria: task.id },
+      if (!original.dependencies.criteria && isDeepStrictEqual((original.data as TaskData).reference, data.reference)) {
+        const check: PlannedTask = { ...original, inputIds: { answer: candidate.input_id }, dependencies: {},
           data: { ...(original.data as TaskData), candidates: { A: candidate }, reference: data.reference } satisfies TaskData };
         try {
-          attributionProfile.validate!(bindTask(check, inputs, { criteria: receipt }, { tasks: state.manifest.tasks }).request, source.evaluation, source.audit);
+          attributionProfile.validate!(bindTask(check, inputs, {}, { tasks: state.manifest.tasks }).request, source.evaluation, source.audit);
           continue;
         } catch (error) { if (!(error instanceof ValidationError)) throw error; }
       }
       let review = reviews.get(sourceId);
       if (!review) {
-        review = { id: randomUUID(), stage: "attribution", dependencies: { criteria: task.id }, inputIds: { answer: candidate.input_id },
+        review = { id: randomUUID(), stage: "attribution", dependencies: {}, inputIds: { answer: candidate.input_id },
           data: { stage: "attribution", candidates: { A: candidate }, reference: data.reference, criteriaScope: data.criteriaScope,
             initialContextChars: compared.initialContextChars, revision: 1,
             standardAnswerReview: (state.manifest.config as EvalConfig).standardAnswerReview === true,

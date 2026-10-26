@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import path from "node:path";
 import { rm } from "node:fs/promises";
 import { writeJsonl } from "@eval/data";
-import { emptyUsage, type SubmissionReceipt } from "@eval/contracts";
+import { emptyUsage } from "@eval/contracts";
 import { attributionProfile } from "@eval/agents/attribution";
 import { Ajv2020 } from "ajv/dist/2020.js";
 import { buildPlan } from "./input.js";
@@ -12,7 +12,7 @@ import { comparisonRow } from "./results.js";
 import { outputSchema } from "./schema.js";
 import { predictionReadiness, readPredictionAnswers, type PredictionAnswer } from "./prediction.js";
 import type { TaskData } from "./types.js";
-import { attributionResult, comparisonResult, criteriaResultForTask, emptyAudit, fixtureConfig, raw } from "../../../../tests/fixtures/comparison.js";
+import { attributionResult, comparisonResult, emptyAudit, fixtureConfig, raw } from "../../../../tests/fixtures/comparison.js";
 
 const answer: PredictionAnswer = {
   question_id: "selected", batch_id: "2026-09-22", text: "计算2+2", question_time: "2026-09-22T12:00:00+08:00",
@@ -54,17 +54,15 @@ test("prediction plan selects accepted pairs, supplies outcome evidence and pres
   assert.equal(data.prediction?.source_comparison_id, "old-comparison");
   assert.deepEqual((data.reference as { prediction_results: unknown[] }).prediction_results, answer.prediction_results);
   assert.deepEqual(plan.inputs[task.inputIds.answer], input);
-  const criterion = plan.tasks.find(item => item.id === task.dependencies.criteria)!;
-  const receipt: SubmissionReceipt = { taskId: criterion.id, attemptId: "criteria", submissionId: "criteria",
-    acceptedAt: 1, status: "succeeded", evaluatorVersion: "fixture", judge: "fixture", audit: emptyAudit(),
-    usage: emptyUsage(), evaluation: criteriaResultForTask(criterion, plan.inputs) };
-  const binding = bindTask(task, plan.inputs, { criteria: receipt }, { tasks: plan.tasks });
+  const binding = bindTask(task, plan.inputs, {}, { tasks: plan.tasks });
   assert.equal((binding.request.input.ground_truth as { available: boolean }).available, true);
   assert(attributionProfile.renderPrompt!(binding.modelInput!).includes("事前预测"));
   assert(!JSON.stringify(binding.request.sources).includes("old-comparison"));
   const comparison = plan.tasks.find(item => item.stage === "comparison")!;
   const receipts = new Map(plan.tasks.filter(item => item.stage === "attribution").map(item => [item.id, {
-    ...receipt, taskId: item.id, evaluation: attributionResult(true, "2+2=4", true, item.inputIds.answer),
+    taskId: item.id, attemptId: "attribution", submissionId: "attribution", acceptedAt: 1, status: "succeeded" as const,
+    evaluatorVersion: "fixture", judge: "fixture", audit: emptyAudit(), usage: emptyUsage(),
+    evaluation: attributionResult(true, "2+2=4", true, item.inputIds.answer),
   }]));
   const row = comparisonRow(plan.inputs, comparison, comparisonResult(), receipts, {}, "fixture");
   const validate = new Ajv2020({ strict: false }).compile(outputSchema);

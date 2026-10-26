@@ -1,13 +1,11 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { rm } from "node:fs/promises";
-import type { SubmissionReceipt } from "@eval/contracts";
-import { emptyUsage } from "@eval/contracts";
 import { attributionProfile } from "@eval/agents/attribution";
 import { buildPlan } from "./input.js";
 import { bindTask } from "./binding.js";
 import type { TaskData } from "./types.js";
-import { criteriaResultForTask, emptyAudit, fixtureConfig, raw } from "../../../../tests/fixtures/comparison.js";
+import { fixtureConfig, raw } from "../../../../tests/fixtures/comparison.js";
 
 test("explicit semantic questions target one business case equally without becoming raw input or a verdict", async () => {
   const rows = [raw("checked"), raw("untouched")];
@@ -22,11 +20,7 @@ test("explicit semantic questions target one business case equally without becom
       const data = task.data as TaskData;
       const selected = data.candidates.A.case_id === "checked";
       assert.deepEqual(data.reviewQuestions, selected ? questions : undefined);
-      const criterion = plan.tasks.find(item => item.id === task.dependencies.criteria)!;
-      const receipt: SubmissionReceipt = { taskId: criterion.id, attemptId: "criteria", submissionId: "criteria",
-        acceptedAt: 1, status: "succeeded", evaluatorVersion: "fixture", judge: "fixture",
-        audit: emptyAudit(), usage: emptyUsage(), evaluation: criteriaResultForTask(criterion, plan.inputs) };
-      const binding = bindTask(task, plan.inputs, { criteria: receipt }, { tasks: plan.tasks });
+      const binding = bindTask(task, plan.inputs, {}, { tasks: plan.tasks });
       assert.deepEqual(binding.request.input.review_context, selected ? { reasons: questions } : undefined);
       const material = binding.modelInput!;
       assert.deepEqual(material.review_context, selected ? { reasons: questions, kind: "unverified_concerns" } : undefined);

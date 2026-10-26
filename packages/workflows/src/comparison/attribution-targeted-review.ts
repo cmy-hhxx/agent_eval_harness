@@ -37,7 +37,6 @@ export async function prepareAttributionTargetedReviews(run: string, selection: 
         source.inputIds.answer !== candidate.input_id) throw new Error("同一输入的归因身份不一致：" + taskId);
       if (chosen.has(candidate.input_id)) throw new Error("重复选择同一回答：" + candidate.input_id);
       chosen.add(candidate.input_id);
-      if (!source.dependencies.criteria || !state.receipts[source.dependencies.criteria]) throw new Error("归因缺少已接受标准：" + source.id);
       const pending = tasks.filter(task => task.stage === "attribution" && !state.receipts[task.id] &&
         (task.data as TaskData).reviewOf?.taskId === source.id);
       if (pending.length > 1 || pending.some(task => !isDeepStrictEqual((task.data as TaskData).reviewOf!.reasons, reasons)))
@@ -56,7 +55,7 @@ export async function prepareAttributionTargetedReviews(run: string, selection: 
       const scope = state.manifest.executionScope && new Set(state.manifest.executionScope);
       for (const [index, plan] of plans.entries()) {
         const review = plan.review ?? { ...plan.source, id: randomUUID(), inputIds: { ...plan.source.inputIds },
-          dependencies: { ...plan.source.dependencies },
+          dependencies: {},
           data: { ...structuredClone(plan.source.data as TaskData), revision: 1,
             reviewOf: { taskId: plan.source.id, round: selected[index]!.round, reasons: plan.reasons } } satisfies TaskData };
         if (!plan.review) {
