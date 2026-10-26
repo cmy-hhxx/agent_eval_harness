@@ -22,9 +22,9 @@ export type { TableReviewConcern } from "./table-review.js";
 // Attribution resolves evidence IDs into source locations before the result is accepted.
 const toolNames = [
   "read_execution", "read_responsibility_chain", "read_trace", "search_trace", "view_image", "calculate", "execute_code",
-  "read_artifact",
+  "read_artifact", "edit_json",
 ];
-const prompt = agentPrompt("attribution", toolNames, { fileSubmission:false });
+const prompt = agentPrompt("attribution", toolNames, { fileSubmission:true });
 export const attributionProfile: AgentProfile = {
   id: "default",
   requestSchema,

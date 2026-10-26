@@ -40,7 +40,7 @@
 |---|---|
 | Score | 原题、完整最终回答与已接受 Attribution 的紧凑事实；一次会话选12核心项、24诊断及独立总分，不复核归因或读取候选内部指令 |
 | Criteria | 原题、公开用户要求与统一质量规范；定义共同交付边界，不接收内部指令、标准答案、候选回答或普通工具轨迹 |
-| Attribution | 一条回答、公开基准、可选标准答案与过程事实；输出评审总结、问题及证据责任、标准一致性，不读问题库 |
+| Attribution | 一条回答、公开基准、可选标准答案与过程事实；输出评审总结、问题及证据责任、标准一致性，不读问题库；在工作目录写 JSON 文件后用 `submit_evaluation_file({path})` 提交，修复用 `edit_json` 的 JSON Pointer 局部修改同一文件 |
 | Instruction Review | 已接受主归因对应回答的 SYS/DEV、已确认加载的 Skill 与实际行为；独立检查条件、例外及遵循情况，不接收主归因结论 |
 | Comparison | 两条已接受归因、共同基准、完整标准答案与候选材料；核对既有 finding 的事实支持并确认同方面差异，程序派生排名与判决，不改归因 |
 | Rewrite | 指定文本槽位与必要表达上下文；只润色，不接触原始证据或改判 |
@@ -121,7 +121,7 @@ Comparison 按 comparison_slots 固定顺序选择 importance、普通格可选 
 | 阶段 | 提交入口 |
 |---|---|
 | Criteria、Rewrite、Clustering | `submit_evaluation` 直接对象 |
-| Attribution | 一条回答、公开基准、可选标准答案与过程事实；输出评审总结、问题及证据责任、标准一致性，不读问题库 |
+| Attribution | 一条回答、公开基准、可选标准答案与过程事实；输出评审总结、问题及证据责任、标准一致性，不读问题库；在工作目录写 JSON 文件后用 `submit_evaluation_file({path})` 提交，修复用 `edit_json` 的 JSON Pointer 局部修改同一文件 |
 | 普通 Comparison | `submit_evaluation({json})` 传完整 JSON 字符串 |
 | 独立核验 | `inspect_material({path})` 保存首查，随后开放文件提交 |
 

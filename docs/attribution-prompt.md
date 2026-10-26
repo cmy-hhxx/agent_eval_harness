@@ -9,7 +9,7 @@ Attribution 使用固定五步流程：确定公开任务和调查范围、核�
 | 固定 system | `attribution/default/system.md` 与 `instructions.md`；包含五步流程、唯一责任决策表、证据强度、点评和停止条件，不再次叠加共享 commentary/evidence |
 | 本次适用规则 | `attributionConditionalRules` 按已有材料选择 `attribution/conditional/`，由 Attribution 的 `renderPrompt` 放在任务材料之前；不改变固定 system 或运行协议 |
 | 任务材料 | 保留任务焦点、原始证据导航、真实执行转换与去重来源导航、适用规则和预算；材料本身不是指令或判决 |
-| 工具说明 | 通用工具使用集中说明；直接提交的 Attribution 使用本阶段 `execute_code.md`，仅用于有界提取和计算，不要求不存在的草稿编辑工具 |
+| 工具说明 | 通用工具使用集中说明；Attribution 使用文件提交，`edit_json` 负责初始草稿和 JSON Pointer 局部修复，`execute_code` 用于有界提取、计算和必要的文件改写 |
 | 提交契约 | `attributionSubmissionSchema` 按请求缩窄根 Schema，实际交给 Worker/SDK 的提交工具；必填项、类型、额外字段和枚举由 Schema 严格约束 |
 | 业务验收 | 保留编号解析、结构、程序身份与计算验收；不设置阅读覆盖退回门；初稿通过验收即正式结果，不进入第二次模型会话；真实质量按样本抽审 |
 

@@ -5,7 +5,7 @@ import {ValidationError,type ToolAudit} from '@eval/contracts';
 import {AgentRegistry} from '@eval/host';
 import {bindAttributionMaterial} from '@eval/workflows/review';
 import type {Candidate} from '@eval/workflows/inputs';
-import {attributionAgent,type AttributionResult} from './index.js';
+import {attributionAgent,attributionProfile,type AttributionResult} from './index.js';
 import {attributionSubmissionSchema} from './submission-schema.js';
 import {resolveModelSubmission} from './submission.js';
 import {responsibilityDisplay} from './responsibility.js';
@@ -104,4 +104,10 @@ test('responsibility chain displays observed transfer without inventing an actor
  assert.equal(result.responsibility_chain![1].component,null);assert.equal(result.responsibility_chain![1].stage,'transfer');
  assert.equal(result.responsibility_chain!.at(-1)!.role,'primary');
  p.responsibility_chain[0].responsibility_boundary='boundary:999999';assert.throws(()=>resolveModelSubmission(f.binding.request,draft,f.audit),ValidationError);
+});
+
+test('attribution submits a file and exposes localized JSON-pointer repair',()=>{
+ assert.equal(attributionProfile.fileSubmission,true);
+ assert(attributionProfile.toolNames.includes('edit_json'));
+ assert.equal(Object.hasOwn(attributionProfile.toolDescriptions??{},'submit_evaluation'),false);
 });

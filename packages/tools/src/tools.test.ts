@@ -50,6 +50,25 @@ test("JSON drafting retains earlier rows and exact literals through investigatio
   } finally { await rm(ctx.workdir, { recursive: true, force: true }); }
 });
 
+test("JSON Pointer patches change one field without rewriting the whole draft", async () => {
+  const ctx = await context();
+  try {
+    ctx.policy.maxToolCalls = 6;
+    const runtime = new ToolRuntime(ctx, createRegistry().select(["edit_json"]));
+    const call = (args: object) => runtime.execute("edit_json", { path: "draft.json", ...args }, new AbortController().signal);
+    await call({ set_json: JSON.stringify({ summary: "待修复", Problem: [{ text: "问题", reason: "旧理由", evidence: [] }] }) });
+    const changed = await call({ set_pointer: "/Problem/0/reason", value_json: JSON.stringify("新理由") });
+    assert(!changed.isError);
+    const removed = await call({ remove_pointer: "/Problem/0/text" });
+    assert(!removed.isError);
+    const saved = JSON.parse(await readFile(path.join(ctx.workdir, "draft.json"), "utf8"));
+    assert.equal(saved.summary, "待修复");
+    assert.deepEqual(saved.Problem, [{ reason: "新理由", evidence: [] }]);
+    const bad = await call({ set_pointer: "/Problem/9/reason", value_json: '"x"' });
+    assert.equal(bad.isError, true);
+  } finally { await rm(ctx.workdir, { recursive: true, force: true }); }
+});
+
 test("JSON drafting rejects paths outside the workspace without editing files", async () => {
   const ctx = await context();
   try {

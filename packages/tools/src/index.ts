@@ -216,9 +216,10 @@ export const builtinTools: ExecutableTool[] = [
     name: "edit_json",
     fileWriter: true,
     inputSchema: schema({ path: str, set_json: str, append_json: str,
-      remove_fields: { type: "array", items: str } }, ["path"]),
+      remove_fields: { type: "array", items: str }, set_pointer: str, value_json: str, remove_pointer: str }, ["path"]),
     async execute(ctx, value) {
-      const args = value as { path: string; set_json?: string; append_json?: string; remove_fields?: string[] };
+      const args = value as { path: string; set_json?: string; append_json?: string; remove_fields?: string[];
+        set_pointer?: string; value_json?: string; remove_pointer?: string };
       if (path.basename(args.path) !== args.path || !args.path.endsWith(".json"))
         throw new Error("JSON 草稿使用工作目录内的单个文件名，不含目录");
       const workspace = await realpath(ctx.workdir), file = path.join(workspace, args.path);
@@ -240,12 +241,55 @@ export const builtinTools: ExecutableTool[] = [
         draft = { ...draft, [key]: [...prior, ...rows] };
       }
       for (const key of args.remove_fields ?? []) delete draft[key];
+      const pointer = (text: string) => {
+        if (!text.startsWith("/")) throw new Error("JSON Pointer 必须以 / 开头");
+        return text.slice(1).split("/").map(part => part.replaceAll("~1", "/").replaceAll("~0", "~"));
+      };
+      const parent = (text: string) => {
+        const parts = pointer(text);
+        if (!parts.length) throw new Error("JSON Pointer 不能为空");
+        let node: unknown = draft;
+        for (const part of parts.slice(0, -1)) {
+          if (Array.isArray(node)) {
+            const index = Number(part);
+            if (!Number.isSafeInteger(index) || index < 0 || index >= node.length) throw new Error("JSON Pointer 数组下标越界");
+            node = node[index];
+          } else if (node && typeof node === "object") {
+            if (!Object.hasOwn(node, part)) throw new Error(`JSON Pointer 路径不存在：${part}`);
+            node = (node as Record<string, unknown>)[part];
+          } else throw new Error("JSON Pointer 路径不是对象或数组");
+        }
+        return { node, key: parts.at(-1)! };
+      };
+      if (args.remove_pointer) {
+        const { node, key } = parent(args.remove_pointer);
+        if (Array.isArray(node)) {
+          const index = Number(key);
+          if (!Number.isSafeInteger(index) || index < 0 || index >= node.length) throw new Error("JSON Pointer 数组下标越界");
+          node.splice(index, 1);
+        } else if (node && typeof node === "object") delete (node as Record<string, unknown>)[key];
+        else throw new Error("JSON Pointer 路径不是对象或数组");
+      }
+      if (args.set_pointer) {
+        if (args.value_json === undefined) throw new Error("set_pointer 必须同时提供 value_json");
+        const value = JSON.parse(args.value_json);
+        const { node, key } = parent(args.set_pointer);
+        if (Array.isArray(node)) {
+          if (key === "-") node.push(value);
+          else {
+            const index = Number(key);
+            if (!Number.isSafeInteger(index) || index < 0 || index > node.length) throw new Error("JSON Pointer 数组下标越界");
+            node[index] = value;
+          }
+        } else if (node && typeof node === "object") (node as Record<string, unknown>)[key] = value;
+        else throw new Error("JSON Pointer 路径不是对象或数组");
+      }
       // Validate all edits before replacing the file; a malformed edit leaves the prior draft intact.
       const temp = path.join(workspace, `${randomUUID()}.tmp`);
       await writeFile(temp, JSON.stringify(draft, null, 2));
       await rename(temp, file);
-      return textResult({ path: args.path, updated_fields: [...new Set([...Object.keys(set), ...Object.keys(append)])],
-        removed_fields: args.remove_fields ?? [],
+      return textResult({ path: args.path, updated_fields: [...new Set([...Object.keys(set), ...Object.keys(append), ...(args.set_pointer ? [args.set_pointer] : [])])],
+        removed_fields: [...(args.remove_fields ?? []), ...(args.remove_pointer ? [args.remove_pointer] : [])],
         array_lengths: Object.fromEntries(Object.entries(draft).filter(([, value]) => Array.isArray(value)).map(([key, value]) => [key, (value as unknown[]).length])) });
     },
   },

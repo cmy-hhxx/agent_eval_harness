@@ -32,7 +32,6 @@ import { object } from "@eval/contracts";
 import { services } from "../../../tests/fixtures/services.js";
 import { attributionAgent } from "@eval/agents/attribution";
 import { traceReadCoverage, ToolRuntime } from "@eval/tools";
-import { agentPrompt } from "@eval/prompts";
 import { buildPlan, type AttributionResult } from "@eval/workflows/comparison";
 import { AgentRegistry, RunStore, type EvaluationServices } from "@eval/host";
 import { startWorker } from "@eval/runtime/worker";
@@ -58,13 +57,8 @@ interface WorkerHarnessOptions {
 }
 
 const fileProfile: Partial<AgentProfile> = {
+  ...attributionAgent.profiles.default,
   fileSubmission: true, jsonStringSubmission:false, draftWriteInCallLimit:false,
-  toolNames:[...attributionAgent.profiles.default.toolNames,"edit_json"],
-  toolDescriptions: {
-    ...Object.fromEntries(Object.entries(attributionAgent.profiles.default.toolDescriptions).filter(([name])=>name!=="submit_evaluation")),
-    edit_json:agentPrompt("attribution",["edit_json"],{fileSubmission:true}).toolDescriptions.edit_json,
-    submit_evaluation_file: "Submit the complete evaluation JSON file.",
-  },
 };
 
 test("saved flat findings survive later drafting and repair without extra call allowance", async () => {
