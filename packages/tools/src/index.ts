@@ -11,7 +11,7 @@ import { cite, displayEvidence, evidenceId, evidenceSources, overlapsImagePlaceh
 import { compareTraceTableRows, parseTraceTables, type TableCheckRequest } from "./table-correspondence.js";
 import { calculate } from "./decimal.js";
 import { fitStringPage } from "./pagination.js";
-import { countNavigationPage, readExecutionTool } from "./execution-navigation.js";
+import { countNavigationPage, readExecutionTool, readResponsibilityChainTool } from "./execution-navigation.js";
 import { RequiredReadBudget } from "./required-reading.js";
 import { traceReadCoverage } from "./trace-audit.js";
 import { reviewTools,scoreTools } from "./review.js";
@@ -209,6 +209,7 @@ export type ExecutableTool = Omit<ToolDefinition, "description">;
 
 export const builtinTools: ExecutableTool[] = [
   readExecutionTool,
+  readResponsibilityChainTool,
   ...reviewTools,
   ...scoreTools,
   {
@@ -808,7 +809,7 @@ export class ToolRuntime {
   }
   private evidenceQueue: Promise<void> = Promise.resolve();
   execute(name: string, args: unknown, signal: AbortSignal, maxCalls = this.context.policy.maxToolCalls): Promise<ToolResult> {
-    if (!["read_execution", "read_trace", "search_trace", "view_image", "check_table", "inspect_material", "edit_json"].includes(name))
+    if (!["read_execution", "read_responsibility_chain", "read_trace", "search_trace", "view_image", "check_table", "inspect_material", "edit_json"].includes(name))
       return this.executeOne(name, args, signal, maxCalls);
     // Evidence registration and incremental file edits share one task-local order.
     const pending = this.evidenceQueue.then(() => this.executeOne(name, args, signal, maxCalls));
@@ -871,14 +872,14 @@ export class ToolRuntime {
       }
       // Register only the committed page after pagination; source text is carried as strings.
       // Delegated tools and arbitrary artifacts are excluded because their objects are not generated evidence envelopes.
-      if (!result.isError && ["read_execution", "read_trace", "search_trace", "view_image", "check_table"].includes(name)) {
+      if (!result.isError && ["read_execution", "read_responsibility_chain", "read_trace", "search_trace", "view_image", "check_table"].includes(name)) {
         const bank = this.context.audit.evidenceBank!;
         for (const content of result.content) if (content.type === "text" && content.text)
           content.text = JSON.stringify(projectEvidenceReferences(JSON.parse(content.text), bank));
         if (result.details !== undefined) result.details = projectEvidenceReferences(result.details, bank);
         await this.context.persistEvidenceBank?.([...bank]);
       }
-      if (!result.isError && ["read_execution", "read_trace", "search_trace", "view_image", "check_table"].includes(name)) {
+      if (!result.isError && ["read_execution", "read_responsibility_chain", "read_trace", "search_trace", "view_image", "check_table"].includes(name)) {
         const candidate = (args as { candidate?: string }).candidate;
         const presentation = candidate && this.context.sourcePresentations?.get(candidate);
         if (presentation) {

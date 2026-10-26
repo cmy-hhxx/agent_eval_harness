@@ -1,5 +1,6 @@
 import { object, parseEvidenceCoordinates, resolveEvidenceSelection, type ToolDefinition } from "@eval/contracts";
 import { evidenceOverlaps } from "./evidence-coverage.js";
+import { evidenceSources } from "./evidence.js";
 
 type View = "nodes" | "boundaries" | "before" | "after" | "predecessors" | "successors" | "table_checks";
 interface NavigationArgs {
@@ -171,6 +172,68 @@ export const readExecutionTool: Omit<ToolDefinition, "description"> = {
     while (result.returned_chars > cap && end > offset) result = page(--end);
     if (result.returned_chars > cap || (end === offset && offset < items.length))
       throw new Error("本次 max_chars 无法容纳一个完整导航项；请增大 max_chars（最多 16000）或缩小筛选范围");
+    return { content: [{ type: "text", text: JSON.stringify(result) }], details: result };
+  },
+};
+
+const chainSchema = {
+  type: "object", additionalProperties: false, required: ["candidate", "transition_index"],
+  properties: { candidate: { type: "string", minLength: 1 }, transition_index: positive, max_chars: { type: "integer", minimum: 1, maximum: 16000 } },
+} as const;
+
+/** One call returns the request, return, actual input and output around a boundary. */
+export const readResponsibilityChainTool: Omit<ToolDefinition, "description"> = {
+  name: "read_responsibility_chain",
+  inputSchema: chainSchema,
+  async execute(ctx, value) {
+    const args = value as { candidate: string; transition_index: number; max_chars?: number };
+    const inputId = ctx.inputIds.get(args.candidate);
+    if (!ctx.inputs.has(args.candidate) || !inputId || !ctx.materialNavigation?.[args.candidate])
+      throw new Error("candidate 必须选择本任务已登记的执行导航材料");
+    const material = object(ctx.materialNavigation[args.candidate]);
+    const boundaries = rows(material.boundaries), nodes = rows(material.nodes), choices = rows(material.responsibility_choices);
+    const selected = boundaries.find(item => item.transition_index === args.transition_index);
+    if (!selected) throw new Error("transition_index 不在当前候选的边界目录中");
+    const records = ctx.inputs.get(args.candidate) as { messages: unknown[] };
+    const choice = choices.find(item => item.transition_index === args.transition_index);
+    const bank = ctx.audit.evidenceBank ?? (ctx.audit.evidenceBank = []);
+    const register = (id: string) => {
+      const existing = bank.indexOf(id);
+      if (existing >= 0) return existing + 1;
+      bank.push(id);
+      return bank.length;
+    };
+    const items = (value: unknown, chars: { used: number; limit: number }): Record<string, unknown>[] => rows(value).flatMap((item): Record<string, unknown>[] => {
+      if (typeof item.evidence_id !== "string" || !Number.isSafeInteger(item.message_index)) return [];
+      const point = parseEvidenceCoordinates(item.evidence_id);
+      if (!point || point.kind === "image") return [];
+      const source = evidenceSources(records.messages[point.message_index]).find(source => source.kind === point.kind && source.path === point.path);
+      if (!source) return [];
+      const quote = source.text.slice(point.start, point.end);
+      const remaining = Math.max(0, chars.limit - chars.used);
+      if (!remaining) return [{ evidence_index: register(item.evidence_id), message_index: point.message_index, kind: point.kind, path: point.path,
+        start: point.start, end: point.end, quote_chars: quote.length, truncated: true }];
+      const shown = quote.slice(0, remaining);
+      chars.used += shown.length;
+      return [{ evidence_index: register(item.evidence_id), message_index: point.message_index, kind: point.kind, path: point.path,
+        start: point.start, end: point.end, quote_chars: quote.length, quote: shown, ...(shown.length < quote.length ? { truncated: true } : {}) }];
+    });
+    const limit = args.max_chars ?? 16000, chars = { used: 0, limit };
+    const chainIndex = selected.chain_index;
+    const sameChain = boundaries.filter(item => item.chain_index === chainIndex);
+    const ofKind = (kind: string) => sameChain.find(item => item.kind === kind);
+    const nodeOf = (item: Record<string, unknown> | undefined) => nodes.find(node => node.execution_node_index === item?.execution_node_index);
+    const requestFormation = ofKind("request_formation"), execution = ofKind("execution"), transfer = ofKind("transfer"), generation = ofKind("generation");
+    const result = {
+      transition_index: args.transition_index, kind: selected.kind, chain_index: chainIndex,
+      component: choice?.component ?? null, message_index: nodeOf(selected)?.message_index ?? null,
+      request: items((requestFormation ?? execution)?.before, chars),
+      original_return: items(execution?.after, chars),
+      actual_input: items((transfer?.after ?? generation?.before), chars),
+      output: items(generation?.after, chars),
+      responsibility_choices: choices.filter(item => item.chain_index === chainIndex),
+      returned_chars: chars.used,
+    };
     return { content: [{ type: "text", text: JSON.stringify(result) }], details: result };
   },
 };
