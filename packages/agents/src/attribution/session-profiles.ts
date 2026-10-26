@@ -1,7 +1,7 @@
 import { Ajv2020 } from "ajv/dist/2020.js";
-import { ValidationError, resolveEvidenceSelection, schemaIssues, type AgentProfile, type AgentRequest, type JsonObject, type ToolAudit } from "@eval/contracts";
+import { ValidationError, resolveEvidenceSelection, schemaIssues, selectEvidence, type AgentProfile, type AgentRequest, type JsonObject, type ToolAudit } from "@eval/contracts";
 import { agentPrompt, attributionConditionalRules } from "@eval/prompts";
-import { parseEvidenceCoordinates } from "@eval/tools";
+import { cite, evidenceSources, parseEvidenceCoordinates } from "@eval/tools";
 import componentRequestSchema from "../../../../schemas/attribution/component-request.schema.json" with { type: "json" };
 import componentSubmissionSchema from "../../../../schemas/attribution/component-submission.schema.json" with { type: "json" };
 import componentResultSchema from "../../../../schemas/attribution/component-result.schema.json" with { type: "json" };
@@ -69,6 +69,26 @@ function evidenceComponent(message: Record<string, unknown>, path: string, fixed
         : kind === "question" ? "question: 用户输入" : `material: ${fixedComponent}`;
 }
 
+/** Split one rejected long quote into real, independently selectable excerpts without changing source bytes. */
+function quoteRepair(request: AgentRequest, audit: ToolAudit, evidence: { evidence_id: string; message_index: number; quote: string }) {
+  const point = parseEvidenceCoordinates(evidence.evidence_id);
+  const raw = request.sources.answer.value as { messages: unknown[] };
+  if (!point || point.kind === "image") return undefined;
+  const source = evidenceSources(raw.messages[evidence.message_index]).find(item => item.kind === point.kind && item.path === point.path);
+  if (!source) return undefined;
+  const limit = 400, span = point.end - point.start;
+  const starts = [...new Set([point.start, point.start + Math.floor(Math.max(0, span - limit) / 2), point.end - limit])]
+    .filter(start => start >= point.start && start < point.end).slice(0, 3);
+  const bank = audit.evidenceBank ?? (audit.evidenceBank = []);
+  const choices = starts.map(start => {
+    const item = cite(request.sources.answer.id, evidence.message_index, source, start, Math.min(point.end, start + limit));
+    const { evidence_id: _id, ...display } = item;
+    return { evidence_index: selectEvidence(bank, item).evidence_index, ...display };
+  });
+  return { choices, append: starts.map(start => cite(request.sources.answer.id, evidence.message_index, source,
+    start, Math.min(point.end, start + limit)).evidence_id) };
+}
+
 function componentReview(request: AgentRequest, draft: unknown, audit: ToolAudit): ComponentReviewResult {
   const issues = componentSchema(draft) ? [] : schemaIssues(componentSchema.errors, draft);
   if (issues.length) throw new ValidationError(issues);
@@ -92,8 +112,14 @@ function componentReview(request: AgentRequest, draft: unknown, audit: ToolAudit
       const path = `/problems/${index}/evidence/${evidenceIndex}`;
       const reference = resolveEvidenceSelection(audit.evidenceBank ?? [], { evidence_index: selection.index }, path);
       const evidence = resolveAttributionEvidence(request, reference, audit, path);
-      if (evidence.quote.length > 400) throw new ValidationError([{ category: "evidence", code: "quote_too_long", path: `${path}/index`,
-        message: "quote 最多 400 字；请选择更精确的连续原文，不要截断或拼接。", actual: evidence.quote.length }]);
+      if (evidence.quote.length > 800) {
+        const repair = quoteRepair(request, audit, evidence);
+        throw new ValidationError([{ category: "evidence", code: "quote_too_long", path: `${path}/index`,
+          message: "quote 校验上限为 800 字；请优先选择不超过 400 字的片段，并只替换本条 evidence.index，不要重新生成整份归因。", actual: evidence.quote.length,
+          expected: { quote_chars_limit: 400, validation_limit: 800,
+            ...(repair ? { suggested_evidence: repair.choices, append_evidence_ids: repair.append,
+              repair_action: "从 suggested_evidence 中选择 2–3 个能支持同一结论的合规引用并替换 index；保留其余字段。" } : {}) } }]);
+      }
       const point = parseEvidenceCoordinates(evidence.evidence_id);
       if (!point) throw new ValidationError([{ category: "evidence", code: "evidence_position_invalid", path, message: "证据坐标不可解析。" }]);
       return { position: evidencePosition(traceIndex, evidence.message_index, point.kind === "image" ? "image" : point.path),
@@ -111,6 +137,7 @@ export const componentAttributionProfile: AgentProfile = {
   submissionSchema: componentSubmissionSchema,
   resultSchema: componentResult,
   evidenceSelections: true,
+  maxEvidenceQuoteChars: 400,
   ...componentPrompt,
   renderPrompt(input, policy, failure) {
     const analysis = input.task_analysis as { requirements: Record<string, unknown>[]; scoring_points: Record<string, unknown>[]; red_flags: Record<string, unknown>[] };

@@ -1,7 +1,6 @@
 import { cite, evidenceSources,selectEvidenceSource } from "./evidence.js";
 import {parseEvidenceCoordinates} from '@eval/contracts';
 import {traceCallOrigins} from './trace-exchanges.js';
-import { answerTurnContexts } from "./instructions.js";
 
 export interface TraceComponentIdentity {
   component: string;
@@ -57,9 +56,6 @@ const toolRecord = (row: Record<string, unknown>) => row.role === "tool" ||
 
 /** Workflow-owned identities: retain raw names and coordinates; never rename the source trace. */
 export function traceComponentIdentities(raw: { messages: unknown[] }, inputId: string, finalIndex: number): TraceComponentIdentity[] {
-  const answerTurn = answerTurnContexts(raw, finalIndex).at(-1)?.message_index;
-  const separateReasoning = answerTurn !== undefined && evidenceSources(raw.messages[answerTurn])
-    .some(source=>source.kind==='text'&&source.text.trim()&&!source.path.startsWith('/input')&&/(?:^|\/)(?:reasoning(?:_content)?|analysis|thinking)(?:\/|$)/iu.test(source.path));
   const rows: TraceComponentIdentity[] = [];
   const calls = new Map<string, { index: number; row: Record<string, unknown> }>();
   const proof = (index: number, path: string) => {
@@ -77,35 +73,22 @@ export function traceComponentIdentities(raw: { messages: unknown[] }, inputId: 
     const nameKey = ["node_name", "agent_name", "service_name", "tool_name", "name"].find(key =>
       typeof origin.row[key] === "string" && String(origin.row[key]).trim() && !isComponentLocator(String(origin.row[key]).trim()));
     let name = nameKey ? String(origin.row[nameKey]).trim() : undefined;
-    const generationActor = final && separateReasoning ? rows.find(actor=>actor.message_indices.includes(answerTurn!)) : undefined;
-    if (!name && generationActor?.identity_status === 'named') name=generationActor.component;
     const kind = tool ? "tool" : model || final ? "model" : "unknown";
-    const role = tool ? "tool" : index === answerTurn && !separateReasoning || final ? "final_answer" : model ? "model_call" : "unknown";
-    // A captured final is the same actor only when its actual generation is recorded.
-    if (final && answerTurn !== undefined && !separateReasoning) {
-      const actor = rows.find(actor => actor.message_indices.includes(answerTurn));
-      if (actor) {
-        if (name && actor.identity_status !== "named") {
-          actor.component = name; actor.identity_status = "named"; actor.identity_gap = null;
-          actor.identity_evidence.push(...proof(origin.index, `/${nameKey}`));
-        }
-        actor.message_indices.push(index); continue;
-      }
-    }
+    const role = tool ? "tool" : final ? "final_answer" : model ? "model_call" : "unknown";
     const existing = tool && name ? rows.find(actor => actor.kind === "tool" && actor.component === name) : undefined;
     if (existing) { existing.message_indices.push(index); continue; }
-    const fallback = role === "final_answer" ? "最终回答组织"
+    const roleName = role === "final_answer" ? "终稿生成轮"
       : role === "model_call" ? "中间推理处理"
       : role === "tool" ? "工具执行"
       : "流程处理";
-    rows.push({ component: name ?? fallback, kind, role,
-      identity_status: name ? "named" : role === "unknown" || role === "model_call" ? "unknown_identity" : "role_only",
-      ...(final && separateReasoning ? {generation_message_index:answerTurn} : {}),
-      message_indices: [index], identity_evidence: nameKey ? proof(origin.index, `/${nameKey}`) : generationActor?.identity_status === 'named' ? [...generationActor.identity_evidence]
+    const component = role === "final_answer" ? roleName : name ?? roleName;
+    const identityStatus = role === "final_answer" ? "role_only" : name ? "named" : role === "unknown" ? "unknown_identity" : "role_only";
+    rows.push({ component, kind, role, identity_status: identityStatus,
+      message_indices: [index], identity_evidence: name && role !== "final_answer" ? proof(origin.index, `/${nameKey}`)
         : [...proof(index, "/type"), ...proof(index, "/role"), ...proof(index, "/name")],
-      identity_gap: name ? role === "unknown" ? "轨迹提供了节点名称，但未提供可确认的职责角色。" : null : role === "model_call" || role === "unknown"
-        ? "轨迹未提供真实节点名称及具体职责角色；仅按已采集记录定位，不推测业务节点名或模型型号。"
-        : "轨迹未提供真实节点名称；名称仅表达可确认的轨迹角色，原调用标识留在证据导航中。" });
+      identity_gap: identityStatus === "named" ? null : role === "final_answer"
+        ? "final_answer 明确表示最终交付；未从内容相同推定某个独立模型调用就是终稿生成轮。"
+        : "执行 locator 只用于定位；未提供可靠业务名称，按可证实的模型或流程角色归类。" });
   }
   const origins=traceCallOrigins(raw.messages);
   for(const actor of rows){const calls=origins.filter(origin=>actor.message_indices.includes(origin.planner_index)).map(origin=>origin.request_index);

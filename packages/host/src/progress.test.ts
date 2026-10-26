@@ -72,7 +72,7 @@ test("attribution progress reports business session states instead of internal t
     manifest: {
       format: "evaluation-run", runId: "attribution-progress", status: "running", debug: false,
       engine: { engine: "pi", version: "test", commit: "test", buildId: "test" }, evaluatorVersion: "test",
-      config: {}, inputs: {}, preflight: {}, startedAt: 1, states, tasks,
+      config: { execution: { sessionWindow: 8 } }, inputs: {}, preflight: {}, startedAt: 1, states, tasks,
     },
     receipts: {}, usage: emptyUsage(), recordedAttempts: 0,
   };

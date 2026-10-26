@@ -19,14 +19,14 @@ test("component content quality rejects placeholders and low-information reasons
   assert.equal(issues.some(issue => issue.code === "duplicate_problem_text"), true);
 });
 
-test("component content quality rejects repeated narration but preserves distinct evidence", () => {
+test("component content quality only hard-fails fully duplicated problem text", () => {
   const repeated = componentContentIssues([problem({ label: "同一句话", definition: "同一句话",
     problem_phenomena: "同一句话", reason: "同一句话", evidence: [{ reason: "同一句话" }] })]);
   assert.equal(repeated.some(issue => issue.code === "duplicate_problem_text"), true);
-  assert.equal(repeated.some(issue => issue.code === "duplicate_semantics"), true);
+  assert.equal(repeated.some(issue => issue.code === "duplicate_semantics"), false);
   const evidence = componentContentIssues([problem({ evidence: [{ reason: "证明工具返回空列表。" },
     { reason: "证明工具返回空列表。" }] })]);
-  assert.equal(evidence.some(issue => issue.code === "duplicate_evidence_reason"), true);
+  assert.deepEqual(evidence, [], "noncritical repeated evidence wording remains repairable without rejection");
   assert.deepEqual(componentContentIssues([problem({ evidence: [
     { reason: "证明工具返回行数为零。" }, { reason: "证明下一轮仍引用了不存在的查询结果。" },
   ] })]), []);

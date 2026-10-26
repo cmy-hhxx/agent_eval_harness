@@ -43,3 +43,10 @@ test("model projection changes generated refs and raw schema, preserving unrelat
     properties: { evidence_index: { type: "integer", minimum: 1 }, observation: { type: "string" } } });
   assert(schema.properties.evidence_id);
 });
+test("quote-limited profiles expose quote_chars instead of a selectable overlong coordinate", () => {
+  const bank: string[] = [], long = evidenceId(source, 0, "text", "/content", 0, 401);
+  assert.deepEqual(evidence.projectEvidenceReferences({ reference: { evidence_id: long } }, bank, 400), {
+    reference: { quote_chars: 401, repair_action: "引用超过 400 字，未分配 evidence_index；按 read_request 读取该位置以获得合规片段。" },
+  });
+  assert.deepEqual(bank, []);
+});

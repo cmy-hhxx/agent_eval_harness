@@ -433,6 +433,14 @@ export const builtinTools: ExecutableTool[] = [
         candidate: args.candidate, message_index: args.message_index, kind: source.kind, path: source.path,
         start: start + offset, end: start + end,
       });
+      const citations = (from: number, to: number) => {
+        const limit = ctx.maxEvidenceQuoteChars ?? Math.max(1, to - from);
+        const result: ReturnType<typeof displayEvidence>[] = [];
+        for (let cursor = from; cursor < to; cursor += limit)
+          result.push(displayEvidence(cite(registeredInputId(ctx, args.candidate), args.message_index,
+            source, cursor, Math.min(to, cursor + limit))));
+        return result;
+      };
       // A deliberately bounded reread is a context check; do not remove its conditions
       // just because the same characters appeared in separate earlier responses.
       const wholeContext = path !== undefined && args.max_chars !== undefined && args.max_chars <= 1800;
@@ -448,18 +456,19 @@ export const builtinTools: ExecutableTool[] = [
           cursor = gap.end;
         }
         if (cursor < start + end) reused.push({ start: cursor, end: start + end });
-        const { quote, ...coordinates } = evidence;
         return {
           source: { kind: source.kind, path: source.path },
           ...(responsibilityChoices?.length ? { responsibility_choices: responsibilityChoices } : {}),
           ...(path !== undefined ? { selection_path: path } : {}),
           ...(alreadyRead ? { already_read: true } : {}),
-          evidence: !quotable ? [] : wholeContext ? [displayEvidence(evidence)] : alreadyRead ? [displayEvidence(quote.length > 400
-            ? { ...coordinates, quote_preview: quote.slice(0, 200) } : evidence)] : missing.map(range =>
-              displayEvidence(cite(registeredInputId(ctx, args.candidate), args.message_index, source, range.start, range.end))),
-          ...(quotable && !wholeContext && !alreadyRead && reused.length ? { reused_evidence: reused.map(range => {
-            const { quote: _quote, ...reference } = cite(registeredInputId(ctx, args.candidate), args.message_index, source, range.start, range.end);
-            return { ...displayEvidence(reference), offset: range.start - start, end_offset: range.end - start };
+          evidence: !quotable ? [] : wholeContext || alreadyRead ? citations(start + offset, start + end)
+            : missing.flatMap(range => citations(range.start, range.end)),
+          ...(quotable && !wholeContext && !alreadyRead && reused.length ? { reused_evidence: reused.flatMap(range => {
+            const limit = ctx.maxEvidenceQuoteChars ?? Math.max(1, range.end - range.start);
+            return Array.from({ length: Math.ceil((range.end - range.start) / limit) }, (_, index) => {
+              const from = range.start + index * limit, to = Math.min(range.end, from + limit);
+              return { ...citations(from, to)[0]!, offset: from - start, end_offset: to - start };
+            });
           }) } : {}),
           // Text is shown once, paired with its ID; image placeholders have no evidence ID.
           ...(!quotable ? { text: evidence.quote } : {}),
@@ -550,13 +559,11 @@ export const builtinTools: ExecutableTool[] = [
               start = position + args.query.length;
               continue;
             }
-            const evidence = cite(
-              registeredInputId(ctx, args.candidate), i,
-              source,
-              Math.max(from, position - 100),
-              Math.min(to, position + args.query.length + 200),
-            );
-            if (!overlapsImagePlaceholder(text, Math.max(from, position - 100), Math.min(to, position + args.query.length + 200))) {
+            const matchStart = Math.max(from, position - 100);
+            const requestedEnd = Math.min(to, position + args.query.length + 200);
+            const matchEnd = Math.min(requestedEnd, matchStart + (ctx.maxEvidenceQuoteChars ?? requestedEnd - matchStart));
+            const evidence = cite(registeredInputId(ctx, args.candidate), i, source, matchStart, matchEnd);
+            if (!overlapsImagePlaceholder(text, matchStart, matchEnd)) {
               if (total >= offset && matches.length < 20) {
                 // Short neighboring metadata and the source opening often carry
                 // the object/date/unit needed to interpret a distant text hit.
@@ -577,9 +584,9 @@ export const builtinTools: ExecutableTool[] = [
                     !/\/(?:id|uid|uuid|ref|type|role|call_id|mimeType|mime_type|serial_number)$/u.test(item.path)))
                     addContext(sibling, 0, sibling.text.length);
                 }
-                matches.push({ path: location, evidence, context, has_more: position - 100 > from || position + args.query.length + 200 < to, read: {
+                matches.push({ path: location, evidence, context, has_more: matchStart > from || matchEnd < requestedEnd, read: {
                   candidate: args.candidate, message_index: i, kind: source.kind, path: source.path,
-                  start: Math.max(from, position - 100), end: Math.min(to, position + args.query.length + 200),
+                  start: matchStart, end: matchEnd,
                 } });
               }
               total++;
@@ -921,8 +928,8 @@ export class ToolRuntime {
       if (!result.isError && ["read_execution", "read_responsibility_chain", "read_trace", "search_trace", "view_image", "check_table"].includes(name)) {
         const bank = this.context.audit.evidenceBank!;
         for (const content of result.content) if (content.type === "text" && content.text)
-          content.text = JSON.stringify(projectEvidenceReferences(JSON.parse(content.text), bank));
-        if (result.details !== undefined) result.details = projectEvidenceReferences(result.details, bank);
+          content.text = JSON.stringify(projectEvidenceReferences(JSON.parse(content.text), bank, this.context.maxEvidenceQuoteChars));
+        if (result.details !== undefined) result.details = projectEvidenceReferences(result.details, bank, this.context.maxEvidenceQuoteChars);
         const snapshot = [...bank], write = this.persistQueue.then(() => this.context.persistEvidenceBank?.(snapshot));
         this.persistQueue = write.then(() => undefined, () => undefined);
         await write;

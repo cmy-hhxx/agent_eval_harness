@@ -46,17 +46,6 @@ export function componentContentIssues(problems: readonly ComponentProblemDraft[
         path: `${base}/${pointer(field)}`, message: "问题描述必须包含可核查的具体语义，不能使用占位、空泛或重复字符。" });
 
     const normalized = (text: string) => semanticText(text);
-    const label = normalized(problem.label), definition = normalized(problem.definition), phenomena = normalized(problem.problem_phenomena),
-      reason = normalized(problem.reason), evidenceReasons = problem.evidence.map((evidence) => normalized(evidence.reason));
-    if (phenomena && phenomena === reason)
-      issues.push({ category: "structure", code: "duplicate_semantics", path: `${base}/reason`,
-        message: "problem_phenomena 与 reason 必须分别说明具体现象和证据如何证明技术原因，不能重复同一句话。" });
-    if (evidenceReasons.some((value) => value && [label, definition, phenomena, reason].includes(value)))
-      issues.push({ category: "structure", code: "duplicate_semantics", path: `${base}/evidence`,
-        message: "evidence.reason 只说明该段原文直接证明了什么，不能复述问题字段。" });
-    if (evidenceReasons.length > 1 && new Set(evidenceReasons).size === 1)
-      issues.push({ category: "structure", code: "duplicate_evidence_reason", path: `${base}/evidence`,
-        message: "不同证据必须分别说明各自的证明作用；若作用完全相同，应合并证据而不是复制理由。" });
     const allText = [problem.label, problem.definition, problem.problem_phenomena, problem.reason,
       ...problem.evidence.map((evidence) => evidence.reason)].map(normalized).filter(Boolean);
     if (allText.length > 1 && new Set(allText).size === 1)

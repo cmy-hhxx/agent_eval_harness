@@ -96,6 +96,8 @@ export async function runEvaluation(options: RunOptions): Promise<Record<string,
     throw new Error("evaluatorVersion must be a non-empty string");
   if (Object.values(options.channelConcurrency ?? {}).some(limit => !Number.isSafeInteger(limit) || limit <= 0))
     throw new Error("channelConcurrency requires positive integer limits");
+  if (options.taskConcurrency !== undefined && (!Number.isSafeInteger(options.taskConcurrency) || options.taskConcurrency < 1))
+    throw new Error("taskConcurrency must be a positive integer");
   if (options.maxAttempts !== undefined && (!Number.isSafeInteger(options.maxAttempts) || options.maxAttempts < 0))
     throw new Error("maxAttempts must be a non-negative integer");
   if (options.policy.maxTaskAttempts !== undefined && (!Number.isSafeInteger(options.policy.maxTaskAttempts) || options.policy.maxTaskAttempts < 1))
@@ -154,6 +156,7 @@ export async function runEvaluation(options: RunOptions): Promise<Record<string,
       else inputs = options.plan.inputs;
       saved.manifest.engine = identity;
       saved.manifest.evaluatorVersion = options.evaluatorVersion;
+      saved.manifest.config = options.config;
       if (options.debug !== undefined) saved.manifest.debug = options.debug;
     } else {
       if ((await localFiles.list(run)).some((name) => name !== ".run-lock"))
@@ -344,19 +347,11 @@ export async function runEvaluation(options: RunOptions): Promise<Record<string,
     );
     let workerUrls = options.workerUrls || [];
     const running = new Map<string, Promise<void>>();
-    const modelConcurrency = () => options.modelRequests?.concurrency() ?? desiredConcurrency;
-    const taskConcurrency = () => Math.max(1, options.taskConcurrency ?? desiredConcurrency, modelConcurrency() * 2);
+    const taskConcurrency = () => Math.max(1, options.taskConcurrency ?? desiredConcurrency);
     const runnable = (task: PlannedTask) => !current.admissionPaused() && (running.size === 0 || running.size < taskConcurrency()) &&
       manifest.states[task.id].status === "pending" && !executionStopReason(manifest) && dispatchable(task) &&
       (manifest.states[task.id].nextRetryAt ?? 0) <= Date.now() &&
       Object.values(task.dependencies).every((id) => manifest.states[id]?.status === "succeeded");
-    const pending = manifest.tasks.filter(runnable);
-    if (!workerUrls.length && pending.length && taskConcurrency() > 0 && !options.pauseSignal?.aborted) {
-      // Start incrementally so every successful child remains owned if a later launch fails.
-      for (let i = 0; !options.pauseSignal?.aborted && !controller.signal.aborted && i < Math.min(taskConcurrency(), pending.length); i++)
-        owned.push(await launchWorker(identity.engine, path.join(working, "workers", `${identity.engine}-${i}-${randomUUID()}`)));
-      workerUrls = owned.map((w) => w.url);
-    }
     const workers = await Promise.all(
       workerUrls.map(async (url) => ({
         url,
@@ -365,7 +360,7 @@ export async function runEvaluation(options: RunOptions): Promise<Record<string,
       })),
     );
     const eligible = workers.filter((w) => canonical(w.health.identity) === canonical(identity));
-    if (pending.length && !eligible.length && taskConcurrency() > 0 && !options.pauseSignal?.aborted) throw new Error("No worker matches the selected build");
+    if (workerUrls.length && !eligible.length && taskConcurrency() > 0 && !options.pauseSignal?.aborted) throw new Error("No worker matches the selected build");
     const unavailable = new Map<(typeof workers)[number], { since: number; checkAt: number }>();
     const deferWorker = (worker: (typeof workers)[number]) => unavailable.set(worker, {
       since: unavailable.get(worker)?.since ?? Date.now(), checkAt: Date.now() + 1000,
@@ -902,24 +897,9 @@ export async function runEvaluation(options: RunOptions): Promise<Record<string,
         } catch { /* Retry capacity observation without spending a task attempt. */ }
         deferWorker(worker);
       }));
-      if (!options.workerUrls?.length && running.size < taskConcurrency() && !options.pauseSignal?.aborted) {
-        const waiting = manifest.tasks.filter(runnable);
-        let slots = Math.max(0, taskConcurrency() - running.size);
-        if (!options.pauseSignal?.aborted) {
-          const target = Math.min(slots, waiting.length);
-          const idle = eligible.filter((worker) => !busy.has(worker)).length;
-          for (let i = idle; i < target && !controller.signal.aborted && !options.pauseSignal?.aborted; i++) {
-            const worker = await launchWorker(identity.engine,
-              path.join(working, "workers", `${identity.engine}-${randomUUID()}`));
-            owned.push(worker);
-            const health = await request<WorkerStatus>(`${worker.url}/api/health`);
-            eligible.push({ url: worker.url, health, owner: worker });
-          }
-        }
-      }
       let scheduled = false, blocked = false;
       const sessionAdmission = options.taskSource.scheduling?.sessionAdmission,
-        admission = sessionAdmission ? sessionAdmissionSnapshot(manifest.tasks, manifest.states, sessionAdmission) : undefined;
+        admission = sessionAdmission ? sessionAdmissionSnapshot(manifest.tasks, manifest.states, sessionAdmission, manifest) : undefined;
       for (const task of scheduleTasks(manifest.tasks.filter(dispatchable), manifest.states, options.taskSource.scheduling?.stagePriority)) {
         if (controller.signal.aborted || options.pauseSignal?.aborted || executionStopReason(manifest)) break;
         if (!dispatchable(task)) continue;
@@ -937,7 +917,14 @@ export async function runEvaluation(options: RunOptions): Promise<Record<string,
         const sessionId = sessionAdmission?.id(task);
         if (sessionId && !admission!.admitted.has(sessionId)) continue;
         if (options.taskSource.canStart?.(task, manifest) === false) continue;
-        if (running.size >= taskConcurrency() || eligible.every((worker) => busy.has(worker) || unavailable.has(worker))) break;
+        if (running.size >= taskConcurrency()) break;
+        if (!options.workerUrls?.length && eligible.every((worker) => busy.has(worker) || unavailable.has(worker))) {
+          const worker = await launchWorker(identity.engine, path.join(working, "workers", `${identity.engine}-${randomUUID()}`));
+          owned.push(worker);
+          const health = await request<WorkerStatus>(`${worker.url}/api/health`);
+          eligible.push({ url: worker.url, health, owner: worker });
+        }
+        if (eligible.every((worker) => busy.has(worker) || unavailable.has(worker))) break;
         const acceptedDependencies = await current.dependencies(task);
         const reason = options.taskSource.blockedReason?.(task, acceptedDependencies);
         if (reason) {

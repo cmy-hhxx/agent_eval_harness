@@ -17,4 +17,7 @@ test("existing aliases and unknown names retain their current mapping", () => {
   assert.equal(attributionComponentLabel("web_search"), "web_search 网页检索");
   assert.equal(attributionComponentLabel("unlisted-tool"), "其他工具（unlisted-tool）");
   assert.equal(attributionComponentLabel("责任主体未确定"), "责任主体未确定");
+  assert.equal(attributionComponentLabel("llm-call-7"), "中间推理处理");
+  assert.equal(attributionComponentLabel("span-4f26f1fabe23fc3c"), "流程处理");
+  assert.equal(attributionComponentLabel("中间推理处理"), "中间推理处理");
 });

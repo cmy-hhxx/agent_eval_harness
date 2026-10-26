@@ -82,21 +82,22 @@ test("a finite session window advances only when a foreground session completes 
   const tasks = Array.from({ length: 10 }, (_, index) => attributionSessionTasks(`session-${index + 1}`)).flat();
   const states: RunManifest["states"] = Object.fromEntries(tasks.map(task => [task.id, { status: "pending", attempts: 0 }]));
   const policy = attributionScheduling.sessionAdmission!;
-  let snapshot = sessionAdmissionSnapshot(tasks, states, policy);
+  const manifest = { config: { execution: { sessionWindow: 8 } } };
+  let snapshot = sessionAdmissionSnapshot(tasks, states, policy, manifest);
   assert.deepEqual({ total: snapshot.total_sessions, active: snapshot.active_sessions, completed: snapshot.completed_sessions,
     waiting: snapshot.waiting_sessions, failed: snapshot.failed_sessions, blocked: snapshot.blocked_sessions },
   { total: 10, active: 8, completed: 0, waiting: 2, failed: 0, blocked: 0 });
   assert.equal(snapshot.admitted.has("session-9"), false);
 
   states["session-1-session"]!.status = "succeeded";
-  snapshot = sessionAdmissionSnapshot(tasks, states, policy);
+  snapshot = sessionAdmissionSnapshot(tasks, states, policy, manifest);
   assert.equal(snapshot.completed_sessions, 1);
   assert.equal(snapshot.active_sessions, 8);
   assert.equal(snapshot.waiting_sessions, 1);
   assert.equal(snapshot.admitted.has("session-9"), true);
 
   states["session-2-component-query"]!.status = "failed";
-  snapshot = sessionAdmissionSnapshot(tasks, states, policy);
+  snapshot = sessionAdmissionSnapshot(tasks, states, policy, manifest);
   assert.equal(snapshot.failed_sessions, 1);
   assert.equal(snapshot.active_sessions, 8);
   assert.equal(snapshot.waiting_sessions, 0);
@@ -133,6 +134,14 @@ test("resume bounds a partially started backlog back to the foreground window", 
   assert.equal(snapshot.active_sessions, 3);
   assert.equal(snapshot.waiting_sessions, 7);
   assert.deepEqual([...snapshot.admitted].sort(), ["session-1", "session-2", "session-3"]);
+});
+
+test("session window rejects non-positive or fractional execution configuration", () => {
+  const tasks = attributionSessionTasks("session-1");
+  const states: RunManifest["states"] = Object.fromEntries(tasks.map(task => [task.id, { status: "pending", attempts: 0 }]));
+  for (const sessionWindow of [0, -1, 1.5]) assert.throws(() =>
+    sessionAdmissionSnapshot(tasks, states, attributionScheduling.sessionAdmission!, { config: { execution: { sessionWindow } } }),
+  /positive integer/u);
 });
 
 test("ready attribution trace and session tasks outrank another session's component backlog", () => {

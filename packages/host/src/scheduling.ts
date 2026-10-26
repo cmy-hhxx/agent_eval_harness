@@ -25,14 +25,22 @@ export interface SessionAdmissionSnapshot {
   admitted: ReadonlySet<string>;
 }
 
+export function sessionAdmissionWindow(policy: NonNullable<WorkflowScheduling["sessionAdmission"]>,
+  manifest?: Pick<RunManifest, "config">): number {
+  const window = typeof policy.window === "function" ? (manifest ? policy.window(manifest as RunManifest) : undefined) : policy.window;
+  if (!Number.isSafeInteger(window) || (window as number) < 1)
+    throw new Error("Session admission window must be a positive integer");
+  return window as number;
+}
+
 /** Derive the foreground window only from durable task states so resume needs no cursor. */
 export function sessionAdmissionSnapshot(
   tasks: readonly PlannedTask[],
   states: RunManifest["states"],
   policy: NonNullable<WorkflowScheduling["sessionAdmission"]>,
+  manifest?: Pick<RunManifest, "config">,
 ): SessionAdmissionSnapshot {
-  if (!Number.isSafeInteger(policy.window) || policy.window < 1)
-    throw new Error("Session admission window must be a positive integer");
+  const window = sessionAdmissionWindow(policy, manifest);
   const sessions = new Map<string, { started: boolean; completed: boolean; failed: boolean; blocked: boolean }>();
   for (const task of tasks) {
     const id = policy.id(task);
@@ -50,7 +58,7 @@ export function sessionAdmissionSnapshot(
     if (session.started && (session.completed || session.failed || session.blocked)) admitted.add(id);
   const open = [...sessions].filter(([, session]) => !session.completed && !session.failed && !session.blocked);
   const selected = [...open.filter(([, session]) => session.started), ...open.filter(([, session]) => !session.started)]
-    .slice(0, policy.window);
+    .slice(0, window);
   for (const [id] of selected) admitted.add(id);
   const completed = [...sessions.values()].filter((session) => session.completed).length;
   const failed = [...sessions.values()].filter((session) => !session.completed && session.failed).length;

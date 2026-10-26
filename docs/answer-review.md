@@ -19,7 +19,7 @@ Attribution 已拆为独立 `workflow: attribution`，Score、Rewrite、Instruct
 
 不再要求 strengths、逐项 criterion_assessments、core_assessment、meets_core、core_reason、维度、阶段、重要性、功能分类或重复调查表。计算错误只用 `calculations[].text` 说明错误算式、正确结果或偏差方向。
 
-组件目录优先读取 trace.meta 的 `tool_names_text` 与 `skill_names_text`，为空时从真实调用派生。组件会话按小现场查看调用前推理、工具参数、返回、下一轮实际输入和后续输出。超大返回首屏有上限，后续最多三次续读，优先 grep，再读取精确字段和短原文。
+组件目录统一从真实消息身份派生：明确命名的 planner/tool 保留名称，执行 locator 归一为可证实的通用模型/流程角色，相同内容不推定匿名调用为终稿生成；每轮保证独立的“终稿生成轮”任务。组件会话按小现场查看调用前推理、工具参数、返回、下一轮实际输入和后续输出。超大返回首屏有上限，后续最多三次续读，优先 grep，再读取精确字段和短原文。
 
 公共 Runtime 保留动态必读受保护预算和无进展停止。未形成完整提交或预算耗尽由 state 保留失败原因。结构检查不能证明任意自然语言判断的语义完整性，真实样本仍须抽审；技术接收数与有效评审数分别报告。
 

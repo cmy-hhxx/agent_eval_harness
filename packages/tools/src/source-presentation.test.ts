@@ -49,6 +49,25 @@ test("blind tool display after raw pagination keeps numeric selection tied to or
   } finally { await rm(workdir, { recursive: true, force: true }); }
 });
 
+test("quote-limited tool pages split long text into exact selectable excerpts", async () => {
+  const workdir = await mkdtemp(path.join(os.tmpdir(), "evidence-quote-limit-"));
+  const text = "证据".repeat(450), raw = { messages: [{ role: "assistant", content: text }] };
+  const context: ToolContext = { attemptId: "quote-limit", workdir, inputs: new Map([["A", raw]]), inputIds: new Map([["A", inputId]]),
+    maxEvidenceQuoteChars: 400, audit: emptyAudit(), policy: DEFAULT_POLICY,
+    artifacts: new ArtifactStore(path.join(workdir, "artifacts")) };
+  try {
+    const runtime = new ToolRuntime(context, createRegistry().select(["read_trace"]));
+    const result = await runtime.execute("read_trace", { candidate: "A", message_index: 0, path: "/content", offset: 0, max_chars: text.length }, new AbortController().signal);
+    assert.equal(result.isError, undefined, JSON.stringify(result));
+    const shown = result.details as { evidence: { quote: string; reference: { evidence_index: number } }[] };
+    assert(shown.evidence.length >= 3);
+    assert(shown.evidence.every(item => item.quote.length <= 400));
+    assert.equal(shown.evidence.map(item => item.quote).join(""), text);
+    assert.deepEqual(context.audit.evidenceBank, shown.evidence.map(item =>
+      resolveEvidenceSelection(context.audit.evidenceBank!, item.reference, "/evidence").evidence_id));
+  } finally { await rm(workdir, { recursive: true, force: true }); }
+});
+
 
 test("complete serialized message pages omit unlisted provenance and keep original selection", async () => {
   const workdir = await mkdtemp(path.join(os.tmpdir(), "evidence-blind-json-origin-"));

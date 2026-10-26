@@ -59,6 +59,8 @@ export interface EvaluationSpec {
   presentedReads?: TraceRead[];
   /** Display-only source rules; evidence always resolves against original inputs. */
   sourcePresentations?: Record<string, import("./source-presentation.js").SourcePresentation>;
+  /** Tool evidence references above this length are shown as quote_chars without a selectable index. */
+  maxEvidenceQuoteChars?: number;
 }
 export interface InputRef {
   id: string;
@@ -345,6 +347,7 @@ export interface ToolContext {
   /** Immutable registered input UUIDs, keyed exactly like inputs. */
   inputIds: ReadonlyMap<string, string>;
   sourcePresentations?: ReadonlyMap<string, import("./source-presentation.js").SourcePresentation>;
+  maxEvidenceQuoteChars?: number;
   audit: ToolAudit;
   /** Delegated by the Worker; validation belongs to the registered Profile. */
   persistEvidenceBank?(bank: import("./evidence-selection.js").EvidenceBank): Promise<void>;
@@ -437,6 +440,8 @@ export interface AgentProfile {
   modelSubmissionSchema?(request: AgentRequest): JsonSchema;
   /** Model references are task-local choices; canonical schemas and stored results retain coordinates. */
   evidenceSelections?: boolean;
+  /** Longest selectable evidence span for this profile; tools expose no index for a longer range. */
+  maxEvidenceQuoteChars?: number;
   /** A mandatory read-only inspection before the trusted secondary material is revealed. */
   inspection?: {
     /** Canonical schema also used when restoring an accepted checkpoint. */
@@ -496,7 +501,8 @@ export interface WorkflowScheduling {
   /** Finite session admission derived from task states; lower stage priorities run first. */
   sessionAdmission?: {
     id(task: PlannedTask): string | undefined;
-    window: number;
+    /** Fixed test/workflow window, or derive the effective value from the run manifest. */
+    window: number | ((manifest: RunManifest) => number);
     completed(task: PlannedTask): boolean;
   };
   stagePriority?(stage: string): number;

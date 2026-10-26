@@ -125,6 +125,7 @@ export async function executeAttempt(attempt: AttemptExecution, deps: AttemptExe
           inputs,
           inputIds: new Map(spec.inputs.map(ref => [ref.name, ref.id])),
           sourcePresentations: new Map(Object.entries(spec.evaluation.sourcePresentations ?? {})),
+          maxEvidenceQuoteChars: spec.evaluation.maxEvidenceQuoteChars,
           materialNavigation: spec.evaluation.materialNavigation,
           audit,
           policy: spec.policy,
@@ -192,6 +193,23 @@ export async function executeAttempt(attempt: AttemptExecution, deps: AttemptExe
       };
       reserveFileDraft();
       const rejected = async (errors: ValidationIssue[], draft = failure.draft, content = true, compareDraft = true, loadingError = false) => {
+        const append = errors.flatMap(issue => {
+          const expected = issue.expected;
+          const ids = expected && typeof expected === "object" && !Array.isArray(expected)
+            ? (expected as { append_evidence_ids?: unknown }).append_evidence_ids : undefined;
+          return Array.isArray(ids) ? ids : [];
+        }).filter((id): id is string => typeof id === "string");
+        if (append.length) {
+          const bank = audit.evidenceBank!, known = new Set(bank);
+          for (const id of append) if (!known.has(id)) { bank.push(id); known.add(id); }
+          await runtime.context.persistEvidenceBank?.(bank);
+          errors = errors.map(issue => {
+            const expected = issue.expected;
+            if (!expected || typeof expected !== "object" || Array.isArray(expected)) return issue;
+            const { append_evidence_ids: _append, ...visible } = expected as Record<string, unknown>;
+            return { ...issue, expected: visible };
+          });
+        }
         const repeatedErrors = !compareDraft ? 0 :
           content && errorSet(errors) === errorSet(failure.errors) && canonical(draft) === canonical(failure.draft)
             ? failure.repeatedErrors + 1

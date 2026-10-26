@@ -7,7 +7,7 @@ import { AgentRegistry } from "@eval/host";
 import { cite, evidenceSources } from "@eval/tools";
 import { attributionAgent } from "@eval/agents/attribution";
 import { fixtureConfig, emptyAudit, fakeEvaluatorVersion, fakeIdentity } from "../../../../tests/fixtures/comparison.js";
-import { planAttribution, bindAttribution, attributionRepository, type AttributionConfig, type AttributionTaskData } from "./index.js";
+import { planAttribution, planAttributionUnit, bindAttribution, attributionRepository, type AttributionConfig, type AttributionTaskData } from "./index.js";
 import type { RawInput } from "../inputs/types.js";
 
 function trace(sessionId: string, question: string, answer: string, tools: string) {
@@ -42,16 +42,30 @@ test("an attribution plan fans out one component task per trace component and on
   const plan = await planAttribution(config);
   assert.deepEqual(plan.summary.issues, []);
   const byStage = (stage: string) => plan.tasks.filter(task => task.stage === stage);
-  assert.equal(byStage("attribution-component").length, 3);
+  assert.equal(byStage("attribution-component").length, 6);
+  assert.deepEqual(byStage("attribution-component").map(task => (task.data as AttributionTaskData).component).filter(component => component === "终稿生成轮").length, 2);
+  assert.equal(byStage("attribution-component").some(task => /^(?:llm[-_]?call|span)[-_: /]/iu.test((task.data as AttributionTaskData).component ?? "")), false);
   assert.equal(byStage("attribution-trace").length, 2);
   assert.equal(byStage("attribution-session").length, 1);
   const sessionTask = byStage("attribution-session")[0]!;
   assert.equal(sessionTask.dependencies.trace0, byStage("attribution-trace")[0]!.id);
   assert.equal(sessionTask.dependencies.trace1, byStage("attribution-trace")[1]!.id);
-  const component = bindAttribution(byStage("attribution-component")[0]!, plan.inputs, {});
+  const toolTask = byStage("attribution-component").find(task => (task.data as AttributionTaskData).component?.startsWith("finquery"))!;
+  const component = bindAttribution(toolTask, plan.inputs, {});
   assert.equal(component.profile, "component");
   assert.equal((component.request.input as { component?: string }).component, "finquery 取数服务");
   assert.equal((component.request.input as { trace_index?: number }).trace_index, 0);
+});
+
+test("planning filters execution locators and always creates one final-generation task per trace", () => {
+  const candidate = { input_id: "11111111-1111-4111-8111-111111111111", case_id: "case", turns: [{
+    trace_index: 0, trace_id: "trace", question: "问题", final_index: 1, component_names: ["llm-call-7", "span-4f26f1fabe23fc3c", "planner-search"],
+  }] };
+  const tasks = planAttributionUnit(candidate as never).tasks;
+  const components = tasks.filter(task => task.stage === "attribution-component")
+    .map(task => (task.data as AttributionTaskData).component);
+  assert.deepEqual(components, ["中间推理处理", "流程处理", "planner-search 检索规划子模型", "终稿生成轮"]);
+  assert.equal(components.some(component => /^(?:llm[-_]?call|span)[-_: /]/iu.test(component ?? "")), false);
 });
 
 test("only the session task exports one attribution row while component and trace tasks stay in state", async t => {
@@ -162,4 +176,26 @@ test("component review resolves evidence into readable position, tool component 
   assert.throws(() => registry.resolve(binding, { problems: [{ label: "tmp", definition: "tmp",
     problem_phenomena: "tmp", reason: "tmp", evidence: [{ index: 1, reason: "tmp" }] }] }, audit),
   (error: unknown) => error instanceof ValidationError && error.issues!.some(issue => issue.code === "placeholder_content"));
+});
+
+test("component quote validation accepts 800 chars but rejects longer exact quotes", async t => {
+  const f = await fixture(t);
+  const config = { ...f.config, workflow: "attribution", inputs: { ...f.config.inputs,
+    versions: f.config.inputs.versions.slice(0, 1) } } as AttributionConfig;
+  const plan = await planAttribution(config);
+  const task = plan.tasks.find(item => item.stage === "attribution-component" && (item.data as {component:string}).component === "finquery 取数服务")!;
+  const binding = bindAttribution(task, plan.inputs, {}), raw = binding.request.sources.answer.value as RawInput;
+  const registry = new AgentRegistry([attributionAgent]); registry.prepare(binding);
+  const output = raw.messages[2] as Record<string, unknown>;
+  const draft = { problems: [{ label: "长证据仍可精确核验", definition: "工具返回包含需要直接核对的长段原文。",
+    problem_phenomena: "下游使用了该长段中的结论。", reason: "长段原文完整保留并可由坐标复核。",
+    evidence: [{ index: 1, reason: "证明工具返回了该段原文。" }] }] };
+  const resolveLength = (length: number) => {
+    output.output = { rows: [], payload: "证".repeat(length) };
+    const source = evidenceSources(output).filter(item => item.kind === "text").sort((a, b) => b.text.length - a.text.length)[0]!;
+    const evidence = cite(binding.request.sources.answer.id, 2, source, 0, length);
+    return () => registry.resolve(binding, draft, { ...emptyAudit(), evidenceBank: [evidence.evidence_id] });
+  };
+  assert.doesNotThrow(resolveLength(800));
+  assert.throws(resolveLength(801), (error: unknown) => error instanceof ValidationError && error.issues!.some(issue => issue.code === "quote_too_long"));
 });

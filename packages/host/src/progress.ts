@@ -57,7 +57,7 @@ export function progressSnapshot(state: RunState, now = Date.now(), preparing: R
   const longest = running.sort(
     (a, b) => (a.lastProgressAt || a.startedAt || now) - (b.lastProgressAt || b.startedAt || now),
   )[0];
-  const sessions = sessionAdmission ? sessionAdmissionSnapshot(state.manifest.tasks, state.manifest.states, sessionAdmission) : undefined;
+  const sessions = sessionAdmission ? sessionAdmissionSnapshot(state.manifest.tasks, state.manifest.states, sessionAdmission, state.manifest) : undefined;
   return {
     updated_at: new Date(now).toISOString(),
     usage: { archived_tokens: state.usage.totalTokens, archived_attempts: state.recordedAttempts,

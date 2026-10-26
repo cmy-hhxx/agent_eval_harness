@@ -25,6 +25,7 @@ import { readSettings, applySettings, type ApplicationSettings } from "./setting
 const EXECUTION_DEFAULTS = {
   ...DEFAULT_POLICY,
   concurrency: 8,
+  sessionWindow: 16,
   retries: 1,
   retryDelaySeconds: 10,
   initialContextChars: 16000,
@@ -170,6 +171,7 @@ function buildEvaluationBase(source: ConfigObject): EvaluationConfig {
   }
   for (const key of [
     "concurrency",
+    "sessionWindow",
     "timeoutSeconds",
     "idleTimeoutSeconds",
     "maxToolCalls",
@@ -355,7 +357,7 @@ function buildModels(source: ConfigObject, configuration: ApplicationSettings): 
 }
 
 const DASHBOARD_STAGES = ["criteria", "score", "attribution", "instruction-review", "comparison", "rewrite", "clustering"] as const;
-const DASHBOARD_EXECUTION = ["concurrency", "timeoutSeconds", "maxToolCalls", "retries", "repairAttempts", "maxTaskAttempts", "retryDelaySeconds"] as const;
+const DASHBOARD_EXECUTION = ["concurrency", "sessionWindow", "timeoutSeconds", "maxToolCalls", "retries", "repairAttempts", "maxTaskAttempts", "retryDelaySeconds"] as const;
 const DASHBOARD_BINDING = ["channel", "model", "thinking"] as const;
 
 export function editableDashboardSettings(source: Record<string, unknown>) {
@@ -368,6 +370,7 @@ export function editableDashboardSettings(source: Record<string, unknown>) {
   return {
     execution: {
       concurrency: execution.concurrency ?? EXECUTION_DEFAULTS.concurrency,
+      sessionWindow: execution.sessionWindow ?? EXECUTION_DEFAULTS.sessionWindow,
       timeoutSeconds: execution.timeoutSeconds ?? EXECUTION_DEFAULTS.timeoutSeconds,
       maxToolCalls: execution.maxToolCalls ?? EXECUTION_DEFAULTS.maxToolCalls,
       retries: execution.retries ?? EXECUTION_DEFAULTS.retries,

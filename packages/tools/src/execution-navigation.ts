@@ -1,6 +1,6 @@
 import { object, parseEvidenceCoordinates, resolveEvidenceSelection, type ToolDefinition } from "@eval/contracts";
 import { evidenceOverlaps } from "./evidence-coverage.js";
-import { evidenceSources } from "./evidence.js";
+import { cite, evidenceSources } from "./evidence.js";
 
 type View = "nodes" | "boundaries" | "before" | "after" | "predecessors" | "successors" | "table_checks";
 interface NavigationArgs {
@@ -209,14 +209,21 @@ export const readResponsibilityChainTool: Omit<ToolDefinition, "description"> = 
       if (!point || point.kind === "image") return [];
       const source = evidenceSources(records.messages[point.message_index]).find(source => source.kind === point.kind && source.path === point.path);
       if (!source) return [];
-      const quote = source.text.slice(point.start, point.end);
+      const quoteEnd = Math.min(point.end, point.start + (ctx.maxEvidenceQuoteChars ?? point.end - point.start));
+      const excerpt = cite(inputId, point.message_index, source, point.start, quoteEnd);
+      const quote = excerpt.quote;
       const remaining = Math.max(0, chars.limit - chars.used);
-      if (!remaining) return [{ evidence_index: register(item.evidence_id), message_index: point.message_index, kind: point.kind, path: point.path,
-        start: point.start, end: point.end, quote_chars: quote.length, truncated: true }];
+      const repair = point.end > quoteEnd ? { next_read_request: { tool: "read_trace", arguments: {
+        candidate: args.candidate, message_index: point.message_index, path: point.path, offset: quoteEnd, max_chars: 400 } } } : {};
+      if (!remaining) return [{ evidence_index: register(excerpt.evidence_id), message_index: point.message_index, kind: point.kind, path: point.path,
+        start: point.start, end: quoteEnd, quote_chars: quote.length, ...(point.end > quoteEnd ? { total_quote_chars: point.end - point.start } : {}),
+        truncated: true, ...repair }];
       const shown = quote.slice(0, remaining);
       chars.used += shown.length;
-      return [{ evidence_index: register(item.evidence_id), message_index: point.message_index, kind: point.kind, path: point.path,
-        start: point.start, end: point.end, quote_chars: quote.length, quote: shown, ...(shown.length < quote.length ? { truncated: true } : {}) }];
+      return [{ evidence_index: register(excerpt.evidence_id), message_index: point.message_index, kind: point.kind, path: point.path,
+        start: point.start, end: quoteEnd, quote_chars: quote.length, quote: shown,
+        ...(shown.length < quote.length || point.end > quoteEnd ? { truncated: true } : {}),
+        ...(point.end > quoteEnd ? { total_quote_chars: point.end - point.start, ...repair } : {}) }];
     });
     const limit = args.max_chars ?? 16000, chars = { used: 0, limit };
     const chainIndex = selected.chain_index;

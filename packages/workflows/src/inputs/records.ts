@@ -1,6 +1,7 @@
 import { fileSourceReader } from "@eval/data";
 import { randomUUID } from "node:crypto";
 import { canonical, errorText, object, ValidationError, type ValidationIssue } from "@eval/contracts";
+import { isComponentLocator, traceComponentIdentities } from "@eval/tools";
 import { inputAdapters, resolveAdapter } from "./adapters.js";
 import { normalizeInput } from "./normalize.js";
 import type { Candidate, CandidateTurn, Message, RawInput, SessionTurn, Timing, VersionConfig } from "./types.js";
@@ -24,41 +25,10 @@ export function strings(value: unknown, prefix = ""): [string, string][] {
   );
 }
 
-function declaredComponents(value: unknown): string[] {
-  if (Array.isArray(value)) return value.filter((item): item is string => typeof item === "string").map(item => item.trim()).filter(Boolean);
-  if (typeof value !== "string" || !value.trim()) return [];
-  try {
-    const parsed: unknown = JSON.parse(value);
-    if (Array.isArray(parsed)) return declaredComponents(parsed);
-  } catch { /* plain text is the normal legacy-compatible form */ }
-  return value.split(/[,，;；\n]+/u).map(item => item.trim()).filter(Boolean);
-}
-
-function calledComponents(messages: Message[]): string[] {
-  const names: string[] = [];
-  const add = (value: unknown) => {
-    if (typeof value === "string" && value.trim()) names.push(value.trim());
-  };
-  for (const message of messages) {
-    add(message.name);
-    const outputs = Array.isArray(message.output) ? message.output : [];
-    for (const output of outputs) {
-      if (!output || typeof output !== "object") continue;
-      const calls = Array.isArray((output as { tool_calls?: unknown[] }).tool_calls) ? (output as { tool_calls: unknown[] }).tool_calls : [];
-      for (const call of calls) {
-        if (!call || typeof call !== "object") continue;
-        const fn = (call as { function?: { name?: unknown } }).function;
-        add(fn?.name);
-      }
-    }
-  }
-  return [...new Set(names)];
-}
-
-/** Metadata text wins when supplied; actual calls provide the safe fallback. */
-export function traceComponentNames(meta: Record<string, unknown>, messages: Message[]): string[] {
-  const declared = [...declaredComponents(meta.tool_names_text), ...declaredComponents(meta.skill_names_text)];
-  return [...new Set((declared.length ? declared : calledComponents(messages)))];
+/** Component names are the role-first identity directory; locators never become actors. */
+export function traceComponentNames(messages: Message[], finalIndex: number, inputId: string): string[] {
+  return [...new Set(traceComponentIdentities({ messages }, inputId, finalIndex)
+    .map(actor => actor.component).filter(name => !isComponentLocator(name)))];
 }
 
 export function inputSources(candidates: Candidate[]): Map<string, Candidate[]> {
@@ -78,6 +48,7 @@ export function adapt(
   defaultBatch?: string,
 ): Candidate {
   const session = Object.hasOwn(object(value), "traces"), raw = normalizeInput(value);
+  const inputId = randomUUID();
   const meta = raw.meta || {}, turns: SessionTurn[] = raw.turns ?? [{ meta, messages: raw.messages }];
   const errors: ValidationIssue[] = [];
   if (
@@ -149,7 +120,7 @@ export function adapt(
       trace_id: typeof traceMeta.trace_id === "string" ? traceMeta.trace_id : null,
       question,
       final_index: final,
-      component_names: traceComponentNames(traceMeta, messages),
+      component_names: traceComponentNames(messages, final, inputId),
     };
     return { trace, traceMeta, messages, adapter, final, question, traceCandidate };
   });
@@ -191,7 +162,7 @@ export function adapt(
     version: item.id,
     name: item.display_name || item.name,
     ...(item.display_name && item.display_name !== item.name ? { identity_names: [item.name] } : {}),
-    input_id: randomUUID(),
+    input_id: inputId,
     trace_id: raw.trace_id || meta.trace_id ? String(raw.trace_id || meta.trace_id) : null,
     source,
     line,

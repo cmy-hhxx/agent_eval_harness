@@ -25,8 +25,6 @@ export interface AttributionUnitOptions {
   /** Changes the unit identity when upstream material changes, such as a revised criteria task. */
   identity?: string;
 }
-export const ATTRIBUTION_SESSION_WINDOW = 8;
-
 const sourceTrace = Symbol("attribution source trace");
 const validateSession = new Ajv2020({ allErrors: true, strict: false })
   .addSchema(problemSchema).addSchema(traceResultSchema).compile(sessionResultSchema);
@@ -52,7 +50,7 @@ export function planAttributionUnit(candidate: Candidate, options: AttributionUn
   const base = { ...options.data, ...(options.identity ? { attributionIdentity: options.identity } : {}) },
     upstream = options.dependencies ?? {}, tasks: PlannedTask[] = [], traceTasks: PlannedTask[] = [];
   for (const trace of traceList) {
-    const components = [...new Set((trace.component_names.length ? trace.component_names : ["终稿生成轮"]).map(attributionComponentLabel))];
+    const components = [...new Set([...trace.component_names.map(attributionComponentLabel), "终稿生成轮"].filter(Boolean))];
     const componentTasks = components.map(component => ({ id: id("attribution-component", trace.trace_index, component),
       stage: "attribution-component", inputIds: { answer: candidate.input_id }, dependencies: upstream,
       data: { ...base, stage: "attribution-component", candidate, traceIndex: trace.trace_index,
@@ -126,7 +124,12 @@ export function bindAttribution(task: PlannedTask, inputs: Record<string, unknow
 export const attributionScheduling: WorkflowScheduling = {
   sessionAdmission: {
     id: task => (task.data as AttributionTaskData).candidate.input_id,
-    window: ATTRIBUTION_SESSION_WINDOW,
+    window: manifest => {
+      const value = (manifest.config as AttributionConfig | undefined)?.execution?.sessionWindow;
+      if (!Number.isSafeInteger(value) || Number(value) < 1)
+        throw new Error("execution.sessionWindow must be a positive integer");
+      return Number(value);
+    },
     completed: task => task.stage === "attribution-session",
   },
   stagePriority: stage => stage === "attribution-session" ? 0 : stage === "attribution-trace" ? 1 : 2,

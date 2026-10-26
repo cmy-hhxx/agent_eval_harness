@@ -100,6 +100,8 @@ export interface EvaluationInputs {
 
 export type EvaluationExecution = Policy & {
   concurrency: number;
+  /** Maximum foreground attribution sessions; runner and progress share this effective value. */
+  sessionWindow: number;
   /** Local task slots; model permits stay global when shared by concurrent day runs. */
   taskConcurrency?: number;
   retries: number;

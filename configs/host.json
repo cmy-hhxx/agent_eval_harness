@@ -1,5 +1,5 @@
 {
-  "evaluatorVersion": "r394",
+  "evaluatorVersion": "r397",
   "inputs": {
     "timing_unit": "ms",
     "versions": [
@@ -113,6 +113,7 @@
   },
   "execution": {
     "concurrency": 8,
+    "sessionWindow": 16,
     "failureGuard": {
       "windowSize": 50,
       "threshold": 5

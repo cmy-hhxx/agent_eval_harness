@@ -63,6 +63,8 @@ npm run eval -- model-probe --stage comparison --config configs/local/models.jso
 
 归因中的私密规范裁剪容器只用于导航；证据从未改写的原文叶子读取。业务链路检查点覆盖已登记的完整边界，分页窗口不限制可引用的后文；调查事实、环节、责任主体与证据各用自身目录编号。用户问题与设备事实不自动成为专有规范，真实本方规范继续按其作用域检查。提交仅使用工具当前 Schema 的字段和枚举，修正不增加提交上限。
 
+Attribution 的 `execution.sessionWindow` 默认 16，必须是正整数；执行、进度和续跑使用同一 effective 值。`execution.taskConcurrency` 是任务槽位硬上限且不再随模型并发放大，内置 Worker 按实际可派发任务惰性启动。
+
 共用配置把 Rewrite 的推理档位单独设为 `low`，保留润色，只处理已接受文本；其他阶段沿用各自配置。专项的后置覆盖也须保留该阶段设置，不能用全阶段 `high` 覆盖。降低推理档位不是语义保真证明，仍按改写验收流程对照原文抽查。
 
 `run / reattribute / cluster --balance-channels` 按 INI 的 traffic_weight 分配完整任务，普通重试保持渠道，明确配额耗尽才切换；各渠道须提供相同阶段模型。自动化渠道池见[自动化启动与调度](automations.md#启动与调度)。

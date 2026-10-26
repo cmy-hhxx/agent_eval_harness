@@ -1,6 +1,6 @@
 import { canonical, parseEvidenceCoordinates, type AgentRequest, type ValidationIssue } from "@eval/contracts";
 import { attributionTaxonomy, type AttributionComponent } from "@eval/prompts";
-import { traceComponentIdentities, type TraceComponentIdentity } from '@eval/tools';
+import { isComponentLocator, traceComponentIdentities, type TraceComponentIdentity } from '@eval/tools';
 import type { AttributionTransition } from "./transitions.js";
 
 /** Workflow supplies the directory; no taxonomy labels or raw call IDs become actors. */
@@ -41,12 +41,15 @@ const componentAliases: Record<string,string> = {
 /** Map metadata tool/skill text to the stable taxonomy component display. */
 export function attributionComponentLabel(name: string): string {
   const value=name.trim();
+  if (isComponentLocator(value))
+    return /^llm[-_]?call[-_: /]/iu.test(value) ? "中间推理处理" : "流程处理";
   const direct=component(value);
   if(direct)return direct.label;
   const matching=Object.values(COMPONENTS).find(component=>component.label===value);
   if(matching)return matching.label;
   const code=componentAliases[value.toLowerCase()];
   if(code)return label(code);
+  if (["中间推理处理", "流程处理", "工具执行"].includes(value)) return value;
   return value===UNKNOWN_COMPONENT?UNKNOWN_COMPONENT:`${label("other-tools")}（${value}）`;
 }
 

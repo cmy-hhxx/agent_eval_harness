@@ -52,9 +52,19 @@ function mapReferences(value: unknown, convert: (value: Record<string, unknown>,
   return Object.fromEntries(Object.entries(object).map(([key, item]) => [key,
     mapReferences(item, convert, selected, `${path}/${key.replaceAll("~", "~0").replaceAll("/", "~1")}`)]));
 }
-/** Call only on program-generated envelopes; original source values must be excluded by their owner. */
-export function projectEvidenceReferences<T>(value: T, bank: EvidenceBank): T {
-  return mapReferences(value, reference => selectEvidence(bank, reference as unknown as EvidenceReference), "evidence_id", "") as T;
+/**
+ * Call only on program-generated envelopes; original source values must be excluded by their owner.
+ * A profile with a quote limit never receives an index that would resolve to a longer quote.
+ */
+export function projectEvidenceReferences<T>(value: T, bank: EvidenceBank, maxQuoteChars?: number): T {
+  return mapReferences(value, reference => {
+    const item = reference as unknown as EvidenceReference;
+    const coordinate = typeof item.evidence_id === "string" ? parseEvidenceCoordinates(item.evidence_id) : undefined;
+    if (maxQuoteChars !== undefined && coordinate && coordinate.kind !== "image" && coordinate.end - coordinate.start > maxQuoteChars)
+      return { quote_chars: coordinate.end - coordinate.start,
+        repair_action: `引用超过 ${maxQuoteChars} 字，未分配 evidence_index；按 read_request 读取该位置以获得合规片段。` };
+    return selectEvidence(bank, item);
+  }, "evidence_id", "") as T;
 }
 /** Submission envelopes contain no raw source data. Numeric-check indexes are separate fields, not reference objects. */
 export function resolveEvidenceSelectionDraft<T>(value: T, bank: readonly string[]): { value: T; issues: ValidationIssue[] } {
