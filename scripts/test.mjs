@@ -55,44 +55,34 @@ if (fast) {
   ]);
   process.exit(0);
 }
-const roots = [
-  "dist/packages",
-  "dist/tests/architecture",
-  ...(full ? ["dist/agent/tests", "dist/tests/integration/host"] : []),
-];
-const files = (
-  await Promise.all(
-    roots.map(async (directory) =>
-      (
-        await readdir(path.join(root, directory), { recursive: true })
-      )
-        .filter((file) => file.endsWith(".test.js"))
-        .map((file) => path.join(directory, file)),
-    ),
-  )
-)
-  .flat()
-  .sort();
+async function testFiles(roots) {
+  return (await Promise.all(roots.map(async (directory) =>
+    (await readdir(path.join(root, directory), { recursive: true }))
+      .filter((file) => file.endsWith(".test.js"))
+      .map((file) => path.join(directory, file)),
+  ))).flat().sort();
+}
+const coreFiles = await testFiles(["dist/packages", "dist/tests/architecture", ...(full ? ["dist/agent/tests"] : [])]);
+const hostFiles = full ? await testFiles(["dist/tests/integration/host"]) : [];
 // Worker tests spawn their own processes; cap file concurrency to avoid starving
 // their existing deadlines without extending timeouts or retrying failed tests.
 const concurrency = Math.min(2, availableParallelism());
+const repositoryTests = [
+  "scripts/attribution-review-tree.test.mjs",
+  "scripts/attribution-review-view.test.mjs",
+  "scripts/attribution-review.test.mjs",
+  "scripts/mongo-contracts.test.mjs",
+  "scripts/benchmark.test.mjs",
+  "scripts/publish.test.mjs",
+  "scripts/apply-agent-dependency-patches.test.mjs",
+  "scripts/deploy-workbench.test.mjs",
+  "scripts/workbench.test.mjs",
+  "scripts/configure-daily-workbench.test.mjs",
+  "scripts/deploy-eris.test.mjs",
+  "data_service/dashboard.test.mjs",
+];
 await Promise.all([
   run("python3", ["-m", "unittest", "discover", "-s", "data_service", "-p", "test_*.py"]),
-  run("node", [
-    "--test",
-    `--test-concurrency=${concurrency}`,
-    ...files,
-    "scripts/attribution-review-tree.test.mjs",
-    "scripts/attribution-review-view.test.mjs",
-    "scripts/attribution-review.test.mjs",
-    "scripts/mongo-contracts.test.mjs",
-    "scripts/benchmark.test.mjs",
-    "scripts/publish.test.mjs",
-    "scripts/apply-agent-dependency-patches.test.mjs",
-    "scripts/deploy-workbench.test.mjs",
-    "scripts/workbench.test.mjs",
-    "scripts/configure-daily-workbench.test.mjs",
-    "scripts/deploy-eris.test.mjs",
-    "data_service/dashboard.test.mjs",
-  ]),
+  run("node", ["--test", `--test-concurrency=${concurrency}`, ...coreFiles, ...repositoryTests]),
+  ...(hostFiles.length ? [run("node", ["--test", `--test-concurrency=${concurrency}`, ...hostFiles])] : []),
 ]);
