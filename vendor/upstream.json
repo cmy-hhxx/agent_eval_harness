@@ -1,12 +1,12 @@
 {
   "pi": {
     "repository": "https://github.com/earendil-works/pi",
-    "version": "1.0.0",
-    "commit": "a13d35a742c6ef8462812a28fbe1d8c8b7431c32",
+    "version": "1.4.0",
+    "commit": "4a080252f06caf63a525d7873c5d94d3c23887e0",
     "directory": "vendor/pi",
     "local_changes": [
-      "Evaluation-only gateway models: the offline generator emits empty chat, image and classifier catalogs without hydration or bundled model data; builtin provider registration is disabled. ModelRuntime registers only explicit application models, with network catalog refresh disabled.",
-      "check:sources typechecks implementation sources and public examples for the gateway-only vendor using the current upstream package graph. The original upstream check command remains unchanged; application behavior is verified by the root unit and SDK integration suites.",
+      "Evaluation-only provider policy: all upstream provider factories, model catalogs, image-provider registrations, provider OAuth implementations, ambient credential discovery and remote catalog networking are removed; the offline generator emits empty chat, image and classifier catalogs without bundled model data. ModelRuntime registers only explicit application models.",
+      "check:sources typechecks implementation sources for the gateway-only vendor using the current upstream package graph. The original upstream check command remains unchanged; application behavior is verified by the root unit and SDK integration suites.",
       "Responses function calls finalize after terminal response validation. Matching item id, call id and name recover delayed gateway arguments from authoritative terminal output; duplicate call identities, item.added/item.done identity changes and malformed JSON objects are rejected before toolcall_end or execution, while interleaved calls, reasoning, text, usage and completed item.done arguments are preserved."
     ]
   },

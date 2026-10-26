@@ -1,14 +1,13 @@
 {
 	"name": "@earendil-works/pi-ai",
-	"version": "1.0.0",
+	"version": "1.4.0",
 	"description": "Unified LLM API with automatic model discovery and provider configuration",
 	"type": "module",
 	"main": "./dist/index.js",
 	"types": "./dist/index.d.ts",
 	"sideEffects": [
 		"./dist/compat.js",
-		"./dist/images.js",
-		"./dist/providers/images/register-builtins.js"
+		"./dist/images.js"
 	],
 	"exports": {
 		".": {
@@ -38,14 +37,6 @@
 		"./oauth": {
 			"types": "./dist/oauth.d.ts",
 			"import": "./dist/oauth.js"
-		},
-		"./bedrock-provider": {
-			"types": "./dist/bedrock-provider.d.ts",
-			"import": "./dist/bedrock-provider.js"
-		},
-		"./bun-oauth": {
-			"types": "./dist/bun-oauth.d.ts",
-			"import": "./dist/bun-oauth.js"
 		}
 	},
 	"bin": {
@@ -57,7 +48,7 @@
 	],
 	"scripts": {
 		"clean": "shx rm -rf dist",
-		"generate-models": "node scripts/generate-models.ts --gateway-only",
+		"generate-models": "node scripts/generate-models.ts",
 		"generate-model-catalog": "node scripts/generate-models.ts --strict --json-only --json-output ../../.artifacts/model-catalog",
 		"build": "npm run build:offline",
 		"build:offline": "npm run generate-models && shx rm -rf dist && tsc -p tsconfig.build.json",
@@ -65,9 +56,9 @@
 		"prepublishOnly": "npm run clean && npm run build"
 	},
 	"dependencies": {
-		"@anthropic-ai/sdk": "0.124.0",
+		"@anthropic-ai/sdk": "0.129.0",
 		"@aws-sdk/client-bedrock-runtime": "3.1127.0",
-		"@earendil-works/pi-telemetry": "^1.0.0",
+		"@earendil-works/pi-telemetry": "1.4.0",
 		"@google/genai": "2.21.0",
 		"@smithy/node-http-handler": "4.12.1",
 		"http-proxy-agent": "9.1.0",

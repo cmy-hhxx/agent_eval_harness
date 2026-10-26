@@ -2,8 +2,6 @@
 	"extends": "./tsconfig.json",
 	"include": [
 		"scripts/model-catalog-protocol.ts",
-		"packages/*/src/**/*",
-		"packages/coding-agent/examples/**/*",
-		"packages/agent/examples/**/*"
+		"packages/*/src/**/*"
 	]
 }

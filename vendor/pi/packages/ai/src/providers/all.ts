@@ -2,8 +2,6 @@ import { CLASSIFIER_MODELS, IMAGE_MODELS, MODELS } from "../models.generated.ts"
 import { type CreateModelsOptions, createModels, type MutableModels, type Provider } from "../models.ts";
 import type { AnyModel, Api, ClassifierApi, ClassifierModel, ImageApi, ImageModel, Model } from "../types.ts";
 
-export { radiusProvider } from "./radius.ts";
-
 /** Providers present in the generated catalog. `KnownProvider` additionally
  * includes purely dynamic providers (e.g. "radius") that have no static
  * catalog entry. */
