@@ -1,0 +1,14 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://eval.local/attribution/component-result.schema.json",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["component", "problems"],
+  "properties": {
+    "component": { "type": "string", "minLength": 1 },
+    "problems": {
+      "type": "array",
+      "items": { "$ref": "./problem.schema.json" }
+    }
+  }
+}

@@ -7,6 +7,7 @@ import { cite, originalUserTimestamp, evidenceSources, messageContentSources, in
 import { acceptedAttributionView } from "./accepted-attribution.js";
 import { projectComparisonEvidence } from "../review/evidence-presentation.js";
 import { contentText } from "../inputs/records.js";
+import { sessionComparisonInput, sessionQas } from "../inputs/session.js";
 import type { TaskData, ComparisonResult } from "./types.js";
 import type { RawInput } from "../inputs/types.js";
 import { bindInstructionReview } from "../review/instruction.js";
@@ -22,12 +23,12 @@ import { citationInventory } from "../review/citations.js";
 import { criterionInstructionSources } from "../review/instruction-bindings.js";
 import { bindRewriteItems } from "./rewrite-presentation.js";
 import { comparisonScope, comparisonSlotChoices } from "@eval/agents/comparison";
-import { attributionPresentation } from "../review/attribution-presentation.js";
 import { comparisonSourceReview } from "./source-review.js";
 import { taskAnalysisPresentation, taskFocus } from "../review/task-focus.js";
 import { verificationPresentation, verificationInspectionPresentation } from "./verification-presentation.js";
 import { getAnswerGeneration } from "../review/answer-generation.js";
 import { comparisonAttribution } from "./comparison-attribution.js";
+import type { AttributionResult } from "@eval/agents/attribution";
 
 export function bindTask(
   task: PlannedTask,
@@ -214,23 +215,24 @@ function bindSourceTask(
   const sources = Object.fromEntries(
     Object.entries(task.inputIds).map(([label, id]) => [label, {
       id,
-      value: inputs[id],
+      value: sessionComparisonInput(inputs[id] as RawInput, data.candidates[label]!),
       ...(blind ? { presentation: blind.presentation } : {}),
     }]),
   );
   const materials = Object.fromEntries(
     Object.entries(data.candidates).map(([label, candidate]) => {
       const raw = sources[label].value as RawInput;
-      const finalSources = messageContentSources(raw.messages[candidate.final_index]);
+      const finalIndex = raw.messages.length - 1;
+      const finalSources = messageContentSources(raw.messages[finalIndex]);
       const finalBlockLimit = Math.max(16000, data.initialContextChars ?? 16000);
       const deferred = finalSources.filter((source) => source.text.length > finalBlockLimit);
       const final = deferred.reduce(
         (text, source) => text.replaceAll(source.text, ""),
-        contentText(raw.messages[candidate.final_index].content),
+        contentText(raw.messages[finalIndex].content),
       );
-      const question = candidate.question;
-      const instructions = instructionSources(raw, candidate.input_id, candidate.final_index);
-      const citations = citationInventory(raw, candidate.input_id, candidate.final_index);
+      const question = contentText(raw.messages[0]?.content);
+      const instructions = instructionSources(raw, candidate.input_id, finalIndex);
+      const citations = citationInventory(raw, candidate.input_id, finalIndex);
       // Question, answer and instructions are already separate required material.
       // Keep this budget available for the evidence needed to judge that answer.
       let used = 0;
@@ -260,7 +262,7 @@ function bindSourceTask(
         .sort((a, b) => Number(b.returned) - Number(a.returned) || b.index - a.index)
         .map(item => item.index);
       for (const i of priority) {
-        if (i === candidate.final_index) continue;
+        if (i === finalIndex) continue;
         if (["system", "developer"].includes(raw.messages[i].role || "")) continue;
         const value = Object.fromEntries(
           Object.entries(raw.messages[i]).filter(
@@ -280,15 +282,16 @@ function bindSourceTask(
         label,
         {
           question,
+          turns: sessionQas(inputs[candidate.input_id] as RawInput, candidate),
           candidate_id: candidate.input_id,
-          final_message_index: candidate.final_index,
-          answer_generation: getAnswerGeneration(raw, candidate.input_id, candidate.final_index),
+          final_message_index: finalIndex,
+          answer_generation: getAnswerGeneration(raw, candidate.input_id, finalIndex),
           final_answer: final,
           final_evidence: finalSources
             .filter((source) => source.text.length <= finalBlockLimit)
-            .map((source) => cite(candidate.input_id, candidate.final_index, source, 0, source.text.length)),
+            .map((source) => cite(candidate.input_id, finalIndex, source, 0, source.text.length)),
           deferred_final_material: deferred.map((source) => ({
-            message_index: candidate.final_index, path: source.path, total_chars: source.text.length,
+            message_index: finalIndex, path: source.path, total_chars: source.text.length,
           })),
           initial_material: initial,
           instruction_sources: instructions,
@@ -314,17 +317,20 @@ function bindSourceTask(
         } else if (r!.submitted !== undefined && Array.isArray(r!.audit.evidenceBank)) {
           throw new Error("缺少已接受归因的原任务上下文，不能重建程序证据来源：" + r!.taskId);
         }
-        const result = acceptedAttributionView(r!, sourceRequest);
+        const result = (r!.evaluation as {session_meta?:unknown}).session_meta !== undefined
+          ? r!.evaluation as import("@eval/agents/attribution").SessionAttributionResult
+          : acceptedAttributionView(r!, sourceRequest);
         return [label, result];
       }),
   );
   const tableReviews = Object.fromEntries(Object.entries(data.candidates).flatMap(([label, candidate]) => {
     const receipt = dependencies[label];
     if (!receipt) return [];
+    if ((receipt.evaluation as {session_meta?:unknown}).session_meta !== undefined) return [];
     const review = attributionTableReview({ input: { answer: { final_message_index: candidate.final_index,
       table_check_results: attributionTableChecks(inputs[candidate.input_id] as RawInput, candidate.input_id, candidate.final_index) } },
       sources: { answer: { id: candidate.input_id, value: inputs[candidate.input_id] } } },
-    acceptedAttributions[label]);
+    acceptedAttributions[label] as AttributionResult);
     return [[label, review]];
   }));
   const attributions = Object.fromEntries(Object.entries(acceptedAttributions).map(([label, result]) =>
@@ -363,12 +369,7 @@ function bindSourceTask(
             [label, inputs[candidate.input_id] as RawInput]))),
         comparison_scope: comparisonScope({ input, sources }),
         comparison_slots: comparisonSlotChoices({ input, sources }),
-        attributions: Object.fromEntries(Object.entries(attributions).map(([label, result]) => {
-          const shown = attributionPresentation(result, label, sources[label].value as RawInput, sources[label].id,
-            Object.fromEntries(Object.entries(sources).map(([key, source]) => [key, source.value as RawInput])),
-            Object.fromEntries(Object.entries(sources).map(([key, source]) => [key, source.id])));
-          return [label, shown];
-        })),
+        attributions,
         candidates: Object.fromEntries(Object.entries(materials).map(([label, material]) =>
         [label, modelMaterial(material, label, sources[label].value as RawInput, sources[label].id)])) },
   };

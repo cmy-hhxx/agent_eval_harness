@@ -1,44 +1,53 @@
 import { object } from "@eval/contracts";
-import type { RawInput } from "./types.js";
+import type { RawInput, SessionTurn } from "./types.js";
 
-/** Project a single session trace into the shared material view; never rewrite source messages. */
+/** Validate a session or flat record without rewriting its source messages. */
 export function normalizeInput(value: unknown): RawInput {
   const source = object(value);
   if (!Object.hasOwn(source, "traces")) return source as RawInput;
   if (Object.hasOwn(source, "messages")) throw new Error("输入不能同时包含 messages 和 traces");
   if (!Array.isArray(source.traces) || !source.traces.length) throw new Error("traces 必须是非空数组");
-  if (source.traces.length !== 1) throw new Error("暂不支持多轮评测：traces 必须恰好包含一轮，不能截取或拼接");
-  const session = object(source.meta), trace = object(source.traces[0]), metadata = object(trace.meta);
-  if (!Array.isArray(trace.messages) || !trace.messages.length ||
-      trace.messages.some(message => !message || typeof message !== "object" || Array.isArray(message)))
-    throw new Error("traces[0].messages 必须是非空消息对象数组");
-  for (const [declared, actual, field] of [
-    [session.n_traces, source.traces.length, "meta.n_traces"],
-    [session.n_messages, trace.messages.length, "meta.n_messages"],
-    [metadata.n_messages, trace.messages.length, "traces[0].meta.n_messages"],
-  ] as const)
-    if (declared !== undefined && declared !== actual) throw new Error(`${field} 与实际数量不一致`);
-  for (const key of ["case_id", "batch_id", "session_id"]) {
-    const identity = source[key] ?? session[key];
-    if (identity !== undefined && metadata[key] !== undefined && identity !== metadata[key])
-      throw new Error(`外层 ${key} 与 traces[0].meta.${key} 冲突`);
+  const session = object(source.meta), turns: SessionTurn[] = source.traces.map((value, index) => {
+    const trace = object(value), metadata = object(trace.meta);
+    if (!Array.isArray(trace.messages) || !trace.messages.length ||
+        trace.messages.some(message => !message || typeof message !== "object" || Array.isArray(message)))
+      throw new Error(`traces[${index}].messages 必须是非空消息对象数组`);
+    if (metadata.n_messages !== undefined && metadata.n_messages !== trace.messages.length)
+      throw new Error(`traces[${index}].meta.n_messages 与实际数量不一致`);
+    for (const key of ["case_id", "batch_id", "session_id"]) {
+      const identity = source[key] ?? session[key];
+      if (identity !== undefined && metadata[key] !== undefined && identity !== metadata[key])
+        throw new Error(`外层 ${key} 与 traces[${index}].meta.${key} 冲突`);
+    }
+    if (metadata.ok === false) throw new Error("trace 采集失败");
+    return { meta: metadata, messages: trace.messages } as SessionTurn;
+  });
+  if (session.n_traces !== undefined && session.n_traces !== turns.length)
+    throw new Error("meta.n_traces 与实际数量不一致");
+  const totalMessages = turns.reduce((total, turn) => total + turn.messages.length, 0);
+  if (session.n_messages !== undefined && session.n_messages !== totalMessages)
+    throw new Error("meta.n_messages 与会话消息总数不一致");
+  const { traces: _traces, ...record } = source;
+  return { ...record, meta: session, session_meta: session, messages: turns[0]!.messages, turns } as RawInput;
+}
+
+/** Project one trace for tools and Agents while retaining the session-level source identity. */
+export function normalizeTraceInput(value: unknown, traceIndex = 0): RawInput {
+  const source = object(value);
+  const input = Array.isArray(source.turns) && Object.hasOwn(source, "messages") ? source as RawInput : normalizeInput(value);
+  if (!input.turns) {
+    if (traceIndex !== 0) throw new Error("单轮输入只能选择 trace_index 0");
+    return input;
   }
-  const meta = { ...metadata, ...session };
-  // Case identity belongs to the outer record, also used by scanning and duplicate detection.
+  const trace = input.turns[traceIndex];
+  if (!trace) throw new Error(`trace_index 不在会话目录中：${traceIndex}`);
+  const { turns: _turns, ...session } = input;
+  const meta = { ...(session.meta ?? {}), ...(trace.meta ?? {}) };
   for (const key of ["case_id", "batch_id"]) {
     delete meta[key];
-    if (Object.hasOwn(session, key)) meta[key] = session[key];
+    if (session[key] !== undefined) meta[key] = session[key];
+    else if (input.meta && input.meta[key] !== undefined) meta[key] = input.meta[key];
   }
-  // These describe the selected answer, not session totals or the fetching agent.
-  for (const key of ["trace_id", "model", "usage"]) {
-    delete meta[key];
-    if (Object.hasOwn(metadata, key)) meta[key] = metadata[key];
-  }
-  // Exactly one trace: missing timing can use the same session's explicit costs.
-  // A trace's explicit null still means unknown and must not be filled.
-  for (const key of ["first_token_time_cost", "first_answer_time_cost", "finish_answer_time_cost"])
-    if (Object.hasOwn(metadata, key)) meta[key] = metadata[key];
-  if (metadata.ok === false) meta.ok = false;
-  const { traces: _traces, ...record } = source;
-  return { ...record, meta, trace_id: metadata.trace_id ?? null, messages: trace.messages } as RawInput;
+  if (trace.meta?.ok === false) meta.ok = false;
+  return { ...session, meta, trace_id: trace.meta?.trace_id ?? null, messages: trace.messages };
 }

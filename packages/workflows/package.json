@@ -11,6 +11,10 @@
       "types": "./answer-review.d.ts",
       "import": "./answer-review.js"
     },
+    "./attribution": {
+      "types": "./attribution.d.ts",
+      "import": "./attribution.js"
+    },
     "./inputs": {
       "types": "./inputs.d.ts",
       "import": "./inputs.js"

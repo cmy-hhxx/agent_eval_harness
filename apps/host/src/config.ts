@@ -1,5 +1,6 @@
 import type { EvaluationConfig } from "@eval/workflows/inputs";
 import type { AnswerReviewConfig } from "@eval/workflows/answer-review";
+import type { AttributionConfig } from "@eval/workflows/attribution";
 import path from "node:path";
 import { DEFAULT_POLICY, type OutputTarget, type ProblemLibraryTarget } from "@eval/contracts";
 import { readJson } from "@eval/data";
@@ -51,9 +52,11 @@ interface HostConfiguration {
 export type HostConfig = HostConfiguration & (
   | { workflow: "comparison"; evaluation: EvalConfig }
   | { workflow: "answer-review"; evaluation: AnswerReviewConfig }
+  | { workflow: "attribution"; evaluation: AttributionConfig }
 );
 export type ComparisonHostConfig = Extract<HostConfig, { workflow: "comparison" }>;
 export type AnswerReviewHostConfig = Extract<HostConfig, { workflow: "answer-review" }>;
+export type AttributionHostConfig = Extract<HostConfig, { workflow: "attribution" }>;
 
 function isObject(value: unknown): value is ConfigObject {
   return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -199,21 +202,18 @@ function buildEvaluationBase(source: ConfigObject): EvaluationConfig {
   return config;
 }
 
-type WorkflowEvaluation = EvalConfig | AnswerReviewConfig;
+type WorkflowEvaluation = EvalConfig | AnswerReviewConfig | AttributionConfig;
 function isAnswerReviewEvaluation(config: WorkflowEvaluation): config is AnswerReviewConfig {
   return "workflow" in config && config.workflow === "answer-review";
 }
+function isAttributionEvaluation(config: WorkflowEvaluation): config is AttributionConfig {
+  return "workflow" in config && config.workflow === "attribution";
+}
 
 function buildEvaluation(source: ConfigObject): WorkflowEvaluation {
-  if (source.workflow !== undefined && !["comparison", "answer-review"].includes(String(source.workflow))) throw new Error("Invalid workflow");
+  if (source.workflow !== undefined && !["comparison", "attribution"].includes(String(source.workflow))) throw new Error("Invalid workflow");
   const base = buildEvaluationBase(source);
-  if (source.workflow === "answer-review") {
-    if (source.rewrite !== undefined && !isObject(source.rewrite)) throw new Error("Invalid rewrite");
-    const rewrite = source.rewrite as ConfigObject | undefined;
-    return { ...base, workflow: "answer-review", rewrite: {
-      attribution: optionalBoolean(rewrite?.attribution, "rewrite.attribution") ?? true,
-    } };
-  }
+  if (source.workflow === "attribution") return { ...base, workflow: "attribution" };
   const config: EvalConfig = {
     ...base,
     problemLibrary: source.problemLibrary as ProblemLibraryTarget,
@@ -457,11 +457,12 @@ async function mergedSource(
 
 /** Narrows an evaluation to the selected models; configured groups keep their remaining members. */
 function selectVersions(evaluation: WorkflowEvaluation, ids: string[]): WorkflowEvaluation {
-  if (ids.length < (isAnswerReviewEvaluation(evaluation) ? 1 : 2))
-    throw new Error(isAnswerReviewEvaluation(evaluation) ? "至少选择一个模型" : "至少选择两个模型");
+  const independent = isAnswerReviewEvaluation(evaluation) || isAttributionEvaluation(evaluation);
+  if (ids.length < (independent ? 1 : 2))
+    throw new Error(independent ? "至少选择一个模型" : "至少选择两个模型");
   const versions = evaluation.inputs.versions.filter((version) => ids.includes(version.id));
   if (versions.length !== ids.length) throw new Error("运行设置包含未登记的模型");
-  if (isAnswerReviewEvaluation(evaluation)) return { ...evaluation, inputs: { ...evaluation.inputs, versions } };
+  if (independent) return { ...evaluation, inputs: { ...evaluation.inputs, versions } };
   const comparisons = selectComparisonGroups(evaluation.comparisons, ids);
   if (!comparisons.length) throw new Error("所选模型没有可比较的组合");
   return { ...evaluation, inputs: { ...evaluation.inputs, versions }, comparisons };
@@ -473,7 +474,7 @@ export async function loadComparisonEvaluation(sources: string | string[], setti
   readEvaluatorVersion(source);
   const evaluation = buildEvaluation(source);
   const selected = versions ? selectVersions(evaluation, versions) : evaluation;
-  if (isAnswerReviewEvaluation(selected)) throw new Error("此入口需要对战工作流配置");
+  if (isAnswerReviewEvaluation(selected) || isAttributionEvaluation(selected)) throw new Error("此入口需要对战工作流配置");
   return selected;
 }
 
@@ -489,10 +490,8 @@ export async function loadConfig(
   const base = buildEvaluation(source), models = buildModels(source, configuration);
   const evaluation = versions ? selectVersions(base, versions) : base;
   const common = { evaluatorVersion, models, automation: configuration.automation };
-  if (isAnswerReviewEvaluation(evaluation)) {
-    if (evaluation.rewrite.attribution && !models.bindings.rewrite) throw new Error("rewrite 已启用但缺少 bindings.rewrite");
-    return { ...common, workflow: "answer-review", evaluation };
-  }
+  if (isAttributionEvaluation(evaluation)) return { ...common, workflow: "attribution", evaluation };
+  if (isAnswerReviewEvaluation(evaluation)) throw new Error("answer-review 已移除，请使用 attribution 或 comparison workflow");
   if ([evaluation.rewrite.comparison, evaluation.rewrite.attribution, evaluation.rewrite.clustering].some(Boolean) && !models.bindings.rewrite)
     throw new Error("rewrite 已启用但缺少 bindings.rewrite");
   if (evaluation.clustering.enabled && !models.bindings.clustering)

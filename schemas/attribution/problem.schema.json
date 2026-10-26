@@ -1,0 +1,56 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://eval.local/attribution/problem.schema.json",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "problem_id",
+    "component",
+    "label",
+    "definition",
+    "problem_phenomena",
+    "reason",
+    "evidence"
+  ],
+  "properties": {
+    "problem_id": { "type": "string", "minLength": 1 },
+    "component": {
+      "type": "string",
+      "minLength": 1,
+      "description": "程序按 taxonomy 和实际调用填写的具体组件，例如 finquery 取数服务。"
+    },
+    "label": { "type": "string", "minLength": 1, "description": "可复用的短问题名称。" },
+    "definition": { "type": "string", "minLength": 1, "description": "该类问题的行为、触发范围与可见结果。" },
+    "problem_phenomena": { "type": "string", "minLength": 1, "description": "本回答中具体可见的问题现象。" },
+    "reason": { "type": "string", "minLength": 1, "description": "证据如何证明该现象及其技术原因。" },
+    "evidence": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["position", "component", "quote", "reason"],
+        "properties": {
+          "position": { "type": "string", "minLength": 1, "description": "原始消息与字段坐标。" },
+          "component": {
+            "type": "string",
+            "minLength": 1,
+            "description": "证据所属位置，例如 reasoning: Expert 推理轮、tool_call: finquery 取数服务。"
+          },
+          "quote": { "type": "string", "minLength": 1, "maxLength": 400 },
+          "reason": { "type": "string", "minLength": 1, "description": "这段原文具体证明了什么。" }
+        }
+      }
+    },
+    "calculations": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["text"],
+        "properties": { "text": { "type": "string", "minLength": 1, "description": "说明哪里算错了以及正确结果。" } }
+      }
+    }
+  }
+}

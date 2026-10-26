@@ -11,14 +11,16 @@ import { findingIssueContext } from "./finding-feedback.js";
 import { attributionSubmissionSchema } from "./submission-schema.js";
 import { attributionFindingBasis } from "./finding-basis.js";
 import { investigationMaterial } from "./investigation-material.js";
+import { componentAttributionProfile, sessionAttributionProfile, traceAttributionProfile } from "./session-profiles.js";
 export { attributionFindingBasis } from "./finding-basis.js";
 export { buildAttributionExecutionNodes, buildAttributionTransitions, type AttributionExecutionNode, type AttributionTransition, type TransitionKind, type TransitionBoundary } from "./transitions.js";
 export { attributionNormDirectory, type AttributionNorm } from "./norm-directory.js";
 export { numericReferenceDirectory } from "./units.js";
 export * from "./types.js";
-export { responsibilityLabels,responsibilityComponentName,responsibilityDisplay,responsibilityComponent,transferChanged,responsibilityCode,selectableTransitions,type ResponsibilityMaterial } from "./responsibility.js";
+export { responsibilityLabels,responsibilityComponentName,responsibilityDisplay,responsibilityComponent,attributionComponentLabel,transferChanged,responsibilityCode,selectableTransitions,type ResponsibilityMaterial } from "./responsibility.js";
 export { attributionTableChecks, attributionTableReview } from "./table-review.js";
 export type { TableReviewConcern } from "./table-review.js";
+export { componentAttributionProfile, sessionAttributionProfile, traceAttributionProfile } from "./session-profiles.js";
 // Attribution resolves evidence IDs into source locations before the result is accepted.
 const toolNames = [
   "read_execution", "read_responsibility_chain", "read_trace", "search_trace", "view_image", "calculate", "execute_code",
@@ -64,5 +66,5 @@ export const attributionProfile: AgentProfile = {
 };
 export const attributionAgent: AgentDefinition = {
   id: "attribution",
-  profiles: { default: attributionProfile },
+  profiles: { default: attributionProfile, component: componentAttributionProfile, trace: traceAttributionProfile, session: sessionAttributionProfile },
 };

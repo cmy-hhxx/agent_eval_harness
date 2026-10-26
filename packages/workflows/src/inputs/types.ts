@@ -19,10 +19,20 @@ export interface Message extends JsonObject {
   model?: string;
 }
 
+/** One QA trace in a session. Message indices are local to this trace. */
+export interface SessionTurn {
+  meta?: JsonObject;
+  messages: Message[];
+}
+
 export interface RawInput extends JsonObject {
   request_time?: string | null;
   has_standard_answer?: boolean;
   messages: Message[];
+  /** Present for session inputs; one entry per user/assistant QA trace. */
+  turns?: SessionTurn[];
+  /** Original outer session meta, before any single-trace compatibility merge. */
+  session_meta?: JsonObject;
   meta?: JsonObject;
   batch_id?: string;
   case_id?: string;
@@ -54,6 +64,18 @@ export interface Candidate {
   final_index: number;
   reference: unknown;
   llm: string | null;
+  /** Session identity is shared by every trace in one input row. */
+  session_id?: string;
+  /** Program-derived trace directory used by session orchestration. */
+  turns?: CandidateTurn[];
+}
+
+export interface CandidateTurn {
+  trace_index: number;
+  trace_id: string | null;
+  question: string;
+  final_index: number | null;
+  component_names: string[];
 }
 
 export interface EvaluationInputs {

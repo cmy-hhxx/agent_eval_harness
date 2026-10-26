@@ -21,7 +21,7 @@
 
 业务链路目录遇到含图片的工具返回时，使用容器下原始文本叶子的坐标登记文本证据，保持原有摘录预算；图片展示占位符不能进入文本证据目录，也不能替代图片读取。
 
-每条问题使用 `problem_id/text/reason/evidence_status/evidence/component/attribution_reason`，程序从模型选择的 boundary 和证据派生 `responsibility_chain`。有真实缺口时增加 `uncertainties`，确有独立传播或放大时增加 `related_responsibilities`，依赖计算时增加 `calculations`。问题编号、主体名称、责任链和证据坐标由程序填写；模型只选稳定编号并写判断。`evidence_status` 为“已确认”或“待核实”，与责任是否已知分开。证据原文去重，`purposes` 标注“问题”“归因”或两者。关联责任只保留一层主体—理由—证据关系。仅有输入输出差异不证明隐藏机制；已知参数生成调用不能因无隐藏推理而写未知。
+Attribution 以 session 为正式单位：一行包含 `session_meta`、`turns[]`、`session_summary`、`session_problem`。每个 turn 使用 `meta/summary/problem/is_correct/correct_reason`，turn 与 session 的 Problem 同形：`problem_id/component/label/definition/problem_phenomena/reason/evidence/calculations`。`is_correct` 为 1、0 或 null；不再使用 `has_standard_answer`。`evidence.position` 必须同时包含 trace_index、message_index 和 path；`quote` 最多 400 字且必须精确连续。
 
 收据保存接受时的评测器标识和实际判官模型 `judge`；正式行的 `evaluator_version` 必须与收据一致。改写另存 `rewritten.evaluator_version`，统计汇总 `evaluator_versions` 与 `judge_models`。同 run 可混合版本：已接受结果不变，未完成任务使用当前配置。
 
@@ -64,7 +64,7 @@
 
 工作台清洗入口会补齐 `meta.info` 中的业务标签、按 RUED 计算完整精度 `meta.difficulty_score` 并补缺失的 `meta.difficulty`，同时规整毫秒耗时与 `usage`。既有难度冲突、非法可选指标写入清洗报告，不因此排除有效回答；`ask_time` 不作为请求时间。字段优先级与未知值规则见[标签与效率清洗](../data_service/docs/metadata.md)。
 
-适配器 `a` 读取 OpenAI 风格消息及 GPT 采集的 `span`（`reasoning` 元数据，以及带 `output` 的 `thinking` 或 `tool-*` 记录）；工具 span 的输出参与证据导航，`reasoning` 元数据和思考 span 不作为工具返回，不改写原消息或证据坐标。`b` 读取显式轮次，两者与模型厂商无关。统一入口也接受 `{meta,traces:[{meta,messages}]}`，当前要求恰好一个 trace；多 trace、与顶层 messages 并存、计数或身份不一致均拒绝。不重排消息、不拼造最终回答。外层题目与标准优先；模型、trace、耗时和 usage 取本 trace，缺失不以会话总量补齐。
+适配器 `a` 读取 OpenAI 风格消息及 GPT 采集的 `span`（`reasoning` 元数据，以及带 `output` 的 `thinking` 或 `tool-*` 记录）；工具 span 的输出参与证据导航，`reasoning` 元数据和思考 span 不作为工具返回，不改写原消息或证据坐标。`b` 读取显式轮次，两者与模型厂商无关。统一入口接受 `{meta,traces:[{meta,messages}]}` 并规范化为 `turns[]`；每轮都必须有完整最终回答，任意一轮缺失时整条 session 过滤。不重排消息、不拼造最终回答；事件元信息按各自 turn 保留。
 
 原始消息中的 `role: null` 表示未记录角色；生成 Agent 请求的 catalog 时省略该可选字段，保留原始输入及证据坐标，不推断或补造角色。
 
@@ -94,11 +94,11 @@ Attribution 正式结果顶层只有 meta、summary、Problem、has_standard_ans
 
 普通 Comparison 可用 `source_reviews` 提交决定性来源疑点，每项选择已有 `slot_index`、该槽 `reviewable_candidates` 中的 `candidate` 并说明 `reason`。程序绑定该候选原判据和 finding，保留 `needs_review`、空排名和空决定性引用，不改变归因。非空复核禁止同时提交正式或相对偏好；资源槽、不适用候选及重复选择均拒绝。双方门槛不一致继续用 `scope_conflicts`，同槽不重复提交两种复核。此入口约束已识别的语义风险，结构校验本身不保证模型能识别所有误读。
 
-`is_correct` 只表示与给定标准答案的一致性，不代表整体质量。有标准时为 true、false 或确实无法判断时的 null，correct_reason 说明对象、依据和具体原因。无标准时程序固定 is_correct=null、correct_reason=null；仍调查事实、过程和交付缺陷。
+`is_correct` 只表示与给定标准答案的一致性，不代表整体质量。1 表示一致，0 表示不一致，null 表示没有标准或给定标准无法支持判断。`correct_reason` 说明对象、依据和具体原因；没有标准时不编造正确性。
 
 预测重评复用这套核对，正式 Comparison 增加成对出现的 `evaluation_purpose: "prediction"` 与 `prediction` 元数据，记录原任务、run、比较 ID、题目 ID、提问时刻和适用目标窗口。完整事后标答和来源保存在 `ground_truth`，只核验适用的明确预测结论，不以单次事件证明概率准确；多目标逐项说明，全部命中才判整体正确。判据仍来自原题，原回答和证据坐标不改写。自动入队、原位上传与统计替换见[预测类自动评测](automations.md#预测类自动评测)。
 
-每条问题使用 `problem_id/text/reason/evidence_status/evidence/component/attribution_reason`，有真实缺口时增加 `uncertainties`，确有独立传播或放大时增加 `related_responsibilities`，依赖计算时增加 `calculations`。问题编号、主体名称和证据坐标由程序填写；模型只选稳定编号并写判断。`evidence_status` 为“已确认”或“待核实”，与责任是否已知分开。证据原文去重，`purposes` 标注“问题”“归因”或两者。关联责任只保留一层主体—理由—证据关系。仅有输入输出差异不证明隐藏机制；已知参数生成调用不能因无隐藏推理而写未知。
+组件目录优先读取 `trace.meta.tool_names_text` 与 `skill_names_text`，为空时从真实调用派生。每个组件独立审查工具调用和相邻小现场；工具报错、零行、空返回、截断、缺返回和调用无结果都按技术问题审查。超大返回不能整体塞入上下文，后续最多三次续读，先做字面 grep，再读取精确字段和短原文。
 
 责任沿请求、工具返回、实际模型输入和最终交付定位。模型误用工具与工具自身错误分开；正确返回不证明模型实际收到。呈现、上下文或环境责任须有本方过程与交付证据。来源坐标合法只证明可定位，不证明责任或语义成立。
 
@@ -235,12 +235,12 @@ Rewrite 只接收选定文本槽位，不接触原题、原始消息或证据。
 
 结构、范围、证据和固定前缀可以机械校验；语气、事实忠实、责任与取舍须按[质量指南](quality.md)复核。测试不得用点评关键词或提示词原句冒充语义正确性。
 
-归因先验收结构、计算和真实调用身份。初稿通过验收后直接成为正式结果，不进入第二次模型会话；程序不证明摘要无漏项、机制解释无过度推断、关联责任确有独立作用，真实样本抽审仍是质量验收依据。
+归因先验收 session 结构、组件证据和真实调用身份。组件与 trace 是内部任务，只保留在运行状态和收据中；最终只导出 `attribution-session`。程序不证明摘要无漏项或机制解释无过度推断，真实样本抽审仍是质量验收依据。
 
-正式 Problem 及关联责任不输出 `responsibility_boundary`；该稳定编号仅保留在内部模型提交与收据中，用于精确关联真实调用。程序按 attribution/taxonomy.json 的组件定义生成 component 展示名称和责任链，不用展示名称反查身份或去重调用；内部模型名及原始坐标仍可溯源。正文说明具体动作和偏差。
+正式 Problem 不输出责任 boundary 或责任链。组件由任务固定并按 taxonomy 映射；证据中的 `component` 明确写出 `reasoning:`、`tool_call:`、`answer:` 等位置和具体工具名。`position` 保留消息与字段坐标，正文说明具体动作和偏差。
 
 归因探索与修复共用从开始即公开的既有总额度，提交不再解锁额外工具次数，不增加总预算或重试。进度 Token 仅累计已归档尝试，同时显示待归档次数和统计覆盖范围；零值不代表没有实际消耗。checkpoint.writeMs 是累计持久化墙钟时间，不是事件循环阻塞时间；snapshotMs 仅衡量快照构造，不涵盖全部持久化 CPU。
 
-归因边界导航同时展示真实组件、原始消息及中文动作；节点页直接提供本次调用的责任编号，减少为获取编号单独往返。计算结果使用原生JSON数字，源数保留十进制字符串；类型修复不改变原数，完整提交仍须通过精确复算与安全表示范围检查，不保留旧结果字符串格式。
+归因的计算说明直接写 `calculations[].text`，说清错误算式、正确结果或偏差方向，不再保存嵌套操作数、单位和复算元数据。`quote` 必须短而精确，超长原文要求重新选择片段，不做省略号截断。
 
-责任选择仅接受 `boundary:<transition_index>`，不接受裸节点数字或null；正式输出仍不含 responsibility_boundary。未被终稿引用的实际压缩来源也进入处理链导航。
+Comparison 独立消费整场 session 的 Attribution 输出，按 QAQAQA 比较整体交付，不逐 trace 判胜，也不在 Attribution workflow 内创建 Comparison 任务。

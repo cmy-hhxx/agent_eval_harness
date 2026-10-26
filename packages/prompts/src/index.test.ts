@@ -183,3 +183,15 @@ test("taxonomy components carry one group, stage and definition", () => {
   assert.equal(components["finquery-script"]?.label, "finquery.py 脚本（经 shell）");
   assert.equal(components["data-visualizer"]?.label, "data-visualizer 图表渲染");
 });
+
+test("session attribution profiles are independently addressable and never expose boundary ids", () => {
+  const component = agentPrompt("attribution", ["read_trace", "search_trace"], { profile: "component", fileSubmission: true });
+  const trace = agentPrompt("attribution", [], { profile: "trace", fileSubmission: false });
+  const session = agentPrompt("attribution", [], { profile: "session", fileSubmission: false });
+  for (const prompt of [component, trace, session]) {
+    assert.doesNotMatch(prompt.systemPrompt, /boundary:\d+/u);
+    assert.doesNotMatch(prompt.instructions, /boundary:\d+/u);
+  }
+  assert.match(component.instructions, /三次续读/u);
+  assert.match(session.instructions, /session_problem/u);
+});

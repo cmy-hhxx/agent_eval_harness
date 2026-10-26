@@ -36,6 +36,52 @@ export interface AttributionResult {
   is_correct: boolean | null;
   correct_reason: string | null;
 }
+
+/** Final session-level problem. Trace and session problems share this exact shape. */
+export interface SessionProblem {
+  problem_id: string;
+  component: string;
+  label: string;
+  definition: string;
+  problem_phenomena: string;
+  reason: string;
+  evidence: {
+    position: string;
+    component: string;
+    quote: string;
+    reason: string;
+  }[];
+  calculations?: { text: string }[];
+}
+
+export interface TraceAttributionResult {
+  meta: JsonObject;
+  summary: string;
+  problem: SessionProblem[];
+  is_correct: 1 | 0 | null;
+  correct_reason: string | null;
+}
+
+export interface SessionAttributionResult {
+  session_meta: JsonObject;
+  turns: TraceAttributionResult[];
+  session_summary: string;
+  session_problem: SessionProblem[];
+}
+
+export interface ComponentProblem {
+  label: string;
+  definition: string;
+  problem_phenomena: string;
+  reason: string;
+  evidence: { index: number; reason: string }[];
+  calculations?: { text: string }[];
+}
+
+export interface ComponentReviewResult {
+  component: string;
+  problems: SessionProblem[];
+}
 export interface AttributionSubmission {
   summary: string;
   Problem: {

@@ -46,12 +46,12 @@
 
 推理与交付阶段的 generation_message_index 仅是内部来源关联，不是业务名称或新身份；reasoning_blocks 保存程序提取的短原文与坐标，支持定位首次引入，不能把共享名称当作同一责任。
 
-归因先验收结构、计算和真实调用身份。初稿通过验收后直接成为正式结果，不进入第二次模型会话；程序不证明摘要无漏项、机制解释无过度推断、关联责任确有独立作用，真实样本抽审仍是质量验收依据。
+Attribution 正式文件一行对应一个 session；component 与 trace 是内部任务，只保存在状态和收据中。程序不证明摘要无漏项或机制解释无过度推断，真实样本抽审仍是质量验收依据。
 
-正式 Problem 及关联责任不输出 `responsibility_boundary`；该稳定编号仅保留在内部模型提交与收据中，用于精确关联真实调用。程序按 attribution/taxonomy.json 的组件定义生成 component 展示名称，不用展示名称反查身份或去重调用；内部模型名及原始坐标仍可溯源。正文说明具体动作和偏差。
+每个 Problem 使用 `problem_id/component/label/definition/problem_phenomena/reason/evidence/calculations`。`evidence` 单项包含 `position/component/quote/reason`；`quote` 最多 400 字且必须精确连续。`calculations` 只保留文字点评。
 
-正式 `responsibility_chain` 由程序从模型选择的主责/关联责任 boundary、实际转换和问题证据派生。模型提交不含该字段；程序只把命中当前问题证据的上游转换作为 context，正常传递不升级为责任主体。
+session 与 trace 的 Problem 同形。`trace.meta` 与 `session_meta` 直接保留输入值，`is_correct` 使用 1/0/null 替代 `has_standard_answer`。
 
 归因探索与修复共用从开始即公开的既有总额度，提交不再解锁额外工具次数，不增加总预算或重试。进度 Token 仅累计已归档尝试，同时显示待归档次数和统计覆盖范围；零值不代表没有实际消耗。checkpoint.writeMs 是累计持久化墙钟时间，不是事件循环阻塞时间；snapshotMs 仅衡量快照构造，不涵盖全部持久化 CPU。
 
-责任选择仅接受 `boundary:<transition_index>`，不接受裸节点数字或null；正式输出仍不含 responsibility_boundary。未被终稿引用的实际压缩来源也进入处理链导航。
+组件优先来自 `tool_names_text` 与 `skill_names_text`，缺失时从真实调用派生。正式结果不包含 `boundary:N`、`responsibility_chain` 或旧 `evidence_status`。

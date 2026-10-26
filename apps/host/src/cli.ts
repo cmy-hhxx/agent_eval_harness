@@ -16,6 +16,7 @@ import { validateRun, validateClusteringJob, reportClusteringJob } from "@eval/w
 import { runClusteringCommand } from "./clustering-command.js";
 import { readClusteringSource } from "./clustering-sources.js";
 import { runAttributionCommand } from "./attribution-command.js";
+import { readAttributionWorkflowCommand, runAttributionWorkflowCommand } from "./attribution-workflow-command.js";
 import { runStabilityCommand } from "./stability-command.js";
 import { runModelProbe } from "./model-probe.js";
 import { createBalancedModels } from "./balanced-models.js";
@@ -241,6 +242,8 @@ dashboard: --port 4173 在本机启动控制看板`,
           ? command === "status" ? checkpoint
             : command === "validate" ? await validateClusteringJob(run, readClusteringSource)
             : await reportClusteringJob(run, readClusteringSource)
+          : checkpoint.workflow === "attribution"
+          ? await readAttributionWorkflowCommand(command as "status" | "validate", run)
           : checkpoint.workflow === "answer-review"
           ? await readAnswerReviewCommand(command as "report" | "status" | "validate", run)
           : command === "status"
@@ -271,7 +274,7 @@ dashboard: --port 4173 在本机启动控制看板`,
     values["dashboard-settings"] ? JSON.parse(values["dashboard-settings"]) : undefined,
   );
   logger.addSecrets(...configurationSecrets());
-  if (values.stage && host.workflow !== "answer-review" && command !== "model-probe") throw new Error("--stage 只用于独立评审或model-probe");
+  if (values.stage && !["answer-review", "attribution"].includes(host.workflow) && command !== "model-probe") throw new Error("--stage 只用于独立评审或model-probe");
   if (command === "model-probe") {
     const result = await runModelProbe({ configPaths: values.config, stage: values.stage, execute: values.execute });
     console.log(JSON.stringify(result, null, 2));
@@ -280,6 +283,8 @@ dashboard: --port 4173 在本机启动控制看板`,
   }
   if (host.workflow === "answer-review" && !["run", "preflight", "index"].includes(command))
     throw new Error("独立评审使用 run、preflight、status、report 或 validate");
+  if (host.workflow === "attribution" && !["run", "preflight", "index"].includes(command))
+    throw new Error("Attribution 使用 run、preflight、status 或 validate");
   if (command === "validate-stability") {
     if (values.input || values.batch || values.case || values["limit-cases"])
       throw new Error("validate-stability 使用 --cases 固定样本清单或 --run 选择已接受来源");
@@ -383,6 +388,13 @@ dashboard: --port 4173 在本机启动控制看板`,
       workers: values.worker, skipFailed: values["skip-failed"], discoverInputs: values["discover-inputs"],
       resumeStages: values["resume-stage"], balanceChannels: values["balance-channels"],
       pilotCases: values["pilot-cases"] === undefined ? undefined : Number(values["pilot-cases"]),
+    });
+    return;
+  }
+  if ("workflow" in config && config.workflow === "attribution") {
+    process.exitCode = await runAttributionWorkflowCommand({ ...host, workflow: "attribution", evaluation: config }, {
+      command, runId: values["run-id"], debug: values.debug, workers: values.worker,
+      discoverInputs: values["discover-inputs"], resumeStages: values["resume-stage"], balanceChannels: values["balance-channels"],
     });
     return;
   }

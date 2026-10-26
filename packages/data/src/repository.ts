@@ -32,7 +32,7 @@ export type ResultEncoder = (
   task: PlannedTask,
   state: RunState,
   inputs: Record<string, unknown>,
-) => ResultReference & { row: JsonObject; auxiliary?: boolean };
+) => (ResultReference & { row: JsonObject; auxiliary?: boolean }) | null;
 
 export function createRunRepository<Checkpoint>(
   codec: RunCodec<Checkpoint>,
@@ -83,6 +83,7 @@ export function createRunRepository<Checkpoint>(
     readTasks: (run, taskIds) => readState(run, new Set(taskIds)),
     createResultWriter(run, inputs) {
       const written = new Map<string, ResultReference & { row: JsonObject; auxiliary?: boolean }>();
+      const processed = new Set<string>();
       const directory = locateRun(run).results;
       const files = new Map<string, ReturnType<typeof createResultFileWriter>>();
       let existingRows: Map<string, JsonObject> | undefined;
@@ -104,13 +105,15 @@ export function createRunRepository<Checkpoint>(
             }
           }
           for (const [id, exported] of written) if (receipts[id]) receipts[id].exported = exported;
-          const pending = manifest.tasks.filter((task) => receipts[task.id] && !written.has(task.id));
+          const pending = manifest.tasks.filter((task) => receipts[task.id] && !processed.has(task.id));
           if (initialized && !pending.length) return;
           const exports = new Map(written);
           const updates = new Set<string>();
           const groups: Record<string, Map<string, JsonObject>> = {};
           for (const task of pending) {
             const result = encodeResult(task, state, inputs);
+            processed.add(task.id);
+            if (!result) continue;
             const file = safeId(result.file!);
             const existing = existingRows.get(file + "\u0000" + result.id);
             const matching = [...exports].filter(([, value]) => value.file === file && value.id === result.id);
@@ -152,6 +155,7 @@ export function createRunRepository<Checkpoint>(
           initialized = true;
         } catch (error) {
           written.clear();
+          processed.clear();
           files.clear();
           existingRows = undefined;
           initialized = false;

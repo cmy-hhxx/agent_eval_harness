@@ -1,0 +1,47 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["session_summary", "session_problem"],
+  "properties": {
+    "session_summary": { "type": "string", "minLength": 1 },
+    "session_problem": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["label", "definition", "problem_phenomena", "reason", "evidence"],
+        "properties": {
+          "label": { "type": "string", "minLength": 1 },
+          "definition": { "type": "string", "minLength": 1 },
+          "problem_phenomena": { "type": "string", "minLength": 1 },
+          "reason": { "type": "string", "minLength": 1 },
+          "evidence": {
+            "type": "array",
+            "minItems": 1,
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["trace_index", "problem_index", "reason"],
+              "properties": {
+                "trace_index": { "type": "integer", "minimum": 0 },
+                "problem_index": { "type": "integer", "minimum": 0 },
+                "reason": { "type": "string", "minLength": 1 }
+              }
+            }
+          },
+          "calculations": {
+            "type": "array",
+            "minItems": 1,
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["text"],
+              "properties": { "text": { "type": "string", "minLength": 1 } }
+            }
+          }
+        }
+      }
+    }
+  }
+}

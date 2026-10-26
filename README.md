@@ -1,10 +1,10 @@
 # 可编排评测 Host
 
-TypeScript Host 编排评测任务，Pi Worker 执行模型与工具调用。主线为共同 Criteria 与单回答 Attribution 并行，两两 Comparison 依赖两者；改写默认开启，独立核验与聚类按需执行。
+TypeScript Host 编排评测任务，Pi Worker 执行模型与工具调用。Attribution 与 Comparison 是独立 workflow：Attribution 按 session 输入执行 component → trace → session 三段归因，Comparison 对整场 session 做两两比较。
 
 开发先读 [AGENTS.md](AGENTS.md)。当前行为以源码、配置和 Schema 为准。
 
-归因正式结果仅含 meta、summary、Problem、has_standard_answer、is_correct、correct_reason；模型填写问题与证据责任判断，程序组装身份和来源。归因专跑使用 `run --stage attribution`，不启动评分或聚类。
+归因正式文件一行对应一个 session，包含 `session_meta`、`turns[]`、`session_summary` 和 `session_problem`。每个 turn 只保留 `meta`、`summary`、`problem`、`is_correct`、`correct_reason`；组件与 turn 汇总是内部任务，只存在于运行状态和收据中。
 
 ## 远程工作台
 
@@ -100,6 +100,7 @@ npm run automations -- run --once
 | 模块、生命周期与扩展 | [架构](docs/architecture.md) · [模块地图](docs/modules/README.md) |
 | 修改、测试与文档维护 | [开发指南](docs/development.md) |
 | 单回答评分、归因与AIME评测 | [独立回答评测](docs/answer-review.md) |
+| Session 归因、组件 fan-out 与正式结果 | [Attribution](docs/attribution.md) |
 | AIME 新包清洗、增量评分与归因、启动和停止 | [AIME 增量归因](docs/aime-incremental.md) |
 | 人工复核与评测实验 | [评测质量](docs/quality.md) |
 | 提示词与工具描述 | [Prompts](packages/prompts/README.md) |

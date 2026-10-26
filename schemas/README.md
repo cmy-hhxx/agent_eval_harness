@@ -22,7 +22,9 @@
 - `submission.schema.json`：模型提交。Profile 可据可信请求收窄可选编号、槽位与数量。
 - `result.schema.json`：程序绑定身份、展开证据并接受后的结果。
 - `workflow/export.schema.json`：含稳定模型身份、源归因及派生判决的正式对比行，仅接受 `decided`。
-- `workflow/answer-review-attribution.schema.json`：独立归因正式行；顶层严格为meta、summary、Problem、has_standard_answer、is_correct、correct_reason，输入来源、trace_id、run与评测器身份由Workflow写入meta，落盘与恢复时校验。
+- `attribution/problem.schema.json`：trace 与 session 共用的扁平 Problem，证据包含 position/component/quote/reason，计算只保留文字点评。
+- `attribution/session-result.schema.json`：独立 Attribution workflow 的正式行；一行一个 session，包含 session_meta、traces、session_summary、session_problem。
+- `workflow/answer-review-attribution.schema.json`：旧 answer-review 导出契约；新 Attribution workflow 不使用该入口。
 - `workflow/clustering-tree.schema.json`：独立聚类完成后的树节点 JSONL；包含模型、功能责任、问题方向和细类，保留待观察问题及全部冻结回答的来源引用。
 - `workflow/rewritten.schema.json`：Workflow 导出的改写文案；Agent 原始结果不包含该字段，归因改写位于meta.rewritten，其他Workflow维持其当前位置。
 

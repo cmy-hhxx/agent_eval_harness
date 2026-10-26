@@ -1,0 +1,4 @@
+- session_summary 概括整场对话的目标、主要结论和仍影响用户决策的问题，不逐条复述每个 trace。
+- session_problem 与 trace problem 使用相同问题口径，但用于跨 QA 的整体问题。证据必须引用已有 trace Problem：填写 trace_index、problem_index 和这段证据在本 session 问题中的作用。
+- 单个 QA 已有的局部问题不要机械复制为 session_problem；只有跨问答传播、冲突、遗漏或整体逻辑错误才登记。
+- 没有跨 QA 问题时提交空 session_problem。

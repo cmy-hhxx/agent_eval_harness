@@ -3,9 +3,7 @@ import { randomUUID } from "node:crypto";
 import { canonical, errorText, object, ValidationError, type ValidationIssue } from "@eval/contracts";
 import { inputAdapters, resolveAdapter } from "./adapters.js";
 import { normalizeInput } from "./normalize.js";
-import type { Candidate, RawInput, Timing, VersionConfig } from "./types.js";
-
-const normalize = (text: string) => text.replace(/\s+/gu, "");
+import type { Candidate, CandidateTurn, Message, RawInput, SessionTurn, Timing, VersionConfig } from "./types.js";
 
 export function contentText(value: unknown): string {
   if (typeof value === "string") return value;
@@ -26,6 +24,43 @@ export function strings(value: unknown, prefix = ""): [string, string][] {
   );
 }
 
+function declaredComponents(value: unknown): string[] {
+  if (Array.isArray(value)) return value.filter((item): item is string => typeof item === "string").map(item => item.trim()).filter(Boolean);
+  if (typeof value !== "string" || !value.trim()) return [];
+  try {
+    const parsed: unknown = JSON.parse(value);
+    if (Array.isArray(parsed)) return declaredComponents(parsed);
+  } catch { /* plain text is the normal legacy-compatible form */ }
+  return value.split(/[,，;；\n]+/u).map(item => item.trim()).filter(Boolean);
+}
+
+function calledComponents(messages: Message[]): string[] {
+  const names: string[] = [];
+  const add = (value: unknown) => {
+    if (typeof value === "string" && value.trim()) names.push(value.trim());
+  };
+  for (const message of messages) {
+    add(message.name);
+    const outputs = Array.isArray(message.output) ? message.output : [];
+    for (const output of outputs) {
+      if (!output || typeof output !== "object") continue;
+      const calls = Array.isArray((output as { tool_calls?: unknown[] }).tool_calls) ? (output as { tool_calls: unknown[] }).tool_calls : [];
+      for (const call of calls) {
+        if (!call || typeof call !== "object") continue;
+        const fn = (call as { function?: { name?: unknown } }).function;
+        add(fn?.name);
+      }
+    }
+  }
+  return [...new Set(names)];
+}
+
+/** Metadata text wins when supplied; actual calls provide the safe fallback. */
+export function traceComponentNames(meta: Record<string, unknown>, messages: Message[]): string[] {
+  const declared = [...declaredComponents(meta.tool_names_text), ...declaredComponents(meta.skill_names_text)];
+  return [...new Set((declared.length ? declared : calledComponents(messages)))];
+}
+
 export function inputSources(candidates: Candidate[]): Map<string, Candidate[]> {
   const sources = new Map<string, Candidate[]>();
   for (const c of candidates) {
@@ -43,7 +78,7 @@ export function adapt(
   defaultBatch?: string,
 ): Candidate {
   const session = Object.hasOwn(object(value), "traces"), raw = normalizeInput(value);
-  const meta = raw.meta || {};
+  const meta = raw.meta || {}, turns: SessionTurn[] = raw.turns ?? [{ meta, messages: raw.messages }];
   const errors: ValidationIssue[] = [];
   if (
     raw.request_time !== undefined &&
@@ -86,35 +121,39 @@ export function adapt(
   if (raw.version && raw.version !== item.name) throw new Error("输入 version 与配置版本不一致");
   if (raw.case_id && meta.case_id && raw.case_id !== meta.case_id)
     throw new Error("顶层 case_id 与 meta.case_id 冲突");
-  const messages = raw.messages;
-  if (
-    meta.ok === false ||
-    !Array.isArray(messages) ||
-    !messages.length ||
-    messages.some((m) => !m || typeof m !== "object" || Array.isArray(m))
-  )
-    throw new Error("缺少有效回答或采集失败");
-  const adapter = session
-    ? Object.values(inputAdapters).find(adapter => messages.every(message => adapter.accepts(message)))
-    : resolveAdapter(item.adapter);
-  if (!adapter) throw new Error("链路含未支持的消息类型");
-  if (messages.some((m) => !adapter.accepts(m))) throw new Error("链路含未支持的消息类型");
-  const lastUser = messages.findLastIndex((m) => m.role === "user" || m.role === undefined && m.type === "user_question");
-  if (lastUser < 0) throw new Error("无法定位用户问题");
-  const final = messages.findLastIndex(
-    (m, i) => i > lastUser &&
-      (session && messages[lastUser].type === "user_question"
-        ? m.type === "final_answer" && (m.role === undefined || m.role === "assistant")
-        : m.role === "assistant" || m.role === undefined && m.type === "final_answer") &&
-      !!contentText(m.content).trim(),
-  );
-  if (final < 0) throw new Error("最后一轮没有完整最终回答");
-  const content = messages[lastUser].content;
-  const question =
-    contentText(Array.isArray(content) ? content.slice(0, 1) : content).trim() ||
-    String(meta.question || "").trim();
-  if (!question || (meta.question && normalize(question) !== normalize(String(meta.question))))
-    throw new Error("用户问题为空或 meta.question 不一致");
+  if (meta.ok === false) throw new Error("缺少有效回答或采集失败");
+  const details = turns.map((trace, trace_index) => {
+    const messages = trace.messages, traceMeta = trace.meta ?? {};
+    if (!Array.isArray(messages) || !messages.length ||
+        messages.some((m) => !m || typeof m !== "object" || Array.isArray(m)))
+      throw new Error(`trace ${trace_index} 缺少有效回答或采集失败`);
+    const adapter = session
+      ? Object.values(inputAdapters).find(adapter => messages.every(message => adapter.accepts(message)))
+      : resolveAdapter(item.adapter);
+    if (!adapter || messages.some((m) => !adapter.accepts(m))) throw new Error("链路含未支持的消息类型");
+    const lastUser = messages.findLastIndex((m) => m.role === "user" || m.role === undefined && m.type === "user_question");
+    if (lastUser < 0) throw new Error(`trace ${trace_index} 无法定位用户问题`);
+    const final = messages.findLastIndex(
+      (m, i) => i > lastUser &&
+        (session && messages[lastUser].type === "user_question"
+          ? m.type === "final_answer" && (m.role === undefined || m.role === "assistant")
+          : m.role === "assistant" || m.role === undefined && m.type === "final_answer") &&
+        !!contentText(m.content).trim(),
+    );
+    if (final < 0) throw new Error(`trace ${trace_index} 没有完整最终回答`);
+    const content = messages[lastUser].content;
+    const question = contentText(Array.isArray(content) ? content.slice(0, 1) : content).trim();
+    if (!question) throw new Error(`trace ${trace_index} 用户问题为空`);
+    const traceCandidate: CandidateTurn = {
+      trace_index,
+      trace_id: typeof traceMeta.trace_id === "string" ? traceMeta.trace_id : null,
+      question,
+      final_index: final,
+      component_names: traceComponentNames(traceMeta, messages),
+    };
+    return { trace, traceMeta, messages, adapter, final, question, traceCandidate };
+  });
+  const first = details[0]!, question = first.question, final = first.final;
   const references =
     raw.has_standard_answer === false
       ? []
@@ -122,8 +161,8 @@ export function adapt(
           .map((k) => meta[k])
           .filter((v) => v !== null && v !== undefined && v !== "");
   if (new Set(references.map(canonical)).size > 1) throw new Error("ground_truth 与 std_answer 冲突");
-  const llm = session && typeof meta.model === "string" && meta.model.trim()
-    ? meta.model : adapter.answerModel(raw, messages, final);
+  const llm = session && typeof first.traceMeta.model === "string" && first.traceMeta.model.trim()
+    ? first.traceMeta.model : first.adapter.answerModel(raw, first.messages, final);
   const fields = {
     first_token_seconds: "first_token_time_cost",
     first_answer_seconds: "first_answer_time_cost",
@@ -138,7 +177,7 @@ export function adapt(
     source_fields: {},
   };
   for (const [key, field] of Object.entries(fields)) {
-    const value = meta[field];
+    const value = Object.hasOwn(first.traceMeta, field) ? first.traceMeta[field] : meta[field];
     timing.source_values[key] = value ?? null;
     timing.source_fields[key] = `meta.${field}`;
     timing[key as keyof typeof fields] =
@@ -161,6 +200,8 @@ export function adapt(
     final_index: final,
     reference: references[0] ?? null,
     llm: llm ? String(llm) : null,
+    ...(meta.session_id || first.traceMeta.session_id ? { session_id: String(meta.session_id || first.traceMeta.session_id) } : {}),
+    turns: details.map(item => item.traceCandidate),
   };
 }
 

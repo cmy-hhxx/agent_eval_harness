@@ -43,15 +43,16 @@ test("single-trace input selects its message format independently of the configu
   assert.equal(material.request_time, undefined, "trace timestamp is not a request timestamp");
   assert.equal(originalUserTimestamp(material), null);
   assert.equal(originalAnswerUsage(material).total_tokens, 30, "trace usage overrides session totals");
-  assert(!Object.hasOwn(material, "traces"), "material contains only one copy of the messages");
+  assert.equal(material.turns?.length, 1, "session turn directory stays addressable");
+  assert.equal(material.turns?.[0]?.messages, source.traces[0].messages);
   assert.deepEqual(source.traces, before.traces, "source content and message indices stay intact");
   const plain = raw();
   assert.equal(normalizeInput(plain), plain, "current flat inputs pass through unchanged");
 });
 
-test("session inputs reject ambiguous, incomplete and multiple traces without choosing a round", () => {
+test("session inputs preserve every valid trace and reject ambiguous or incomplete rounds", () => {
   const source = sessionRaw();
-  for (const traces of [null, {}, [], [null], [source.traces[0], source.traces[0]],
+  for (const traces of [null, {}, [], [null],
     [{ ...source.traces[0], messages: [] }], [{ ...source.traces[0], messages: [null] }]])
     assert.throws(() => normalizeInput({ ...source, traces }));
   assert.throws(() => normalizeInput({ ...source, messages: raw().messages }), /同时包含/);
@@ -61,13 +62,25 @@ test("session inputs reject ambiguous, incomplete and multiple traces without ch
     meta: { ...source.traces[0].meta, session_id: "another" } }] }), /session_id.*冲突/);
   assert.throws(() => normalizeInput({ ...source, case_id: "outer", traces: [{ ...source.traces[0],
     meta: { ...source.traces[0].meta, case_id: "inner" } }] }), /case_id.*冲突/);
-  assert.throws(() => adapt({ meta: {}, traces: [{ ...source.traces[0],
-    meta: { ...source.traces[0].meta, case_id: "inner" } }] }, version, "fixture", 1, "batch"), /case_id/);
   assert.throws(() => adapt({ ...source, meta: { ...source.meta, ok: false } }, version, "fixture", 1, "batch"), /采集失败/);
   assert.throws(() => adapt({ ...source, traces: [{ ...source.traces[0],
     meta: { ...source.traces[0].meta, ok: false } }] }, version, "fixture", 1, "batch"), /采集失败/);
   assert.throws(() => adapt({ ...source, traces: [{ ...source.traces[0], messages: [source.traces[0].messages[0],
     { type: "llm_turn", role: "assistant", content: "unfinished" }] }] }, version, "fixture", 1, "batch"), /完整最终回答/);
+  const second = structuredClone(source.traces[0]!) as typeof source.traces[number];
+  second.meta = { ...second.meta!, trace_id: "trace-q2", n_messages: 2 };
+  second.messages = [
+    { type: "user_question", content: "计算3+3" },
+    { type: "final_answer", content: "3+3=6" },
+  ];
+  const multiple = normalizeInput({ ...source, meta: { ...source.meta, n_traces: 2, n_messages: 4 },
+    traces: [source.traces[0], second] });
+  assert.equal(multiple.turns?.length, 2);
+  assert.deepEqual(multiple.turns?.map(trace => trace.messages.length), [2, 2]);
+  const record = adapt({ ...source, meta: { ...source.meta, n_traces: 2, n_messages: 4 },
+    traces: [source.traces[0], second] }, version, "fixture", 1, "batch");
+  assert.equal(record.turns?.length, 2);
+  assert.deepEqual(record.turns?.map(trace => trace.question), ["计算2+2", "计算3+3"]);
 });
 
 test("type-only question and final markers preserve governing context, timestamps and exact evidence", () => {

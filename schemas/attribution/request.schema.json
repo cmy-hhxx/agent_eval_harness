@@ -9,6 +9,14 @@
     "task_analysis"
   ],
   "properties": {
+    "component": {
+      "type": "string",
+      "minLength": 1
+    },
+    "trace_index": {
+      "type": "integer",
+      "minimum": 0
+    },
     "ground_truth": {
       "type": "object",
       "additionalProperties": false,

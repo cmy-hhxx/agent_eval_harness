@@ -1,0 +1,17 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://eval.local/attribution/trace-result.schema.json",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["meta", "summary", "problem", "is_correct", "correct_reason"],
+  "properties": {
+    "meta": { "type": "object" },
+    "summary": { "type": "string", "minLength": 1 },
+    "problem": {
+      "type": "array",
+      "items": { "$ref": "./problem.schema.json" }
+    },
+    "is_correct": { "enum": [1, 0, null] },
+    "correct_reason": { "type": ["string", "null"] }
+  }
+}

@@ -1,0 +1,11 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["summary", "is_correct", "correct_reason"],
+  "properties": {
+    "summary": { "type": "string", "minLength": 1 },
+    "is_correct": { "enum": [1, 0, null] },
+    "correct_reason": { "type": "string", "minLength": 1 }
+  }
+}

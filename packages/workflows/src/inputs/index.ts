@@ -5,3 +5,4 @@ export { adapt, candidateKey, contentText, createInputScanCache, inputSources, l
 export * from "./scan.js";
 export * from "./load.js";
 export * from "./catalog.js";
+export * from "./session.js";

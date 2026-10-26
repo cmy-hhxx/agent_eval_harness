@@ -35,6 +35,23 @@ const COMPONENTS = attributionTaxonomy.components as Record<string, AttributionC
 const component = (code: string): AttributionComponent | undefined => COMPONENTS[code];
 const label = (code: string): string => component(code)?.label ?? UNKNOWN_COMPONENT;
 
+const componentAliases: Record<string,string> = {
+  finquery:"finquery", "finquery.py":"finquery-script", search:"web-search", web_search:"web-search",
+  websearch:"web-search", web_fetch:"web-fetch", web_fetch_url:"web-fetch", accessingfulltext:"web-fetch",
+  shell:"shell", "data-visualizer":"data-visualizer", view_skill:"view-skill", read_file:"view-skill",
+  stock_ner_parse:"stock-ner", memory:"memory", "终稿生成轮":"final-generation", "final-generation":"final-generation",
+};
+
+/** Map metadata tool/skill text to the stable taxonomy component display. */
+export function attributionComponentLabel(name: string): string {
+  const value=name.trim();
+  const matching=Object.values(COMPONENTS).find(component=>component.label===value);
+  if(matching)return matching.label;
+  const code=componentAliases[value.toLowerCase()];
+  if(code)return label(code);
+  return value===UNKNOWN_COMPONENT?UNKNOWN_COMPONENT:`${label("other-tools")}（${value}）`;
+}
+
 /** Scripts run through shell are separate tool-dimension components, not generic shell. */
 function commandText(message: Record<string, unknown>): string {
   const input = message.input;
