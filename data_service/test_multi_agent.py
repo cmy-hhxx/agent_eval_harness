@@ -137,6 +137,22 @@ class MultiAgentTest(unittest.TestCase):
         self.assertEqual(len(self.read(self.aime, "aime_expert")), 1)
         self.assertEqual(self.ifind.known_days(), [])
 
+    def test_aime_file_refs_are_projected_to_top_level_files(self):
+        value = row()
+        value["meta"]["file_refs"] = [{
+            "fileName": "aime_file_1.png", "filePath": "/harness/file-ref/one",
+            "contentType": None, "dsw_file_name": "hash-one.png",
+            "dsw_sha256": "ignored", "dsw_bytes": 12,
+        }]
+        self.archive(self.aime, "ainvest_20261014_010000.7z", [value])
+        self.process(self.aime)
+        result = self.read(self.aime, "aime_fast")[0]
+        self.assertEqual(result["files"], [{
+            "fileName": "aime_file_1.png", "filePath": "/harness/file-ref/one",
+            "contentType": None, "dsw_file_name": "hash-one.png",
+        }])
+        self.assertEqual(result["meta"]["file_refs"], value["meta"]["file_refs"])
+
     def test_ifind_unwraps_outer_arrays_and_keeps_rounds_and_modes_separate(self):
         one = row("ifind", "normal_agent", case=None)
         one["meta"].update(trace_id="same-session", session_round=1)

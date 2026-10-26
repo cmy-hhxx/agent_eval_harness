@@ -18,6 +18,16 @@ SOURCES = {
 }
 
 
+def project_file_refs(row: dict, meta: dict, provider: str) -> None:
+    refs = meta.get("file_refs")
+    if provider == "aime" and isinstance(refs, list) and refs:
+        row["files"] = [
+            {"fileName": ref.get("fileName"), "filePath": ref.get("filePath"),
+             "contentType": ref.get("contentType"), "dsw_file_name": ref.get("dsw_file_name")}
+            for ref in refs if isinstance(ref, dict)
+        ]
+
+
 def normalize_session(value: dict, provider: str, archive: str, member: str, line: int, item: int, metadata_issues: list | None = None) -> tuple[str, str, dict]:
     meta = app.normalize_meta(value["meta"], metadata_issues)
     traces = value["traces"]
@@ -68,6 +78,7 @@ def normalize_session(value: dict, provider: str, archive: str, member: str, lin
            **{key: field for key, field in value.items() if key not in ("request_time", "has_standard_answer", "versions")}}
     row.update(batch_id=batch, case_id=str(identity).strip(), version=channel, meta=meta,
                _source={"original_file": archive + "/" + member, "original_line": line, "original_item": item})
+    project_file_refs(row, meta, provider)
     return channel, day, row
 
 
@@ -120,6 +131,7 @@ def normalize(value: object, provider: str, archive: str, member: str, line: int
                        "case_id": str(identity).strip(), "version": channel, "meta": meta,
                        "trace_id": meta.get("trace_id"),
                        "_source": {"original_file": archive + "/" + member, "original_line": line, "original_item": item}})
+    project_file_refs(normalized, meta, provider)
     return channel, day, normalized
 
 
