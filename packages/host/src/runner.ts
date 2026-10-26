@@ -63,6 +63,8 @@ export interface RunOptions extends EvaluationServices {
   /** Return true only after selecting a different channel for subsequent attempts. */
   onModelQuotaExhausted?: (model: ModelConfig, task: PlannedTask) => boolean;
   concurrency: number;
+  /** Task slots may exceed model permits so tool reads and material assembly do not idle the model gate. */
+  taskConcurrency?: number;
   /** Limit active task attempts per model channel within the total concurrency. */
   channelConcurrency?: Record<string, number>;
   modelRequests?: ModelRequestControl;
@@ -353,7 +355,8 @@ export async function runEvaluation(options: RunOptions): Promise<Record<string,
     );
     let workerUrls = options.workerUrls || [];
     const running = new Map<string, Promise<void>>();
-    const taskConcurrency = () => options.modelRequests?.concurrency() ?? desiredConcurrency;
+    const modelConcurrency = () => options.modelRequests?.concurrency() ?? desiredConcurrency;
+    const taskConcurrency = () => Math.max(1, options.taskConcurrency ?? desiredConcurrency, modelConcurrency() * 2);
     const runnable = (task: PlannedTask) => !current.admissionPaused() && (running.size === 0 || running.size < taskConcurrency()) &&
       manifest.states[task.id].status === "pending" && !executionStopReason(manifest) && dispatchable(task) &&
       (manifest.states[task.id].nextRetryAt ?? 0) <= Date.now() &&

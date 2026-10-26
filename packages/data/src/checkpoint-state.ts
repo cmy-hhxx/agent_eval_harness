@@ -19,7 +19,7 @@ function compactIssue(issue: ValidationIssue): ValidationIssue {
 
 function compactFailure(failure: FailureContext | undefined): FailureContext | undefined {
   if (!failure) return undefined;
-  const { draft: _draft, completionCandidate: _candidate, inspection: _inspection,
+  const { draft: _draft, inspection: _inspection,
     review: _review, evidenceBank: _bank, ...rest } = failure;
   return {
     ...rest,

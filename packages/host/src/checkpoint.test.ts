@@ -16,7 +16,7 @@ test("checkpoint snapshots drop bulky review context and keep bounded diagnostic
           errors: Array.from({ length: 8 }, (_, index) => ({
             category: "decision", code: "code_" + index, path: "/", message: huge, expected: { huge },
           })),
-          draft: { huge }, completionCandidate: { id: "candidate", attemptId: "attempt", evaluation: { huge } },
+          draft: { huge },
           inspection: { id: "inspection", value: { huge }, proof: { traceReads: [], viewedImages: [] } },
           evidenceBank: [], review: { quotes: [], sources: [{ id: "source", content: huge, record: {} }], actions: [], viewed: [], searches: [] },
           contentSubmissions: 2, fileErrors: 0, repeatedErrors: 1, stopped: false, attemptId: "attempt",
@@ -38,7 +38,6 @@ test("checkpoint snapshots drop bulky review context and keep bounded diagnostic
   assert.equal(failure.errors[0]!.code, "code_5");
   assert.equal(failure.errors[0]!.expected, undefined);
   assert.equal(failure.draft, undefined);
-  assert.equal(failure.completionCandidate, undefined);
   assert.equal(failure.inspection, undefined);
   assert.equal(failure.review, undefined);
   assert.equal(snapshot.receipts.task!.audit.review, undefined);

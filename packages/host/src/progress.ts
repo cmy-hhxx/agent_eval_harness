@@ -2,8 +2,7 @@ import type { RunState } from "@eval/contracts";
 
 export function progressSnapshot(state: RunState, now = Date.now(), preparing: ReadonlySet<string> = new Set()) {
   const repairing = (id: string) => state.manifest.states[id].status === "running" &&
-    !preparing.has(id) && state.manifest.states[id].failure?.draft !== undefined &&
-    state.manifest.states[id].failure!.errors.some(error => error.code !== "completion_review_required");
+    !preparing.has(id) && state.manifest.states[id].failure?.draft !== undefined;
   const stages: Record<string, { queued: number; ready: number; preparing: number; running: number; repairing: number; accepted: number; failed: number; recent_completed_per_minute: number }> = {};
   const scope = state.manifest.executionScope && new Set(state.manifest.executionScope);
   for (const task of state.manifest.tasks) {

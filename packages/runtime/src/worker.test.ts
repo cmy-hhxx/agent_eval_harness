@@ -328,9 +328,6 @@ async function harness(
     );
     const prepared = evaluationServices.agents.prepare(evaluationServices.taskSource.bind(task, plan.inputs,
       criteria ? { criteria: criteriaReceipt! } : {}, { tasks: plan.tasks }));
-    // Dedicated completion-review tests opt in explicitly; other cases isolate tool and repair behavior.
-    if (!profile?.completionReview)
-      prepared.evaluation = { ...prepared.evaluation, completionReview: undefined };
     let posts = 0, inspectionPosts = 0,
       lookups = 0;
     const host = await listen(async (req, res, url) => {
@@ -1657,32 +1654,6 @@ test("a session stopping after rejected submission repairs within the same attem
   } finally { await fixture.close(); }
 });
 
-test("independent review receives the current Problem without extra material calls",async()=>{
-  let sessions=0;
-  const fixture=await harness(async options=>{const session=++sessions;return {async run(prompt){
-    if(session===2)assert.equal(JSON.parse(prompt).problems[0].attribution_reason,'参数生成错误。');
-    assert.equal((await options.execute('submit_evaluation',{ok:true})).terminate,true);
-  },async abort(){},async dispose(){}};},{material:'abc',policy:{repairAttempts:0,maxToolCalls:1},profile:{requiredReads:()=>[],
-    completionReview:'Recall actual components once.',completionReviewContext(){return {problems:[{attribution_reason:'参数生成错误。'}],choices:[{component:'Expert 推理轮'}]};},
-  }});
-  try{await fixture.start();const status=await fixture.done();assert.equal(status.state,'succeeded',status.error);
-    const receipt=(await fixture.store.receipt(fixture.spec.taskId))!;assert.equal(receipt.submissionStats!.contentSubmissions,1);assert.equal(receipt.audit.calls,0);assert.equal(sessions,2);
-  }finally{await fixture.close();}
-});
-
-test("independent review rejects an invalid revision without another repair loop",async()=>{
-  let sessions=0;
-  const fixture=await harness(async options=>{const session=++sessions;return {async run(){
-    await options.execute('submit_evaluation',{ok:session===1?true:'invalid'});
-  },async abort(){},async dispose(){}};},{material:'abc',policy:{repairAttempts:3},profile:{requiredReads:()=>[],
-    submissionSchema:{type:'object',required:['ok'],properties:{ok:{type:'boolean'}}},
-    completionReview:'Review once.',completionReviewContext(){return {problems:[],choices:[]};},
-  }});
-  try{await fixture.start();const status=await fixture.done();assert.equal(status.state,'failed');
-    assert.equal(sessions,2);assert.equal(status.failure?.contentSubmissions,1);assert.deepEqual(status.failure?.draft,{ok:'invalid'});
-  }finally{await fixture.close();}
-});
-
 test("dynamic investigation reads show real pages and preserve the verdict allowance",async()=>{
   const target:TraceRead={candidate:'answer',message_index:0,kind:'text',path:'/content',start:0,end:3};
   const fixture=await harness(async options=>({async run(){
@@ -2865,33 +2836,5 @@ test("Worker rejects malformed program material navigation before starting a ses
       request(fixture.worker.url+"/api/attempts","POST",{...fixture.spec,evaluation:{...fixture.spec.evaluation,materialNavigation}}),
       (error:unknown)=>error instanceof HttpError&&error.status===400&&error.message==="Invalid material navigation");
     assert.equal(sessions,0);
-  }finally{await fixture.close();}
-});
-
-test("independent review directly receives originals even when the initial session read them",async()=>{
-  const original='ma50=165.7899; period=20261023; status_code=-2601; SQL取数异常';
-  const target:TraceRead={candidate:'answer',message_index:0,kind:'text',path:'/content',start:0,end:original.length};
-  let sessions=0;
-  const fixture=await harness(async options=>{const session=++sessions;return {async run(prompt){
-    if(session===1)await options.execute('read_trace',{candidate:'answer',message_index:0,path:'/content'});
-    else assert.equal(JSON.parse(prompt).originals[0].quote,original);
-    await options.execute('submit_evaluation',{ok:true});
-  },async abort(){},async dispose(){}};},{material:original,policy:{repairAttempts:0,maxToolCalls:1},profile:{requiredReads:()=>[],
-    completionReview:'Compare originals once.',completionReviewContext(){return {originals:[{quote:original}],read_requests:[target] as any};},
-  }});
-  try{await fixture.start();const status=await fixture.done();assert.equal(status.state,'succeeded',status.error);
-    const receipt=(await fixture.store.receipt(fixture.spec.taskId))!;assert.equal(receipt.audit.calls,1);
-    assert.equal(receipt.audit.requiredReadCalls,0);assert(traceReadCoverage(receipt.audit,target).covered);
-  }finally{await fixture.close();}
-});
-test("an unfinished independent review preserves the draft and never creates a receipt",async()=>{
-  let sessions=0;
-  const fixture=await harness(async options=>{const session=++sessions;return {async run(){
-    if(session===1)await options.execute('submit_evaluation',{ok:true});
-    else return;
-  },async abort(){},async dispose(){}};},{material:'original',profile:{requiredReads:()=>[],completionReview:'Confirm or stop.'}});
-  try{await fixture.start();const status=await fixture.done();assert.equal(status.state,'failed');
-    assert.equal(await fixture.store.receipt(fixture.spec.taskId),undefined);
-    assert.deepEqual(status.failure?.draft,{ok:true});assert(status.failure?.errors.some(e=>e.code==='submission_missing'));
   }finally{await fixture.close();}
 });

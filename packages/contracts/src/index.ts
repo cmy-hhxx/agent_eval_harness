@@ -40,8 +40,6 @@ export interface EvaluationSpec {
   outputSchema: JsonSchema;
   /** Optional structured material inspection, sharing the final submission content budget. */
   inspectionSchema?: JsonSchema;
-  /** One independent session revises the initial candidate before acceptance. */
-  completionReview?: string;
   toolNames: string[];
   /** Whether this profile explicitly submits existing workspace JSON files instead of JSON values. */
   fileSubmission: boolean;
@@ -142,14 +140,7 @@ export interface ToolAudit {
   inspection?: InspectionCheckpoint;
 }
 export type { ReviewCase, ReviewQuote, ReviewAudit } from "./review.js";
-export interface CompletionCandidate {
-  id: string;
-  superseded?: boolean;
-  attemptId: string;
-  evaluation: unknown;
-}
 export interface Submission {
-  completionReview?: { candidateId: string; reason: string };
   submissionId: string;
   attemptId: string;
   taskId: string;
@@ -456,10 +447,6 @@ export interface AgentProfile {
   };
   /** Schema for the accepted result after optional submission resolution. */
   resultSchema?: JsonSchema;
-  /** Prompt-owned instructions for one independent review, without a confirmation turn. */
-  completionReview?: string;
-  /** Direct originals and the complete initial result for the independent review. */
-  completionReviewContext?(request:AgentRequest,draft:unknown,result:unknown,audit:ToolAudit):JsonObject|undefined;
   systemPrompt: string;
   instructions: string;
   submissionNudge: string;
@@ -633,8 +620,6 @@ export interface FailureContext {
   /** Keep prior choices stable even when the last draft or inspection failed. */
   evidenceBank?: import("./evidence-selection.js").EvidenceBank;
   draft?: unknown;
-  /** Host-owned provisional judgment; never a successful result. */
-  completionCandidate?: CompletionCandidate;
   inspection?: InspectionCheckpoint;
   errors: ValidationIssue[];
   contentSubmissions: number;

@@ -293,7 +293,18 @@ export async function reportAnswerReview(run:string,state?:RunState){
       for(const related of problem.related_responsibilities??[])responsibility_counts.related[related.component]=(responsibility_counts.related[related.component]??0)+1;
     }
   }
-  const report={...summary,responsibility_counts};
+  const acceptedAttributions=state.manifest.tasks.filter(t=>t.stage==='attribution'&&state.receipts[t.id]);
+  const durations=acceptedAttributions.map(t=>state.manifest.states[t.id]?.durationMs).filter((value):value is number=>Number.isFinite(value)).sort((a,b)=>a-b);
+  const percentile=(values:number[],p:number)=>values.length?values[Math.min(values.length-1,Math.max(0,Math.ceil(values.length*p)-1))]:0;
+  const firstSubmission=acceptedAttributions.filter(t=>state.receipts[t.id]?.submissionStats?.contentSubmissions===1).length;
+  const toolCalls=acceptedAttributions.reduce((sum,t)=>sum+(state.receipts[t.id]?.audit?.calls??0),0);
+  const modelConcurrency=state.manifest.concurrency||1;
+  const metrics={model_concurrency:modelConcurrency,task_concurrency:Math.max(modelConcurrency,modelConcurrency*2),
+    attribution_ms_p50:Math.round(percentile(durations,0.5)),attribution_ms_p95:Math.round(percentile(durations,0.95)),
+    first_submission_acceptance:acceptedAttributions.length?Number((firstSubmission/acceptedAttributions.length).toFixed(4)):0,
+    tokens_per_accepted_attribution:acceptedAttributions.length?Math.round(state.usage.totalTokens/acceptedAttributions.length):0,
+    tool_calls_per_accepted_attribution:acceptedAttributions.length?Number((toolCalls/acceptedAttributions.length).toFixed(2)):0};
+  const report={...summary,...metrics,responsibility_counts};
   await writeJson(path.join(run,'stats.json'),report);
   const lines=['# 独立回答评测','',`状态：${summary.status}`,''];
   if(summary.active_stages.includes('score')){

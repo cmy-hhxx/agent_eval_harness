@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { readFileSync, readdirSync } from "node:fs";
 import { DEFAULT_POLICY } from "@eval/contracts";
 import { builtinTools } from "@eval/tools";
-import { agentPrompt, attributionConditionalRules, erisPrompt, sharedPromptResources, type PromptStage } from "./index.js";
+import { agentPrompt, attributionConditionalRules, attributionTaxonomy, erisPrompt, sharedPromptResources, type PromptStage } from "./index.js";
 
 const submissionToolNames = ["submit_evaluation", "submit_evaluation_file"];
 
@@ -157,4 +157,20 @@ test("attribution sends only applicable rule resources and does not repeat share
   assert(!prompt.toolDescriptions.execute_code.includes('edit_json'));
   const focused=prompt.renderPrompt({task_focus:{question:'核查实际交付。'}});
   assert(!focused.includes('候选私有规范'));
+});
+
+test("taxonomy components carry one group, stage and definition", () => {
+  const groups = attributionTaxonomy.groups;
+  const components = attributionTaxonomy.components;
+  const listed = Object.values(groups).flat();
+  assert.deepEqual([...new Set(listed)].sort(), Object.keys(components).sort());
+  for (const [code, component] of Object.entries(components)) {
+    assert.equal(groups[component.group]?.includes(code), true, code);
+    assert.equal(attributionTaxonomy.stages.includes(component.stage), true, code);
+    assert(component.definition.trim(), code);
+    assert(Array.isArray(component.exclusions), code);
+  }
+  assert.equal(components["context-transfer"]?.optional, "material_change");
+  assert.equal(components["finquery-script"]?.label, "finquery.py 脚本（经 shell）");
+  assert.equal(components["data-visualizer"]?.label, "data-visualizer 图表渲染");
 });

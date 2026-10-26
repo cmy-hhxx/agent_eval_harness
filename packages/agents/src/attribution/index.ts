@@ -1,5 +1,5 @@
 export {checkAttributionLanguage,type AttributionLanguageField,type AttributionLanguageStatus} from './language.js';
-import { agentPrompt, attributionConditionalRules, attributionCompletionReview } from "@eval/prompts";
+import { agentPrompt, attributionConditionalRules } from "@eval/prompts";
 import { type AgentDefinition, type AgentProfile } from "@eval/contracts";
 import requestSchema from "../../../../schemas/attribution/request.schema.json" with { type: "json" };
 import submissionSchema from "../../../../schemas/attribution/submission.schema.json" with { type: "json" };
@@ -7,7 +7,6 @@ import resultSchema from "../../../../schemas/attribution/result.schema.json" wi
 import { validateEvaluation } from "./validate.js";
 import { resolveModelSubmission, validateModelSubmission } from "./submission.js";
 import { numericReferenceDirectory } from "./units.js";
-import { finalResponsibilityReview } from './responsibility-binding.js';
 import { findingIssueContext } from "./finding-feedback.js";
 import { attributionSubmissionSchema } from "./submission-schema.js";
 import { attributionFindingBasis } from "./finding-basis.js";
@@ -17,7 +16,7 @@ export { buildAttributionExecutionNodes, buildAttributionTransitions, type Attri
 export { attributionNormDirectory, type AttributionNorm } from "./norm-directory.js";
 export { numericReferenceDirectory } from "./units.js";
 export * from "./types.js";
-export { responsibilityLabels,responsibilityComponentName,responsibilityDisplay,responsibilityComponent,type ResponsibilityMaterial } from "./responsibility.js";
+export { responsibilityLabels,responsibilityComponentName,responsibilityDisplay,responsibilityComponent,transferChanged,responsibilityCode,selectableTransitions,type ResponsibilityMaterial } from "./responsibility.js";
 export { attributionTableChecks, attributionTableReview } from "./table-review.js";
 export type { TableReviewConcern } from "./table-review.js";
 // Attribution resolves evidence IDs into source locations before the result is accepted.
@@ -28,9 +27,6 @@ const toolNames = [
 const prompt = agentPrompt("attribution", toolNames, { fileSubmission:false });
 export const attributionProfile: AgentProfile = {
   id: "default",
-  completionReview: attributionCompletionReview,
-  completionReviewContext: finalResponsibilityReview,
-
   requestSchema,
   submissionSchema,
   evidenceSelections: true,

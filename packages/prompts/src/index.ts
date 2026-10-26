@@ -21,7 +21,6 @@ const taskFocus = resource("shared/task-focus.md");
 const budget = resource("shared/budget.md");
 const recovery = resource("shared/recovery.md");
 const nudge = resource("shared/nudge.md");
-export const attributionCompletionReview = resource("attribution/completion-review.md");
 export const standardConflictReviewInstructions = resource("attribution/standard-review.md");
 export const standardConflictInstructions = resource("attribution/standard-challenge.md");
 export function workflowText(name: "attribution-material" | "core-rewrite" | "criteria-review" | "prediction-evaluation"): string {
@@ -39,7 +38,17 @@ export function attributionConditionalRules(options: {
     options.tableDoubts && attributionRules["table-doubts"], options.images && attributionRules.images,
     options.captureGaps && attributionRules["capture-gaps"]].filter(Boolean).join("\n\n");
 }
+export interface AttributionComponent {
+  label: string;
+  group: string;
+  stage: string;
+  definition: string;
+  optional?: "material_change" | "command_match" | "unlisted_tool";
+  exclusions: string[];
+}
 export const attributionTaxonomy = JSON.parse(resource("attribution/taxonomy.json")) as {
+  groups: Record<string, string[]>;
+  components: Record<string, AttributionComponent>;
   domains: Record<string, string[]>;
   stages: string[];
   investigation_steps: string[];

@@ -1,5 +1,5 @@
 import { displayEvidence, images, parseEvidenceCoordinates, visualCaptureMarkers, type TraceComponentIdentity, type TableCheckResult } from "@eval/tools";
-import { responsibilityComponentName, responsibilityComponent, type ResponsibilityMaterial, type AttributionExecutionNode, type AttributionTransition, type AttributionNorm } from "@eval/agents/attribution";
+import { responsibilityComponentName, responsibilityComponent, transferChanged, type ResponsibilityMaterial, type AttributionExecutionNode, type AttributionTransition, type AttributionNorm } from "@eval/agents/attribution";
 import type { JsonObject } from "@eval/contracts";
 import { tableChecksPresentation } from "./attribution-presentation.js";
 import type { RawInput } from "../inputs/types.js";
@@ -14,11 +14,13 @@ export function attributionNavigation(answer: JsonObject, raw: RawInput, inputId
       answer: { ...row.answer, evidence: reference(row.answer.evidence) },
       sources: row.sources.map(source => ({ ...source, evidence: reference(source.evidence) })),
     }))) : [];
-  const responsibility_choices = (answer.transitions as AttributionTransition[]).filter(t => t.execution_node_index !== null).map(t => ({
-    transition_index:t.transition_index, responsibility_boundary:`boundary:${t.transition_index}`, execution_node_index:t.execution_node_index,
-    message_index:(answer.execution_nodes as AttributionExecutionNode[]).find(n=>n.execution_node_index===t.execution_node_index)!.message_index,
-    component:responsibilityComponent(answer as unknown as ResponsibilityMaterial, raw, t.transition_index), kind:t.kind,
-  }));
+  const model = answer as unknown as ResponsibilityMaterial;
+  const responsibility_choices = (answer.transitions as AttributionTransition[]).flatMap(t => {
+    if (t.execution_node_index === null && !(t.kind === "transfer" && transferChanged(model, raw, t))) return [];
+    const node = (answer.execution_nodes as AttributionExecutionNode[]).find(n => n.execution_node_index === t.execution_node_index);
+    return [{ transition_index:t.transition_index, responsibility_boundary:`boundary:${t.transition_index}`, execution_node_index:t.execution_node_index,
+      message_index:node?.message_index ?? null, component:responsibilityComponent(model, raw, t.transition_index), kind:t.kind }];
+  });
   return { table_checks, responsibility_choices, nodes: (answer.execution_nodes as AttributionExecutionNode[]).map(node => {
     const message = raw.messages[node.message_index];
     const outputs = Array.isArray(message.output) ? message.output : [];
@@ -63,6 +65,7 @@ export function initialAttributionMaterial(answer: JsonObject, raw: RawInput, na
       read_request: { candidate, view: "nodes", offset: 0 },
     },
     final_generation_choices: navigation.responsibility_choices.filter(c=>c.component==='终稿生成轮'),
+    context_transfer_choices: navigation.responsibility_choices.filter(c=>c.kind==='transfer'),
     table_check_count: navigation.table_checks.length,
     ...(navigation.table_checks.length ? { table_check_request: { candidate, view: "table_checks", offset: 0 } } : {}),
     norm_directory: (answer.norm_directory as AttributionNorm[]).map(norm => ({ ...norm,

@@ -140,7 +140,6 @@ export class AgentRegistry {
         ...(profile.draftWriteInCallLimit ? { draftWriteInCallLimit: true } : {}),
         ...(profile.jsonStringSubmission ? {jsonStringSubmission:true} : {}),
         toolDescriptions: descriptions,
-        ...(profile.completionReview ? { completionReview: profile.completionReview } : {}),
         submissionNudge: profile.submissionNudge,
         requiredReads: profile.requiredReads?.(binding.request) ?? [],
         ...(binding.presentedReads ? { presentedReads: binding.presentedReads } : {}),
@@ -246,10 +245,6 @@ export class AgentRegistry {
     if (issues.length) throw new ValidationError(this.feedbackProjection(binding,this.feedback(profile, binding.request, draft,
       [...new Map(issues.map(issue => [canonical(issue), issue])).values()]), audit.evidenceBank ?? []));
     return result;
-  }
-  completionReviewContext(binding:AgentBinding,draft:unknown,result:unknown,audit:ToolAudit) {
-    const {profile}=this.get(binding);
-    return profile.completionReviewContext?.(binding.request,draft,result,{...audit,traceReads:[...binding.presentedReads??[],...audit.traceReads]});
   }
   validate(binding: AgentBinding, result: unknown, audit: ToolAudit): void {
     audit={...audit,traceReads:[...binding.presentedReads??[],...audit.traceReads]};

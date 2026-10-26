@@ -23,13 +23,13 @@ AIME 使用 workflow: answer-review。每条回答先完成 Attribution，通过
 
 公共 Runtime 保留动态必读受保护预算和无进展停止；归因已关闭证据业务门，改由模型核查完成性及真实样本抽审。未形成完整提交或预算耗尽由 state 保留失败原因。结构检查不能证明任意自然语言判断的语义完整性，真实样本仍须抽审；技术接收数与有效评审数分别报告。
 
-运行进度以活动 Host 的 `/api/progress` 为准：`updated_at` 是实时观测时间，`checkpoint.savedAt` 是最后派生快照时间，`outbox` 给出待投影事件数、字节数、最早时间和准入是否因积压暂停。queued 等待派发，preparing 等待材料组装或派发确认，running 已派发执行（含一次独立复核），repairing 是有实际拒收的内容修复，accepted 和 failed 分别为正式收据与终止失败；这些计数互不重复。preparing 仅存在内存，不新增持久化任务状态。Host 不在线时，state 与 progress.jsonl 是恢复依据，不能据其 running 宣称模型仍在执行。
+运行进度以活动 Host 的 `/api/progress` 为准：`updated_at` 是实时观测时间，`checkpoint.savedAt` 是最后派生快照时间，`outbox` 给出待投影事件数、字节数、最早时间和准入是否因积压暂停。queued 等待派发，preparing 等待材料组装或派发确认，running 已派发执行，repairing 是有实际拒收的内容修复，accepted 和 failed 分别为正式收据与终止失败；这些计数互不重复。preparing 仅存在内存，不新增持久化任务状态。Host 不在线时，state 与 progress.jsonl 是恢复依据，不能据其 running 宣称模型仍在执行。
 
-同次尝试复用已组装材料，证据路径索引只在一次组装内存在；初稿和复核提交仍执行结构、程序身份及计算验收，不缓存通过结论。统一 runtime.log 中的 task_prepared、submission_validation、attempt_metrics 分别记录材料准备、验收和 Worker 耗时；不同任务提交只竞争 SQLite 短事务，不再记录全局提交队列等待。materialMs 包含 directoryMs；requiredReadMs 是 submissionMs 内的受保护补读子集，不重复相加。modelMs 是 SDK assistant 消息开始至结束的观测时长，工具、Host 材料 IO 和提交分别计时。输入等待不算模型空闲，但总任务 deadline 始终有效，额度和重试上限不增加。
+同次尝试复用已组装材料，证据路径索引只在一次组装内存在；初稿提交仍执行结构、程序身份及计算验收，不缓存通过结论。统一 runtime.log 中的 task_prepared、submission_validation、attempt_metrics 分别记录材料准备、验收和 Worker 耗时；不同任务提交只竞争 SQLite 短事务，不再记录全局提交队列等待。materialMs 包含 directoryMs；requiredReadMs 是 submissionMs 内的受保护补读子集，不重复相加。modelMs 是 SDK assistant 消息开始至结束的观测时长，工具、Host 材料 IO 和提交分别计时。输入等待不算模型空闲，但总任务 deadline 始终有效，额度和重试上限不增加。
 
 边界覆盖先按已解析路径和范围排除不可能覆盖的组合，再对剩余组合执行原始来源校验；部分引用仍须落在真实原文范围，不用同文内容替代坐标。该索引不跨尝试保存。
 
-初稿进入一次独立上下文复核，复用当前模型、工具与原有任务预算，复核关闭推理，直接提供相关原始请求、返回及实际生成输入输出、真实组件选项和完整六字段初稿；原文去重，组件选项限于相关调用。复核仅暴露现有 submit_evaluation，不重新调查。重点核对事实与责任形成位置，不主动展开漏报调查，不按组件配额改归责。复核直接提交修订稿，正确内容原样保留；没有成功确认轮或复核修复循环。复核必须交回完整归因，不提供确认或未完成出口；无充分反证的判断原样保留。复核后只沿用结构、真实身份、证据坐标和计算检查，不额外按摘要措辞、完成性问卷或必读数量／覆盖率拒收。结构或来源无效时保留问题草稿，不能复活已被推翻的初稿。
+初稿通过验收后直接成为正式结果，不再进入第二次模型会话。程序只验收结构、程序身份、证据坐标与计算一致性；摘要是否漏项、机制解释是否过度、关联责任是否成立等语义质量按真实样本抽审，不用复核会话替代。
 
 Rewrite 只接收 summary、问题和理由文本槽位，不接触证据，不改变原归因或评分。可选改写记录放在 `meta.rewritten`，保持正式顶层六字段。
 
@@ -50,7 +50,7 @@ npm run eval -- run --stage attribution --run-id answer-review-run --config conf
 
 `--stage score` 确保本条归因先就绪；同run增加评分复用已接受归因。`--input ID=PATH`、`--batch`、`--case`、`--limit-cases` 沿用公共筛选。`--test-eval` 与 `--pilot-cases N` 将真实测试结果放在同来源 `eval_output/test_eval`，试跑范围续跑时保持，显式 `--discover-inputs` 才释放剩余已登记回答。`--balance-channels` 按渠道 traffic_weight 分配完整任务。
 
-正式结果位于 results/attribution.jsonl、results/score.jsonl 和按需生成的 results/instruction_review.jsonl；本地 SQLite 热日志先原子确认收据，outbox 再追加正式行与 progress.jsonl。恢复 state.json 是周期派生摘要，只引用已接受 JSONL，不重复保存正文，也不保留完整复核错误现场。源输入仍在数据源，不复制到 run。status、report、validate 使用当前 workflow 读取结果和进度事件；续跑保存任务 ID、已用次数、预算和收据，不因模型或参数变化拒绝。
+正式结果位于 results/attribution.jsonl、results/score.jsonl 和按需生成的 results/instruction_review.jsonl；本地 SQLite 热日志先原子确认收据，outbox 再追加正式行与 progress.jsonl。恢复 state.json 是周期派生摘要，只引用已接受 JSONL，不重复保存正文，也不保留完整失败草稿现场。源输入仍在数据源，不复制到 run。status、report、validate 使用当前 workflow 读取结果和进度事件；续跑保存任务 ID、已用次数、预算和收据，不因模型或参数变化拒绝。
 
 新增日期及增量回答沿既定每日run追加，已接受结果不重复评测。自动恢复只选择仍有额度的可恢复任务，内容失败耗尽额度时保留可定位错误。暂停停止新分配并收尾，停止中断并保存，服务重启等待手动启动。AIME默认并发64，可在独立候选配置调整，不与问财混用。来源与持续执行见 [AIME日常评测](aime-incremental.md)。
 
@@ -71,19 +71,18 @@ npm run eval -- run --stage attribution --run-id answer-review-run --config conf
 
 模型常规提交只有 summary 和 Problem；每条问题必填 text、reason、evidence_status、evidence、responsibility_boundary、attribution_reason。有标准答案才额外提交 is_correct、correct_reason；正式六字段始终保留，meta 与 has_standard_answer 完全由程序填写。判断和说明为简洁中文，真实工具名与引文不翻译。
 
-程序验证结构、实际边界身份、证据坐标与读取记录、相关输入输出覆盖和计算一致性。程序不能可靠证明摘要没有漏项、机制文字没有过度推断、关联责任确有独立作用，或正文是否漏交必要计算；独立复核仍可能复现误判，仍须真实样本抽审。规则信号不能直接当作缺陷：零行、旧来源、原句直送及恢复后的工具失败均须结合具体任务和影响判断。
+程序验证结构、实际边界身份、证据坐标与读取记录、相关输入输出覆盖和计算一致性。程序不能可靠证明摘要没有漏项、机制文字没有过度推断、关联责任确有独立作用，或正文是否漏交必要计算；程序验收仍可能复现误判，仍须真实样本抽审。规则信号不能直接当作缺陷：零行、旧来源、原句直送及恢复后的工具失败均须结合具体任务和影响判断。
 
 归因接收口径：证据业务硬校验已关闭，不再因必读覆盖、边界前后匹配、上游来源追查或原数证据匹配触发内容修复。保留 Schema、稳定编号与来源坐标解析、程序身份一致性及计算复算。技术接收不证明评审有效，证据相关性、缺陷成立与语义完成性须真实样本抽审。公共 Runtime 的动态必读受保护预算及无进展停止仍保留，归因不再注册强制必读门。
 
-正式 Problem 及关联责任不输出 `responsibility_boundary`；该稳定编号仅保留在内部模型提交与收据中，用于精确关联真实调用。程序按组件健康度报表生成 component 展示名称，不用展示名称反查身份或去重调用；内部模型名及原始坐标仍可溯源。正文说明具体动作和偏差。
+正式 Problem 及关联责任不输出 `responsibility_boundary`；该稳定编号仅保留在内部模型提交与收据中，用于精确关联真实调用。程序按 attribution/taxonomy.json 的组件定义生成 component 展示名称，不用展示名称反查身份或去重调用；内部模型名及原始坐标仍可溯源。正文说明具体动作和偏差。
 
 归因探索与修复共用从开始即公开的既有额度，提交不再解锁额外工具次数，不增加总预算或重试。进度 Token 仅累计已归档尝试，同时显示待归档次数和统计覆盖范围；零值不代表没有实际消耗。checkpoint.writeMs 仅统计低频派生快照，不包含本地 SQLite 提交和 outbox 投影；snapshotMs 只衡量快照构造。
 
-责任组件对齐组件健康度报表：规划子模型、Expert 推理轮、终稿生成轮及具体工具名称由实际调用解析；内部模型代号只用于溯源。展示名相同不合并不同调用。报表风险信号不自动成立为缺陷。
+责任组件由 `packages/prompts/resources/attribution/taxonomy.json` 定义，按技术环节和工具维度分组；规划子模型、Expert 推理轮、终稿生成轮及具体工具名称由实际调用和实际命令解析，内部模型代号只用于溯源。展示名相同不合并不同调用。报表风险信号不自动成立为缺陷。
 
 责任链节点由模型选择现有 boundary 并写 state/evidence_indices，程序解析 component、stage、message_index、evidence_ids 与 primary/related/context。component 始终是独立主责组件，related_responsibilities 仅登记成立的关联责任；链中的正常返回、零行、历史页面不计责任。未采集处理调用的 transfer 节点 component 为 null，页面显示“输入材料变化（处理调用未采集）”；没有独立上游调用时显示“已采集输入”。终稿责任同时呈现上游状态与具体生成错误，不把整条链当作健康度组件。stats.json 与 report.md 分别统计主责问题数、关联责任数。
 
-复核以现有问题的实体标识匹配直接原始请求/返回，补入初稿未引用的相关反证，并与实际生成输入输出对照；标识只检索材料，不决定错误或责任，不沿历史祖先展开。已有问题中若不同缺陷的形成位置不同则分别登记，不拓展漏报调查。
 
 原文去重覆盖 JSON 父子范围和文本叶子；跨坐标完全相同的原文只保留一次 quote，also_at 保留全部真实坐标。不再按固定24万字符提前拒收；不改写所选原文，真实模型上下文和请求失败仍由运行时明确报告。Responses 的 off 显式发送 reasoning.effort=none，避免网关因字段缺省继续推理。
 

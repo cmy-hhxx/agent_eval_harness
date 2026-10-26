@@ -6,7 +6,6 @@ import path from "node:path";
 import { Ajv2020 } from "ajv/dist/2020.js";
 import {
   emptyUsage,
-  projectEvidenceReferences,
   presentSource,
   SUBMISSION_FILE_SCHEMA,
   SUBMISSION_JSON_SCHEMA,
@@ -115,7 +114,6 @@ export async function startWorker(
       jsonRepairs = 0,
       modelError: string | undefined,
       malformedCompletedResponse = false;
-    let reviewing = false;
     let deadlineAt = spec.deadline, deadline: NodeJS.Timeout | undefined;
     const armDeadline = () => {
       clearTimeout(deadline);
@@ -177,7 +175,7 @@ export async function startWorker(
         },
         definitions,
       );
-      const explorationLimit = () => spec.policy.maxToolCalls + 3 * (spec.evaluation.completionReview ? spec.policy.repairAttempts : Math.min(submissions, spec.policy.repairAttempts));
+      const explorationLimit = () => spec.policy.maxToolCalls + 3 * Math.min(submissions, spec.policy.repairAttempts);
       const ajv = new Ajv2020({ strict: false, allErrors: true });
       const draftPath = path.join(runtime.context.workdir, "submission-rejected.json");
       let fileErrors = 0;
@@ -223,9 +221,6 @@ export async function startWorker(
       }
       if (failure.draft !== undefined) await writeJson(draftPath, failure.draft);
       const errorSet = (errors: ValidationIssue[]) => canonical(errors.map((error) => canonical(error)).sort());
-      let completionCandidate: Submission | undefined;
-      let pendingReview: JsonObject | undefined;
-      let reviewSubmitted = false;
       const nextContentTool = () => contentToolName(spec.evaluation, Boolean(audit.inspection));
       const reserveFileDraft = () => {
         if (spec.evaluation.fileSubmission && submissions < 1 + spec.policy.repairAttempts)
@@ -334,11 +329,10 @@ export async function startWorker(
         if (!content.length) return undefined;
         reserveFileDraft();
         // Deliver every recorded page before judging the draft or charging a verdict.
-        const focused=(failure.errors.find(e=>e.code==='completion_review_required')?.expected as {focused_review?:{correction_remaining:number}}|undefined)?.focused_review;
         const feedback = textResult({ accepted: false, material_pending: true,
           ...(dynamic.length?{draft_preserved:true,errors:failure.errors}:{}),
           next_tool: nextContentTool(), read_requests, instructions: spec.evaluation.toolDescriptions.read_trace,
-          budget: { content_remaining: focused?focused.correction_remaining:Math.max(0, 1 + spec.policy.repairAttempts - submissions) },
+          budget: { content_remaining: Math.max(0, 1 + spec.policy.repairAttempts - submissions) },
         });
         return { ...feedback, content: [...feedback.content, ...content] };
       };
@@ -358,13 +352,10 @@ export async function startWorker(
       const rejectedLoad = async (errors: ValidationIssue[]) => {
         fileErrors++;
         const feedback = await rejected(errors, failure.draft, false, false, true);
-        if (reviewing) {
-          failure.stopped=true;record.failure=failure;await saveRecord();
-          controller.abort(new Error('Independent review submission is invalid'));void attempt.session?.abort();
-        } else if (!failure.stopped) reserveFileDraft();
+        if (!failure.stopped) reserveFileDraft();
         return feedback;
       };
-      const submitExclusive = async (load: () => Promise<unknown>, jsonText = false, completionReview?: Submission["completionReview"]) => {
+      const submitExclusive = async (load: () => Promise<unknown>, jsonText = false) => {
         if (accepted)
           return {
             ...textResult({
@@ -374,16 +365,9 @@ export async function startWorker(
             terminate: true,
           };
         controller.signal.throwIfAborted();
-        // Replacement intent supersedes the old candidate even if loading or the
-        // content budget rejects it. Confirmation cannot revive an unfinished draft.
-        if (reviewing) {
-          if (reviewSubmitted) throw new Error('Independent review already submitted');
-          reviewSubmitted = true;
-          completionReview = { candidateId: completionCandidate!.submissionId, reason: '独立上下文一次复核' };
-        } else if (!completionReview) completionCandidate = undefined;
-        const material = reviewing ? undefined : await supplyRequiredMaterial(investigationReads(failure.errors));
+        const material = await supplyRequiredMaterial(investigationReads(failure.errors));
         if (material) return material;
-        if (!completionReview && submissions >= 1 + spec.policy.repairAttempts) throw new Error("提交修正次数已耗尽");
+        if (submissions >= 1 + spec.policy.repairAttempts) throw new Error("提交修正次数已耗尽");
         let result: unknown;
         try {
           result = await load();
@@ -394,9 +378,9 @@ export async function startWorker(
           }
           return rejectedFile(error);
         }
-        if (!completionReview) submissions++;
+        submissions++;
         runtime.clearDraftWrite();
-        const emitLoaded = () => emit(attempt, "submission", { accepted: false, content_loaded: !completionReview, evaluation: result,
+        const emitLoaded = () => emit(attempt, "submission", { accepted: false, content_loaded: true, evaluation: result,
           contentSubmissions: (spec.recovery?.contentSubmissions || 0) + submissions,
           ...(jsonRepairs ? { jsonRepairs } : {}) });
         await writeJson(draftPath, result);
@@ -405,7 +389,6 @@ export async function startWorker(
           attemptId: spec.attemptId,
           taskId: spec.taskId,
           evaluation: result,
-          ...(completionReview ? { completionReview } : {}),
           audit: structuredClone(audit),
           usage: { ...usage },
           submissionStats: {
@@ -438,32 +421,13 @@ export async function startWorker(
                     message: error.message,
                   },
                 ];
-              if (spec.evaluation.completionReview && errors.length === 1 && errors[0].code === 'completion_review_required') {
-                pendingReview=(errors[0].expected as {focused_review:JsonObject}).focused_review;
-                completionCandidate = submission;
-                failure = { evidenceBank: [...audit.evidenceBank!], draft: structuredClone(result), errors,
-                  contentSubmissions: submission.submissionStats!.contentSubmissions, fileErrors: submission.submissionStats!.fileErrors,
-                  repeatedErrors: 0, stopped: false, attemptId: spec.attemptId,
-                  ...(failure.inspection ? { inspection: failure.inspection } : {}) };
-                record.failure = failure;
-                await saveRecord();
-                emitLoaded();
-                void attempt.session?.abort();
-                return {...textResult({accepted:false,review_pending:true}),terminate:true};
-              }
-              if(reviewing){
-                const response=await rejected(errors,result,false,false);
-                failure.stopped=true;record.failure=failure;await saveRecord();
-                controller.abort(new Error(errors.map(e=>e.message).join('; ')));void attempt.session?.abort();return response;
-              }
               if(errors.some(e=>['responsibility_unresolved','submission_unfinished'].includes(e.code))){
                 const response=await rejected(errors,result,false,false);
                 failure.stopped=true;record.failure=failure;await saveRecord();
                 controller.abort(new Error(errors.map(e=>e.message).join('; ')));void attempt.session?.abort();return response;
               }
-              const material = await supplyRejectedMaterial(errors, result, !completionReview);
+              const material = await supplyRejectedMaterial(errors, result, true);
               if (material) return material;
-              completionCandidate = undefined;
               emitLoaded();
               return rejected(errors,result);
             }
@@ -489,7 +453,6 @@ export async function startWorker(
           accepted: true,
           submissionId: accepted.submissionId,
         });
-        if(reviewing)void attempt.session?.abort();
         return {
           ...textResult({
             accepted: true,
@@ -698,8 +661,6 @@ export async function startWorker(
         } } : {}),
         async execute(name, args, signal) {
           activity();
-          if(reviewing&&!submissionTools.some(tool=>tool.name===name))return {...textResult({error:'独立复核只提交完整修订稿；相关原文已直接提供，不重新调查。'}),isError:true};
-          if(pendingReview&&!reviewing)return {...textResult({accepted:false,review_pending:true}),terminate:true};
           if (accepted) return runtime.withBudget({ ...textResult({ accepted: true }), terminate: true }, explorationLimit());
           if (controller.signal.aborted) throw controller.signal.reason;
           emit(attempt, "tool_start", { name, args });
@@ -736,7 +697,7 @@ export async function startWorker(
             timings[submissionTool ? "submissionMs" : "toolMs"] += performance.now() - toolStarted;
             if (submissionTool) pendingSubmissions--;
           }
-          if (submissionTool && !accepted && (reviewing&&reviewSubmitted || !completionCandidate && submissions >= 1 + spec.policy.repairAttempts)) {
+          if (submissionTool && !accepted && submissions >= 1 + spec.policy.repairAttempts) {
             controller.abort(new Error("Submission repair budget exhausted"));
             void attempt.session?.abort();
           }
@@ -788,8 +749,7 @@ export async function startWorker(
           modelError = undefined;
           malformedCompletedResponse = false;
           try { await attempt.session!.run(prompt); }
-          catch (error) { if (accepted || pendingReview&&!reviewing)return; if (modelError === undefined || modelError !== errorText(error)) throw error; }
-          if (pendingReview || reviewing)return;
+          catch (error) { if (accepted)return; if (modelError === undefined || modelError !== errorText(error)) throw error; }
           if (!modelError || accepted || controller.signal.aborted) return;
           // Only a real completed SDK assistant failure can enter argument repair.
           // Identity/stream/length errors remain distinct and no invalid JSON is dispatched.
@@ -803,8 +763,7 @@ export async function startWorker(
           emit(attempt, "tool_start", { name: tool.name, malformed_arguments: true, argument_object_available: false });
           if (content) {
             await enqueueContent(async () => {
-              completionCandidate = undefined;
-              if (!completionCandidate && submissions >= 1 + spec.policy.repairAttempts) throw new Error("Submission repair budget exhausted");
+              if (submissions >= 1 + spec.policy.repairAttempts) throw new Error("Submission repair budget exhausted");
               // Count and persist the failed call without manufacturing an object or a receipt.
               return rejectedLoad(errors);
             });
@@ -837,8 +796,8 @@ export async function startWorker(
       };
       await runModel(spec.prompt);
       if (
-        !accepted && !pendingReview &&
-        (Boolean(completionCandidate) || submissions < 1 + spec.policy.repairAttempts) &&
+        !accepted &&
+        submissions < 1 + spec.policy.repairAttempts &&
         !failure.stopped && !record.pendingSubmission &&
         !modelError &&
         !controller.signal.aborted &&
@@ -851,27 +810,6 @@ export async function startWorker(
           budget: { content_remaining: Math.max(0, 1 + spec.policy.repairAttempts - submissions),
             file_errors_remaining: Math.max(0, 3 - (spec.recovery?.fileErrors || 0) - fileErrors), ...runtime.budget(explorationLimit()) },
         }) : ""));
-      if(pendingReview&&!controller.signal.aborted){
-        await attempt.session.dispose();
-        reviewing=true;
-        const {read_requests,...material}=pendingReview;
-        const prompt=JSON.stringify(projectEvidenceReferences(material,audit.evidenceBank!));
-        await runtime.context.persistEvidenceBank?.([...audit.evidenceBank!]);
-        const reviewSpec:AttemptSpec={...spec,prompt,recovery:undefined,
-          model:{...spec.model,thinking:'off'},evaluation:{...spec.evaluation,
-          toolNames:[],systemPrompt:spec.evaluation.completionReview!}};
-        attempt.session=await createSession(reviewSpec);
-        audit.traceReads.push(...(read_requests as unknown as TraceRead[]??[]));
-        const started=performance.now();
-        emit(attempt,'model',{type:'independent_review_start',initial_submission_id:completionCandidate!.submissionId});
-        await runModel(prompt);
-        emit(attempt,'model',{type:'independent_review_end',elapsedMs:performance.now()-started,submitted:reviewSubmitted});
-        if(!accepted&&!controller.signal.aborted){
-          await rejected([{category:'decision',code:'submission_missing',path:'/',
-            message:modelError||'模型未返回归因结果，保留初稿。'}],failure.draft,false,false);
-          failure.stopped=true;record.failure=failure;await saveRecord();
-        }
-      }
       if (accepted) attempt.status.state = "succeeded";
       else if (attempt.status.state === "running")
         throw new Error(modelError || "Agent ended without an accepted submission");
@@ -889,7 +827,7 @@ export async function startWorker(
         attempt.status.modelQuotaExhausted = !controller.signal.aborted && modelError === errorText(original) &&
           isModelQuotaExhausted(modelError);
         attempt.status.retryable =
-          !reviewing && !controller.signal.aborted &&
+          !controller.signal.aborted &&
           !attempt.status.modelQuotaExhausted &&
           !attempt.status.error.startsWith("Invalid OpenAI Responses tool arguments:") &&
           // Some SDK failures omit the HTTP status. Recognize provider failures only
@@ -945,10 +883,6 @@ export async function startWorker(
         if (audit.review) record.failure.review = structuredClone(audit.review);
         record.failure.evidenceBank = [...audit.evidenceBank!];
         record.failure.contentSubmissions = (spec.recovery?.contentSubmissions || 0) + submissions;
-        const technicalReviewFailure = reviewing && (attempt.status.retryable || attempt.status.state === "timed_out") &&
-          record.failure.errors.every(({ category }) => category === "transport" || category === "interruption");
-        if (reviewing && technicalReviewFailure) attempt.status.retryable = true;
-        else if (reviewing) { record.failure.stopped=true;attempt.status.retryable=false; }
         attempt.status.failure = record.failure;
       }
       record.evidenceBank = [...audit.evidenceBank!];

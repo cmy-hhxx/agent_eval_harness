@@ -7,9 +7,9 @@ import { evidenceSources } from "@eval/tools";
 import { bindAttributionMaterial } from "@eval/workflows/review";
 import type { Candidate, RawInput } from "@eval/workflows/inputs";
 import type { AttributionTransition } from "./transitions.js";
-import { responsibilityDisplay } from "./responsibility.js";
+import { responsibilityDisplay, transferChanged } from "./responsibility.js";
 import { attributionSubmissionSchema } from "./submission-schema.js";
-import { responsibilityBindingIssues, finalResponsibilityReview } from './responsibility-binding.js';
+import { resolveModelSubmission } from "./submission.js";
 
 function nativeFixture(loss = false, unrelated = false) {
   const question = "核对XOM的MA50支撑，并给出结论。";
@@ -60,21 +60,6 @@ test('parameter creator remains identifiable without prose or hidden reasoning',
  assert.equal(display.component,'Expert 推理轮');assert(!Object.hasOwn(display,'responsibility_boundary'));
  assert(!display.component.includes('责任主体未确定'));
 });
-test('final responsibility recall reads the existing Problem and offers only captured calls',()=>{
- const f=nativeFixture(true,true),edge=f.transitions.find(t=>responsibilityDisplay(f.binding.request,t.transition_index).component==='终稿生成轮')!;
- const problem={text:'均线支撑无依据',reason:'原始返回有均线，实际输入丢失。',attribution_reason:'材料传递中丢失均线字段。',responsibility_boundary:'boundary:'+edge.transition_index};
- const context=finalResponsibilityReview(f.binding.request,{Problem:[problem]},{Problem:[{component:'终稿生成轮',evidence:f.evidence.filter(e=>e.message_index===6)}]},f.audit)!;
- assert((context.initial_result as any).Problem[0].component==='终稿生成轮');
- const reads=context.read_requests as any[];
- assert(reads?.some(r=>r.message_index===6),'the actual finquery return is mandatory, not the attribution explanation');
- const original=(f.binding.request.sources.answer.value as RawInput).messages;
- assert(reads.filter(r=>r.message_index===6).some(r=>evidenceSources(original[r.message_index]).find(s=>s.kind===r.kind&&s.path===r.path)?.text.slice(r.start,r.end).includes('165.7899')));
- assert(!reads.some(r=>[1,2,3].includes(r.message_index)),'unrelated weather ancestors stay outside the review');
- assert((context.choices as any[]).some(c=>c.component==='finquery 取数服务'));
- assert(!(context.choices as any[]).some(c=>c.component?.includes('web_fetch')));
- assert(finalResponsibilityReview(f.binding.request,{Problem:[problem]},{Problem:[{component:'finquery 取数服务'}]},f.audit));
- assert(responsibilityBindingIssues(f.binding.request,null,f.evidence,f.audit,'/Problem/0').some(i=>i.code==='responsibility_unresolved'));
-});
 test('responsibility identifiers cannot be confused with valid numeric node indices',()=>{
  const f=nativeFixture(),s=attributionSubmissionSchema(f.binding.request);
  const p=s.properties.Problem.items.properties;
@@ -84,75 +69,71 @@ test('responsibility identifiers cannot be confused with valid numeric node indi
  assert(!validate({summary:'检查完成。',Problem:[{text:'问题',reason:'依据',evidence_status:'已确认',evidence:[{index:1,purposes:['问题']}],responsibility_boundary:f.transitions.length+1,attribution_reason:'定位依据'}]}));
 });
 
-test('empty Problem also receives actual input/output review without forbidding an empty assessment',()=>{
- const f=nativeFixture();
- const ctx=finalResponsibilityReview(f.binding.request,{summary:'待完成原文核对',Problem:[]},{Problem:[]},f.audit)!;
- assert.equal((ctx.initial_result as any).Problem.length,0);assert.deepEqual(ctx.problems,[]);
- assert((ctx.read_requests as any[]).some(r=>r.path.startsWith('/input_messages')));
- assert((ctx.read_requests as any[]).some(r=>r.path.startsWith('/output')));
- assert((ctx.originals as any[]).some(r=>r.message_index===3&&r.quote.includes('165.7899')),'an unfinished empty draft still receives direct upstream facts');
+test('shell scripts are split by the actual command on the tool dimension',()=>{
+  const run = (command: string) => material([
+    { role: 'user', type: 'user_question', content: '执行脚本' },
+    { type: 'llm_turn', name: 'llm-call-0', input_messages: [{ role: 'user', content: '执行脚本' }],
+      output: [{ role: 'assistant', content: '', tool_calls: [{ id: 'script-call', type: 'function', function: { name: 'shell', arguments: JSON.stringify({ command }) } }] }] },
+    { type: 'tool_call', name: 'shell', call_id: 'script-call', input: { command } },
+    { type: 'tool_result', name: 'shell', call_id: 'script-call', output: { stdout: 'ok', action_id: 'script' } },
+    { type: 'llm_turn', name: 'llm-call-1', input_messages: [{ role: 'tool', tool_call_id: 'script-call', content: '{"stdout":"ok"}' }],
+      output: [{ role: 'assistant', content: '完成。' }] },
+    { type: 'final_answer', role: 'assistant', content: '完成。' },
+  ], '执行脚本');
+  const component = (command: string) => {
+    const f = run(command), edge = f.transitions.find(t => t.kind === 'execution')!;
+    return responsibilityDisplay(f.binding.request, edge.transition_index).component;
+  };
+  assert.equal(component('cd /opt/skills-aime/aime-finquery && python scripts/finquery.py "Stock: XOM"'), 'finquery.py 脚本（经 shell）');
+  assert.equal(component('cd /opt/skills-aime/data-visualizer && python render.py chart.json'), 'data-visualizer 图表渲染');
+  assert.equal(component('cd /tmp && python calc.py'), 'shell 代码解释器');
 });
 
-test('an unpropagated failed query is compared with the distinct zero-row query actually in the input',()=>{
- const first='Leveraged ETF that has holding of PMI',second='ETF: Leveraged ETFs; Full Holdings contains PMI';
- const f=material([
-  {role:'user',type:'user_question',content:first},
-  {type:'tool_call',name:'finquery',call_id:'one',input:{query:first}},
-  {type:'tool_result',name:'finquery',call_id:'one',output:{query:first,status_code:0,row_count:0}},
-  {type:'tool_call',name:'finquery',call_id:'two',input:{query:second}},
-  {type:'tool_result',name:'finquery',call_id:'two',output:{query:second,status_code:-2601,status_msg:'SQL取数异常'}},
-  {type:'llm_turn',name:'llm-call-0',input_messages:[{role:'user',content:'Financial data you fetched:\n'+JSON.stringify({serial_number:'abc1234',query:first,row_count:0})}],output:[{role:'assistant',content:'没有任何产品。'}]},
-  {type:'final_answer',role:'assistant',content:'没有任何产品。'},
- ],first);
- const edge=f.transitions.find(t=>responsibilityDisplay(f.binding.request,t.transition_index).component==='终稿生成轮')!;
- const problem={text:'把有限筛选写成不存在',responsibility_boundary:'boundary:'+edge.transition_index};
- const ctx=finalResponsibilityReview(f.binding.request,{Problem:[problem]},{Problem:[{component:'终稿生成轮',evidence:f.evidence.filter(e=>e.message_index===4)}]},f.audit)!;
- const messages=(ctx.read_requests as any[]).map(r=>r.message_index);
- assert(messages.includes(2));assert(messages.includes(4));assert(messages.includes(5));
+test('a truncated transfer is selectable while a verbatim transfer is not',()=>{
+  const returned = { serial_number: 'long-return', payload: 'x'.repeat(4000) };
+  const f = material([
+    { role: 'user', type: 'user_question', content: '核对材料' },
+    { type: 'tool_call', name: 'finquery', call_id: 'data-call', input: { query: 'X' } },
+    { type: 'tool_result', name: 'finquery', call_id: 'data-call', output: returned },
+    { type: 'llm_turn', name: 'llm-call-0', input_messages: [{ role: 'tool', tool_call_id: 'data-call', content: JSON.stringify({ serial_number: returned.serial_number, payload: 'x'.repeat(100) }) }],
+      output: [{ role: 'assistant', content: '材料完整。' }] },
+    { type: 'final_answer', role: 'assistant', content: '材料完整。' },
+  ], '核对材料');
+  const transfer = f.transitions.find(t => t.kind === 'transfer')!;
+  assert.equal(transferChanged(f.binding.request.input.answer as any, f.binding.request.sources.answer.value as any, transfer), true);
+  const full = material([
+    { role: 'user', type: 'user_question', content: '核对材料' },
+    { type: 'tool_call', name: 'finquery', call_id: 'data-call', input: { query: 'X' } },
+    { type: 'tool_result', name: 'finquery', call_id: 'data-call', output: returned },
+    { type: 'llm_turn', name: 'llm-call-0', input_messages: [{ role: 'tool', tool_call_id: 'data-call', content: JSON.stringify(returned) }],
+      output: [{ role: 'assistant', content: '材料完整。' }] },
+    { type: 'final_answer', role: 'assistant', content: '材料完整。' },
+  ], '核对材料');
+  const verbatim = full.transitions.find(t => t.kind === 'transfer')!;
+  assert.equal(transferChanged(full.binding.request.input.answer as any, full.binding.request.sources.answer.value as any, verbatim), false);
 });
 
-test('parameter formation never recalls historical same-tool returns as missing propagation',()=>{
- const call={id:'new',type:'function',function:{name:'shell',arguments:'{"title":"two metrics","series":[1]}'}};
- const f=material([{role:'user',content:'绘图'},
- {type:'tool_call',name:'shell',call_id:'old',input:{command:'old'}},
- {type:'tool_result',name:'shell',call_id:'old',output:'unrelated old chart'},
- {type:'llm_turn',name:'llm-call-0',input_messages:[{role:'tool',tool_call_id:'old',content:'unrelated old chart'}],output:[{role:'assistant',content:'',tool_calls:[call]}]},
- {type:'tool_call',name:'shell',call_id:'new',input:{title:'two metrics',series:[1]}},
- {type:'tool_result',name:'shell',call_id:'new',output:'one series rendered'},
- {type:'llm_turn',name:'llm-call-1',input_messages:[{role:'user',content:'write final'}],output:[{role:'assistant',content:'two metrics rendered'}]},
- {type:'final_answer',role:'assistant',content:'two metrics rendered'}],'绘图');
- const parameter=f.transitions.find(t=>t.kind==='request_formation')!,final=f.transitions.find(t=>responsibilityDisplay(f.binding.request,t.transition_index).component==='终稿生成轮')!;
- const draft={Problem:[{responsibility_boundary:'boundary:'+parameter.transition_index},{responsibility_boundary:'boundary:'+final.transition_index}]};
- const ctx=finalResponsibilityReview(f.binding.request,draft,{Problem:[{component:'Expert 推理轮',evidence:f.evidence.filter(e=>e.message_index===5)},{component:'终稿生成轮',evidence:[]}]},f.audit)!;
- assert(!(ctx.read_requests as any[]).some(r=>r.message_index===1||r.message_index===2));
-});
-
-test('review includes uncited direct counterevidence rather than anchoring to the initial price return',()=>{
- const f=material([{role:'user',content:'SLB均线'},
- {type:'tool_call',name:'shell',call_id:'price',input:{command:'SLB price'}},
- {type:'tool_result',name:'shell',call_id:'price',output:{stdout:'SLB last 53.1'}},
- {type:'tool_call',name:'shell',call_id:'ma',input:{command:'SLB MA50'}},
- {type:'tool_result',name:'shell',call_id:'ma',output:{stdout:'SLB MA50 52.47'}},
- {type:'llm_turn',name:'llm-call-0',input_messages:[{role:'tool',tool_call_id:'price',content:'SLB last 53.1'},{role:'tool',tool_call_id:'ma',content:'SLB MA50 52.47'}],output:[{role:'assistant',content:'SLB 53.1低于52.5均线'}]},
- {type:'final_answer',role:'assistant',content:'SLB 53.1低于52.5均线'}],'SLB均线');
- const edge=f.transitions.find(t=>responsibilityDisplay(f.binding.request,t.transition_index).component==='终稿生成轮')!;
- const p={text:'SLB均线方向错误',reason:'SLB 52.5没有来源',responsibility_boundary:'boundary:'+edge.transition_index};
- const ctx=finalResponsibilityReview(f.binding.request,{Problem:[p]},{Problem:[{component:'终稿生成轮',evidence:f.evidence.filter(e=>e.message_index===2)}]},f.audit)!;
- assert((ctx.originals as any[]).some(e=>e.message_index===4&&e.quote.includes('52.47')));
-});
-
-test('review selects original web fields and reuses repeated policy text without sending the whole response',()=>{
- const privacy='Effective date: 2025. Privacy policy. '+'Policy text. '.repeat(16000);
- const f=material([{role:'user',content:'XOM MA50'},
- {type:'tool_call',name:'web_search',call_id:'web',input:{query:'XOM MA50'}},
- {type:'tool_result',name:'web_search',call_id:'web',output:{items:[{title:'XOM page',publish_time:'2026-10-23',summary:privacy,content:privacy},{title:'XOM facts',content:'XOM MA50 165.7899'}]}},
- {type:'llm_turn',name:'llm-call-0',input_messages:[{role:'tool',tool_call_id:'web',content:'XOM MA50 165.7899'}],output:[{role:'assistant',content:'XOM MA50 170–172'}]},
- {type:'final_answer',role:'assistant',content:'XOM MA50 170–172'}],'XOM MA50');
- const edge=f.transitions.find(t=>responsibilityDisplay(f.binding.request,t.transition_index).component==='终稿生成轮')!;
- const ctx=finalResponsibilityReview(f.binding.request,{Problem:[{text:'XOM MA50数值错误',reason:'与原数不符',responsibility_boundary:'boundary:'+edge.transition_index}]},{Problem:[{evidence:[]}]},f.audit)!;
- const originals=ctx.originals as any[];
- assert(originals.reduce((n,r)=>n+r.quote.length,0)<20000);
- assert(originals.some(r=>r.quote.includes('165.7899')));
- assert(originals.some(r=>r.also_at?.length),'same text retains each original coordinate without repeating its body');
- assert((ctx.problems as any[])[0].source_comparison.calls[0].return_scope);
+test('an observed truncation can be the primary context-transfer responsibility',()=>{
+  const returned = { serial_number: 'ctx-return', payload: 'y'.repeat(4000) };
+  const f = material([
+    { role: 'user', type: 'user_question', content: '核对材料' },
+    { type: 'tool_call', name: 'finquery', call_id: 'ctx-call', input: { query: 'Y' } },
+    { type: 'tool_result', name: 'finquery', call_id: 'ctx-call', output: returned },
+    { type: 'llm_turn', name: 'llm-call-0', input_messages: [{ role: 'tool', tool_call_id: 'ctx-call', content: JSON.stringify({ serial_number: returned.serial_number, payload: 'y'.repeat(80) }) }],
+      output: [{ role: 'assistant', content: '字段不全。' }] },
+    { type: 'final_answer', role: 'assistant', content: '字段不全。' },
+  ], '核对材料');
+  const transfer = f.transitions.find(t => t.kind === 'transfer')!;
+  f.audit.evidenceBank = f.evidence.map(item => item.evidence_id);
+  const index = 1;
+  const draft = { summary: '材料在进入终稿前被截断。', Problem: [{
+    text: '终稿称字段不全。', reason: '原始返回完整，实际输入只剩一段。', evidence_status: '已确认',
+    evidence: [{ index, purposes: ['问题', '归因'] }], responsibility_boundary: `boundary:${transfer.transition_index}`,
+    attribution_reason: '原始返回进入终稿输入时被截断，未能核对完整字段。',
+    responsibility_chain: [{ responsibility_boundary: `boundary:${transfer.transition_index}`, state: '原始返回 4000 字符，实际输入只剩 80 字符。', evidence_indices: [index] }],
+  }] };
+  const result = resolveModelSubmission(f.binding.request, draft, f.audit);
+  assert.equal(result.Problem[0]!.component, '上下文组装与传递');
+  assert.equal(result.Problem[0]!.responsibility_chain![0]!.component, '上下文组装与传递');
+  assert.equal(result.Problem[0]!.responsibility_chain![0]!.message_index, null);
 });

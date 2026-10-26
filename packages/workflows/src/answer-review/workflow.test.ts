@@ -68,6 +68,7 @@ test('Attribution immediately enables one Score session, with attribution-only r
    responsibility_chain:[{component:'web_search 网页检索',role:'context',state:'返回历史页面'}]}];
  const report=await reportAnswerReview(path.join(config.output.path,'flow'),counted);
  assert.deepEqual(report.responsibility_counts,{primary:{'finquery 取数服务':1},related:{'终稿生成轮':1}});
+ for(const key of ['model_concurrency','task_concurrency','attribution_ms_p50','attribution_ms_p95','first_submission_acceptance','tokens_per_accepted_attribution','tool_calls_per_accepted_attribution']) assert.equal(typeof (report as Record<string,unknown>)[key],'number',key);
  // Exercise actual Host dispatch after appending to a saved day, not just checkpoint decoding.
  const version=config.inputs.versions[0],file=version.sources[0].path;
  const next={...sessionRaw('two'),batch_id:'b1'};

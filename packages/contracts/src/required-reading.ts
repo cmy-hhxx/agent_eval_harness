@@ -3,10 +3,8 @@ import { evidenceId } from "./evidence.js";
 
 /** Only validator-issued ranges can extend the protected source-reading budget. */
 export function validationRequiredReads(issues: readonly ValidationIssue[]): TraceRead[] {
-  return issues.filter(issue => issue.code === "investigation_read_required" || issue.code === "completion_review_required").flatMap(issue => {
-    const expected = (issue.code === "completion_review_required"
-      ? (issue.expected as {focused_review?:unknown})?.focused_review : issue.expected) as { read_requests?: unknown[] } | undefined;
-    if(issue.code === "completion_review_required" && !expected?.read_requests)return [];
+  return issues.filter(issue => issue.code === "investigation_read_required").flatMap(issue => {
+    const expected = issue.expected as { read_requests?: unknown[] } | undefined;
     return (expected?.read_requests ?? [issue.expected]).map(value => {
       const read = value as TraceRead;
       if (!read || typeof read.candidate !== "string" || !read.candidate ||

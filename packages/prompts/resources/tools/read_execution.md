@@ -4,4 +4,4 @@ offset、limit、max_chars 控制结构页，按 next_request.arguments 继续�
 
 节点页的 responsibility_choices 直接给出该次调用可选的责任编号及中文动作；边界页同时显示 component、message_index 和 action。已取得编号就直接使用，不必仅为查编号再消耗一次调用；主体未采集与尚未查询编号是两回事。
 
-read_trace 同时返回所读原始调用的 responsibility_choices；最终正文调用也在初始 final_generation_choices 中。组件名称按健康度报表展示，具体动作单独解释；同名组件的不同 transition_index 仍是不同调用，不按名称合并。
+read_trace 同时返回所读原始调用的 responsibility_choices；最终正文调用也在初始 final_generation_choices 中，观察到的材料变化边界在 context_transfer_choices 中。组件名称按健康度报表展示，具体动作单独解释；同名组件的不同 transition_index 仍是不同调用，不按名称合并。上下文组装与传递只在材料确实缺失、截断或改写时可选，正常传递不是责任主体。

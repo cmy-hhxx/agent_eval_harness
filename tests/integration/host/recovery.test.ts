@@ -54,7 +54,6 @@ async function fixture(rows = [raw("q", null)]) {
   await createResultWriter(run, plan.inputs)(initial);
   await writeRunState(run, initial);
   const prepared = prepare(task, plan.inputs, { criteria: criteriaReceipts[task.dependencies.criteria] });
-  prepared.evaluation = { ...prepared.evaluation, completionReview: undefined };
   const spec: AttemptSpec = {
     inputRevision: 1, runId: "test", taskId: task.id, attemptId: "first", engine: fakeIdentity,
     evidenceBank: [...prepared.evidenceBank], evaluation: prepared.evaluation,
@@ -76,7 +75,6 @@ function specForTask(store: RunStore, base: AttemptSpec, taskId: string, attempt
   const task = store.manifest.tasks.find(item => item.id === taskId)!;
   const dependencies = Object.fromEntries(Object.entries(task.dependencies).map(([key, id]) => [key, store.state.receipts[id]]));
   const prepared = prepare(task, store.inputs, dependencies);
-  prepared.evaluation = { ...prepared.evaluation, completionReview: undefined };
   return { ...base, ...prepared, evidenceBank: [...prepared.evidenceBank], taskId, attemptId,
     inputs: Object.entries(task.inputIds).map(([name, id]) => ({ name, id })) };
 }

@@ -4,7 +4,6 @@
 
 r368 固定样本 `thread_9f0443b1f87447ed9a421bc916defafe` 暴露同会话自检仍可能误确认：消息 121 的 `llm-call-32 / AIME-Atlas` 明确生成绘图标题和单序列参数，消息 122 的 shell 正常执行，结果却仅选择 delivery 并称主体未采集。图表问题成立，责任归因无效；该技术收据不得计为有效评审。复核必须检查 request_formation，不能因无正文 generation 边界而否认已采集的参数生成者。任意自然语言 reason 提到却未选择的来源，程序尚不能可靠识别，必须继续真实抽审。
 
-r368 的 `thread_9b4c276a47c249ef8fc8ad79362d9fb8` 在修正预算耗尽后仍确认旧候选，把实质结论放在 completionReview.reason 中，正式摘要未完成。该收据无效。Worker 回归必须复现“候选通过 → 替换因预算失败 → 确认旧稿”，要求最后失败且无正式收据；实际完成的空 Problem 仍可直接确认。
 
 ## Criteria：只从原问与真实规范定义交付
 

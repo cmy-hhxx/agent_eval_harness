@@ -426,8 +426,7 @@ export class RunStore {
       if (!spec) throw new HttpError(409, "Unknown attempt");
       this.validateBank(spec, failure.evidenceBank, state.failure?.evidenceBank ?? spec.evidenceBank);
       state.failure = { ...failure, evidenceBank: [...failure.evidenceBank], contentSubmissions: Math.max(failure.contentSubmissions, state.failure?.contentSubmissions ?? 0),
-        ...(state.failure?.inspection ? { inspection: state.failure.inspection } : {}),
-        ...(state.failure?.completionCandidate ? { completionCandidate: state.failure.completionCandidate } : { completionCandidate: undefined }) };
+        ...(state.failure?.inspection ? { inspection: state.failure.inspection } : {}) };
       await this.save(taskId);
     });
   }
@@ -543,20 +542,6 @@ export class RunStore {
       value.submissionStats!.contentSubmissions <= (state.failure?.contentSubmissions ?? 0) ||
       value.submissionStats!.contentSubmissions > (spec.recovery?.contentSubmissions ?? 0) + 1 + spec.policy.repairAttempts))
       throw new HttpError(422, "材料核查与最终提交必须共用本次剩余内容预算，最终提交仍计一稿");
-    const previousCandidate = state.failure?.completionCandidate;
-    if (spec.evaluation.completionReview && value.completionReview) {
-      const review = value.completionReview;
-      if (!previousCandidate || previousCandidate.superseded || previousCandidate.attemptId !== value.attemptId || review.candidateId !== previousCandidate.id ||
-        typeof review.reason !== 'string' || !review.reason.trim())
-        throw new ValidationError([{ category: 'decision', code: 'completion_review_stale', path: '/',
-          message: 'Completion review must explain and confirm the current candidate in this attempt.' }]);
-    }
-    if (spec.evaluation.completionReview && previousCandidate) {
-      if (!value.completionReview) throw new ValidationError([{category:'decision',code:'completion_review_stale',path:'/',
-        message:'初稿只能进入一次独立复核，不能在原会话继续改稿或确认。'}]);
-      previousCandidate.superseded = true;
-      await this.save(value.taskId);
-    }
     let evaluation: unknown;
     const validationStarted = performance.now(), validationCpu = process.cpuUsage();
     try {
@@ -573,18 +558,6 @@ export class RunStore {
         task_id: value.taskId, attempt_id: value.attemptId, submission_id: value.submissionId,
         message: value.submissionId,
         validationMs: performance.now() - validationStarted, validationCpuMs: (cpu.user + cpu.system) / 1000 });
-    }
-    if (spec.evaluation.completionReview && !value.completionReview) {
-      const reviewContext=this.services.agents.completionReviewContext(this.bindings.get(spec.attemptId)!,value.evaluation,evaluation,value.audit);
-      const candidate = { id: value.submissionId, attemptId: value.attemptId, evaluation: structuredClone(value.evaluation) };
-      const errors = [{ category: 'decision' as const, code: 'completion_review_required', path: '/',
-        message: spec.evaluation.completionReview, expected: { candidate_id: candidate.id,
-          focused_review:reviewContext??{initial_result:evaluation} } }];
-      state.failure = { ...state.failure, draft: structuredClone(value.evaluation), completionCandidate: candidate, errors,
-        evidenceBank: [...value.audit.evidenceBank ?? []], contentSubmissions: value.submissionStats?.contentSubmissions ?? 1,
-        fileErrors: value.submissionStats?.fileErrors ?? 0, repeatedErrors: 0, stopped: false, attemptId: value.attemptId };
-      await this.save(value.taskId);
-      throw new ValidationError(errors);
     }
     const receipt: SubmissionReceipt = {
       ...value,

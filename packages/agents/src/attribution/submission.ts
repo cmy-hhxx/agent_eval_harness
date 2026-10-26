@@ -4,7 +4,7 @@ import schema from '../../../../schemas/attribution/submission.schema.json' with
 import type {AttributionResult,AttributionSubmission,ProblemEvidence} from './types.js';
 import {resolveAttributionEvidence} from './source-evidence.js';
 import {responsibilityBindingIssues} from './responsibility-binding.js';
-import {responsibilityDisplay,type ResponsibilityMaterial} from './responsibility.js';
+import {responsibilityDisplay,UNKNOWN_COMPONENT,type ResponsibilityMaterial} from './responsibility.js';
 import {resolveDerivations} from './derivations.js';
 import {validateEvaluation} from './validate.js';
 const shape=new Ajv2020({allErrors:true,strict:false}).compile(schema);
@@ -65,7 +65,9 @@ export function resolveModelSubmission(request:AgentRequest,draft:unknown,audit:
       const at=path+'/responsibility_chain/'+j;
       const index=item.responsibility_boundary===null?null:Number(item.responsibility_boundary.slice('boundary:'.length));
       const boundary=index===null?undefined:edge(index,at);
-      const component=boundary?.execution_node_index==null?null:responsibilityDisplay(request,index).component;
+      const displayed=boundary==null?null:responsibilityDisplay(request,index).component;
+      const responsible=index===primary||p.related_responsibilities?.some(r=>r.responsibility_boundary===item.responsibility_boundary);
+      const component=boundary?.kind==='transfer'?(responsible?displayed:null):displayed===UNKNOWN_COMPONENT?null:displayed;
       const node=nodes.find(n=>n.execution_node_index===boundary?.execution_node_index);
       const ids=item.evidence_indices.map(n=>{const e=evidence(n,at);e.purposes=[...new Set([...e.purposes,'归因' as const])];return e.evidence_id;});
       return {component,stage:boundary?.kind??'input' as const,state:item.state,
@@ -74,9 +76,9 @@ export function resolveModelSubmission(request:AgentRequest,draft:unknown,audit:
     });
     for(const [index,r] of [p,...p.related_responsibilities??[]].entries()){
       const boundary=edge(Number(r.responsibility_boundary!.slice('boundary:'.length)),path),role=index?'related' as const:'primary' as const;
-      if(!chain.some(n=>n.role===role&&n.message_index===nodes.find(n=>n.execution_node_index===boundary.execution_node_index)?.message_index)){
-        const node=nodes.find(n=>n.execution_node_index===boundary.execution_node_index)!;
-        chain.push({component:responsibilityDisplay(request,boundary.transition_index).component,stage:boundary.kind,state:index?r.attribution_reason:p.text,role,message_index:node.message_index,evidence_ids:index?related![index-1].evidence_ids:[...selected.keys()]});
+      const node=nodes.find(n=>n.execution_node_index===boundary.execution_node_index);
+      if(!chain.some(n=>n.role===role&&n.stage===boundary.kind&&n.message_index===(node?.message_index??null))){
+        chain.push({component:responsibilityDisplay(request,boundary.transition_index).component,stage:boundary.kind,state:index?r.attribution_reason:p.text,role,message_index:node?.message_index??null,evidence_ids:index?related![index-1].evidence_ids:[...selected.keys()]});
       }
     }
     const finalInvolved=[p,...p.related_responsibilities??[]].some(r=>responsibilityDisplay(request,Number(r.responsibility_boundary!.slice('boundary:'.length))).component==='终稿生成轮');
