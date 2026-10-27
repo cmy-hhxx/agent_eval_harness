@@ -1,0 +1,19 @@
+{
+  "dataRoot": "/mnt/fin_bench/eval_data",
+  "runtimeRoot": "/mnt/aigc_team/user_workspace/chenmingyang/eval_harness/runtime",
+  "intervalSeconds": 30,
+  "stableSeconds": 30,
+  "python": "python3",
+  "sources": [
+    {
+      "id": "wencai",
+      "cleanDirectory": "0_wencai/6_daily_eval_input_clean",
+      "targetDirectory": "0_wencai/6_daily_eval_input_clean_slim"
+    },
+    {
+      "id": "aime",
+      "cleanDirectory": "1_aime/3_daily_eval_input_clean",
+      "targetDirectory": "1_aime/4_daily_eval_input_clean_slim"
+    }
+  ]
+}

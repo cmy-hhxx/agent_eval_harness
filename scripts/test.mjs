@@ -52,6 +52,7 @@ const fastFiles = [
   "dist/tests/architecture/dependencies.test.js",
   "scripts/attribution-review-view.test.mjs",
   "scripts/aime-slim.test.mjs",
+  "scripts/auto-renew.test.mjs",
   "scripts/archive-processed-packages.test.mjs",
   "scripts/extract-lost-user.test.mjs",
   "scripts/watch-lost-user.test.mjs",
@@ -79,6 +80,7 @@ const hostFiles = full ? await testFiles(["dist/tests/integration/host"]) : [];
 const concurrency = Math.min(2, availableParallelism());
 const repositoryTests = [
   "scripts/aime-slim.test.mjs",
+  "scripts/auto-renew.test.mjs",
   "scripts/archive-processed-packages.test.mjs",
   "scripts/attribution-review-tree.test.mjs",
   "scripts/extract-lost-user.test.mjs",
