@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { comparisonProfile, type ComparisonInput, type ComparisonResult } from "@eval/agents/comparison";
 import example from "../../../agents/src/comparison/fixtures/example.json" with { type: "json" };
-import { requestComparisonSubmission } from "../../../../tests/fixtures/comparison-submission.js";
+import { requestComparisonSubmission, flatComparisonSubmission } from "../../../../tests/fixtures/comparison-submission.js";
 import { display } from "./results.js";
 import { decideVerdict } from "./verdicts.js";
 
@@ -23,7 +23,7 @@ test("swapping candidates restores the same relative preference without changing
     draft.comparisons.forEach(row => { if (row) row.importance = "low"; });
     draft.relative_preference = swapped ? "B" : "A";
     draft.tradeoff = `质量相当，【候选${swapped ? "B" : "A"}】本次等待较短，【候选${swapped ? "A" : "B"}】等待较久。`;
-    const result = comparisonProfile.resolve!(request, draft, {
+    const result = comparisonProfile.resolve!(request, flatComparisonSubmission(draft), {
       calls: 0, requiredReadCalls: 0, viewedImages: [], traceReads: [], calculations: [], artifacts: [],
     }) as ComparisonResult;
     const names = swapped ? { A: "乙组", B: "甲组" } : { A: "甲组", B: "乙组" };
@@ -48,7 +48,7 @@ test("swapped tradeoff binds each defect and measured resources to the same actu
   draft.comparisons.forEach(row => { if (row) row.importance = "low"; });
   draft.relative_preference = "B";
   draft.tradeoff = "【候选A】没有席位数据却推断具体买方。【候选B】的小单净流入分类可用，机构出货仍须限定为资金类别。A/B类业务标记保持原义。";
-  const result = comparisonProfile.resolve!(request, draft, {
+  const result = comparisonProfile.resolve!(request, flatComparisonSubmission(draft), {
     calls: 0, requiredReadCalls: 0, viewedImages: [], traceReads: [], calculations: [], artifacts: [],
   }) as ComparisonResult;
   const shown = display(result.decision_basis.tradeoff, { A: "B组Expert", B: "A组Expert" });

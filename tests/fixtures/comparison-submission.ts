@@ -47,3 +47,13 @@ export function requestComparisonSubmission(request: AgentRequest, result: Compa
  if(passed.length===1&&Object.values(result.assessments).some(item=>item.meets_core===false))draft.relative_preference=passed[0] as 'A'|'B';
  return draft;
 }
+
+/** Current flat model submission; canonical fixture judgments stay readable. */
+export function flatComparisonSubmission(value: ComparisonSubmission) {
+ const {assessments,comparisons,...decision}=value;
+ return {...decision,...Object.fromEntries(assessments.flatMap(({candidate,meets_core,core_failure_refs,summary})=>{
+  const side=candidate.toLowerCase();return [[`${side}_core`,meets_core],[`${side}_core_refs`,core_failure_refs],[`${side}_summary`,summary]];
+ })),comparisons:comparisons.map(({kind: _kind,assessments,...row})=>({...row,...Object.fromEntries((assessments??[]).flatMap(({candidate,status,evidence_status,summary,finding_indices})=>{
+  const side=candidate.toLowerCase();return [[`${side}_status`,status],[`${side}_evidence`,evidence_status],[`${side}_summary`,summary],[`${side}_findings`,finding_indices]];
+ }))}))};
+}

@@ -128,7 +128,7 @@ export interface SubmittedComparison {
   assessments?: { candidate: string; status: CriterionStatus; evidence_status: EvidenceStatus;
     summary: string; finding_indices: number[] }[];
 }
-/** The model judges fixed requirements and core completion; evidence selections reference accepted problems. */
+/** Program-normalized judgments; the model submits flat A/B fields defined by the submission schema. */
 export interface ComparisonSubmission {
   assessments: (ComparisonAssessment & { candidate: string })[];
   scope_conflicts?: { slot_index: number; reason: string }[];

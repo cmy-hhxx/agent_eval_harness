@@ -127,6 +127,8 @@ Comparison 按 comparison_slots 显式选择 slot_index 与 kind，提交 import
 
 Rewrite 当前提交 `rewrites: [{id,text}]`，数量、顺序与 ID 由请求的动态 Schema 固定。其他阶段编号及字段约束以各自 submission Schema 和 Profile 为准。
 
+Comparison 模型提交采用平铺字段：顶层 `a_core/a_core_refs/a_summary` 与对应的 `b_*`；每个 comparisons 行含 `slot_index/importance/better_candidate` 和 `a_status/a_evidence/a_summary/a_findings`、对应的 `b_*`。资源行只需槽位与重要性。程序绑定行类型并组装正式结果，模型不重复输出 candidate、kind 或嵌套 assessments；落盘判决与统计契约保持不变。
+
 结构与业务校验保留原稿，错误反馈提供 code/path/message 和适用的 expected/actual，指向模型实际可写字段。必读材料不足先返回真实补页，不消耗内容修正；加载错误与内容修正分别计数，累计规则见[运行与恢复](usage.md#运行与恢复)。只有 Host 保存有效收据才算成功。
 
 探索耗尽后的预留写稿额度只用于提交 JSON：execute_code 必须在 outputs 声明 JSON 产物，未声明时不执行，也不消耗该写稿槽位；edit_json 可直接保存草稿。探索期的只读提取和复算仍按原额度计数，提交文件名与实际写入文件须一致。

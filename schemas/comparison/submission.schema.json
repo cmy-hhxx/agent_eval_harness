@@ -6,7 +6,12 @@
     "comparisons",
     "relative_preference",
     "tradeoff",
-    "assessments"
+    "a_core",
+    "a_core_refs",
+    "a_summary",
+    "b_core",
+    "b_core_refs",
+    "b_summary"
   ],
   "properties": {
     "source_reviews": {
@@ -93,47 +98,43 @@
         null
       ]
     },
-    "assessments": {
+    "a_core": {
+      "type": [
+        "boolean",
+        "null"
+      ],
+      "description": "独立判断主要交付是否可用；证据不足时仅needs_review可为null。核心失败明确引用已确认的requirements。"
+    },
+    "a_core_refs": {
       "type": "array",
-      "minItems": 2,
-      "maxItems": 2,
+      "uniqueItems": true,
       "items": {
-        "type": "object",
-        "additionalProperties": false,
-        "required": [
-          "candidate",
-          "meets_core",
-          "summary",
-          "core_failure_refs"
-        ],
-        "properties": {
-          "candidate": {
-            "enum": [
-              "A",
-              "B"
-            ]
-          },
-          "meets_core": {
-            "type": [
-              "boolean",
-              "null"
-            ],
-            "description": "独立判断主要交付是否可用；证据不足时仅needs_review可为null。核心失败明确引用已确认的requirements。"
-          },
-          "summary": {
-            "type": "string",
-            "minLength": 1
-          },
-          "core_failure_refs": {
-            "type": "array",
-            "uniqueItems": true,
-            "items": {
-              "type": "string",
-              "minLength": 1
-            }
-          }
-        }
+        "type": "string",
+        "minLength": 1
       }
+    },
+    "a_summary": {
+      "type": "string",
+      "minLength": 1
+    },
+    "b_core": {
+      "type": [
+        "boolean",
+        "null"
+      ],
+      "description": "独立判断主要交付是否可用；证据不足时仅needs_review可为null。核心失败明确引用已确认的requirements。"
+    },
+    "b_core_refs": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": {
+        "type": "string",
+        "minLength": 1
+      }
+    },
+    "b_summary": {
+      "type": "string",
+      "minLength": 1
     }
   },
   "$defs": {
@@ -142,17 +143,20 @@
       "additionalProperties": false,
       "required": [
         "slot_index",
-        "kind",
         "importance",
-        "assessments"
+        "a_status",
+        "a_evidence",
+        "a_summary",
+        "a_findings",
+        "b_status",
+        "b_evidence",
+        "b_summary",
+        "b_findings"
       ],
       "properties": {
         "slot_index": {
           "type": "integer",
           "minimum": 0
-        },
-        "kind": {
-          "const": "criterion"
         },
         "importance": {
           "enum": [
@@ -168,55 +172,58 @@
             null
           ]
         },
-        "assessments": {
+        "a_status": {
+          "enum": [
+            "met",
+            "partial",
+            "unmet",
+            "unknown",
+            "not_applicable"
+          ]
+        },
+        "a_evidence": {
+          "enum": [
+            "已确认",
+            "待核实"
+          ]
+        },
+        "a_summary": {
+          "type": "string",
+          "minLength": 1
+        },
+        "a_findings": {
           "type": "array",
-          "minItems": 2,
-          "maxItems": 2,
+          "uniqueItems": true,
           "items": {
-            "type": "object",
-            "additionalProperties": false,
-            "required": [
-              "candidate",
-              "summary",
-              "finding_indices",
-              "status",
-              "evidence_status"
-            ],
-            "properties": {
-              "candidate": {
-                "enum": [
-                  "A",
-                  "B"
-                ]
-              },
-              "summary": {
-                "type": "string",
-                "minLength": 1
-              },
-              "finding_indices": {
-                "type": "array",
-                "uniqueItems": true,
-                "items": {
-                  "type": "integer",
-                  "minimum": 0
-                }
-              },
-              "status": {
-                "enum": [
-                  "met",
-                  "partial",
-                  "unmet",
-                  "unknown",
-                  "not_applicable"
-                ]
-              },
-              "evidence_status": {
-                "enum": [
-                  "已确认",
-                  "待核实"
-                ]
-              }
-            }
+            "type": "integer",
+            "minimum": 0
+          }
+        },
+        "b_status": {
+          "enum": [
+            "met",
+            "partial",
+            "unmet",
+            "unknown",
+            "not_applicable"
+          ]
+        },
+        "b_evidence": {
+          "enum": [
+            "已确认",
+            "待核实"
+          ]
+        },
+        "b_summary": {
+          "type": "string",
+          "minLength": 1
+        },
+        "b_findings": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "type": "integer",
+            "minimum": 0
           }
         }
       }
@@ -226,16 +233,12 @@
       "additionalProperties": false,
       "required": [
         "slot_index",
-        "kind",
         "importance"
       ],
       "properties": {
         "slot_index": {
           "type": "integer",
           "minimum": 0
-        },
-        "kind": {
-          "const": "resource"
         },
         "importance": {
           "enum": [

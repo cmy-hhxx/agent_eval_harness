@@ -43,6 +43,8 @@ Comparison 的归因输入由自身公开契约定义，Workflow 显式投影摘
 
 常规 Comparison 的模型材料只呈现一份完整会话问答，不重复附加 turns、正文引用副本和引用目录；长答案直接呈现，冲突仍可定向读取来源。提交 Schema 按 criterion/resource 分组约束槽位编号，不为每个槽重复整份行定义。可选 verification 的分段读取流程保持独立。
 
+评分槽通过 criterion_ids 引用 task_analysis 中的唯一标准。常规 Comparison 只使用原文读取、搜索和图片查看工具核对决定性冲突，计算与责任调查留在归因；资源比较由程序读取已记录指标。
+
 验证先找模块同目录的 .test.ts，跨模块行为看 tests/integration/host；直接 SDK 看 tests/integration。具体命令见[开发指南](../development.md#验证)。
 
 工作台结果与分析入口：`apps/host/src/dashboard-analysis.ts` 登记任务/批次/运行选择和分析占用；`packages/workflows/src/comparison/analysis-scope.ts` 投影已接受归因身份，`clustering-job.ts` 校验冻结来源并复用独立作业。`packages/data/src/run-artifacts.ts` 枚举公开报告与结果，页面不读取 state 或 debug 材料。

@@ -2,9 +2,9 @@
 
 每格 summary 和顶层 summary 各用一句简短的话说明满足情况及决定性依据，通常 20–40 字即可；tradeoff 用一至三句话说明关键取舍。不复述整段答案、完整归因过程或所有已填写格子。所有必填槽和业务判断仍须完整提交。完成判断后直接调用 submit_evaluation 提交结构化对象，不另写解释正文或生成待转义的 JSON 字符串。
 
-1. finding_indices 直接引用 attributions 中本方 Problem 的零起始位置；归因只提供这一份，不在每个评分槽重复。按 comparison_slots 的 slot_index 比较。每个提交行必须带同一个 slot_index 和 kind，同一槽只提交一次；候选专有槽无需评审时可省略该行，不能提交 null。
+1. finding_indices 直接引用 attributions 中本方 Problem 的零起始位置；归因只提供这一份，不在每个评分槽重复。comparison_slots 的 criterion_ids 对应 task_analysis 中的完整标准，按 slot_index 比较。每个提交行只带 slot_index，kind 由程序绑定，同一槽只提交一次；候选专有槽无需评审时可省略该行，不能提交 null。
 
-每个 criterion 槽填写 importance、better_candidate 和 assessments。assessments 是恰好包含 A/B 的数组，每项用 candidate 标明本方，并填写 status（met/partial/unmet/unknown/not_applicable）、evidence_status（已确认/待核实）、summary 和 finding_indices。finding_indices 选择本方既有 Problem 的零起始位置，不能新增或改写问题。完整阅读实际交付后，可以判断正常完成而不引用问题；已确认 partial/unmet 必须引用对应正式问题。没有问题记录的实质缺陷应请求 source_reviews，不把新问题直接用于胜负。原问与 acceptance_rule 只规定判断门槛，不代表回答已经满足。
+每个 criterion 行填写 importance、better_candidate，以及平铺的 a_status/a_evidence/a_summary/a_findings 和 b_status/b_evidence/b_summary/b_findings。status 为 met/partial/unmet/unknown/not_applicable；evidence 为 已确认/待核实；findings 是本方既有 Problem 的零起始位置数组，不能新增或改写问题。不输出 assessments 或 candidate 嵌套对象。完整阅读实际交付后，可以判断正常完成而不引用问题；已确认 partial/unmet 必须引用对应正式问题。没有问题记录的实质缺陷应请求 source_reviews，不把新问题直接用于胜负。原问与 acceptance_rule 只规定判断门槛，不代表回答已经满足。
 
 每格 summary 只评价本格候选，主体必须是该候选本人；把双方比较留给 tradeoff，不在单格用“对方没有”或另一候选作为结论主语。better_candidate 只在实际给出更优判断的槽填写，理由必须落在本槽的同一验收事实内，且不能选择 status 更差的一方。双方 status 相同时，只有可核实程度确有差异才填 better_candidate；若本格事实已经表明一方没有完成该 requirement，应下调其 status 并按既有 Problem 或 source_reviews 处理，不能用 better_candidate 代替缺陷登记。
 
@@ -14,7 +14,7 @@ resource 槽只填 importance，双方状态与方向由程序读取有效原始
 
 2. 独立判断核心完成。
 
-顶层 assessments 是恰好包含 A/B 的数组，每项用 candidate 标明本方，并填写 meets_core（true/false/null）、core_failure_refs、summary。它是 Comparison 本次判断，不从 attribution 抄状态。true 表示主要交付实际可用，不要求零缺陷；false 须有双方共同适用、高重要性 requirements 的已确认 partial/unmet 比较格及正式 Problem，core_failure_refs 填这些要求的 ID；true/null 时 refs=[]。无法判断时保留 null 和具体原因，进入 needs_review。
+顶层平铺 a_core/a_core_refs/a_summary 和 b_core/b_core_refs/b_summary。core 为 true/false/null，core_refs 为核心失败 requirement ID 数组。它是 Comparison 本次判断，不从 attribution 抄状态。true 表示主要交付实际可用，不要求零缺陷；false 须有双方共同适用、高重要性 requirements 的已确认 partial/unmet 比较格及正式 Problem，core_refs 填这些要求的 ID；true/null 时 refs=[]。无法判断时保留 null 和具体原因，进入 needs_review。
 
 has_standard_answer、is_correct、correct_reason 来自已接受归因。is_correct 只比较给定标准，既不证明没有其它缺陷，也不替代整体完成。计算和证据按问题内原有依据核对，单位、期间、容差、区间与原句限定必须一致。
 

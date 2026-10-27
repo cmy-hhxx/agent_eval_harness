@@ -12,7 +12,7 @@ import { loadComparisonConfig, createModelResolver } from "@eval/host-app/config
 import { sessionProblems, type SessionAttributionResult, type SessionProblem } from "@eval/agents/attribution";
 import type { ComparisonResult, TaskData } from "@eval/workflows/comparison";
 import type { RawInput } from "@eval/workflows/inputs";
-import { comparisonSubmission } from "./comparison-submission.js";
+import { comparisonSubmission, flatComparisonSubmission } from "./comparison-submission.js";
 import type { ComparisonSlot, ComparisonAttribution } from "@eval/agents/comparison";
 import { comparisonWorkflow } from "@eval/workflows/comparison";
 
@@ -429,14 +429,12 @@ export function draftFor(spec: Pick<AttemptSpec, "evaluation" | "inputs" | "prom
   if(material.answer&&"session_meta" in result) return taskResult(spec,revealed);
   if ("assessments" in result) {
     const choices = (material as unknown as { comparison_slots: { aspect:string; scope:string; optional:boolean; kind:ComparisonSlot["kind"];
-      standards:{text:string}[] }[] }).comparison_slots;
+      criterion_ids:string[] }[] }).comparison_slots;
     if (!choices) throw new Error("Comparison fixture requires its program slot directory");
-    const analysis = fixtureAnalysis(material.task_analysis, spec.inputs);
-    const criteria = [...analysis.requirements,...analysis.scoring_points,...analysis.red_flags];
     const slots: ComparisonSlot[] = choices.map(choice => ({ aspect:choice.aspect,kind:choice.kind,optional:choice.optional,shared:choice.scope === "pair",
-      criterion_ids:choice.standards.map(standard => criteria.find(criterion => criterion.text === standard.text)!.id),
+      criterion_ids:choice.criterion_ids,
       finding_indices:Object.fromEntries(Object.keys(result.assessments as object).map(candidate => [candidate,[]])) }));
-    return comparisonSubmission(result as unknown as ComparisonResult,slots);
+    return flatComparisonSubmission(comparisonSubmission(result as unknown as ComparisonResult,slots));
   }
   return result;
 }

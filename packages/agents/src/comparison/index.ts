@@ -18,6 +18,7 @@ const toolNames = [
   "read_trace", "search_trace", "view_image", "calculate", "calculate_pair", "execute_code",
   "read_artifact",
 ];
+const comparisonTools = ["read_trace", "search_trace", "view_image"];
 export const comparisonProfile: AgentProfile = {
   id: "default",
 
@@ -26,8 +27,8 @@ export const comparisonProfile: AgentProfile = {
   modelSubmissionSchema: comparisonSubmissionSchema,
   evidenceSelections: true,
   resultSchema,
-  ...agentPrompt("comparison", toolNames, { fileSubmission: false }),
-  toolNames,
+  ...agentPrompt("comparison", comparisonTools, { fileSubmission: false }),
+  toolNames: comparisonTools,
   validate: validateEvaluation,
   validateSubmission: (request, _draft, audit) => [
     ...comparisonFinalImageIssues(request, audit), ...comparisonDeferredFinalIssues(request, audit),

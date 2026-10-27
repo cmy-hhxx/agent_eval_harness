@@ -103,7 +103,7 @@ export function comparisonSlotChoices(request:AgentRequest){
   }));
   return {slot_index,aspect:slot.aspect,scope:slot.shared?'pair':'source_only',optional:slot.optional,kind:slot.kind,
    advantage_candidates:slot.shared?labels:[],applicable_candidates,reviewable_candidates:slot.kind==='resource'?[]:applicable_candidates,
-   standards:slot.criterion_ids.map(id=>criteria.find(item=>item.id===id)!),
+   criterion_ids:slot.criterion_ids,
    ...(slot.kind==='resource'?{resource_metrics:Object.fromEntries(labels.map(label=>[label,comparisonResourceMetrics(input,label)])),comparable_metrics:comparableResourceMetrics(input)}:{})};
  });
 }

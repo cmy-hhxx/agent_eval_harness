@@ -3,15 +3,15 @@ import assert from 'node:assert/strict';
 import {Ajv2020} from 'ajv/dist/2020.js';
 import {ValidationError,type AgentRequest,type ToolAudit} from '@eval/contracts';
 import {comparisonProfile,comparisonSlotChoices} from './index.js';
-import {requestComparisonSubmission} from '../../../../tests/fixtures/comparison-submission.js';
-import type {ComparisonInput,ComparisonResult} from './types.js';
+import {requestComparisonSubmission,flatComparisonSubmission} from '../../../../tests/fixtures/comparison-submission.js';
+import type {ComparisonInput,ComparisonResult,ComparisonSubmission} from './types.js';
 import example from './fixtures/example.json' with {type:'json'};
 const audit:ToolAudit={calls:0,requiredReadCalls:0,traceReads:[],viewedImages:[],calculations:[],artifacts:[]};
 function fixture(){const request=structuredClone(example.request) as AgentRequest;
  const input=request.input as unknown as ComparisonInput;
  const draft=requestComparisonSubmission(request,structuredClone(example.result) as ComparisonResult);
  return {request,input,draft};}
-function accept(request:AgentRequest,draft:unknown){const result=comparisonProfile.resolve!(request,draft,audit) as ComparisonResult;
+function accept(request:AgentRequest,draft:ComparisonSubmission){const result=comparisonProfile.resolve!(request,flatComparisonSubmission(draft),audit) as ComparisonResult;
  comparisonProfile.validate!(request,result,audit);return result;}
 function rejected(fn:()=>unknown,code:string){assert.throws(fn,(error:unknown)=>error instanceof ValidationError&&!!error.issues?.some(item=>item.code===code));}
 function problem(input:ComparisonInput,candidate='A',status:'已确认'|'待核实'='已确认'){
@@ -23,7 +23,7 @@ test('comparison accepts independent met judgments with evidence-backed no-probl
  assert(new Ajv2020({strict:false}).compile(comparisonProfile.requestSchema!)(request.input));
  const result=accept(request,draft);assert.equal(result.status,'decided');assert.deepEqual(result.ranking,[['A','B']]);assert.deepEqual(input.attributions,before);
 });
-test('comparison resolves rows by slot_index and rejects duplicate candidate cells',()=>{
+test('comparison resolves flat rows by slot_index and rejects nested candidate cells',()=>{
  const request=structuredClone(example.request) as AgentRequest,input=request.input as unknown as ComparisonInput;
  input.candidates.A.original_answer_timing.finish_seconds=4;input.candidates.B.original_answer_timing.finish_seconds=6;
  const source=structuredClone(example.result) as ComparisonResult;
@@ -33,8 +33,7 @@ test('comparison resolves rows by slot_index and rejects duplicate candidate cel
  const draft=requestComparisonSubmission(request,source);draft.comparisons.reverse();
  const result=accept(request,draft);
  assert.deepEqual(result.decision_basis.comparisons.map(row=>row.criterion_ids), [['sum'],[]]);
- const duplicate=structuredClone(draft);duplicate.comparisons.find(row=>row.slot_index===0)!.assessments![1]!.candidate='A';
- rejected(()=>accept(request,duplicate),'comparison_cell_duplicate');
+ assert.throws(()=>comparisonProfile.resolve!(request,draft,audit),ValidationError);
 });
 test('comparison schema groups row kinds while rejecting wrong kind and unknown slot',()=>{
  const {request,input,draft}=fixture();
@@ -42,9 +41,11 @@ test('comparison schema groups row kinds while rejecting wrong kind and unknown 
  const schema=comparisonProfile.modelSubmissionSchema!(request) as any;
  assert.equal(schema.properties.comparisons.items.oneOf.length,1);
  const validate=new Ajv2020({strict:false}).compile(schema.properties.comparisons.items);
- assert(validate(draft.comparisons[0]));
- assert(!validate({...draft.comparisons[0],slot_index:1000}));
- assert(!validate({...draft.comparisons[0],kind:'resource'}));
+ const row:Record<string,unknown>=flatComparisonSubmission(draft).comparisons[0];
+ const unknown={...row,slot_index:1000},nested={...row,kind:'resource'};
+ assert(validate(row));
+ assert(!validate(unknown));
+ assert(!validate(nested));
 });
 test('comparison records existing defect as common core failure without an attribution core field',()=>{
  const {request,input,draft}=fixture();problem(input);
@@ -103,7 +104,7 @@ test('formal resource advantage must match measured dominance',()=>{
  const {request,input}=fixture();
  input.candidates.A.original_answer_timing.finish_seconds=10;
  input.candidates.B.original_answer_timing.finish_seconds=20;
- const result=comparisonProfile.resolve!(request,requestComparisonSubmission(request,structuredClone(example.result) as ComparisonResult),audit) as ComparisonResult;
+ const result=comparisonProfile.resolve!(request,flatComparisonSubmission(requestComparisonSubmission(request,structuredClone(example.result) as ComparisonResult)),audit) as ComparisonResult;
  comparisonProfile.validate!(request,result,audit);
  const resource=result.decision_basis.comparisons.at(-1)!;
  resource.better_candidates=['B'];

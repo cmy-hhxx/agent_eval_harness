@@ -18,13 +18,11 @@ export function comparisonSubmissionSchema(request: AgentRequest) {
     row.properties.slot_index = { enum: indices };
     if (kind === "criterion") {
       row.properties.better_candidate = { enum: [...labels, null] };
-      row.properties.assessments.items.properties.candidate = { enum: labels };
     }
     return [row];
   });
   const requiredSlots = slots.filter(slot => !slot.optional).length;
   Object.assign(result.properties.comparisons, { minItems: requiredSlots, maxItems: slots.length, items: { oneOf: rowSchemas } });
-  result.properties.assessments.items.properties.candidate = { enum: labels };
   result.properties.quality_winner = { enum: [...labels, null] };
   result.properties.source_reviews.items.properties.candidate = { enum: labels };
   const scopeSlots = slots.flatMap((slot, index) => slot.kind === "criterion" && slot.shared && slot.criterion_ids.length ? [index] : []);
@@ -50,7 +48,25 @@ export function pendingComparison(request: AgentRequest, summaries: Record<strin
 export function resolveComparison(request: AgentRequest, draft: unknown): ComparisonResult {
   const validator = new Ajv2020({ allErrors: true, strict: false }).compile(comparisonSubmissionSchema(request));
   if (!validator(draft)) throw new ValidationError(schemaIssues(validator.errors, draft));
-  const value = draft as unknown as ComparisonSubmission, input = request.input as unknown as ComparisonInput;
+  const flat = draft as Record<string, any>, input = request.input as unknown as ComparisonInput;
+  const sourceSlots = comparisonSlots(request);
+  const value: ComparisonSubmission = {
+    ...flat,
+    relative_preference: flat.relative_preference, tradeoff: flat.tradeoff,
+    assessments: (["A", "B"] as const).map(candidate => {
+      const side = candidate.toLowerCase();
+      return { candidate, meets_core: flat[`${side}_core`], core_failure_refs: flat[`${side}_core_refs`], summary: flat[`${side}_summary`] };
+    }),
+    comparisons: flat.comparisons.map((row: Record<string, any>) => ({
+      slot_index: row.slot_index, kind: sourceSlots[row.slot_index].kind, importance: row.importance,
+      better_candidate: row.better_candidate,
+      ...(sourceSlots[row.slot_index].kind === "criterion" ? { assessments: (["A", "B"] as const).map(candidate => {
+        const side = candidate.toLowerCase();
+        return { candidate, status: row[`${side}_status`], evidence_status: row[`${side}_evidence`],
+          summary: row[`${side}_summary`], finding_indices: row[`${side}_findings`] };
+      }) } : {}),
+    })),
+  };
   const qualityWinner = value.quality_winner ?? null;
   const labels = Object.keys(input.candidates), slots = comparisonSlots(request);
   const rowIssues: ValidationIssue[] = [], submittedAssessments = new Map<string, ComparisonResult["assessments"][string]>();
