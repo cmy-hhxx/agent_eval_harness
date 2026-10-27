@@ -165,9 +165,11 @@ tail -f log/runtime.log
 
 | 预算/故障 | 恢复规则 |
 |---|---|
-| 内容提交 | 同任务跨 attempt 和续跑共享 `1 + (stageRepairAttempts[stage] ?? repairAttempts)` |
+| 内容提交 | 接受或明确内容校验拒绝计入额度；同任务跨 attempt 和续跑共享 `1 + (stageRepairAttempts[stage] ?? repairAttempts)` |
 | 文件/JSON 加载错误 | 独立累计 fileErrors，新的加载失败达到三次上限时停止；续跑不清零，但已成功加载的内容仍可使用剩余内容修正预算 |
 | 传输、流中断及可恢复提前结束 | 按 retries / retryDelaySeconds 有界重试 |
+| 提交与材料核查交付失败 | 短暂网络错误及 408/429/502/503/504 重传同一请求，最多三次；提交另查询原收据。无法确认时保留草稿与原始原因并结束尝试，不要求模型改稿，不消耗内容修复预算；Host 已确认的收据和核查计数仍为准 |
+| Host 程序或协议错误 | 保留草稿与原始原因，结束尝试并立即暂停受影响阶段；只有携带内容校验问题的 422 才进入模型修复 |
 | 取消、总期限、耗尽预算 | 停止，不靠重启清零 |
 | 未确认 Worker 最终账本 | 保存已知计数与原因，不推测用量 |
 | 源材料修订 | 清除失效草稿与阅读状态，保留历史计数 |
@@ -188,7 +190,7 @@ npm run eval -- run --run-id pi-001 --config configs/host.json --config configs/
 
 task / result 可重复；成功任务不重评，必要未完成依赖进入清单。准备不重置内容和加载账本。
 
-同阶段、不同任务的同类错误达到 failureGuard 阈值时暂停该阶段，其他健康阶段继续。修复原因后显式解除：
+同阶段、不同任务的同类错误达到 failureGuard 阈值时暂停该阶段，其他健康阶段继续。提交或材料核查的 Host 程序、协议错误无需等待阈值，首个失败即暂停该阶段；网络交付故障仍按原阈值处理。修复原因后显式解除：
 
 ```bash
 npm run eval -- run --run-id pi-001 --resume-stage rewrite \
@@ -372,6 +374,8 @@ npm run eval -- rewrite-comparisons --run /mnt/fin_bench/eval_data/0_wencai/eval
 | model-behavior.jsonl | 由当前有效归因派生的责任分类与 finding 来源，不提供底座排名 |
 
 正式 JSONL 是判词的权威存储，state 不重复保存已接受正文。运行中的提交先在本地 SQLite WAL 热日志中原子确认，再由 outbox 投影到正式 JSONL 和 progress.jsonl；进程崩溃重放本地事件，整机故障允许最多 5 秒未投影进度。崩溃恢复可处理相同重复行与中断尾行，冲突或缺失正式结果明确报错，不自动重评。写入顺序见[生命周期](architecture.md#生命周期)。
+
+恢复时，同序号的 progress 投影只允许为热日志 receipt 补充尚未存在的 `exported`；判词、审计、状态或已有结果引用不一致仍拒绝恢复。重放完成后才应用本次配置与评测器标记，已接受 receipt 保留原评测器标记，保证续跑策略记录与实际执行一致。
 
 `state.json` 仅周期写入，并对错误消息、错误数量和 receipt 审计做固定压缩；draft、completion candidate、inspection、evidence bank 与完整 review 上下文不进入检查点。热日志和 outbox 路径由 `EVAL_HOT_STATE_ROOT` 控制，默认位于 `~/.cache/eval-agent-harness/hot`；生产应放在本机 SSD，不放在 Ceph。
 

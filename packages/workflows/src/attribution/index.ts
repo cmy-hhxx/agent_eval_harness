@@ -4,7 +4,7 @@ import { Ajv2020 } from "ajv/dist/2020.js";
 import { canonical, type AgentBinding, type JsonObject, type PlannedTask, type RunManifest, type RunState, type SubmissionReceipt, type TaskAnalysis, type WorkflowDefinition, type WorkflowScheduling } from "@eval/contracts";
 import { createRunRepository, readJson, type RunCodec } from "@eval/data";
 import { attributionComponentLabel, type ComponentReviewResult, type TraceAttributionResult } from "@eval/agents/attribution";
-import { collectInputs, contentText, loadRunInputs, normalizeInput, normalizeTraceInput, type Candidate, type EvaluationConfig, type RawInput } from "@eval/workflows/inputs";
+import { collectInputs, contentText, loadRunInputs, normalizeInput, normalizeTraceInput, type Candidate, type EvaluationConfig } from "@eval/workflows/inputs";
 import { bindAttributionMaterial, validateOriginalAttributionEvidence } from "@eval/workflows/review";
 import problemSchema from "../../../../schemas/attribution/problem.schema.json" with { type: "json" };
 import traceResultSchema from "../../../../schemas/attribution/trace-result.schema.json" with { type: "json" };
@@ -25,7 +25,6 @@ export interface AttributionUnitOptions {
   /** Changes the unit identity when upstream material changes, such as a revised criteria task. */
   identity?: string;
 }
-const sourceTrace = Symbol("attribution source trace");
 const validateSession = new Ajv2020({ allErrors: true, strict: false })
   .addSchema(problemSchema).addSchema(traceResultSchema).compile(sessionResultSchema);
 
@@ -76,12 +75,7 @@ export async function planAttribution(config: AttributionConfig) {
   const catalog = indexed.catalog, tasks: PlannedTask[] = [];
   for (const candidate of catalog) tasks.push(...planAttributionUnit(candidate).tasks);
   const manifest = { config, tasks, inputCatalog: catalog } as RunManifest;
-  const inputs = await loadRunInputs(manifest, undefined, undefined, undefined, source => {
-    const record = source as Record<string, unknown>;
-    const value = normalizeInput(source);
-    return Object.defineProperties(value, { [sourceTrace]: { value: normalizeInput(source) },
-      meta: { value: Object.hasOwn(record, "meta") ? record.meta : undefined, enumerable: true } });
-  });
+  const inputs = await loadRunInputs(manifest, undefined, undefined, undefined, normalizeInput);
   return { tasks, inputs, catalog, summary: { workflow: "attribution", sessions: catalog.length,
     component_tasks: tasks.filter(task => task.stage === "attribution-component").length,
     trace_tasks: tasks.filter(task => task.stage === "attribution-trace").length,
@@ -89,8 +83,8 @@ export async function planAttribution(config: AttributionConfig) {
 }
 
 export function bindAttribution(task: PlannedTask, inputs: Record<string, unknown>, dependencies: Record<string, SubmissionReceipt | undefined>): AgentBinding {
-  const data = task.data as AttributionTaskData, input = inputs[data.candidate.input_id] as RawInput & { [sourceTrace]?: RawInput };
-  const session = input[sourceTrace] ?? normalizeInput(input), analysis = dependencies.criteria?.status === "succeeded"
+  const data = task.data as AttributionTaskData;
+  const session = normalizeInput(inputs[data.candidate.input_id]), analysis = dependencies.criteria?.status === "succeeded"
     ? dependencies.criteria.evaluation as TaskAnalysis : undefined;
   const traceIndex = data.traceIndex ?? 0, traceRaw = normalizeTraceInput(session, traceIndex), trace = turns(data.candidate)[traceIndex];
   const traceCandidate = trace ? { ...data.candidate, trace_id: trace.trace_id, question: trace.question,
@@ -143,7 +137,7 @@ export const attributionWorkflow: WorkflowDefinition = {
   scheduling: attributionScheduling,
   advance(task, receipt, _state, inputs) {
     if (task.stage === "attribution-component") {
-      const data = task.data as AttributionTaskData, session = (inputs[data.candidate.input_id] as { [sourceTrace]: RawInput })[sourceTrace];
+      const data = task.data as AttributionTaskData, session = inputs[data.candidate.input_id];
       validateOriginalAttributionEvidence(receipt.evaluation, { [data.candidate.input_id]: normalizeTraceInput(session, data.traceIndex ?? 0) }, receipt.audit, receipt.submitted);
     }
     return { tasks: [] };

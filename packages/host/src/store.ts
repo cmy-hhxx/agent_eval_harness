@@ -552,8 +552,7 @@ export class RunStore {
       this.services.agents.validate(binding, evaluation, value.audit,{semantic:!spec.evaluation.resolveValidatesResult});
     } catch (error) {
       this.registerValidationReads(spec, error);
-      if (error instanceof HttpError) throw error;
-      throw new HttpError(422, error instanceof Error ? error.message : String(error));
+      throw error;
     } finally {
       const cpu = process.cpuUsage(validationCpu);
       void this.services.logger?.event?.("submission_validation", { component: "host", run_id: this.manifest.runId,

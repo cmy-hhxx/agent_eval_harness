@@ -1,5 +1,6 @@
 import {
   applyRunJournalDelta,
+  isRunJournalProjection,
   atomicWrite,
   localFiles,
   readProgressJournal,
@@ -154,10 +155,6 @@ export async function runEvaluation(options: RunOptions): Promise<Record<string,
       if (options.taskSource.reconcile)
         inputs = (await options.taskSource.reconcile(run, saved, options.config)).inputs;
       else inputs = options.plan.inputs;
-      saved.manifest.engine = identity;
-      saved.manifest.evaluatorVersion = options.evaluatorVersion;
-      saved.manifest.config = options.config;
-      if (options.debug !== undefined) saved.manifest.debug = options.debug;
     } else {
       if ((await localFiles.list(run)).some((name) => name !== ".run-lock"))
         throw new Error("运行目录缺少 state.json，无法读取已有进度");
@@ -193,7 +190,7 @@ export async function runEvaluation(options: RunOptions): Promise<Record<string,
     for (const event of hot.eventsAfter(snapshotSequence)) replayed.set(event.seq, event);
     for (const event of await readProgressJournal(run, snapshotSequence)) {
       const previous = replayed.get(event.seq);
-      if (previous && canonical(previous.event) !== canonical(event.event))
+      if (previous && !isRunJournalProjection(previous.event, event.event))
         throw new Error("本地热状态与进度事件流在同一序号上不一致");
       replayed.set(event.seq, event);
     }
@@ -201,6 +198,11 @@ export async function runEvaluation(options: RunOptions): Promise<Record<string,
       applyRunJournalDelta(saved, event.event);
     if (replayed.size) hot.setSequenceFloor(Math.max(...replayed.keys()));
     const manifest = saved.manifest;
+    // Replay historical progress before recording the policy used by this execution.
+    manifest.engine = identity;
+    manifest.evaluatorVersion = options.evaluatorVersion;
+    manifest.config = options.config;
+    if (options.debug !== undefined) manifest.debug = options.debug;
     cumulativeAttempts(manifest);
     if (options.maxAttempts !== undefined || options.stopStartingAt !== undefined)
       manifest.executionLimits = { ...manifest.executionLimits,

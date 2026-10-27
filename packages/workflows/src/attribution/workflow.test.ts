@@ -2,12 +2,14 @@ import test, { type TestContext } from "node:test";
 import assert from "node:assert/strict";
 import { readFile, readdir, rm } from "node:fs/promises";
 import path from "node:path";
-import { emptyUsage, ValidationError, type RunState } from "@eval/contracts";
-import { AgentRegistry } from "@eval/host";
+import { DEFAULT_POLICY, emptyUsage, ValidationError, type AttemptSpec, type RunState, type WorkflowDefinition } from "@eval/contracts";
+import { AgentRegistry, RunStore } from "@eval/host";
+import { RunHotStore, runJournalIdentity } from "@eval/data";
+import { comparisonWorkflow, comparisonRepository } from "@eval/workflows/comparison";
 import { cite, evidenceSources } from "@eval/tools";
 import { attributionAgent } from "@eval/agents/attribution";
-import { fixtureConfig, emptyAudit, fakeEvaluatorVersion, fakeIdentity } from "../../../../tests/fixtures/comparison.js";
-import { planAttribution, planAttributionUnit, bindAttribution, attributionRepository, type AttributionConfig, type AttributionTaskData } from "./index.js";
+import { fixtureConfig, emptyAudit, fakeEvaluatorVersion, fakeIdentity, criteriaResultForTask } from "../../../../tests/fixtures/comparison.js";
+import { planAttribution, planAttributionUnit, bindAttribution, attributionRepository, attributionWorkflow, type AttributionConfig, type AttributionTaskData } from "./index.js";
 import type { RawInput } from "../inputs/types.js";
 
 function trace(sessionId: string, question: string, answer: string, tools: string) {
@@ -34,6 +36,76 @@ async function fixture(t: TestContext) {
   t.after(() => rm(f.directory, { recursive: true, force: true }));
   return f;
 }
+
+for (const workflow of [attributionWorkflow, comparisonWorkflow] as WorkflowDefinition[])
+  for (const resume of [false, true])
+    test(`${workflow.id} ${resume ? "resumed" : "new"} multi-trace components commit through Host and preserve evidence validation`, async t => {
+      const f = await fixtureConfig([[session()], [], [session()], []]);
+      let store: RunStore | undefined;
+      t.after(async () => { await store?.close(); await rm(f.directory, { recursive: true, force: true }); });
+      const config = workflow.id === "attribution" ? { ...f.config, workflow: "attribution", inputs: {
+        ...f.config.inputs, versions: f.config.inputs.versions.slice(0, 1),
+      } } : f.config;
+      let plan = await workflow.plan(config);
+      const run = path.join(f.directory, "component-acceptance");
+      const repository = workflow.id === "attribution" ? attributionRepository : comparisonRepository;
+      let state: RunState = { manifest: { format: "evaluation-run", debug: false, runId: "component-acceptance",
+        status: "running", engine: fakeIdentity, evaluatorVersion: fakeEvaluatorVersion, config,
+        tasks: plan.tasks, inputCatalog: plan.catalog, inputs: {},
+        states: Object.fromEntries(plan.tasks.map(task => [task.id, { status: "pending", attempts: 0 }])),
+        preflight: plan.summary, startedAt: 1 }, receipts: {}, usage: emptyUsage(), recordedAttempts: 0 };
+      for (const task of plan.tasks.filter(task => task.stage === "criteria")) {
+        state.manifest.states[task.id]!.status = "succeeded";
+        state.receipts[task.id] = { taskId: task.id, attemptId: "criteria", submissionId: `criteria-${task.id}`,
+          status: "succeeded", acceptedAt: 1, evaluatorVersion: fakeEvaluatorVersion, judge: "fixture",
+          evaluation: criteriaResultForTask(task, plan.inputs), audit: emptyAudit(), usage: emptyUsage() };
+      }
+      if (resume) {
+        await repository.writeRun(run, state);
+        state = await repository.readRun(run);
+        plan = await workflow.reconcile!(run, state, config);
+      }
+      const agents = new AgentRegistry([attributionAgent]);
+      store = new RunStore(run, state, plan.inputs, { repository, agents, taskSource: workflow },
+        undefined, new RunHotStore(":memory:", runJournalIdentity(state)));
+      const components = plan.tasks.filter(task => task.stage === "attribution-component" &&
+        (task.data as AttributionTaskData).component === "终稿生成轮");
+      assert(components.some(task => (task.data as AttributionTaskData).traceIndex === 1));
+      for (const task of components) {
+        const dependencies = Object.fromEntries(Object.entries(task.dependencies).map(([key, id]) => [key, state.receipts[id]]));
+        const binding = workflow.bind(task, plan.inputs, dependencies, { tasks: plan.tasks });
+        const prepared = agents.prepare(binding), raw = binding.request.sources.answer!.value as RawInput;
+        const messageIndex = raw.messages.length - 1;
+        const source = evidenceSources(raw.messages[messageIndex]).find(source => source.kind === "text")!;
+        const evidence = cite(binding.request.sources.answer!.id, messageIndex, source, 0, source.text.length);
+        const bank = [...prepared.evidenceBank];
+        if (!bank.includes(evidence.evidence_id)) bank.push(evidence.evidence_id);
+        const spec: AttemptSpec = { runId: state.manifest.runId, taskId: task.id, attemptId: `attempt-${task.id}`,
+          inputRevision: 1, engine: fakeIdentity, evaluation: prepared.evaluation, prompt: prepared.prompt,
+          evidenceBank: prepared.evidenceBank, policy: DEFAULT_POLICY,
+          inputs: Object.entries(task.inputIds).map(([name, id]) => ({ name, id })),
+          hostUrl: "http://localhost", deadline: Date.now() + 60000,
+          model: { provider: "fixture", baseUrl: "http://localhost", api: "openai-completions", apiKeyEnv: "FIXTURE_KEY",
+            model: "fixture", thinking: "off", contextWindow: 10000, maxOutputTokens: 1000 } };
+        await store.activate(spec);
+        await store.registerEvidenceBank({ taskId: task.id, attemptId: spec.attemptId, evidenceBank: bank });
+        const problem = { label: "最终回答缺少可核查结论", definition: "最终回答只给出简短答复，缺少支持其结论的数据。",
+          problem_phenomena: "当前问答没有展示结论依据。", reason: "原文只包含简短答复，无法核对数据与推导过程。",
+          evidence: [{ index: bank.indexOf(evidence.evidence_id) + 1, reason: "直接定位本轮最终回答。" }] };
+        const submission = { taskId: task.id, attemptId: spec.attemptId, submissionId: `submission-${task.id}`,
+          evaluation: { problems: [problem] }, audit: { ...emptyAudit(), evidenceBank: bank }, usage: emptyUsage() };
+        await assert.rejects(store.accept({ ...submission, evaluation: { problems: [{ ...problem,
+          evidence: [{ index: bank.length + 1, reason: "不存在的证据不能接受。" }] }] } }), ValidationError);
+        assert.equal(await store.receipt(task.id), undefined);
+        const receipt = await store.accept(submission);
+        assert.equal(receipt.status, "succeeded");
+        assert.equal((await store.receipt(task.id))!.submissionId, submission.submissionId);
+        assert.equal(state.manifest.states[task.id]!.status, "succeeded");
+      }
+      await store.persistCheckpoint();
+      const restored = await repository.readRun(run);
+      for (const task of components) assert.equal(restored.receipts[task.id]!.status, "succeeded");
+    });
 
 test("an attribution plan fans out one component task per trace component and one final session task", async t => {
   const f = await fixture(t);
