@@ -1,7 +1,7 @@
 import { canonical, type RunState, type TaskPlan } from "@eval/contracts";
 import { attributionSlots, comparisonSlots } from "./commentary.js";
 import { taskCase } from "./input.js";
-import { display, stageResult, sourceRewriteTasks } from "./results.js";
+import { displayComparison, stageResult, sourceRewriteTasks } from "./results.js";
 import type { ComparisonResult, EvalConfig, SessionAttributionResult, TaskData } from "./types.js";
 import { acceptedRewriteProjection } from "./rewrite-projection.js";
 
@@ -160,7 +160,7 @@ export function comparisonRewriteReview(state: RunState, resultIds: string[] | u
       { rewrites: { id: string; text: string }[] } | undefined;
     return { task_id: task.id, result_id: data.comparisonId, ...taskCase(data),
       slots: (["verdicts", "items"] as const).flatMap((scope) => comparisonSlots(receipt.evaluation as ComparisonResult, scope))
-        .map((item) => ({ ...display(item, names), rewritten: saved?.rewrites.find((entry) => entry.id === item.id)?.text ?? null })) };
+        .map((item) => ({ ...displayComparison(item, names), rewritten: displayComparison(saved?.rewrites.find((entry) => entry.id === item.id)?.text ?? null, names) })) };
   });
   return { semantic_review: "required", cases };
 }

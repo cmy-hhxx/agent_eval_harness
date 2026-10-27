@@ -1,6 +1,7 @@
 import type { PlannedTask, RunState, SubmissionReceipt } from "@eval/contracts";
 import type { RewriteResult } from "@eval/agents/rewrite";
 import type { TaskData } from "./types.js";
+import { displayComparison } from "./candidate-display.js";
 
 export function sourceRewriteTasks(tasks: PlannedTask[], sourceTaskId: string): PlannedTask[] {
   return tasks.filter(task => task.stage === "rewrite" && (task.data as TaskData).rewriteOf!.taskId === sourceTaskId);
@@ -21,7 +22,9 @@ export function acceptedRewriteProjection(state: RunState, sourceTaskId: string)
   if (!accepted.length) return undefined;
   const rewrites = new Map<string, RewriteResult["rewrites"][number]>(), owners = new Map<string, string>();
   for (const { task, receipt } of accepted) for (const item of (receipt.evaluation as RewriteResult).rewrites) {
-    rewrites.set(item.id, item);
+    const data = task.data as TaskData;
+    rewrites.set(item.id, data.rewriteOf?.stage === "comparison"
+      ? { ...item, text: displayComparison(item.text, data.rewriteNames!) } : item);
     owners.set(item.id, task.id);
   }
   return { rewritten: { evaluator_version: accepted.at(-1)!.receipt.evaluatorVersion, rewrites: [...rewrites.values()] }, owners };

@@ -19,22 +19,8 @@ import { taskObservations } from "./observations.js";
 import { acceptedRewriteProjection } from "./rewrite-projection.js";
 import { sessionAttributionResultSchema } from "@eval/agents/attribution";
 export { acceptedRewrites, acceptedRewriteProjection, sourceRewriteTasks } from "./rewrite-projection.js";
-export function display<T>(value: T, names: Record<string, string>, key = ""): T {
-  if (typeof value === "string")
-    return (
-      key === "quote"
-        ? value
-        : value.replace(
-            /【候选([A-Z])】|候选([A-Z])/g,
-            (marker, bracketed: string | undefined, bare: string | undefined) =>
-              names[bracketed ?? bare!] ?? marker,
-          )
-    ) as T;
-  if (Array.isArray(value)) return value.map((v) => display(v, names)) as T;
-  if (value && typeof value === "object")
-    return Object.fromEntries(Object.entries(value).map(([k, v]) => [k, display(v, names, k)])) as T;
-  return value;
-}
+import { displayComparison } from "./candidate-display.js";
+export { display, displayComparison } from "./candidate-display.js";
 
 /** Derive every two-way verdict from the group ranking plus per-candidate core classification. */
 function deriveVerdicts(
@@ -65,7 +51,7 @@ function deriveVerdicts(
         result: decision.outcome,
         winner_version: winnerVersion,
         winner_name: winnerLabel ? labels[winnerLabel] : null,
-        reason: display(verdictReason(decision, la, lb), labels),
+        reason: displayComparison(verdictReason(decision, la, lb), labels),
       };
     }
   return verdicts;
@@ -117,22 +103,22 @@ export function comparisonRow(
     assessments: Object.fromEntries(
       Object.entries(result.assessments).map(([label, assessment]) => [
         data.candidates[label]!.version,
-        { meets_core: assessment.meets_core, core_failure_refs: assessment.core_failure_refs, summary: display(assessment.summary, labels) },
+        { meets_core: assessment.meets_core, core_failure_refs: assessment.core_failure_refs, summary: displayComparison(assessment.summary, labels) },
       ]),
     ),
     evaluations,
     verdicts: deriveVerdicts(data.candidates, result, group, labels),
-    task_analysis: display(result.task_analysis, labels),
+    task_analysis: displayComparison(result.task_analysis, labels),
     decision_basis: {
-      tradeoff: display(result.decision_basis.tradeoff, labels),
+      tradeoff: displayComparison(result.decision_basis.tradeoff, labels),
       comparisons: result.decision_basis.comparisons.map((item) => ({
-        aspect: display(item.aspect, labels),
+        aspect: displayComparison(item.aspect, labels),
         importance: item.importance,
         criterion_ids: item.criterion_ids,
         better_candidates: item.better_candidates.map((label) => data.candidates[label]!.version),
         assessments: Object.fromEntries(Object.entries(item.assessments).map(([label, assessment]) => [
           data.candidates[label]!.version,
-          { ...assessment, summary: display(assessment.summary, labels) },
+          { ...assessment, summary: displayComparison(assessment.summary, labels) },
         ])),
       })),
       decisive_findings: result.decision_basis.decisive_findings.map((ref) => ({

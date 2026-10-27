@@ -10,7 +10,7 @@ import { sessionComparisonInput, sessionQas } from "../inputs/session.js";
 import type { TaskData, ComparisonResult } from "./types.js";
 import type { RawInput } from "../inputs/types.js";
 import { bindInstructionReview } from "../review/instruction.js";
-import { display } from "./results.js";
+import { display, displayComparison } from "./candidate-display.js";
 import { sourceSlots } from "./commentary.js";
 import { taskObservations, requestItems } from "./observations.js";
 import { normalizeLabel } from "@eval/agents/clustering";
@@ -115,6 +115,7 @@ function bindSourceTask(
     };
   }
   if (data.stage === "rewrite") {
+    const present = data.rewriteOf?.stage === "comparison" ? displayComparison : display;
     const source = dependencies.source;
     if (!source || !data.rewriteOf)
       throw new Error("改写任务缺少已接受的源结果：" + data.rewriteOf?.taskId);
@@ -142,13 +143,13 @@ function bindSourceTask(
           ...item,
           label: data.rewriteOf!.stage === "attribution"
             ? `${data.rewriteNames!.A} ${item.label}`
-            : display(item.label, data.rewriteNames!),
-          text: display(item.text, data.rewriteNames!),
+            : present(item.label, data.rewriteNames!),
+          text: present(item.text, data.rewriteNames!),
           ...(identityContext || item.context ? {
-            context: [identityContext, item.context && display(item.context, data.rewriteNames!)].filter(Boolean).join("\n"),
+            context: [identityContext, item.context && present(item.context, data.rewriteNames!)].filter(Boolean).join("\n"),
           } : {}),
-          ...(item.forbiddenPrefixes ? { forbiddenPrefixes: display(item.forbiddenPrefixes, data.rewriteNames!) } : {}),
-          ...(item.preference ? { preference: display(item.preference, data.rewriteNames!) } : {}),
+          ...(item.forbiddenPrefixes ? { forbiddenPrefixes: present(item.forbiddenPrefixes, data.rewriteNames!) } : {}),
+          ...(item.preference ? { preference: present(item.preference, data.rewriteNames!) } : {}),
         })),
       },
       sources: {},
