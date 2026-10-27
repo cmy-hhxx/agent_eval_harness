@@ -88,6 +88,10 @@ export function createNightDispatcher(state, { save, record, run, canOverlap = a
 
 export function resolveNightConfig(value, configFile) {
   const config = structuredClone(value);
+  config.activeSources ??= [...priority];
+  if (!Array.isArray(config.activeSources) || !config.activeSources.length ||
+      new Set(config.activeSources).size !== config.activeSources.length ||
+      config.activeSources.some(source => !priority.includes(source))) throw new Error("Invalid activeSources");
   for (const key of ["runtimeRoot", "dataRoot", "settingsFile"])
     if (typeof config[key] !== "string" || !path.isAbsolute(config[key])) throw new Error(`${key} 必须为绝对路径`);
   for (const key of ["pollSeconds", "stableSeconds", "admissionSeconds"])
@@ -122,7 +126,7 @@ export async function main(argv) {
   const requestFile = path.join(directory, "model-requests.json");
   if (command === "status") {
     const state = await readJson(stateFile);
-    console.log(JSON.stringify({ intake: state.closed ? "closed" : "open", pending: state.pending, excludedInputs: state.excludedInputs,
+    console.log(JSON.stringify({ activeSources: config.activeSources, intake: state.closed ? "closed" : "open", pending: state.pending, excludedInputs: state.excludedInputs,
       modelRequests: await exists(requestFile) ? await readJson(requestFile) : undefined,
       preparationError: state.preparationError, jobs: state.jobs.map(({ source, runId, status, error }) =>
         ({ source, runId, status, error })) }, null, 2));
@@ -227,7 +231,8 @@ export async function main(argv) {
     const requestPriorities = { comparison: 0, "attribution-session": 1, "attribution-trace": 2,
       "attribution-component": 3, criteria: 4 };
     const requests = createChannelRequests(Object.fromEntries(config.channels.map(channel => [channel, 200])),
-      { wencai: 7, lost: 2, aime: 1 }, context => requestPriorities[context.stage] ?? 5);
+      Object.fromEntries(config.activeSources.map(source => [source, { wencai: 7, lost: 2, aime: 1 }[source]])),
+      context => requestPriorities[context.stage] ?? 5);
     const writeRequests = () => writeJson(requestFile, requests.snapshot());
     await writeRequests();
     requestTimer = setInterval(() => { void writeRequests().catch(error => logger.error(error,
@@ -270,17 +275,18 @@ export async function main(argv) {
     const evaluate = async source => {
       while (!stopping) {
         if (await dispatcher.step(source)) continue;
+        const selectedJobs = state.jobs.filter(job => config.activeSources.includes(job.source));
         if (state.closed && dataReady && !state.preparationError && state.deliveries.every(item => item.admitted) &&
-            state.jobs.every(job => ["completed", "failed"].includes(job.status)) && !stopping) {
+            selectedJobs.every(job => ["completed", "failed"].includes(job.status)) && !stopping) {
           stop();
-          const failed = state.jobs.filter(job => job.status === "failed").length;
-          await record(failed ? "finished_with_failures" : "completed", { jobs: state.jobs.length, failed }); break;
+          const failed = selectedJobs.filter(job => job.status === "failed").length;
+          await record(failed ? "finished_with_failures" : "completed", { jobs: selectedJobs.length, failed }); break;
         }
         await wait(1000);
       }
     };
     const guard = task => task.catch(error => { stop(); abort.abort(error); throw error; });
-    const outcomes = await Promise.allSettled([guard(prepare()), ...priority.map(source => guard(evaluate(source)))]);
+    const outcomes = await Promise.allSettled([guard(prepare()), ...config.activeSources.map(source => guard(evaluate(source)))]);
     await dispatcher.settle();
     for (const outcome of outcomes) if (outcome.status === "rejected") throw outcome.reason;
     await save();

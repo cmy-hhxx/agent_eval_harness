@@ -8,6 +8,7 @@
   "stableSeconds": 30,
   "admissionSeconds": 7200,
   "channels": ["evaluation-gateway", "evaluation-gateway-2"],
+  "activeSources": ["lost", "aime"],
   "hostConfigs": {
     "wencai": ["host.json", "automations-host.json", "night-wencai.json"],
     "lost": ["host.json", "attribution.json", "automations-host.json", "night-aime.json"],
