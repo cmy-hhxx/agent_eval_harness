@@ -877,6 +877,7 @@ export async function runEvaluation(options: RunOptions): Promise<Record<string,
       }
     }
     const runningChannels = new Map<string, string>();
+    let completions = 0;
     while (true) {
       if (controller.signal.aborted) break;
       if (options.pauseSignal?.aborted) {
@@ -901,10 +902,15 @@ export async function runEvaluation(options: RunOptions): Promise<Record<string,
         deferWorker(worker);
       }));
       let scheduled = false, blocked = false;
+      const scheduledAtCompletion = completions;
+      let reschedule = false;
       const sessionAdmission = options.taskSource.scheduling?.sessionAdmission,
         admission = sessionAdmission ? sessionAdmissionSnapshot(manifest.tasks, manifest.states, sessionAdmission, manifest) : undefined;
       for (const task of scheduleTasks(manifest.tasks.filter(dispatchable), manifest.states, options.taskSource.scheduling?.stagePriority)) {
         if (controller.signal.aborted || options.pauseSignal?.aborted || executionStopReason(manifest)) break;
+        // Worker startup and preparation yield while dependencies finish. Refresh
+        // the stage order before admitting more of the old upstream backlog.
+        if (completions !== scheduledAtCompletion) { reschedule = true; break; }
         if (!dispatchable(task)) continue;
         if (manifest.states[task.id].status !== "pending" || running.has(task.id) ||
             (manifest.states[task.id].nextRetryAt ?? 0) > Date.now()) continue;
@@ -986,6 +992,7 @@ export async function runEvaluation(options: RunOptions): Promise<Record<string,
             running.delete(task.id);
             runningChannels.delete(task.id);
             busy.delete(worker);
+            completions++;
           });
         running.set(task.id, promise);
         // Binding can be CPU-heavy. Let dispatched Workers, permits and checkpoints
@@ -993,6 +1000,7 @@ export async function runEvaluation(options: RunOptions): Promise<Record<string,
         await yieldToIO();
       }
       if (blocked) await current.save(undefined, { manifest: true, all: true });
+      if (reschedule) continue;
       const retryDeadlines = manifest.tasks.filter(task => !executionStopReason(manifest) && dispatchable(task) &&
         manifest.states[task.id].status === "pending" && (manifest.states[task.id].nextRetryAt ?? 0) > Date.now())
         .map(task => manifest.states[task.id].nextRetryAt!);
