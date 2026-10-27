@@ -35,35 +35,52 @@ export function admitLost(state, versions, output, now, intervalMs) {
   return added;
 }
 
-export function createNightDispatcher(state, { save, record, run }) {
+export function createNightDispatcher(state, { save, record, run, canOverlap = async () => false }) {
   const active = new Map();
+  let paused = false, failure;
+  const lane = source => [...active.keys()].filter(job => job.source === source);
+  const overlapping = () => new Set([...active.keys()].map(job => job.source)).size < active.size;
   return {
-    pause() { for (const pause of active.values()) pause.abort(new Error("Night pipeline stopping")); },
+    pause() {
+      paused = true;
+      for (const entry of active.values()) entry.pause.abort(new Error("Night pipeline stopping"));
+    },
+    async settle() {
+      await Promise.all([...active.values()].map(entry => entry.promise));
+      if (failure) throw failure;
+    },
     async step(source) {
-      if (active.has(source)) throw new Error("Evaluation dispatcher is already active: " + source);
+      if (failure) throw failure;
+      if (paused || !nextJob(state, source)) return false;
+      const current = lane(source);
+      if (current.length >= 2 || current.length && overlapping()) return false;
+      if (current.length && !await canOverlap(current[0])) return false;
+      // Progress reads yield; another lane may have claimed the single extra batch.
+      if (paused || lane(source).length >= 2 || lane(source).length && overlapping()) return false;
       const job = nextJob(state, source);
       if (!job) return false;
       const pause = new AbortController();
-      let detail;
-      active.set(source, pause);
+      const entry = { pause, promise: undefined };
+      active.set(job, entry);
       job.status = "running";
       delete job.error;
-      await save();
-      await record("evaluation_started", { source: job.source, runId: job.runId });
-      try {
-        const result = await run(job, pause.signal);
-        job.status = result.complete ? "completed" : pause.signal.aborted ? "queued" : "failed";
-        job.result = result.result;
-        if (job.status === "failed") job.error = "评测未全部成功；保留成功结果和失败状态，不自动补跑";
-      } catch (error) {
-        job.status = "failed";
-        job.error = error.message;
-        detail = error.stack;
-      } finally {
-        active.delete(source);
-      }
-      await save();
-      await record("evaluation_settled", { source: job.source, runId: job.runId, status: job.status, error: job.error, detail });
+      entry.promise = Promise.resolve().then(async () => {
+        let detail;
+        await save();
+        await record("evaluation_started", { source: job.source, runId: job.runId, tailOf: current[0]?.runId });
+        try {
+          const result = await run(job, pause.signal);
+          job.status = result.complete ? "completed" : pause.signal.aborted ? "queued" : "failed";
+          job.result = result.result;
+          if (job.status === "failed") job.error = "评测未全部成功；保留成功结果和失败状态，不自动补跑";
+        } catch (error) {
+          job.status = "failed";
+          job.error = error.message;
+          detail = error.stack;
+        }
+        await save();
+        await record("evaluation_settled", { source: job.source, runId: job.runId, status: job.status, error: job.error, detail });
+      }).catch(error => { failure ??= error; }).finally(() => { active.delete(job); });
       return true;
     },
   };
@@ -215,7 +232,17 @@ export async function main(argv) {
     await writeRequests();
     requestTimer = setInterval(() => { void writeRequests().catch(error => logger.error(error,
       { component: "night-evaluation", event: "request_metrics_failed" })); }, 10_000);
-    dispatcher = createNightDispatcher(state, { save, record, run: (job, pauseSignal) => runNightBatch({
+    dispatcher = createNightDispatcher(state, { save, record, canOverlap: async job => {
+      try {
+        const lock = await readJson(path.join(job.output, job.runId, ".run-lock"));
+        if (!lock.url) return false;
+        const response = await fetch(lock.url + "/api/progress", { signal: AbortSignal.timeout(2000) });
+        if (!response.ok) return false;
+        const progress = await response.json();
+        return progress.queued === 0 && progress.preparing === 0 &&
+          progress.in_flight_tasks > 0 && progress.in_flight_tasks <= 2;
+      } catch { return false; }
+    }, run: (job, pauseSignal) => runNightBatch({
       ...job, configs: config.hostConfigs[job.source], workflow: job.source === "wencai" ? "comparison" : "attribution",
       channels: config.channels, requests: { concurrency: requests.concurrency,
         acquire: (context, signal) => requests.acquire({ ...context, trafficGroup: job.source }, signal) },
@@ -254,15 +281,20 @@ export async function main(argv) {
     };
     const guard = task => task.catch(error => { stop(); abort.abort(error); throw error; });
     const outcomes = await Promise.allSettled([guard(prepare()), ...priority.map(source => guard(evaluate(source)))]);
+    await dispatcher.settle();
     for (const outcome of outcomes) if (outcome.status === "rejected") throw outcome.reason;
     await save();
     await writeRequests();
     await record("stopped", { closed: Boolean(state.closed), failed: state.jobs.filter(job => job.status === "failed").length });
   } finally {
-    clearInterval(requestTimer);
-    process.off("SIGINT", stop); process.off("SIGTERM", stop);
-    await releaseInput?.();
-    await release();
+    dispatcher?.pause();
+    try { await dispatcher?.settle(); }
+    finally {
+      clearInterval(requestTimer);
+      process.off("SIGINT", stop); process.off("SIGTERM", stop);
+      await releaseInput?.();
+      await release();
+    }
   }
 }
 

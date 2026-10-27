@@ -203,7 +203,7 @@ test("changed, duplicate, or removed delivered identities fail instead of silent
   await assert.rejects(f.deliver(), /删除了已交付记录/);
 });
 
-test("three sources dispatch concurrently and reject duplicate active runs within one source", async () => {
+test("three sources dispatch concurrently without duplicating an active batch", async () => {
   const sources = ["wencai", "lost", "aime"];
   const state = { jobs: sources.map(source => ({ source, runId: source, status: "queued" })) };
   const runs = [];
@@ -219,8 +219,9 @@ test("three sources dispatch concurrently and reject duplicate active runs withi
   const active = sources.map(source => dispatch.step(source));
   await running;
   assert.deepEqual(runs, sources);
-  await assert.rejects(dispatch.step("aime"), /already active/);
+  assert.equal(await dispatch.step("aime"), false);
   drain(); await Promise.all(active);
+  await dispatch.settle();
   assert.ok(state.jobs.every(job => job.status === "completed"));
 });
 
@@ -236,6 +237,29 @@ test("incremental admission survives restart and honors the two-hour interval", 
   assert.notEqual(resumed.jobs[0].runId, resumed.jobs[1].runId);
 });
 
+test("tail overlap admits only one extra batch globally and drains on pause", async () => {
+  const sources = ["wencai", "lost", "aime"], drains = [];
+  const state = { jobs: sources.flatMap(source => [0, 1].map(index =>
+    ({ source, runId: source + index, status: "queued" }))) };
+  const dispatch = createNightDispatcher(state, { save: async () => {}, record: async () => {},
+    canOverlap: async () => true, run: async () => {
+      await new Promise(resolve => drains.push(resolve));
+      return { complete: true };
+    } });
+  for (const source of sources) assert.equal(await dispatch.step(source), true);
+  assert.equal(await dispatch.step("aime"), true);
+  assert.equal(await dispatch.step("aime"), false);
+  assert.equal(await dispatch.step("lost"), false);
+  assert.equal(state.jobs.filter(job => job.status === "running").length, 4);
+  await new Promise(resolve => setImmediate(resolve));
+  dispatch.pause();
+  assert.equal(await dispatch.step("lost"), false);
+  drains.forEach(resolve => resolve());
+  await dispatch.settle();
+  assert.equal(state.jobs.filter(job => job.status === "completed").length, 4);
+  assert.equal(state.jobs.filter(job => job.status === "queued").length, 2);
+});
+
 test("failed batches remain failed while later work continues, including after restart", async () => {
   const state = { jobs: [{ source: "wencai", runId: "w", status: "queued" }, { source: "wencai", runId: "next", status: "queued" }] };
   const runs = [];
@@ -245,11 +269,13 @@ test("failed batches remain failed while later work continues, including after r
     return { complete: true };
   } });
   await dispatch.step("wencai");
+  await dispatch.settle();
   const failed = state.jobs[0];
   assert.equal(failed.status, "failed");
   assert.equal(failed.retryAt, undefined);
   assert.equal(nextJob(state, "wencai"), state.jobs[1]);
   await dispatch.step("wencai");
+  await dispatch.settle();
   assert.equal(await dispatch.step("wencai"), false);
   assert.deepEqual(runs, ["w", "next"]);
   assert.equal(failed.status, "failed");
