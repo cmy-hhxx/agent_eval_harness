@@ -557,10 +557,6 @@ export async function executeAttempt(attempt: AttemptExecution, deps: AttemptExe
           clearTimeout(idle); clearTimeout(deadline);
           try {
             await request(`${spec.hostUrl}/api/model-requests/${spec.attemptId}/${callId}`, "POST", {}, combined);
-          } catch (error) {
-            // Fail closed: a missing permit must never fall through to the provider.
-            controller.abort(error);
-            throw error;
           } finally {
             deadlineAt += Date.now() - waitingAt;
             if (!controller.signal.aborted) { armDeadline(); activity(); }
@@ -569,13 +565,14 @@ export async function executeAttempt(attempt: AttemptExecution, deps: AttemptExe
           return async () => {
             if (released) return;
             released = true;
-            try {
+            for (let retry = 0; ; retry++) try {
               // A busy Host may acknowledge after serializing its checkpoint. A short
               // control timeout must not discard a successfully completed model turn.
               await request(`${spec.hostUrl}/api/model-requests/${spec.attemptId}/${callId}`, "DELETE", undefined, AbortSignal.timeout(60_000));
+              return;
             } catch (error) {
-              await stop(attempt, "cancelled", "LLM permit release failed: " + errorText(error));
-              throw error;
+              if (!transientDelivery(error) || retry === 2) throw error;
+              await new Promise(resolve => setTimeout(resolve, 100 * 2 ** retry));
             }
           };
         } } : {}),

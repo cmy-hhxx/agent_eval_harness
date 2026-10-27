@@ -1599,6 +1599,44 @@ test("token budget aborts at the model response boundary", async () => {
   }
 });
 
+for (const mode of ["acquire", "release-once", "release-always"] as const)
+test(`model permit ${mode} network failures preserve transport retries and completed turns`, async () => {
+  const original = globalThis.fetch;
+  let releases = 0, providerCalls = 0;
+  globalThis.fetch = async (input, init) => {
+    if (String(input).includes("/api/model-requests/")) {
+      if (init?.method === "DELETE") releases++;
+      if (mode === "acquire" && init?.method === "POST" || init?.method === "DELETE" &&
+        (mode === "release-always" || mode === "release-once" && releases === 1))
+        throw new TypeError("fetch failed", { cause: Object.assign(new Error("connection reset"), { code: "ECONNRESET" }) });
+      return new Response(JSON.stringify({ admitted: true, released: true }), { headers: { "content-type": "application/json" } });
+    }
+    return original(input, init);
+  };
+  const fixture = await harness(async options => ({ async run() {
+    const release = await options.modelRequest!();
+    providerCalls++;
+    await release();
+    await options.execute("read_trace", { candidate: "answer", message_index: 0, path: "/content" });
+    await submitFor(options, { ok: true });
+  }, async abort() {}, async dispose() {} }));
+  fixture.spec.controlModelRequests = true;
+  try {
+    await fixture.start();
+    const result = await fixture.done();
+    assert.equal(providerCalls, mode === "acquire" ? 0 : 1);
+    if (mode === "release-once") {
+      assert.equal(releases, 2);
+      assert.equal(result.state, "succeeded");
+    } else {
+      assert.equal(result.state, "failed");
+      assert.equal(result.retryable, true);
+      assert.equal(result.failure!.contentSubmissions, 0);
+      assert.equal(result.failure!.errors[0].category, "transport");
+    }
+  } finally { globalThis.fetch = original; await fixture.close(); }
+});
+
 for (const [message, retryable, quota = false] of [
   ['429 {"code":"insufficient_quota","message":"You exceeded your current quota"}', false, true],
   ["You exceeded your current quota, please check your plan and billing details.", false, true],

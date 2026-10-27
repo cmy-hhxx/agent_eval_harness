@@ -126,7 +126,7 @@
     "idleTimeoutSeconds": 120,
     "maxToolCalls": 24,
     "repairAttempts": 3,
-    "retries": 1,
+    "retries": 3,
     "retryDelaySeconds": 10,
     "codeTimeoutSeconds": 60,
     "maxOutputChars": 16000,
