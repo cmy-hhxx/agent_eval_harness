@@ -35,7 +35,7 @@
     "versions": [
       {
         "id": "a_fast",
-        "name": "a_fast",
+        "name": "A Fast",
         "comparison_tier": "Fast",
         "display_name": "a_fast",
         "adapter": "a",
@@ -48,7 +48,7 @@
       },
       {
         "id": "b_fast",
-        "name": "b_fast",
+        "name": "B Fast",
         "comparison_tier": "Fast",
         "display_name": "b_fast",
         "adapter": "b",
