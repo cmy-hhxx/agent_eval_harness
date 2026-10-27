@@ -137,10 +137,10 @@ async function main() {
     if (inbox.size) {
       try {
         const summary = await extract({ source, target, sevenZip: values["seven-zip"], quiet: true, log: note });
-        if (summary.accepted || summary.incremental || summary.unchanged) {
-          log(`解压完成：写入 ${summary.accepted} 条（总计 ${Object.values(summary.files).reduce((total, rows) => total + rows, 0)} 条）`);
-        }
         const state = await readState(target);
+        const total = Object.values(state?.files ?? {}).reduce((sum, file) => sum + file.rows, 0);
+        if (summary.accepted) log(`解压完成：新增 ${summary.accepted} 条，累计 ${total} 条`);
+        else if (summary.unchanged) log(`输入已是最新：累计 ${total} 条`);
         const { moved, kept } = await archiveProcessed({ source, archiveDir, names: [...inbox.keys()], state });
         if (moved.length) log(`归档 ${moved.length} 个包：${moved.join(", ")}`);
         for (const entry of kept) log(`保留 ${entry.name}：${entry.reason}`);
