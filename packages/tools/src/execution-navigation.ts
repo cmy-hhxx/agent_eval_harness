@@ -203,44 +203,77 @@ export const readResponsibilityChainTool: Omit<ToolDefinition, "description"> = 
       bank.push(id);
       return bank.length;
     };
+    const sources = new Map<number, ReturnType<typeof evidenceSources>>();
     const items = (value: unknown, chars: { used: number; limit: number }): Record<string, unknown>[] => rows(value).flatMap((item): Record<string, unknown>[] => {
       if (typeof item.evidence_id !== "string" || !Number.isSafeInteger(item.message_index)) return [];
       const point = parseEvidenceCoordinates(item.evidence_id);
-      if (!point || point.kind === "image") return [];
-      const source = evidenceSources(records.messages[point.message_index]).find(source => source.kind === point.kind && source.path === point.path);
-      if (!source) return [];
-      const quoteEnd = Math.min(point.end, point.start + (ctx.maxEvidenceQuoteChars ?? point.end - point.start));
-      const excerpt = cite(inputId, point.message_index, source, point.start, quoteEnd);
-      const quote = excerpt.quote;
+      if (!point || point.kind === "image" || point.input_id !== inputId) return [];
+      if (!sources.has(point.message_index)) sources.set(point.message_index, evidenceSources(records.messages[point.message_index]));
+      const source = sources.get(point.message_index)!.find(source => source.kind === point.kind && source.path === point.path);
+      if (!source || source.quotable === false) return [];
       const remaining = Math.max(0, chars.limit - chars.used);
-      const repair = point.end > quoteEnd ? { next_read_request: { tool: "read_trace", arguments: {
-        candidate: args.candidate, message_index: point.message_index, path: point.path, offset: quoteEnd, max_chars: 400 } } } : {};
-      if (!remaining) return [{ evidence_index: register(excerpt.evidence_id), message_index: point.message_index, kind: point.kind, path: point.path,
-        start: point.start, end: quoteEnd, quote_chars: quote.length, ...(point.end > quoteEnd ? { total_quote_chars: point.end - point.start } : {}),
-        truncated: true, ...repair }];
-      const shown = quote.slice(0, remaining);
-      chars.used += shown.length;
-      return [{ evidence_index: register(excerpt.evidence_id), message_index: point.message_index, kind: point.kind, path: point.path,
-        start: point.start, end: quoteEnd, quote_chars: quote.length, quote: shown,
-        ...(shown.length < quote.length || point.end > quoteEnd ? { truncated: true } : {}),
-        ...(point.end > quoteEnd ? { total_quote_chars: point.end - point.start, ...repair } : {}) }];
+      const end = Math.min(point.end, point.start + (ctx.maxEvidenceQuoteChars ?? point.end - point.start), point.start + remaining);
+      const next = (offset: number) => ({ next_read_request: { tool: "read_trace", arguments: {
+        candidate: args.candidate, message_index: point.message_index, path: point.path, offset, max_chars: 400 } } });
+      const coordinates = { message_index: point.message_index, kind: point.kind, path: point.path };
+      if (end <= point.start) return [{ ...coordinates, start: point.start, end: point.end,
+        total_quote_chars: point.end - point.start, truncated: true, ...next(point.start) }];
+      const excerpt = cite(inputId, point.message_index, source, point.start, end);
+      chars.used += excerpt.quote.length;
+      return [{ ...coordinates, evidence_id: excerpt.evidence_id, start: point.start, end,
+        quote_chars: excerpt.quote.length, quote: excerpt.quote,
+        ...(end < point.end ? { total_quote_chars: point.end - point.start, truncated: true, ...next(end) } : {}) }];
     });
-    const limit = args.max_chars ?? 16000, chars = { used: 0, limit };
+    const limit = Math.min(args.max_chars ?? 16000, ctx.policy.maxOutputChars), chars = { used: 0, limit };
     const chainIndex = selected.chain_index;
-    const sameChain = chainIndex === null || chainIndex === undefined ? [selected] : boundaries.filter(item => item.chain_index === chainIndex);
-    const ofKind = (kind: string) => sameChain.find(item => item.kind === kind);
+    const selectedChains = new Set(indexes(selected.chain_indices));
+    if (typeof chainIndex === "number") selectedChains.add(chainIndex);
+    const sameChain = boundaries.filter(item => item === selected || indexes(item.chain_indices).some(index => selectedChains.has(index)));
+    const ofKind = (kind: string) => sameChain.filter(item => item.kind === kind);
+    const evidence = (boundaries: Record<string, unknown>[], side: "before" | "after") =>
+      [...new Map(boundaries.flatMap(boundary => rows(boundary[side])).map(item => [item.evidence_id, item])).values()];
     const nodeOf = (item: Record<string, unknown> | undefined) => nodes.find(node => node.execution_node_index === item?.execution_node_index);
     const requestFormation = ofKind("request_formation"), execution = ofKind("execution"), transfer = ofKind("transfer"), generation = ofKind("generation");
     const result = {
       transition_index: args.transition_index, kind: selected.kind, chain_index: chainIndex,
       component: choice?.component ?? null, message_index: nodeOf(selected)?.message_index ?? null,
-      request: items((requestFormation ?? execution)?.before, chars),
-      original_return: items(execution?.after, chars),
-      actual_input: items((transfer?.after ?? generation?.before), chars),
-      output: items(generation?.after, chars),
-      responsibility_choices: choices.filter(item => item.chain_index === chainIndex),
+      request: items(execution.length ? evidence(execution, "before") : evidence(requestFormation, "after"), chars),
+      original_return: items(evidence(execution, "after"), chars),
+      actual_input: items(generation.length ? evidence(generation, "before") : evidence(transfer, "after"), chars),
+      output: items(evidence(generation, "after"), chars),
+      request_context: items(evidence(requestFormation, "before"), chars),
+      responsibility_choices: choices.filter(item => sameChain.some(boundary => boundary.transition_index === item.transition_index)),
       returned_chars: chars.used,
     };
-    return { content: [{ type: "text", text: JSON.stringify(result) }], details: result };
+    const fields = ["request", "original_return", "actual_input", "output", "request_context"] as const;
+    const page = { ...result, responsibility_choices_total: result.responsibility_choices.length,
+      responsibility_choices: result.responsibility_choices.slice(0, 8),
+      omitted_entries: Object.fromEntries(fields.map(field => [field, 0])),
+      continuation: null as { tool: string; arguments: Record<string, unknown> } | null };
+    const continueNavigation = () => { page.continuation = { tool: "read_execution",
+      arguments: { candidate: args.candidate, view: "boundaries", offset: 0 } }; };
+    if (page.responsibility_choices.length < page.responsibility_choices_total) continueNavigation();
+    // Fit generated envelopes before registering evidence, so generic artifact previews
+    // cannot silently hide text already marked as read. Full boundaries remain navigable.
+    while (JSON.stringify(page).length > ctx.policy.maxOutputChars) {
+      const field = fields.reduce((largest, key) => page[key].length > page[largest].length ? key : largest);
+      if (page[field].length) {
+        const removed = page[field].pop()!;
+        page.returned_chars -= typeof removed.quote === "string" ? removed.quote.length : 0;
+        page.omitted_entries[field]!++;
+      } else if (page.responsibility_choices.length) page.responsibility_choices.pop();
+      else throw new Error("输出预算无法容纳责任链导航，请增大 maxOutputChars 或用 read_execution 定向分页");
+      continueNavigation();
+    }
+    for (const field of fields) for (const item of page[field]) {
+      if (typeof item.evidence_id !== "string") continue;
+      const point = parseEvidenceCoordinates(item.evidence_id)!;
+      if (point.kind === "image") continue;
+      item.evidence_index = register(item.evidence_id);
+      delete item.evidence_id;
+      ctx.audit.traceReads.push({ candidate: args.candidate, message_index: point.message_index,
+        kind: point.kind, path: point.path, start: point.start, end: point.end });
+    }
+    return { content: [{ type: "text", text: JSON.stringify(page) }], details: page };
   },
 };

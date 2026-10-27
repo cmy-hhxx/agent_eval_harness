@@ -3,6 +3,7 @@ import type { JsonObject, RunState, SubmissionReceipt } from "@eval/contracts";
 import { canonical, type ResultReference } from "@eval/contracts";
 import type { RunCodec } from "@eval/data";
 import type { Candidate } from "../inputs/types.js";
+import type { AttributionTaskData } from "@eval/workflows/attribution";
 import type { ComparisonResult, EvalConfig, Stage, TaskData } from "./types.js";
 import { originalResultRow, stageRewritten, resultFile, acceptedRewrites } from "./results.js";
 import { analysisRunOverview } from "./analysis-progress.js";
@@ -213,29 +214,34 @@ function decodeState(
     input_id,
   }));
   const candidates = Object.fromEntries(catalog.map((c) => [c.input_id, c]));
-  const plan = Object.entries(savedTasks).map(([id, t]) => ({
-    id,
-    stage: t.stage,
-    inputIds: t.inputIds,
-    dependencies: t.dependencies,
-    data: {
-      ...t.data,
+  const plan = Object.entries(savedTasks).map(([id, t]) => {
+    const attribution = t.stage.startsWith("attribution-")
+      ? candidates[(t.data as unknown as AttributionTaskData).candidate.input_id] : undefined;
+    if (t.stage.startsWith("attribution-") && !attribution) throw new Error("归因输入引用缺失：" + id);
+    return {
+      id,
       stage: t.stage,
-      revision: t.revision || 1,
-      ...(t.stage.startsWith("attribution-") && Object.keys(t.inputIds).some(key => key !== "answer") ? { referenceCandidates: Object.fromEntries(
-        Object.entries(t.inputIds).filter(([key]) => key !== "answer").map(([key, id]) => {
-          if (!candidates[id]) throw new Error("事实复核输入引用缺失：" + id);
-          return [key, candidates[id]];
-        })) } : {}),
-      candidates: Object.fromEntries(
-        Object.entries(t.inputIds).filter(([label]) => !t.stage.startsWith("attribution-") || label === "answer").map(([label, id]) => {
-          if (!candidates[id]) throw new Error("输入引用缺失：" + id);
-          return [t.stage.startsWith("attribution-") || t.stage === "instruction-review" ? "A" : label, candidates[id]];
-        }),
-      ),
-      ...(t.stage.startsWith("attribution-") ? { candidate: candidates[t.inputIds.answer!] } : {}),
-    },
-  }));
+      inputIds: t.inputIds,
+      dependencies: t.dependencies,
+      data: {
+        ...t.data,
+        stage: t.stage,
+        revision: t.revision || 1,
+        ...(attribution && Object.keys(t.inputIds).some(key => key !== "answer") ? { referenceCandidates: Object.fromEntries(
+          Object.entries(t.inputIds).filter(([key]) => key !== "answer").map(([key, id]) => {
+            if (!candidates[id]) throw new Error("事实复核输入引用缺失：" + id);
+            return [key, candidates[id]];
+          })) } : {}),
+        candidates: attribution ? { A: attribution } : Object.fromEntries(
+          Object.entries(t.inputIds).map(([label, id]) => {
+            if (!candidates[id]) throw new Error("输入引用缺失：" + id);
+            return [t.stage === "instruction-review" ? "A" : label, candidates[id]];
+          }),
+        ),
+        ...(attribution ? { candidate: attribution } : {}),
+      },
+    };
+  });
   for (const task of plan) {
     const data = task.data as TaskData;
     if ((data.verificationAudit || data.verificationOf) &&

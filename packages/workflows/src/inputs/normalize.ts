@@ -1,14 +1,41 @@
 import { object } from "@eval/contracts";
 import type { RawInput, SessionTurn } from "./types.js";
 
+/** Resolve source-owned pools by reference, preserving snapshot order and original evidence coordinates. */
+function expandTrace(source: Record<string, unknown>): Record<string, unknown> {
+  if (!Object.hasOwn(source, "message_pool")) return source;
+  const pool = source.message_pool, tools = source.tool_sets;
+  if (!Array.isArray(pool) || !Array.isArray(source.messages)) throw new Error("message_pool 与 messages 必须是数组");
+  const select = (values: unknown, ref: unknown, name: string) => {
+    if (!Array.isArray(values) || !Number.isSafeInteger(ref) || Number(ref) < 0 || Number(ref) >= values.length)
+      throw new Error(`${name} 引用必须是池内有效的整数索引`);
+    return values[Number(ref)];
+  };
+  const messages = source.messages.map(value => {
+    const turn = object(value);
+    if (turn.type !== "llm_turn") return value;
+    const input = turn.input_messages;
+    const resolve = (refs: unknown[]) => refs.map(ref => select(pool, ref, "message_pool"));
+    if (Array.isArray(input)) return { ...turn, input_messages: resolve(input) };
+    if (!input || typeof input !== "object") return value;
+    const snapshot = input as Record<string, unknown>;
+    return { ...turn, input_messages: { ...snapshot,
+      ...(Array.isArray(snapshot.messages) ? { messages: resolve(snapshot.messages) } : {}),
+      ...(typeof snapshot.tools === "number" ? { tools: select(tools, snapshot.tools, "tool_sets") } : {}),
+    } };
+  });
+  const { message_pool: _pool, tool_sets: _tools, ...record } = source;
+  return { ...record, messages };
+}
+
 /** Validate a session or flat record without rewriting its source messages. */
 export function normalizeInput(value: unknown): RawInput {
   const source = object(value);
-  if (!Object.hasOwn(source, "traces")) return source as RawInput;
+  if (!Object.hasOwn(source, "traces")) return expandTrace(source) as RawInput;
   if (Object.hasOwn(source, "messages")) throw new Error("输入不能同时包含 messages 和 traces");
   if (!Array.isArray(source.traces) || !source.traces.length) throw new Error("traces 必须是非空数组");
   const session = object(source.meta), turns: SessionTurn[] = source.traces.map((value, index) => {
-    const trace = object(value), metadata = object(trace.meta);
+    const trace = expandTrace(object(value)), metadata = object(trace.meta);
     if (!Array.isArray(trace.messages) || !trace.messages.length ||
         trace.messages.some(message => !message || typeof message !== "object" || Array.isArray(message)))
       throw new Error(`traces[${index}].messages 必须是非空消息对象数组`);

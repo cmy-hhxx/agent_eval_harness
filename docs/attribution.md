@@ -2,6 +2,8 @@
 
 Attribution 是独立 workflow，入口为 `workflow: "attribution"`。输入扫描以一行为一个 session；一个 session 保留全部 trace，任何 trace 没有完整最终回答时整条 session 过滤。Score、Rewrite、Instruction Review 和 Clustering 都不属于这条 workflow。
 
+AIME 的 `4_daily_eval_slim` JSONL 可以直接作为输入。每个 trace 的 `message_pool` 和 `tool_sets` 在输入边界按索引恢复：保持消息顺序、对象字段顺序和原始证据路径，不改写正文，不另存展开后的输入文件。重复消息共享内存中的对象，内部规范投影也复用共享结构；缺失、越界或非整数引用报错，不把坏引用当成空材料。未使用共享池的 trace 保持原样。
+
 ## 任务结构
 
 ```text
@@ -20,11 +22,21 @@ session input
 
 每个 `attribution-session` 收据接受后立即追加到 `results/attribution.jsonl`，不等待同一 run 的其他 session；续跑读取既有行并跳过已导出的 session。
 
+独立 Attribution 和 Comparison 内的归因在新建、续跑时共用同一原始输入与 trace 投影；组件提交仍按对应 trace 的原文核验证据。trace、session 汇总不向 Worker 暴露原始来源，但恢复时仍保留其所属输入身份。
+
 ## 小现场
+
+首屏的 `component_entrypoints` 提供当前固定组件前八个已知调用的 `read_responsibility_chain` 入口，省去重复枚举全局执行目录；`component_entrypoints_total` 显示总数，剩余调用继续从完整导航读取。它只提供导航，不是结论或完整调用清单；入口为空仍须核查原文。完整执行导航、跨组件因果材料和原始证据继续可读，证据校验不因入口提示而放宽。
+
+归因导航允许模型在同一轮请求多个独立证据片段，提示词要求每轮最多四个，并将提交与读取分开。Pi 仍逐个执行工具，按实际调用登记证据、扣除读取预算；预算耗尽后不再允许批量工具请求。合并读取不减少材料范围，也不放宽原文引用和提交校验。
+
+固定样本、对照命令与吞吐验收口径见[归因可靠性验证](attribution-reliability.md)。
 
 组件审查按“原问上下文 → 调用前推理 → 工具参数 → 工具返回 → 下一轮实际输入 → 下一轮推理/输出”阅读。首屏材料有输出上限，超大返回只给结构、状态和可定位片段；后续最多三次续读，优先使用 `search_trace` 做字面 grep，再按精确路径读取。
 
 零行、空返回、工具报错、返回截断、缺返回和调用无结果都属于必须审查的技术问题。证据必须引用真实原文；图片使用 `view_image` 并记录观察。模型不选择全局责任编号，组件由任务固定。
+
+内部规范隔离产生的展示占位符不能作为原始执行失败的依据。组件结果虽然只导出位置与引文，Host 仍从本次提交的证据编号恢复内部坐标，逐字核对原始输入后才接受收据；非法引用反馈定位到对应 `evidence[].index`，不会泄漏被隔离的原文。
 
 ## 正式契约
 
@@ -75,7 +87,7 @@ Component 提交在 Schema 与证据坐标校验之外，会硬拒绝占位/空�
 
 ## Trace 与 Session 汇总
 
-Trace 汇总读取完整 Q/A 和组件 Problem，输出 `summary`、`is_correct`、`correct_reason`，不改写组件问题。Session 汇总只读取 QAQAQA 与各 trace 评测输出，不读取完整原始轨迹；它输出 `session_summary` 与同 Problem 结构的 `session_problem`，证据引用已有 trace Problem。
+Trace 汇总读取完整 Q/A、显式 ground_truth 和组件 Problem，不改写组件问题。有标准答案时模型提交 `summary`、`is_correct`、`correct_reason`；无标准答案时模型仅提交 `summary`，程序固定输出 `is_correct=null`，理由为“未提供标准答案，无法判断回答与标准答案是否一致；已确认的问题独立保留。”，不采用模型自行生成的正确性值或理由。Session 汇总只读取 QAQAQA 与各 trace 评测输出，不读取完整原始轨迹；它输出 `session_summary` 与同 Problem 结构的 `session_problem`，证据引用已有 trace Problem。
 
 ## Comparison
 

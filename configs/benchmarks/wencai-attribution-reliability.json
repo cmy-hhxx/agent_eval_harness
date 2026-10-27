@@ -1,0 +1,74 @@
+{
+  "models": {
+    "judge": {
+      "channel": "evaluation-gateway",
+      "model": "deepseek-v4.1-flash",
+      "thinking": "high"
+    }
+  },
+  "execution": {
+    "concurrency": 8,
+    "sessionWindow": 8,
+    "timeoutSeconds": 900,
+    "idleTimeoutSeconds": 120,
+    "maxToolCalls": 24,
+    "repairAttempts": 3,
+    "retries": 1,
+    "retryDelaySeconds": 10,
+    "failureGuard": {
+      "windowSize": 50,
+      "threshold": 5
+    }
+  },
+  "problemLibrary": {
+    "kind": "directory",
+    "path": "/mnt/aigc_team/user_workspace/chenmingyang/eval_harness/runtime/data/problems"
+  },
+  "inputs": {
+    "batches": [
+      "2026-10-25"
+    ],
+    "case_ids": [
+      "alldata_balanced_cn_20261023_000159c9-d10e-4963-8602-a502a3f75fff",
+      "alldata_balanced_cn_20261023_0004fdda-fa4a-41bd-b105-42de4e3d8ac4"
+    ],
+    "versions": [
+      {
+        "id": "a_fast",
+        "name": "A Fast",
+        "comparison_tier": "Fast",
+        "display_name": "a_fast",
+        "adapter": "a",
+        "sources": [
+          {
+            "kind": "file",
+            "path": "/mnt/fin_bench/eval_data/0_wencai/2_daily_eval_input/a_fast/2026-10-25.jsonl"
+          }
+        ]
+      },
+      {
+        "id": "b_fast",
+        "name": "B Fast",
+        "comparison_tier": "Fast",
+        "display_name": "b_fast",
+        "adapter": "b",
+        "sources": [
+          {
+            "kind": "file",
+            "path": "/mnt/fin_bench/eval_data/0_wencai/2_daily_eval_input/b_fast/2026-10-25.jsonl"
+          }
+        ]
+      }
+    ]
+  },
+  "comparisons": [
+    [
+      "a_fast",
+      "b_fast"
+    ]
+  ],
+  "output": {
+    "kind": "directory",
+    "path": "/mnt/fin_bench/eval_data/0_wencai/eval_output/test_eval"
+  }
+}

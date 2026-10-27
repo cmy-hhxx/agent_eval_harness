@@ -9,7 +9,7 @@ import type {
   TaskState,
   Usage,
 } from "@eval/contracts";
-import { safeId } from "@eval/contracts";
+import { canonical, safeId } from "@eval/contracts";
 import { appendJsonl, readJsonl } from "./files.js";
 
 export type ManifestJournalPatch = Partial<Omit<RunManifest, "tasks" | "states" | "inputCatalog">> & {
@@ -31,6 +31,15 @@ export interface RunJournalDelta {
 export interface StoredRunJournalEvent {
   seq: number;
   event: RunJournalDelta;
+}
+
+/** Outbox projection may add a result reference, but must preserve the accepted event. */
+export function isRunJournalProjection(event: RunJournalDelta, projection: RunJournalDelta): boolean {
+  const receipts = event.receipts && Object.fromEntries(Object.entries(event.receipts).map(([id, receipt]) => {
+    const exported = receipt.exported ?? projection.receipts?.[id]?.exported;
+    return [id, exported ? { ...receipt, exported } : receipt];
+  }));
+  return canonical(receipts ? { ...event, receipts } : event) === canonical(projection);
 }
 
 export interface OutboxStats {
@@ -157,9 +166,12 @@ export class RunHotStore {
     const current = this.database.prepare("SELECT seq FROM sqlite_sequence WHERE name = 'events'").get() as
       | { seq: number }
       | undefined;
-    if ((current?.seq ?? 0) < sequence)
-      this.database.prepare("INSERT INTO sqlite_sequence(name, seq) VALUES ('events', ?) ON CONFLICT(name) DO UPDATE SET seq = excluded.seq")
-        .run(sequence);
+    if ((current?.seq ?? 0) < sequence) {
+      // sqlite_sequence.name has no UNIQUE constraint, so it cannot be an UPSERT target.
+      this.database.prepare(current
+        ? "UPDATE sqlite_sequence SET seq = ? WHERE name = 'events'"
+        : "INSERT INTO sqlite_sequence(seq, name) VALUES (?, 'events')").run(sequence);
+    }
   }
 
   close(): void { this.database.close(); }

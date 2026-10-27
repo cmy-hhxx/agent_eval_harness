@@ -27,6 +27,7 @@ export function workflowText(name: "attribution-material" | "core-rewrite" | "cr
   return resource(`workflow/${name}.md`);
 }
 export const attributionNotApplicableText = resource("attribution/default/not_applicable.md");
+export const attributionNoStandardReason = resource("attribution/trace/no-standard-reason.md");
 const attributionRules = Object.fromEntries(["standard-answer", "numeric", "table-doubts", "images", "capture-gaps"]
   .map(name => [name, resource(`attribution/conditional/${name}.md`)]));
 /** Only applicable procedural rules accompany this request; fixed decisions remain in the system prompt. */

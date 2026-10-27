@@ -6,6 +6,10 @@ import { root, run } from "./lib.mjs";
 const full = process.argv.includes("--full");
 const fast = process.argv.includes("--fast");
 const workerPattern = [
+  "Host .*preserves the draft without spending content repairs",
+  "Host validator programming error",
+  "Host fault refunds only its reservation",
+  "transient submission delivery retries",
   "exhausted exploration budget still permits submission",
   "file loading feedback cannot renew exhausted protected writers",
   "SDK malformed submission",
@@ -31,12 +35,15 @@ const fastFiles = [
   "dist/packages/data/src/run-journal.test.js",
   "dist/packages/data/src/statistics-log.test.js",
   "dist/packages/host/src/scheduling.test.js",
+  "dist/packages/host/src/failure-guard.test.js",
   "dist/packages/host/src/store-concurrency.test.js",
   "dist/packages/runtime/src/sdk-utils.test.js",
   "dist/packages/tools/src/evidence.test.js",
   "dist/packages/tools/src/required-reading.test.js",
   "dist/packages/workflows/src/comparison/attribution-contract.test.js",
   "dist/packages/workflows/src/attribution/workflow.test.js",
+  "dist/packages/workflows/src/inputs/normalize.test.js",
+  "dist/packages/workflows/src/comparison/instruction-review.test.js",
   "dist/packages/workflows/src/comparison/optional-verification.test.js",
   "dist/packages/workflows/src/comparison/relative-preference.test.js",
   "dist/packages/workflows/src/comparison/simple-flow.test.js",

@@ -14,6 +14,16 @@ import { DEFAULT_POLICY, type ToolContext } from "@eval/contracts";
 import { ArtifactStore } from "@eval/data";
 import { createRegistry, ToolRuntime } from "@eval/tools";
 
+test("shared slim snapshots stay shared after private instructions are projected out", () => {
+  const snapshot = [{ role: "system", content: "PRIVATE_SYSTEM_SENTINEL" }, { role: "tool", content: "收入 42 亿元。" }];
+  const raw = { messages: [0, 1].map(() => ({ type: "llm_turn", input_messages: snapshot, output: [] })) };
+  const view = attributionTrace(raw, randomUUID(), 1);
+  assert.equal(view.messages[0].input_messages, view.messages[1].input_messages);
+  assert(!JSON.stringify(view).includes("PRIVATE_SYSTEM_SENTINEL"));
+  assert(JSON.stringify(view).includes("收入 42 亿元。"));
+  assert.equal(raw.messages[0].input_messages[0].content, "PRIVATE_SYSTEM_SENTINEL");
+});
+
 test("main attribution excludes private rules from both prompt and readable sources while preserving factual coordinates", () => {
   const id = randomUUID(), question = "查询价格。", fact = "ETF价格为369美元。";
   const raw: RawInput = { messages: [

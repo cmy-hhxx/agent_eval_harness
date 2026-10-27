@@ -6,6 +6,7 @@ import path from "node:path";
 import { emptyUsage, type RunState } from "@eval/contracts";
 import {
   applyRunJournalDelta,
+  isRunJournalProjection,
   appendProgressJournal,
   readProgressJournal,
   RunHotStore,
@@ -20,6 +21,33 @@ const state = (): RunState => ({
     evaluatorVersion: "test", config: {}, tasks: [], inputs: {}, states: {}, preflight: {}, startedAt: 1,
   },
   receipts: {}, usage: emptyUsage(), recordedAttempts: 0,
+});
+
+test("progress enrichment permits only a previously absent exported reference", () => {
+  const receipt = { taskId: "task", attemptId: "attempt", submissionId: "submission", evaluation: { ok: true },
+    usage: emptyUsage(), audit: { calls: 0, requiredReadCalls: 0, traceReads: [], viewedImages: [], calculations: [], artifacts: [] },
+    acceptedAt: 2, evaluatorVersion: "test", judge: "model", status: "succeeded" as const };
+  const original = { at: 2, receipts: { task: receipt }, states: { task: { status: "succeeded" as const, attempts: 1 } } };
+  const enriched = { ...original, receipts: { task: { ...receipt, exported: { file: "results.jsonl", id: "task", row: { ok: true } } } } };
+  assert(isRunJournalProjection(original, enriched));
+  assert(isRunJournalProjection(enriched, enriched));
+  assert(!isRunJournalProjection(enriched, original), "projection cannot remove an existing result reference");
+  assert(!isRunJournalProjection(enriched, { ...enriched, receipts: { task: { ...enriched.receipts.task,
+    exported: { ...enriched.receipts.task.exported, id: "different" } } } }));
+  assert(!isRunJournalProjection(original, { ...enriched, states: { task: { status: "failed", attempts: 1 } } }));
+  assert(!isRunJournalProjection(original, { ...enriched, receipts: {} }));
+});
+
+test("progress replay advances a fresh or older hot store without reusing sequence numbers", () => {
+  const hot = new RunHotStore(":memory:", "sequence-recovery");
+  try {
+    hot.setSequenceFloor(10);
+    assert.equal(hot.append({ at: 1 }), 11);
+    hot.setSequenceFloor(20);
+    assert.equal(hot.append({ at: 2 }), 21);
+    hot.setSequenceFloor(5);
+    assert.equal(hot.append({ at: 3 }), 22);
+  } finally { hot.close(); }
 });
 
 test("hot journal is durable, replayable and rejects cross-task submission id reuse", async t => {

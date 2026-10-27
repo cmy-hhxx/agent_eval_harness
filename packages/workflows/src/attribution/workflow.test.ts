@@ -2,12 +2,14 @@ import test, { type TestContext } from "node:test";
 import assert from "node:assert/strict";
 import { readFile, readdir, rm } from "node:fs/promises";
 import path from "node:path";
-import { emptyUsage, ValidationError, type RunState } from "@eval/contracts";
-import { AgentRegistry } from "@eval/host";
-import { cite, evidenceSources } from "@eval/tools";
+import { DEFAULT_POLICY, emptyUsage, ValidationError, type AttemptSpec, type RunState, type WorkflowDefinition } from "@eval/contracts";
+import { AgentRegistry, RunStore } from "@eval/host";
+import { RunHotStore, runJournalIdentity } from "@eval/data";
+import { comparisonWorkflow, comparisonRepository } from "@eval/workflows/comparison";
+import { cite, evidenceSources, parseEvidenceCoordinates } from "@eval/tools";
 import { attributionAgent } from "@eval/agents/attribution";
-import { fixtureConfig, emptyAudit, fakeEvaluatorVersion, fakeIdentity } from "../../../../tests/fixtures/comparison.js";
-import { planAttribution, planAttributionUnit, bindAttribution, attributionRepository, type AttributionConfig, type AttributionTaskData } from "./index.js";
+import { fixtureConfig, emptyAudit, fakeEvaluatorVersion, fakeIdentity, criteriaResultForTask } from "../../../../tests/fixtures/comparison.js";
+import { planAttribution, planAttributionUnit, bindAttribution, attributionRepository, attributionWorkflow, type AttributionConfig, type AttributionTaskData } from "./index.js";
 import type { RawInput } from "../inputs/types.js";
 
 function trace(sessionId: string, question: string, answer: string, tools: string) {
@@ -15,7 +17,7 @@ function trace(sessionId: string, question: string, answer: string, tools: strin
     meta: { trace_id: `${sessionId}-trace-${question}`, session_id: sessionId, n_messages: 4, tool_names_text: tools, skill_names_text: "" },
     messages: [
       { type: "user_question", role: "user", content: question },
-      { type: "llm_turn", name: "expert", input_messages: [{ role: "user", content: question }],
+      { type: "llm_turn", name: "expert", system_prompt: "PRIVATE_SYSTEM_SENTINEL", input_messages: [{ role: "user", content: question }],
         output: [{ role: "assistant", content: "", tool_calls: [{ id: `call-${question}`, function: { name: tools.split(",")[0], arguments: "{}" } }] }] },
       { type: "tool_result", name: tools.split(",")[0], output: { rows: [] } },
       { type: "final_answer", role: "assistant", content: answer },
@@ -24,9 +26,12 @@ function trace(sessionId: string, question: string, answer: string, tools: strin
 }
 
 function session(sessionId = "session-1"): RawInput {
+  const first = trace(sessionId, "第一问", "第一答", "FinQuery,Search");
   return { batch_id: "batch", case_id: sessionId, has_standard_answer: false,
     meta: { session_id: sessionId, case_id: sessionId, n_traces: 2, n_messages: 8 },
-    traces: [trace(sessionId, "第一问", "第一答", "FinQuery,Search"), trace(sessionId, "第二问", "第二答", " web_search ")] } as unknown as RawInput;
+    traces: [{ ...first, message_pool: [{ role: "user", content: "第一问" }],
+      messages: first.messages.map((message, index) => index === 1 ? { ...message, input_messages: [0] } : message) },
+      trace(sessionId, "第二问", "第二答", " web_search ")] } as unknown as RawInput;
 }
 
 async function fixture(t: TestContext) {
@@ -34,6 +39,88 @@ async function fixture(t: TestContext) {
   t.after(() => rm(f.directory, { recursive: true, force: true }));
   return f;
 }
+
+for (const workflow of [attributionWorkflow, comparisonWorkflow] as WorkflowDefinition[])
+  for (const resume of [false, true])
+    test(`${workflow.id} ${resume ? "resumed" : "new"} multi-trace components commit through Host and preserve evidence validation`, async t => {
+      const f = await fixtureConfig([[session()], [], [session()], []]);
+      let store: RunStore | undefined;
+      t.after(async () => { await store?.close(); await rm(f.directory, { recursive: true, force: true }); });
+      const config = workflow.id === "attribution" ? { ...f.config, workflow: "attribution", inputs: {
+        ...f.config.inputs, versions: f.config.inputs.versions.slice(0, 1),
+      } } : f.config;
+      let plan = await workflow.plan(config);
+      const run = path.join(f.directory, "component-acceptance");
+      const repository = workflow.id === "attribution" ? attributionRepository : comparisonRepository;
+      let state: RunState = { manifest: { format: "evaluation-run", debug: false, runId: "component-acceptance",
+        status: "running", engine: fakeIdentity, evaluatorVersion: fakeEvaluatorVersion, config,
+        tasks: plan.tasks, inputCatalog: plan.catalog, inputs: {},
+        states: Object.fromEntries(plan.tasks.map(task => [task.id, { status: "pending", attempts: 0 }])),
+        preflight: plan.summary, startedAt: 1 }, receipts: {}, usage: emptyUsage(), recordedAttempts: 0 };
+      for (const task of plan.tasks.filter(task => task.stage === "criteria")) {
+        state.manifest.states[task.id]!.status = "succeeded";
+        state.receipts[task.id] = { taskId: task.id, attemptId: "criteria", submissionId: `criteria-${task.id}`,
+          status: "succeeded", acceptedAt: 1, evaluatorVersion: fakeEvaluatorVersion, judge: "fixture",
+          evaluation: criteriaResultForTask(task, plan.inputs), audit: emptyAudit(), usage: emptyUsage() };
+      }
+      if (resume) {
+        await repository.writeRun(run, state);
+        state = await repository.readRun(run);
+        plan = await workflow.reconcile!(run, state, config);
+      }
+      const agents = new AgentRegistry([attributionAgent]);
+      store = new RunStore(run, state, plan.inputs, { repository, agents, taskSource: workflow },
+        undefined, new RunHotStore(":memory:", runJournalIdentity(state)));
+      const components = plan.tasks.filter(task => task.stage === "attribution-component" &&
+        (task.data as AttributionTaskData).component === "终稿生成轮");
+      assert(components.some(task => (task.data as AttributionTaskData).traceIndex === 1));
+      for (const task of components) {
+        const dependencies = Object.fromEntries(Object.entries(task.dependencies).map(([key, id]) => [key, state.receipts[id]]));
+        const binding = workflow.bind(task, plan.inputs, dependencies, { tasks: plan.tasks });
+        const prepared = agents.prepare(binding), raw = binding.request.sources.answer!.value as RawInput;
+        const messageIndex = raw.messages.length - 1;
+        const source = evidenceSources(raw.messages[messageIndex]).find(source => source.kind === "text")!;
+        const evidence = cite(binding.request.sources.answer!.id, messageIndex, source, 0, source.text.length);
+        const bank = [...prepared.evidenceBank];
+        if (!bank.includes(evidence.evidence_id)) bank.push(evidence.evidence_id);
+        const spec: AttemptSpec = { runId: state.manifest.runId, taskId: task.id, attemptId: `attempt-${task.id}`,
+          inputRevision: 1, engine: fakeIdentity, evaluation: prepared.evaluation, prompt: prepared.prompt,
+          evidenceBank: prepared.evidenceBank, policy: DEFAULT_POLICY,
+          inputs: Object.entries(task.inputIds).map(([name, id]) => ({ name, id })),
+          hostUrl: "http://localhost", deadline: Date.now() + 60000,
+          model: { provider: "fixture", baseUrl: "http://localhost", api: "openai-completions", apiKeyEnv: "FIXTURE_KEY",
+            model: "fixture", thinking: "off", contextWindow: 10000, maxOutputTokens: 1000 } };
+        await store.activate(spec);
+        await store.registerEvidenceBank({ taskId: task.id, attemptId: spec.attemptId, evidenceBank: bank });
+        const problem = { label: "最终回答缺少可核查结论", definition: "最终回答只给出简短答复，缺少支持其结论的数据。",
+          problem_phenomena: "当前问答没有展示结论依据。", reason: "原文只包含简短答复，无法核对数据与推导过程。",
+          evidence: [{ index: bank.indexOf(evidence.evidence_id) + 1, reason: "直接定位本轮最终回答。" }] };
+        const submission = { taskId: task.id, attemptId: spec.attemptId, submissionId: `submission-${task.id}`,
+          evaluation: { problems: [problem] }, audit: { ...emptyAudit(), evidenceBank: bank }, usage: emptyUsage() };
+        await assert.rejects(store.accept({ ...submission, evaluation: { problems: [{ ...problem,
+          evidence: [{ index: bank.length + 1, reason: "不存在的证据不能接受。" }] }] } }), ValidationError);
+        assert.equal(await store.receipt(task.id), undefined);
+        const projectedSource = evidenceSources(raw.messages[1]).find(source => source.path === "/system_prompt")!;
+        const projected = cite(binding.request.sources.answer!.id, 1, projectedSource, 0, projectedSource.text.length);
+        const projectedBank = [...bank, projected.evidence_id];
+        await store.registerEvidenceBank({ taskId: task.id, attemptId: spec.attemptId, evidenceBank: projectedBank });
+        await assert.rejects(store.accept({ ...submission, audit: { ...emptyAudit(), evidenceBank: projectedBank },
+          evaluation: { problems: [{ ...problem, evidence: [{ index: projectedBank.length, reason: "展示占位符不能证明原始记录缺失。" }] }] } }), error => {
+          assert(error instanceof ValidationError);
+          assert(error.issues?.some(issue => issue.code === "evidence_original_scope" && issue.path === "/problems/0/evidence/0/index"));
+          assert(!JSON.stringify(error.issues).includes("PRIVATE_SYSTEM_SENTINEL"));
+          return true;
+        });
+        assert.equal(await store.receipt(task.id), undefined);
+        const receipt = await store.accept({ ...submission, audit: { ...submission.audit, evidenceBank: projectedBank } });
+        assert.equal(receipt.status, "succeeded");
+        assert.equal((await store.receipt(task.id))!.submissionId, submission.submissionId);
+        assert.equal(state.manifest.states[task.id]!.status, "succeeded");
+      }
+      await store.persistCheckpoint();
+      const restored = await repository.readRun(run);
+      for (const task of components) assert.equal(restored.receipts[task.id]!.status, "succeeded");
+    });
 
 test("an attribution plan fans out one component task per trace component and one final session task", async t => {
   const f = await fixture(t);
@@ -57,6 +144,92 @@ test("an attribution plan fans out one component task per trace component and on
   assert.equal((component.request.input as { trace_index?: number }).trace_index, 0);
 });
 
+test("explicit attribution records retain their requested session order instead of source scan order", async t => {
+  const f = await fixtureConfig([[session("first"), session("second")], [], [], []]);
+  t.after(() => rm(f.directory, { recursive: true, force: true }));
+  const config = { ...f.config, workflow: "attribution", inputs: { ...f.config.inputs,
+    versions: f.config.inputs.versions.slice(0, 1) } } as AttributionConfig;
+  const original = await planAttribution(config);
+  const candidates = original.tasks.filter(task => task.stage === "attribution-session")
+    .map(task => (task.data as AttributionTaskData).candidate);
+  config.inputs.records = candidates.toReversed().map(candidate => ({ model: candidate.version, batch_id: candidate.batch_id,
+    case_id: candidate.case_id, input_file: candidate.source, input_index: candidate.line - 1 }));
+  const selected = await planAttribution(config);
+  assert.deepEqual(selected.tasks.filter(task => task.stage === "attribution-session")
+    .map(task => (task.data as AttributionTaskData).candidate.case_id), ["second", "first"]);
+  assert.equal(selected.tasks.length, original.tasks.length);
+});
+
+test("component startup presents bounded original evidence with stable selectable references and precise read coverage", async t => {
+  const f = await fixtureConfig([[{ batch_id: "batch", case_id: "scene", messages: [
+    { type: "user_question", role: "user", content: "核对查询结果。" },
+    { type: "tool_call", name: "finquery", call_id: "q1", input: { query: "收入" } },
+    { type: "tool_result", name: "finquery", call_id: "q1", output: { rows: [{ value: 10 }] } },
+    { type: "llm_turn", system_prompt: "PRIVATE_SYSTEM_SENTINEL", input_messages: [{ role: "user", content: "核对查询结果。" }],
+      output: [{ role: "assistant", content: "收入是10。" }] },
+    { type: "final_answer", content: "收入是10。" },
+  ] }], [], [], []]);
+  f.config.inputs.versions[0]!.adapter = "b";
+  t.after(() => rm(f.directory, { recursive: true, force: true }));
+  const plan = await planAttribution({ ...f.config, workflow: "attribution", inputs: { ...f.config.inputs,
+    versions: f.config.inputs.versions.slice(0, 1) } } as AttributionConfig);
+  const task = plan.tasks.find(task => task.stage === "attribution-component" &&
+    (task.data as AttributionTaskData).component === "finquery 取数服务")!;
+  const binding = bindAttribution(task, plan.inputs, {}), registry = new AgentRegistry([attributionAgent]);
+  const material = binding.modelInput!.answer as Record<string, any>, scene = material.component_scene;
+  assert(scene?.entries.length > 0);
+  assert(scene.entries.length <= 8);
+  assert(!JSON.stringify(scene).includes("PRIVATE_SYSTEM_SENTINEL"));
+  const prepared = registry.prepare(binding), bank = [...prepared.evidenceBank];
+  const source = binding.request.sources.answer!.value as RawInput;
+  for (const entry of scene.entries) {
+    const point = parseEvidenceCoordinates(entry.reference.evidence_id)!;
+    assert(point.kind !== "image");
+    assert(entry.quote.length > 0 && entry.quote.length <= 400);
+    assert.equal(entry.quote, evidenceSources(source.messages[point.message_index])
+      .find(source => source.kind === point.kind && source.path === point.path)!.text.slice(point.start, point.end));
+    assert(bank.includes(entry.reference.evidence_id));
+    assert(binding.presentedReads!.some(read => read.message_index === point.message_index && read.path === point.path &&
+      read.start <= point.start && read.end >= point.end));
+  }
+  prepared.renderAttempt(DEFAULT_POLICY, { ...emptyAudit(), evidenceBank: bank, errors: [], contentSubmissions: 0,
+    fileErrors: 0, repeatedErrors: 0, stopped: false, attemptId: "previous" });
+  assert.deepEqual(prepared.evidenceBank, bank);
+});
+
+test("component entrypoints stay bounded while preserving every source call and the full navigation", async t => {
+  const messages: RawInput["messages"] = [{ type: "user_question", role: "user", content: "核对十次查询。" }];
+  for (let index = 0; index < 10; index++) messages.push(
+    { type: "tool_call", name: "finquery", call_id: `query-${index}`, input: { query: `Q${index}` } },
+    { type: "tool_result", name: "finquery", call_id: `query-${index}`, output: { rows: [{ value: index }] } });
+  messages.push({ type: "llm_turn", input_messages: [{ role: "user", content: "核对十次查询。" }],
+    output: [{ role: "assistant", content: "查询完成。" }] }, { type: "final_answer", content: "查询完成。" });
+  const f = await fixtureConfig([[{ batch_id: "batch", case_id: "queries", messages }], [], [], []]);
+  f.config.inputs.versions[0]!.adapter = "b";
+  t.after(() => rm(f.directory, { recursive: true, force: true }));
+  const plan = await planAttribution({ ...f.config, workflow: "attribution", inputs: { ...f.config.inputs,
+    versions: f.config.inputs.versions.slice(0, 1) } });
+  assert.deepEqual(plan.summary.issues, []);
+  const task = plan.tasks.find(task => (task.data as AttributionTaskData).component === "finquery 取数服务")!;
+  const directed = bindAttribution(task, plan.inputs, {});
+  const entries = directed.modelInput!.component_entrypoints as { component: string; message_index: number;
+    read_request: { tool: string; arguments: { candidate: string; transition_index: number } } }[];
+  assert.equal(entries.length, 8, "large sessions must not copy the whole component directory into the prompt");
+  assert.equal(directed.modelInput!.component_entrypoints_total, 10);
+  const navigation = directed.materialNavigation!.answer as { responsibility_choices: { component: string; transition_index: number }[] };
+  assert.equal(navigation.responsibility_choices.filter(choice => choice.component === "finquery 取数服务").length, 10);
+  assert(navigation.responsibility_choices.some(choice => choice.component !== "finquery 取数服务"),
+    "cross-component context remains available for causal checks");
+  assert.deepEqual((directed.request.sources.answer!.value as RawInput).messages, messages);
+  for (const entry of entries) {
+    assert.equal(entry.component, "finquery 取数服务");
+    assert.equal(entry.read_request.tool, "read_responsibility_chain");
+    assert.equal(entry.read_request.arguments.candidate, "answer");
+    assert(navigation.responsibility_choices.some(choice => choice.component === entry.component &&
+      choice.transition_index === entry.read_request.arguments.transition_index));
+  }
+});
+
 test("planning filters execution locators and always creates one final-generation task per trace", () => {
   const candidate = { input_id: "11111111-1111-4111-8111-111111111111", case_id: "case", turns: [{
     trace_index: 0, trace_id: "trace", question: "问题", final_index: 1, component_names: ["llm-call-7", "span-4f26f1fabe23fc3c", "planner-search"],
@@ -66,6 +239,47 @@ test("planning filters execution locators and always creates one final-generatio
     .map(task => (task.data as AttributionTaskData).component);
   assert.deepEqual(components, ["中间推理处理", "流程处理", "planner-search 检索规划子模型", "终稿生成轮"]);
   assert.equal(components.some(component => /^(?:llm[-_]?call|span)[-_: /]/iu.test(component ?? "")), false);
+});
+
+test("trace correctness without a standard is program-owned and survives session assembly", async t => {
+  const f = await fixture(t);
+  const plan = await planAttribution({ ...f.config, workflow: "attribution", inputs: { ...f.config.inputs,
+    versions: f.config.inputs.versions.slice(0, 1) } });
+  const task = plan.tasks.find(task => task.stage === "attribution-trace")!;
+  const binding = bindAttribution(task, plan.inputs, {}), registry = new AgentRegistry([attributionAgent]);
+  assert.deepEqual(binding.request.input.ground_truth, { available: false, value: null });
+  const prepared = registry.prepare(binding);
+  assert.deepEqual(Object.keys(prepared.evaluation.outputSchema.properties as object), ["summary"]);
+  const expected = { meta: binding.request.input.trace_meta, summary: "已审查本轮。", problem: [],
+    is_correct: null, correct_reason: "未提供标准答案，无法判断回答与标准答案是否一致；已确认的问题独立保留。" };
+  for (const fields of [{}, ...[0, 1, null].map(is_correct => ({ is_correct, correct_reason: "与标准答案一致。" }))]) {
+    const result = registry.resolve(binding, { summary: expected.summary, ...fields }, emptyAudit());
+    registry.validate(binding, result, emptyAudit());
+    assert.deepEqual(result, expected);
+  }
+  const sessionTask = plan.tasks.find(task => task.stage === "attribution-session")!;
+  const sessionBinding = bindAttribution(sessionTask, plan.inputs, { trace0: { evaluation: expected } as never });
+  const result = registry.resolve(sessionBinding, { session_summary: "整场汇总。", session_problem: [] }, emptyAudit()) as { turns: unknown[] };
+  assert.deepEqual(result.turns, [expected]);
+});
+
+for (const reference of [0, false, "给定标准答案"]) test(`trace passes through standard ${JSON.stringify(reference)} and requires a comparison`, async t => {
+  const raw = session(); raw.has_standard_answer = true; raw.meta!.std_answer = reference;
+  const f = await fixtureConfig([[raw], [], [], []]);
+  t.after(() => rm(f.directory, { recursive: true, force: true }));
+  const plan = await planAttribution({ ...f.config, workflow: "attribution", inputs: { ...f.config.inputs,
+    versions: f.config.inputs.versions.slice(0, 1) } });
+  const task = plan.tasks.find(task => task.stage === "attribution-trace")!;
+  const binding = bindAttribution(task, plan.inputs, {}), registry = new AgentRegistry([attributionAgent]);
+  assert.deepEqual(binding.request.input.ground_truth, { available: true, value: reference });
+  assert.deepEqual(registry.prepare(binding).evaluation.outputSchema.required, ["summary", "is_correct", "correct_reason"]);
+  assert.throws(() => registry.resolve(binding, { summary: "已审查本轮。" }, emptyAudit()), ValidationError);
+  for (const is_correct of [0, 1, null]) {
+    const result = registry.resolve(binding, { summary: "已审查本轮。", is_correct, correct_reason: "依据给定标准作比较。" }, emptyAudit()) as { is_correct: unknown; correct_reason: string };
+    registry.validate(binding, result, emptyAudit());
+    assert.equal(result.is_correct, is_correct);
+    assert.equal(result.correct_reason, "依据给定标准作比较。");
+  }
 });
 
 test("only the session task exports one attribution row while component and trace tasks stay in state", async t => {

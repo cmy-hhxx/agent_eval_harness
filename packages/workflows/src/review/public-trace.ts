@@ -7,13 +7,17 @@ export function attributionTrace(raw: RawInput, inputId: string, finalIndex: num
   const skills = instructionSources(raw, inputId, finalIndex).filter(source => source.role === "tool");
   const hiddenSkills = new Set(skills.map(source => source.message_index));
   const skillContents = new Set(skills.flatMap(source => typeof source.content === "string" ? [source.content] : []));
+  const projected = new WeakMap<object, unknown>();
   const visit = (value: unknown): unknown => {
     if (typeof value === "string" && skillContents.has(value)) return "[内部技能规范由独立指令会话检查]";
-    if (Array.isArray(value)) return value.map(visit);
     if (!value || typeof value !== "object") return value;
+    if (projected.has(value)) return projected.get(value);
+    if (Array.isArray(value)) {
+      const result = value.map(visit); projected.set(value, result); return result;
+    }
     const row = value as Record<string, unknown>;
     if (row.role === "system" || row.role === "developer") return { type: "private_instruction_omitted" };
-    return Object.fromEntries(Object.entries(row)
+    const result = Object.fromEntries(Object.entries(row)
       .map(([key, child]) => {
         if (["system_prompt", "developer_prompt", "systemPrompt", "developerPrompt"].includes(key))
           return [key, "[内部技能规范由独立指令会话检查]"];
@@ -28,6 +32,8 @@ export function attributionTrace(raw: RawInput, inputId: string, finalIndex: num
         }
         return [key, visit(child)];
       }));
+    projected.set(value, result);
+    return result;
   };
   return { messages: raw.messages.map((message, index) => hiddenSkills.has(index)
     ? { type: message.type, name: message.name, output: "[内部技能规范由独立指令会话检查]" }
@@ -45,6 +51,7 @@ export function validateOriginalAttributionEvidence(value: unknown, originals: R
       if (key.endsWith("evidence_indices") && Array.isArray(child))
         return child.flatMap((number, i) => number === index ? [`${location}/${i}`] : []);
       if (key === "evidence_index" && child === index) return [location];
+      if (key === "index" && /\/evidence\/\d+$/u.test(path) && child === index) return [location];
       return addressed(child, index, location);
     });
   };

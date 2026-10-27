@@ -337,6 +337,27 @@ export async function executeAttempt(attempt: AttemptExecution, deps: AttemptExe
         if (!failure.stopped) reserveFileDraft();
         return feedback;
       };
+      const contentRejection = (error: unknown): error is HttpError => error instanceof HttpError &&
+        error.status === 422 && !!error.issues?.length &&
+        error.issues.every(issue => !["transport", "interruption"].includes(issue.category));
+      const transientDelivery = (error: unknown) => !(error instanceof HttpError) ||
+        [408, 429, 502, 503, 504].includes(error.status);
+      const failDelivery = async (error: unknown, draft: unknown, code: string): Promise<never> => {
+        // The reserved verdict was never accepted or rejected as content. Keep its
+        // payload and the original failure instead of asking the model to rewrite it.
+        submissions--;
+        failure = { ...failure, draft: structuredClone(draft), evidenceBank: [...audit.evidenceBank!],
+          errors: [{ category: transientDelivery(error) ? "transport" : "interruption", code, path: "/",
+            message: errorText(error) }],
+          contentSubmissions: (spec.recovery?.contentSubmissions ?? 0) + submissions,
+          fileErrors: (spec.recovery?.fileErrors ?? 0) + fileErrors, repeatedErrors: 0, stopped: false,
+          attemptId: spec.attemptId };
+        record.failure = failure;
+        await saveRecord();
+        controller.abort(error);
+        void attempt.session?.abort();
+        throw error;
+      };
       const submitExclusive = async (load: () => Promise<unknown>, jsonText = false) => {
         if (accepted)
           return {
@@ -391,18 +412,10 @@ export async function executeAttempt(attempt: AttemptExecution, deps: AttemptExe
             );
             break;
           } catch (error) {
-            if (error instanceof HttpError && error.status < 500) {
+            if (contentRejection(error)) {
               // A definitive rejection is no longer an unacknowledged submission.
               delete record.pendingSubmission;
-              const errors = error.issues || [
-                  {
-                    category: "structure",
-                    code: "submission_rejected",
-                    path: "/",
-                    actual: error.status,
-                    message: error.message,
-                  },
-                ];
+              const errors = error.issues!;
               if(errors.some(e=>['responsibility_unresolved','submission_unfinished'].includes(e.code))){
                 const response=await rejected(errors,result,false,false);
                 failure.stopped=true;record.failure=failure;await saveRecord();
@@ -422,7 +435,8 @@ export async function executeAttempt(attempt: AttemptExecution, deps: AttemptExe
               );
               break;
             } catch (lookup) {
-              if (controller.signal.aborted || i === 2) throw error;
+              if (controller.signal.aborted || !transientDelivery(error) || i === 2)
+                return failDelivery(error, result, "host_submission_failed");
             }
             await new Promise((resolve) => setTimeout(resolve, 100 * 2 ** i));
           }
@@ -486,13 +500,14 @@ export async function executeAttempt(attempt: AttemptExecution, deps: AttemptExe
             return textResult({ accepted: true, material: result.material, budget: {
               content_remaining: Math.max(0, 1 + spec.policy.repairAttempts - submissions) } });
           } catch (error) {
-            if (error instanceof HttpError && error.status < 500) {
-              const errors = error.issues ?? [{ category: "decision" as const, code: "inspection_rejected", path: "/", message: error.message }];
+            if (contentRejection(error)) {
+              const errors = error.issues!;
               const material = await supplyRejectedMaterial(errors, value);
               if (material) return material;
               return rejected(errors, value);
             }
-            if (signal.aborted || retry === 2) throw error;
+            if (signal.aborted || !transientDelivery(error) || retry === 2)
+              return failDelivery(error, value, "host_inspection_failed");
             await new Promise(resolve => setTimeout(resolve, 100 * 2 ** retry));
           }
         }
@@ -783,8 +798,8 @@ export async function executeAttempt(attempt: AttemptExecution, deps: AttemptExe
           stopped: false,
           attemptId: spec.attemptId,
         };
-        // A later complete submission may fail in transport without creating a new
-        // validation failure; its cost still belongs in the cumulative ledger.
+        // Only content judgments belong in the cumulative ledger. Delivery failures
+        // preserve the last draft without charging another content repair.
         if (audit.review) record.failure.review = structuredClone(audit.review);
         record.failure.evidenceBank = [...audit.evidenceBank!];
         record.failure.contentSubmissions = (spec.recovery?.contentSubmissions || 0) + submissions;

@@ -25,7 +25,9 @@ export class FailureGuard {
     for (const issue of normalized) {
       const taskIds = window.filter((entry) => entry.issues.some((other) =>
         other.category === issue.category && other.code === issue.code && other.path === issue.path)).map((entry) => entry.taskId);
-      if (taskIds.length < this.policy.threshold) continue;
+      const hostFault = issue.category === "interruption" &&
+        ["host_submission_failed", "host_inspection_failed"].includes(issue.code);
+      if (!hostFault && taskIds.length < this.policy.threshold) continue;
       const pause = { stage, ...issue, taskIds, at: now };
       this.pauses.push(pause);
       return pause;

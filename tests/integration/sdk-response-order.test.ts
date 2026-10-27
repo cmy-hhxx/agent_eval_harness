@@ -22,11 +22,12 @@ const terminal = (output: Record<string, unknown>[]) => ({
       input_tokens_details: { cached_tokens: 3 }, output_tokens_details: { reasoning_tokens: 2 } } },
 });
 
-async function replay(events: Record<string, unknown>[], debug = false) {
+async function replay(events: Record<string, unknown>[], debug = false, readBatch = false) {
   const directory = await mkdtemp(path.join(tmpdir(), "eval-pi-responses-"));
   const requests: Record<string, unknown>[] = [], executed: unknown[] = [];
   const errors: string[] = [], ended: unknown[] = [], messages: Record<string, unknown>[] = [];
   const providerArguments: Record<string, unknown>[] = [];
+  let activeTools = 0, peakActiveTools = 0;
   const gateway = await listen(async (req, res) => {
     requests.push(object(await body(req)));
     assert(requests.length <= 2, "replay must terminate after returning the tool result");
@@ -45,7 +46,7 @@ async function replay(events: Record<string, unknown>[], debug = false) {
       runId: "responses-test", debug, taskId: "task", attemptId: "attempt", inputRevision: 1,
       engine: identity, evidenceBank: [],
       evaluation: { id: "fixture", profile: "default", systemPrompt: "Submit the value.",
-        outputSchema: { type: "object" }, toolNames: [], fileSubmission: false,
+        outputSchema: { type: "object" }, toolNames: readBatch ? ["read_responsibility_chain"] : [], fileSubmission: false,
         toolDescriptions: {}, submissionNudge: "Submit." },
       model: { provider: "fixture", baseUrl: gateway.url + "/v1", api: "openai-responses", apiKeyEnv: keyName,
         model: "fixture", thinking: "off", contextWindow: 10000, maxOutputTokens: 1000 },
@@ -53,12 +54,16 @@ async function replay(events: Record<string, unknown>[], debug = false) {
     };
     const session = await piBackend(identity).createSession({
       spec, workdir: directory,
-      tools: [{ name: "submit_evaluation", description: "Submit the value.",
+      tools: (readBatch ? ["read_responsibility_chain", "submit_evaluation"] : ["submit_evaluation"]).map(name => ({ name, description: "Read or submit the value.",
         inputSchema: { type: "object", properties: { value: { type: "string" } }, required: ["value"], additionalProperties: false },
-        async execute() { return { content: [] }; } }],
+        async execute() { return { content: [] }; } })),
       async execute(_name, args) {
+        activeTools++; peakActiveTools = Math.max(peakActiveTools, activeTools);
         executed.push(structuredClone(args));
-        return { content: [{ type: "text", text: "accepted" }] };
+        if (readBatch) await new Promise(resolve => setTimeout(resolve, 5));
+        activeTools--;
+        return { content: [{ type: "text", text: "accepted" }],
+          ...(readBatch ? { details: { budget: { exploration: { remaining: Math.max(0, 2 - executed.length) } } } } : {}) };
       },
       onEvent(value) {
         const event = object(value);
@@ -75,7 +80,7 @@ async function replay(events: Record<string, unknown>[], debug = false) {
       },
     });
     try { await session.run(spec.prompt); } finally { await session.dispose(); }
-    return { requests, executed, errors, ended, messages, providerArguments };
+    return { requests, executed, errors, ended, messages, providerArguments, peakActiveTools };
   } finally {
     if (previous === undefined) delete process.env[keyName];
     else process.env[keyName] = previous;
@@ -85,6 +90,21 @@ async function replay(events: Record<string, unknown>[], debug = false) {
     await rm(directory, { recursive: true, force: true });
   }
 }
+
+test("pi: independent navigation reads share one response and execute serially before the next model request", async () => {
+  const calls = ["第一段原文", "第二段原文"].map((value, index) => ({ ...call(String(index), JSON.stringify({ value })), name: "read_responsibility_chain" }));
+  const result = await replay([...calls.flatMap((item, index) => [itemEvent("added", index, { ...item, arguments: "" }),
+    itemEvent("done", index, item)]), terminal(calls)], false, true);
+  assert.deepEqual(result.errors, []);
+  assert.deepEqual(result.executed, [{ value: "第一段原文" }, { value: "第二段原文" }]);
+  assert.equal(result.peakActiveTools, 1, "batched generation must not race evidence or budget mutation");
+  assert.equal(result.requests.length, 2, "both reads finish without an intervening model request");
+  assert.equal(result.requests[0].parallel_tool_calls, true);
+  assert.equal(result.requests[1].parallel_tool_calls, false, "the exhausted exploration budget still closes reading tools");
+  assert.deepEqual((result.requests[1].tools as { name: string }[]).map(tool => tool.name), ["submit_evaluation"]);
+  assert.deepEqual((result.requests[1].input as { type?: string; call_id?: string }[])
+    .filter(item => item.type === "function_call_output").map(item => item.call_id), ["call_0", "call_1"]);
+});
 
 for (const status of ["completed", "incomplete"] as const)
 test(`pi: only debug records original malformed arguments in ${status} Responses`, async () => {

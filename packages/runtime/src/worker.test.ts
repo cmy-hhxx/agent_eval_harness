@@ -60,6 +60,92 @@ const fileProfile: Partial<AgentProfile> = {
   fileSubmission: true, jsonStringSubmission:false, draftWriteInCallLimit:false,
 };
 
+for (const method of ["accept", "inspect"] as const)
+  for (const status of [500, 409, 422, 503])
+    test(`Host ${method} ${status} preserves the draft without spending content repairs`, async () => {
+      let modelSubmissions = 0, hostCalls = 0;
+      const draft = method === "inspect" ? { actual: "original facts" } : { ok: true };
+      const fixture = await harness(async options => ({ async run() {
+        await options.execute("read_trace", { candidate: "answer", message_index: 0, path: "/content" });
+        modelSubmissions++;
+        if (method === "inspect") await inspectMaterials(options, draft);
+        else await submitFor(options, draft);
+      }, async abort() {}, async dispose() {} }), { material: "original facts", policy: { repairAttempts: 0 },
+        ...(method === "inspect" ? { profile: inspectionProfile } : {}) });
+      fixture.store[method] = async () => { hostCalls++; throw new HttpError(status, "Host fixture fault"); };
+      try {
+        await fixture.start();
+        const result = await fixture.done();
+        assert.equal(result.state, "failed");
+        assert.match(result.error!, /Host fixture fault/);
+        assert.doesNotMatch(result.error!, /repair budget/i);
+        assert.equal(result.failure!.contentSubmissions, 0);
+        assert.equal(result.failure!.fileErrors, 0);
+        assert.deepEqual(result.failure!.draft, draft);
+        assert.equal(result.failure!.errors[0]!.code, `host_${method === "accept" ? "submission" : "inspection"}_failed`);
+        assert.equal(modelSubmissions, 1);
+        assert.equal(hostCalls, status === 503 ? 3 : 1);
+        assert.equal(await fixture.store.receipt(fixture.spec.taskId), undefined);
+      } finally { await fixture.close(); }
+    });
+
+test("a Host validator programming error is not presented as a content rejection", async () => {
+  const fixture = await harness(async options => ({ async run() {
+    await options.execute("read_trace", { candidate: "answer", message_index: 0, path: "/content" });
+    await submitFor(options, { ok: true });
+  }, async abort() {}, async dispose() {} }), { material: "source", policy: { repairAttempts: 0 },
+    profile: { validate() { throw new Error("validator fixture bug"); } } });
+  try {
+    await fixture.start(); const result = await fixture.done();
+    assert.match(result.error!, /validator fixture bug/);
+    assert.equal(result.failure!.contentSubmissions, 0);
+    assert.equal(result.failure!.errors[0]!.code, "host_submission_failed");
+  } finally { await fixture.close(); }
+});
+
+test("a Host fault refunds only its reservation and preserves earlier content rejections", async () => {
+  let calls = 0;
+  const fixture = await harness(async options => ({ async run() {
+    await options.execute("read_trace", { candidate: "answer", message_index: 0, path: "/content" });
+    assert.equal((await submitFor(options, { ok: false })).isError, true);
+    await submitFor(options, { ok: true });
+  }, async abort() {}, async dispose() {} }), { material: "source", policy: { repairAttempts: 1 } });
+  const accept = fixture.store.accept.bind(fixture.store);
+  fixture.store.accept = async value => {
+    if (++calls === 2) throw new HttpError(500, "Host failed after content repair");
+    return accept(value);
+  };
+  try {
+    await fixture.start(); const result = await fixture.done();
+    assert.match(result.error!, /Host failed after content repair/);
+    assert.equal(result.failure!.contentSubmissions, 1);
+    assert.deepEqual(result.failure!.draft, { ok: true });
+    assert.equal(calls, 2);
+  } finally { await fixture.close(); }
+});
+
+test("transient submission delivery retries the same identity and payload before asking the model again", async () => {
+  let submissions = 0;
+  const payloads: Submission[] = [];
+  const fixture = await harness(async options => ({ async run() {
+    await options.execute("read_trace", { candidate: "answer", message_index: 0, path: "/content" });
+    submissions++;
+    await submitFor(options, { ok: true });
+  }, async abort() {}, async dispose() {} }), { material: "source", policy: { repairAttempts: 0 } });
+  const accept = fixture.store.accept.bind(fixture.store);
+  fixture.store.accept = async value => {
+    payloads.push(structuredClone(value));
+    if (payloads.length < 3) throw new HttpError(503, "Host temporarily unavailable");
+    return accept(value);
+  };
+  try {
+    await fixture.start(); assert.equal((await fixture.done()).state, "succeeded");
+    assert.equal(payloads.length, 3); assert.equal(submissions, 1);
+    assert.deepEqual(payloads[0], payloads[1]); assert.deepEqual(payloads[1], payloads[2]);
+    assert.equal((await fixture.store.receipt(fixture.spec.taskId))!.submissionStats!.contentSubmissions, 1);
+  } finally { await fixture.close(); }
+});
+
 test("JSON text submission preserves nested rows, empty arrays and markup without a model-written file", async()=>{
   const original={summary:'中文 "引号" </summary>',problems:[{text:"记录保留原样",component:[]}],values:[false,null,0]};
   const fixture=await harness(async options=>({async run(){

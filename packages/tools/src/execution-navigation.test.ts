@@ -206,3 +206,88 @@ test('read-only evidence tools overlap while bank persistence stays ordered',asy
    assert.equal(f.snapshots.at(-1)!.length,2);
  } finally { await f.close(); }
 });
+
+
+test("responsibility scenes retain merged generation inputs, all contributing returns and actual choices", async () => {
+  const f = await setup();
+  try {
+    const boundary = (transition_index: number, kind: string, chain_indices: number[], before: number[], after: number[]) => ({
+      transition_index, kind, chain_index: chain_indices.length === 1 ? chain_indices[0] : null, chain_indices,
+      execution_node_index: transition_index, before: before.map(proof), after: after.map(proof), predecessors: [],
+    });
+    const boundaries = [
+      boundary(1, "request_formation", [1], [0], [1]), boundary(2, "execution", [1], [1], [2]),
+      boundary(3, "request_formation", [2], [0], [3]), boundary(4, "execution", [2], [3], [4]),
+      boundary(5, "transfer", [1, 2], [2, 4], [5]), boundary(6, "generation", [1, 2], [5], [6]),
+      boundary(7, "execution", [3], [7], [8]),
+    ];
+    const choices = boundaries.map(({ transition_index, kind }) => ({ transition_index, kind, component: `component-${transition_index}` }));
+    Object.assign(f.ctx.materialNavigation!.answer as object, { boundaries, responsibility_choices: choices });
+    const runtime = new ToolRuntime(f.ctx, createRegistry().select(["read_responsibility_chain"]));
+    const execute = async (transition_index: number) => {
+      const result = await runtime.execute("read_responsibility_chain", { candidate: "answer", transition_index }, new AbortController().signal);
+      assert(!result.isError, result.content[0].text);
+      return JSON.parse(result.content[0].text!);
+    };
+    const selected = await execute(2);
+    assert.deepEqual(selected.request.map((item: { message_index: number }) => item.message_index), [1]);
+    assert.deepEqual(selected.actual_input.map((item: { message_index: number }) => item.message_index), [5]);
+    assert.deepEqual(selected.output.map((item: { message_index: number }) => item.message_index), [6]);
+    assert.deepEqual(selected.responsibility_choices, choices.filter(choice => [1, 2, 5, 6].includes(choice.transition_index)));
+    const merged = await execute(6);
+    assert.deepEqual(merged.original_return.map((item: { message_index: number }) => item.message_index), [2, 4]);
+    assert.deepEqual(merged.request.map((item: { message_index: number }) => item.message_index), [1, 3]);
+    assert(!merged.responsibility_choices.some((choice: { transition_index: number }) => choice.transition_index === 7));
+    for (const item of [...merged.request, ...merged.original_return, ...merged.actual_input, ...merged.output]) {
+      assert.equal(f.ctx.audit.evidenceBank![item.evidence_index - 1], proof(item.message_index).evidence_id);
+      assert(f.ctx.audit.traceReads.some(read => read.message_index === item.message_index && read.start === 0 && read.end === 6));
+    }
+  } finally { await f.close(); }
+});
+
+
+test("responsibility scene budgets register only displayed characters and expose every unread range", async () => {
+  const f = await setup();
+  try {
+    Object.assign(f.ctx.materialNavigation!.answer as object, { boundaries: [
+      { transition_index: 1, kind: "execution", chain_index: 1, chain_indices: [1], before: [proof(0)], after: [proof(1)] },
+    ] });
+    const runtime = new ToolRuntime(f.ctx, createRegistry().select(["read_responsibility_chain"]));
+    const result = await runtime.execute("read_responsibility_chain", { candidate: "answer", transition_index: 1, max_chars: 3 }, new AbortController().signal);
+    assert(!result.isError, result.content[0].text);
+    const value = JSON.parse(result.content[0].text!);
+    assert.equal(value.request[0].quote, "证据正");
+    assert.equal(f.ctx.audit.evidenceBank![value.request[0].evidence_index - 1], evidenceId(inputId, 0, "text", "/content", 0, 3));
+    assert.equal(value.request[0].next_read_request.arguments.offset, 3);
+    assert.equal(value.original_return[0].evidence_index, undefined);
+    assert.equal(value.original_return[0].next_read_request.arguments.offset, 0);
+    assert.deepEqual(f.ctx.audit.traceReads, [{ candidate: "answer", message_index: 0, kind: "text", path: "/content", start: 0, end: 3 }]);
+  } finally { await f.close(); }
+});
+
+
+test("large responsibility scenes fit the visible envelope and retain navigation for omitted evidence", async () => {
+  const f = await setup();
+  try {
+    f.ctx.policy.maxOutputChars = 2000;
+    Object.assign(f.ctx.materialNavigation!.answer as object, { boundaries: [
+      { transition_index: 1, kind: "execution", chain_index: 1, chain_indices: [1],
+        before: Array.from({ length: 10 }, (_, i) => proof(i)), after: Array.from({ length: 10 }, (_, i) => proof(i + 10)) },
+    ] });
+    const runtime = new ToolRuntime(f.ctx, createRegistry().select(["read_responsibility_chain", "read_execution"]));
+    const result = await runtime.execute("read_responsibility_chain", { candidate: "answer", transition_index: 1 }, new AbortController().signal);
+    assert(!result.isError, result.content[0].text);
+    const value = JSON.parse(result.content[0].text!);
+    assert.equal(value.artifact, undefined, "generated evidence must not disappear into an artifact preview");
+    assert(value.omitted_entries.request + value.omitted_entries.original_return > 0);
+    assert.equal(value.continuation.tool, "read_execution");
+    assert(result.content[0].text!.length <= f.ctx.policy.maxOutputChars);
+    assert.equal(f.ctx.audit.evidenceBank!.length, value.request.length + value.original_return.length);
+    assert.equal(f.ctx.audit.traceReads.length, value.request.length + value.original_return.length);
+    const next = await runtime.execute(value.continuation.tool, value.continuation.arguments, new AbortController().signal);
+    assert(!next.isError, next.content[0].text);
+    const boundary = JSON.parse(next.content[0].text!).items[0];
+    assert.equal(boundary.before_count, 10);
+    assert.equal(boundary.after_count, 10);
+  } finally { await f.close(); }
+});

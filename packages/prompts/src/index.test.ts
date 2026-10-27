@@ -185,7 +185,7 @@ test("taxonomy components carry one group, stage and definition", () => {
 });
 
 test("session attribution profiles are independently addressable and never expose boundary ids", () => {
-  const component = agentPrompt("attribution", ["read_trace", "search_trace"], { profile: "component", fileSubmission: true });
+  const component = agentPrompt("attribution", ["read_trace", "search_trace"], { profile: "component", fileSubmission: false });
   const trace = agentPrompt("attribution", [], { profile: "trace", fileSubmission: false });
   const session = agentPrompt("attribution", [], { profile: "session", fileSubmission: false });
   for (const prompt of [component, trace, session]) {

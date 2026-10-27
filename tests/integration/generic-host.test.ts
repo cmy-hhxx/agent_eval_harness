@@ -4,11 +4,12 @@ import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { AgentRegistry, runEvaluation } from "@eval/host";
-import { createRunRepository, type RunCodec } from "@eval/data";
+import { createRunRepository, appendProgressJournal, RunHotStore, runHotFile, runJournalIdentity, type RunCodec } from "@eval/data";
 import { startWorker } from "@eval/runtime/worker";
 import { body, json, listen, request } from "@eval/runtime/http";
 import {
   DEFAULT_POLICY,
+  emptyUsage,
   type AgentBackend,
   type AgentDefinition,
   type AgentProfile,
@@ -95,6 +96,50 @@ const repository = createRunRepository(codec, (task, state) => ({
   file: "scores.jsonl",
   row: { id: task.id, result: state.receipts[task.id].evaluation },
 }));
+
+for (const scenario of ["projection", "conflict", "missing-hot-store"])
+test(`resume reconciles projected receipt metadata while rejecting changed verdicts (${scenario})`, async t => {
+  const directory = await mkdtemp(path.join(tmpdir(), "eval-projected-recovery-"));
+  const oldHotRoot = process.env.EVAL_HOT_STATE_ROOT;
+  process.env.EVAL_HOT_STATE_ROOT = path.join(directory, "hot");
+  const worker = await startWorker({ identity, async createSession() { throw new Error("Accepted work must not call the model again"); } }, path.join(directory, "worker"));
+  t.after(async () => {
+    await worker.close();
+    if (oldHotRoot === undefined) delete process.env.EVAL_HOT_STATE_ROOT;
+    else process.env.EVAL_HOT_STATE_ROOT = oldHotRoot;
+    await rm(directory, { recursive: true, force: true });
+  });
+  const run = path.join(directory, "resume"), selected = { ...plan, tasks: plan.tasks.slice(0, 1) };
+  const state: RunState = { manifest: { format: "evaluation-run", debug: false, runId: "resume", status: "running",
+    engine: identity, evaluatorVersion: "old", config: { timeoutSeconds: 900 }, tasks: selected.tasks, inputs: {},
+    states: { "task-1": { status: "running", attempts: 1 } }, preflight: {}, startedAt: 1 },
+    receipts: {}, usage: emptyUsage(), recordedAttempts: 0 };
+  await repository.writeRun(run, state);
+  const hot = new RunHotStore(runHotFile(process.env.EVAL_HOT_STATE_ROOT!, run), runJournalIdentity(state));
+  hot.append({ at: 2, manifest: { config: state.manifest.config, evaluatorVersion: "old" },
+    states: { "task-1": { status: "succeeded", attempts: 1 } }, receipts: { "task-1": {
+      taskId: "task-1", attemptId: "attempt", submissionId: "submission", status: "succeeded", acceptedAt: 2,
+      evaluatorVersion: "old", judge: "fixture", evaluation: { score: 11 }, usage: emptyUsage(),
+      audit: { calls: 0, requiredReadCalls: 0, traceReads: [], viewedImages: [], calculations: [], artifacts: [] },
+    } } });
+  const projected = hot.eventsAfter();
+  hot.close();
+  projected[0]!.event.receipts!["task-1"]!.exported = { file: "scores.jsonl", id: "task-1", row: { id: "task-1", result: { score: 11 } } };
+  if (scenario === "conflict") projected[0]!.event.receipts!["task-1"]!.evaluation = { score: 99 };
+  await appendProgressJournal(run, projected);
+  if (scenario === "missing-hot-store") await rm(process.env.EVAL_HOT_STATE_ROOT!, { recursive: true, force: true });
+  const execute = () => runEvaluation({ agents: new AgentRegistry([agent]), taskSource: workflow, repository,
+    runtime: { root: directory, workerEntry: "unused" }, runId: "resume", output: { kind: "directory", path: directory },
+    engine: "pi", identity, evaluatorVersion: "current", config: { timeoutSeconds: 3600 }, plan: selected,
+    policy: DEFAULT_POLICY, modelForStage: () => model, concurrency: 1, retries: 0, retryDelaySeconds: 0, workerUrls: [worker.url] });
+  if (scenario === "conflict") { await assert.rejects(execute, /同一序号上不一致/); return; }
+  assert.deepEqual((await execute()).execution_task_statuses, { succeeded: 1 });
+  const restored = await repository.readRun(run);
+  assert.equal(restored.receipts["task-1"]!.exported!.file, "scores.jsonl");
+  assert.equal(restored.receipts["task-1"]!.evaluatorVersion, "old");
+  assert.equal(restored.manifest.evaluatorVersion, "current");
+  assert.deepEqual(restored.manifest.config, { timeoutSeconds: 3600 });
+});
 
 for (const persistent of [false, true]) test(`the stage circuit waits for bounded transport retries (${persistent ? "outage" : "recovery"})`, { timeout: 15000 }, async () => {
   const directory = await mkdtemp(path.join(tmpdir(), "eval-transport-circuit-"));
