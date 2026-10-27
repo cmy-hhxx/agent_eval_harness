@@ -46,6 +46,8 @@ node dist/apps/host/src/cli.js run --config configs/host.json --config configs/b
 
 使用 100 并发、100 session 窗口和原有 high 推理及修复预算，运行时不启用逐 token debug 归档。记录实际峰值并发、完整 session 成功率、总耗时、分模式吞吐、限流、超时和内容拒绝。估算全量时按 Fast/Expert 实际数量加权，不能把这批均衡抽样直接等比例放大；输入文件变化时重新核对样本坐标。
 
+限时压测仍使用这 200 条记录，但在每个日期/模式内固定打散，再交错各组；Attribution 按显式 `inputs.records` 顺序规划，避免文件扫描顺序让 10 分钟窗口只覆盖 Fast。每轮两个渠道分别 high/low，各 100 并发；实际达到 100 个运行任务后计时 600 秒，然后停止并保留收据和未完成草稿。只统计窗口内接受的完整 session，冷启动单列，截止时取消的任务计未完成而非模型失败；每轮使用新 run ID，不借用前一轮结果。
+
 ```bash
 node dist/apps/host/src/cli.js preflight --config configs/host.json --config configs/benchmarks/aime-slim-200-concurrency-100.json
 node dist/apps/host/src/cli.js run --config configs/host.json --config configs/benchmarks/aime-slim-200-concurrency-100.json --run-id aime-slim-200-c100 --test-eval

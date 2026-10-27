@@ -144,6 +144,22 @@ test("an attribution plan fans out one component task per trace component and on
   assert.equal((component.request.input as { trace_index?: number }).trace_index, 0);
 });
 
+test("explicit attribution records retain their requested session order instead of source scan order", async t => {
+  const f = await fixtureConfig([[session("first"), session("second")], [], [], []]);
+  t.after(() => rm(f.directory, { recursive: true, force: true }));
+  const config = { ...f.config, workflow: "attribution", inputs: { ...f.config.inputs,
+    versions: f.config.inputs.versions.slice(0, 1) } } as AttributionConfig;
+  const original = await planAttribution(config);
+  const candidates = original.tasks.filter(task => task.stage === "attribution-session")
+    .map(task => (task.data as AttributionTaskData).candidate);
+  config.inputs.records = candidates.toReversed().map(candidate => ({ model: candidate.version, batch_id: candidate.batch_id,
+    case_id: candidate.case_id, input_file: candidate.source, input_index: candidate.line - 1 }));
+  const selected = await planAttribution(config);
+  assert.deepEqual(selected.tasks.filter(task => task.stage === "attribution-session")
+    .map(task => (task.data as AttributionTaskData).candidate.case_id), ["second", "first"]);
+  assert.equal(selected.tasks.length, original.tasks.length);
+});
+
 test("component entrypoints stay bounded while preserving every source call and the full navigation", async t => {
   const messages: RawInput["messages"] = [{ type: "user_question", role: "user", content: "核对十次查询。" }];
   for (let index = 0; index < 10; index++) messages.push(

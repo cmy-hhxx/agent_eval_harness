@@ -55,6 +55,13 @@
     "limit": null,
     "records": [
       {
+        "model": "aime_expert",
+        "batch_id": "2026-10-19",
+        "case_id": "thread_cf1336b5f26344b18ac19dbba2a85b3d",
+        "input_file": "/mnt/fin_bench/eval_data/1_aime/4_daily_eval_slim/aime_expert/2026-10-19.jsonl",
+        "input_index": 2
+      },
+      {
         "model": "aime_fast",
         "batch_id": "2026-10-19",
         "case_id": "thread_5034b9574a4247a8b36f6cb1aa41f39f",
@@ -62,11 +69,11 @@
         "input_index": 4
       },
       {
-        "model": "aime_fast",
+        "model": "aime_expert",
         "batch_id": "2026-10-20",
-        "case_id": "thread_b7577f0304b54825a85a262c898f9ba4",
-        "input_file": "/mnt/fin_bench/eval_data/1_aime/4_daily_eval_slim/aime_fast/2026-10-20.jsonl",
-        "input_index": 47
+        "case_id": "thread_5f46bbd9f7b840d099f630be2f69ff67",
+        "input_file": "/mnt/fin_bench/eval_data/1_aime/4_daily_eval_slim/aime_expert/2026-10-20.jsonl",
+        "input_index": 9
       },
       {
         "model": "aime_fast",
@@ -76,18 +83,11 @@
         "input_index": 23
       },
       {
-        "model": "aime_fast",
-        "batch_id": "2026-10-20",
-        "case_id": "thread_746f010aecf64118bd156f3ae2feb7ec",
-        "input_file": "/mnt/fin_bench/eval_data/1_aime/4_daily_eval_slim/aime_fast/2026-10-20.jsonl",
-        "input_index": 11
-      },
-      {
-        "model": "aime_fast",
-        "batch_id": "2026-10-20",
-        "case_id": "thread_35995bf149154857bd82be7bf5b1b360",
-        "input_file": "/mnt/fin_bench/eval_data/1_aime/4_daily_eval_slim/aime_fast/2026-10-20.jsonl",
-        "input_index": 42
+        "model": "aime_expert",
+        "batch_id": "2026-10-21",
+        "case_id": "thread_47deaa4e4cf94a2689f238132b050997",
+        "input_file": "/mnt/fin_bench/eval_data/1_aime/4_daily_eval_slim/aime_expert/2026-10-21.jsonl",
+        "input_index": 12
       },
       {
         "model": "aime_fast",
@@ -97,18 +97,11 @@
         "input_index": 43
       },
       {
-        "model": "aime_fast",
+        "model": "aime_expert",
         "batch_id": "2026-10-22",
-        "case_id": "thread_e5147eebef354312ba6cf08803cbb6f0",
-        "input_file": "/mnt/fin_bench/eval_data/1_aime/4_daily_eval_slim/aime_fast/2026-10-22.jsonl",
-        "input_index": 153
-      },
-      {
-        "model": "aime_fast",
-        "batch_id": "2026-10-22",
-        "case_id": "thread_0338f221590d4cb199ae6682980cebc7",
-        "input_file": "/mnt/fin_bench/eval_data/1_aime/4_daily_eval_slim/aime_fast/2026-10-22.jsonl",
-        "input_index": 80
+        "case_id": "thread_fdfb72a61bd1476ca0e99934c4edc819",
+        "input_file": "/mnt/fin_bench/eval_data/1_aime/4_daily_eval_slim/aime_expert/2026-10-22.jsonl",
+        "input_index": 42
       },
       {
         "model": "aime_fast",
@@ -118,74 +111,11 @@
         "input_index": 91
       },
       {
-        "model": "aime_fast",
-        "batch_id": "2026-10-22",
-        "case_id": "thread_c69e108b1fa64eeaa40133208234cdc0",
-        "input_file": "/mnt/fin_bench/eval_data/1_aime/4_daily_eval_slim/aime_fast/2026-10-22.jsonl",
-        "input_index": 100
-      },
-      {
-        "model": "aime_fast",
+        "model": "aime_expert",
         "batch_id": "2026-10-23",
-        "case_id": "chat_once-10c4be52-5e20-40de-8d95-3996210f1955",
-        "input_file": "/mnt/fin_bench/eval_data/1_aime/4_daily_eval_slim/aime_fast/2026-10-23.jsonl",
-        "input_index": 449
-      },
-      {
-        "model": "aime_fast",
-        "batch_id": "2026-10-23",
-        "case_id": "chat_once-08044cf0-2242-4d79-bf49-ba934068df5a",
-        "input_file": "/mnt/fin_bench/eval_data/1_aime/4_daily_eval_slim/aime_fast/2026-10-23.jsonl",
-        "input_index": 173
-      },
-      {
-        "model": "aime_fast",
-        "batch_id": "2026-10-23",
-        "case_id": "chat_once-584daaf5-fe63-491f-b0a0-64783ec072d9",
-        "input_file": "/mnt/fin_bench/eval_data/1_aime/4_daily_eval_slim/aime_fast/2026-10-23.jsonl",
-        "input_index": 455
-      },
-      {
-        "model": "aime_fast",
-        "batch_id": "2026-10-23",
-        "case_id": "thread_298ac4e0f41e47b78f8a516f0a091ccf",
-        "input_file": "/mnt/fin_bench/eval_data/1_aime/4_daily_eval_slim/aime_fast/2026-10-23.jsonl",
-        "input_index": 1056
-      },
-      {
-        "model": "aime_fast",
-        "batch_id": "2026-10-23",
-        "case_id": "chat_once-fd04308f-d237-438a-bba6-c6a852861278",
-        "input_file": "/mnt/fin_bench/eval_data/1_aime/4_daily_eval_slim/aime_fast/2026-10-23.jsonl",
-        "input_index": 661
-      },
-      {
-        "model": "aime_fast",
-        "batch_id": "2026-10-23",
-        "case_id": "thread_eeed0ccd01094e6fbfe12f0c4ecd6ea0",
-        "input_file": "/mnt/fin_bench/eval_data/1_aime/4_daily_eval_slim/aime_fast/2026-10-23.jsonl",
-        "input_index": 467
-      },
-      {
-        "model": "aime_fast",
-        "batch_id": "2026-10-23",
-        "case_id": "thread_39e8628bb0c54fcaac857580976b38bf",
-        "input_file": "/mnt/fin_bench/eval_data/1_aime/4_daily_eval_slim/aime_fast/2026-10-23.jsonl",
-        "input_index": 1292
-      },
-      {
-        "model": "aime_fast",
-        "batch_id": "2026-10-23",
-        "case_id": "thread_c1304a87871640ce9893d881cdcca68c",
-        "input_file": "/mnt/fin_bench/eval_data/1_aime/4_daily_eval_slim/aime_fast/2026-10-23.jsonl",
-        "input_index": 593
-      },
-      {
-        "model": "aime_fast",
-        "batch_id": "2026-10-23",
-        "case_id": "thread_cc15e8efb370435dbf9694e697c4a6f8",
-        "input_file": "/mnt/fin_bench/eval_data/1_aime/4_daily_eval_slim/aime_fast/2026-10-23.jsonl",
-        "input_index": 84
+        "case_id": "thread_ae3cacbec106410a8574e486b11338b8",
+        "input_file": "/mnt/fin_bench/eval_data/1_aime/4_daily_eval_slim/aime_expert/2026-10-23.jsonl",
+        "input_index": 115
       },
       {
         "model": "aime_fast",
@@ -195,39 +125,277 @@
         "input_index": 2457
       },
       {
+        "model": "aime_expert",
+        "batch_id": "2026-10-24",
+        "case_id": "thread_c697c9a3bc084c7a9df759eb70d80e22",
+        "input_file": "/mnt/fin_bench/eval_data/1_aime/4_daily_eval_slim/aime_expert/2026-10-24.jsonl",
+        "input_index": 150
+      },
+      {
         "model": "aime_fast",
+        "batch_id": "2026-10-24",
+        "case_id": "chat_once-7bdd3bce-9954-4aee-a0bc-cb945bf840b7",
+        "input_file": "/mnt/fin_bench/eval_data/1_aime/4_daily_eval_slim/aime_fast/2026-10-24.jsonl",
+        "input_index": 482
+      },
+      {
+        "model": "aime_expert",
+        "batch_id": "2026-10-25",
+        "case_id": "chat_once-52847beb-dd29-43a6-b4c2-2fa7aa62a3c7",
+        "input_file": "/mnt/fin_bench/eval_data/1_aime/4_daily_eval_slim/aime_expert/2026-10-25.jsonl",
+        "input_index": 88
+      },
+      {
+        "model": "aime_fast",
+        "batch_id": "2026-10-25",
+        "case_id": "chat_once-80cf0b1c-b51f-4163-8863-6ba8f12f517d",
+        "input_file": "/mnt/fin_bench/eval_data/1_aime/4_daily_eval_slim/aime_fast/2026-10-25.jsonl",
+        "input_index": 452
+      },
+      {
+        "model": "aime_expert",
+        "batch_id": "2026-10-26",
+        "case_id": "thread_4bfae8aaa567415889f2cf8103f5a98d",
+        "input_file": "/mnt/fin_bench/eval_data/1_aime/4_daily_eval_slim/aime_expert/2026-10-26.jsonl",
+        "input_index": 8
+      },
+      {
+        "model": "aime_fast",
+        "batch_id": "2026-10-26",
+        "case_id": "thread_6632c2f9647646feb5454a3053fb1ba2",
+        "input_file": "/mnt/fin_bench/eval_data/1_aime/4_daily_eval_slim/aime_fast/2026-10-26.jsonl",
+        "input_index": 3
+      },
+      {
+        "model": "aime_expert",
+        "batch_id": "2026-10-20",
+        "case_id": "thread_99b1dcc549f34d3ea6969a95f84d49d9",
+        "input_file": "/mnt/fin_bench/eval_data/1_aime/4_daily_eval_slim/aime_expert/2026-10-20.jsonl",
+        "input_index": 15
+      },
+      {
+        "model": "aime_fast",
+        "batch_id": "2026-10-20",
+        "case_id": "thread_b7577f0304b54825a85a262c898f9ba4",
+        "input_file": "/mnt/fin_bench/eval_data/1_aime/4_daily_eval_slim/aime_fast/2026-10-20.jsonl",
+        "input_index": 47
+      },
+      {
+        "model": "aime_expert",
+        "batch_id": "2026-10-21",
+        "case_id": "thread_235520e535b7463f9a46e543bfc7a2f5",
+        "input_file": "/mnt/fin_bench/eval_data/1_aime/4_daily_eval_slim/aime_expert/2026-10-21.jsonl",
+        "input_index": 22
+      },
+      {
+        "model": "aime_expert",
+        "batch_id": "2026-10-22",
+        "case_id": "thread_71f44c1104cd43ed92b3c5bc2d1f4a5f",
+        "input_file": "/mnt/fin_bench/eval_data/1_aime/4_daily_eval_slim/aime_expert/2026-10-22.jsonl",
+        "input_index": 0
+      },
+      {
+        "model": "aime_fast",
+        "batch_id": "2026-10-22",
+        "case_id": "thread_0338f221590d4cb199ae6682980cebc7",
+        "input_file": "/mnt/fin_bench/eval_data/1_aime/4_daily_eval_slim/aime_fast/2026-10-22.jsonl",
+        "input_index": 80
+      },
+      {
+        "model": "aime_expert",
         "batch_id": "2026-10-23",
-        "case_id": "thread_1d471abd583e47d6976633835a9ba0d5",
-        "input_file": "/mnt/fin_bench/eval_data/1_aime/4_daily_eval_slim/aime_fast/2026-10-23.jsonl",
-        "input_index": 2392
+        "case_id": "thread_e6d682305033426487e98295a14b8f7a",
+        "input_file": "/mnt/fin_bench/eval_data/1_aime/4_daily_eval_slim/aime_expert/2026-10-23.jsonl",
+        "input_index": 181
       },
       {
         "model": "aime_fast",
         "batch_id": "2026-10-23",
-        "case_id": "thread_8407b4f25d6e4eb5bd3381f78683c9ea",
+        "case_id": "thread_298ac4e0f41e47b78f8a516f0a091ccf",
         "input_file": "/mnt/fin_bench/eval_data/1_aime/4_daily_eval_slim/aime_fast/2026-10-23.jsonl",
-        "input_index": 737
+        "input_index": 1056
+      },
+      {
+        "model": "aime_expert",
+        "batch_id": "2026-10-24",
+        "case_id": "thread_fee62ded51e14bfe9adcc1857e4dd1f1",
+        "input_file": "/mnt/fin_bench/eval_data/1_aime/4_daily_eval_slim/aime_expert/2026-10-24.jsonl",
+        "input_index": 153
+      },
+      {
+        "model": "aime_fast",
+        "batch_id": "2026-10-24",
+        "case_id": "thread_506d8eae112f45b8a4e616b98bb2383e",
+        "input_file": "/mnt/fin_bench/eval_data/1_aime/4_daily_eval_slim/aime_fast/2026-10-24.jsonl",
+        "input_index": 208
+      },
+      {
+        "model": "aime_expert",
+        "batch_id": "2026-10-25",
+        "case_id": "thread_7c13684ee7924c98b098cba54d122d03",
+        "input_file": "/mnt/fin_bench/eval_data/1_aime/4_daily_eval_slim/aime_expert/2026-10-25.jsonl",
+        "input_index": 96
+      },
+      {
+        "model": "aime_fast",
+        "batch_id": "2026-10-25",
+        "case_id": "thread_74412479953645878e000288f62a4a10",
+        "input_file": "/mnt/fin_bench/eval_data/1_aime/4_daily_eval_slim/aime_fast/2026-10-25.jsonl",
+        "input_index": 429
+      },
+      {
+        "model": "aime_expert",
+        "batch_id": "2026-10-20",
+        "case_id": "thread_818fb4da8ae94f9c81c2299a4eaba4f9",
+        "input_file": "/mnt/fin_bench/eval_data/1_aime/4_daily_eval_slim/aime_expert/2026-10-20.jsonl",
+        "input_index": 26
+      },
+      {
+        "model": "aime_fast",
+        "batch_id": "2026-10-20",
+        "case_id": "thread_35995bf149154857bd82be7bf5b1b360",
+        "input_file": "/mnt/fin_bench/eval_data/1_aime/4_daily_eval_slim/aime_fast/2026-10-20.jsonl",
+        "input_index": 42
+      },
+      {
+        "model": "aime_expert",
+        "batch_id": "2026-10-21",
+        "case_id": "thread_9c05ce9be0294b6ab8c83639c1febfd5",
+        "input_file": "/mnt/fin_bench/eval_data/1_aime/4_daily_eval_slim/aime_expert/2026-10-21.jsonl",
+        "input_index": 6
+      },
+      {
+        "model": "aime_expert",
+        "batch_id": "2026-10-22",
+        "case_id": "thread_b5626e015eb44d4d855b765efa219826",
+        "input_file": "/mnt/fin_bench/eval_data/1_aime/4_daily_eval_slim/aime_expert/2026-10-22.jsonl",
+        "input_index": 8
+      },
+      {
+        "model": "aime_fast",
+        "batch_id": "2026-10-22",
+        "case_id": "thread_e5147eebef354312ba6cf08803cbb6f0",
+        "input_file": "/mnt/fin_bench/eval_data/1_aime/4_daily_eval_slim/aime_fast/2026-10-22.jsonl",
+        "input_index": 153
+      },
+      {
+        "model": "aime_expert",
+        "batch_id": "2026-10-23",
+        "case_id": "thread_ced17aede08542ea9c5872a013860f01",
+        "input_file": "/mnt/fin_bench/eval_data/1_aime/4_daily_eval_slim/aime_expert/2026-10-23.jsonl",
+        "input_index": 63
       },
       {
         "model": "aime_fast",
         "batch_id": "2026-10-23",
-        "case_id": "chat_once-1f7de397-ff66-45d8-882c-c542680f1f87",
+        "case_id": "thread_49f161fc8a2747d3800f00e9f4a310d4",
         "input_file": "/mnt/fin_bench/eval_data/1_aime/4_daily_eval_slim/aime_fast/2026-10-23.jsonl",
-        "input_index": 803
+        "input_index": 2281
+      },
+      {
+        "model": "aime_expert",
+        "batch_id": "2026-10-24",
+        "case_id": "thread_92bf8bca92384a1d857a5836d611cc0f",
+        "input_file": "/mnt/fin_bench/eval_data/1_aime/4_daily_eval_slim/aime_expert/2026-10-24.jsonl",
+        "input_index": 203
+      },
+      {
+        "model": "aime_fast",
+        "batch_id": "2026-10-24",
+        "case_id": "chat_once-d570f3c2-1a50-4594-818c-f6d432f4b33b",
+        "input_file": "/mnt/fin_bench/eval_data/1_aime/4_daily_eval_slim/aime_fast/2026-10-24.jsonl",
+        "input_index": 45
+      },
+      {
+        "model": "aime_expert",
+        "batch_id": "2026-10-25",
+        "case_id": "thread_1219645998694ad6baaee891e53ef8d4",
+        "input_file": "/mnt/fin_bench/eval_data/1_aime/4_daily_eval_slim/aime_expert/2026-10-25.jsonl",
+        "input_index": 2
+      },
+      {
+        "model": "aime_fast",
+        "batch_id": "2026-10-25",
+        "case_id": "thread_884a9f271bcf48518faf470ffc0a67f0",
+        "input_file": "/mnt/fin_bench/eval_data/1_aime/4_daily_eval_slim/aime_fast/2026-10-25.jsonl",
+        "input_index": 21
+      },
+      {
+        "model": "aime_fast",
+        "batch_id": "2026-10-20",
+        "case_id": "thread_746f010aecf64118bd156f3ae2feb7ec",
+        "input_file": "/mnt/fin_bench/eval_data/1_aime/4_daily_eval_slim/aime_fast/2026-10-20.jsonl",
+        "input_index": 11
+      },
+      {
+        "model": "aime_expert",
+        "batch_id": "2026-10-22",
+        "case_id": "thread_2246d55cbc8d431aa4a4a7f103ca5028",
+        "input_file": "/mnt/fin_bench/eval_data/1_aime/4_daily_eval_slim/aime_expert/2026-10-22.jsonl",
+        "input_index": 6
+      },
+      {
+        "model": "aime_fast",
+        "batch_id": "2026-10-22",
+        "case_id": "thread_c69e108b1fa64eeaa40133208234cdc0",
+        "input_file": "/mnt/fin_bench/eval_data/1_aime/4_daily_eval_slim/aime_fast/2026-10-22.jsonl",
+        "input_index": 100
+      },
+      {
+        "model": "aime_expert",
+        "batch_id": "2026-10-23",
+        "case_id": "thread_f57bbb899a95403b945f43d6a9115385",
+        "input_file": "/mnt/fin_bench/eval_data/1_aime/4_daily_eval_slim/aime_expert/2026-10-23.jsonl",
+        "input_index": 100
       },
       {
         "model": "aime_fast",
         "batch_id": "2026-10-23",
-        "case_id": "thread_2d11cd2f0ced44209e8a4298214ab634",
+        "case_id": "thread_f42dce447b7943778c7480f43fb43aad",
         "input_file": "/mnt/fin_bench/eval_data/1_aime/4_daily_eval_slim/aime_fast/2026-10-23.jsonl",
-        "input_index": 1114
+        "input_index": 2427
+      },
+      {
+        "model": "aime_expert",
+        "batch_id": "2026-10-24",
+        "case_id": "thread_bbc22627067d40f785ffbdba498c4340",
+        "input_file": "/mnt/fin_bench/eval_data/1_aime/4_daily_eval_slim/aime_expert/2026-10-24.jsonl",
+        "input_index": 200
       },
       {
         "model": "aime_fast",
+        "batch_id": "2026-10-24",
+        "case_id": "thread_fb5aef6bf6fc4d3c92ed0c8de07889ed",
+        "input_file": "/mnt/fin_bench/eval_data/1_aime/4_daily_eval_slim/aime_fast/2026-10-24.jsonl",
+        "input_index": 522
+      },
+      {
+        "model": "aime_expert",
+        "batch_id": "2026-10-25",
+        "case_id": "thread_bf50a04c9c6e41ffb85f934bbe225eb9",
+        "input_file": "/mnt/fin_bench/eval_data/1_aime/4_daily_eval_slim/aime_expert/2026-10-25.jsonl",
+        "input_index": 72
+      },
+      {
+        "model": "aime_fast",
+        "batch_id": "2026-10-25",
+        "case_id": "thread_a40debc713144c42901844c882903160",
+        "input_file": "/mnt/fin_bench/eval_data/1_aime/4_daily_eval_slim/aime_fast/2026-10-25.jsonl",
+        "input_index": 261
+      },
+      {
+        "model": "aime_expert",
+        "batch_id": "2026-10-22",
+        "case_id": "thread_81f3fdf97d374992a1f0d8fc4600d14c",
+        "input_file": "/mnt/fin_bench/eval_data/1_aime/4_daily_eval_slim/aime_expert/2026-10-22.jsonl",
+        "input_index": 17
+      },
+      {
+        "model": "aime_expert",
         "batch_id": "2026-10-23",
-        "case_id": "chat_once-fbfe410a-aea9-45ab-b474-d57e81c88b6a",
-        "input_file": "/mnt/fin_bench/eval_data/1_aime/4_daily_eval_slim/aime_fast/2026-10-23.jsonl",
-        "input_index": 996
+        "case_id": "thread_c1115fba29374df7867f82eb576e3f26",
+        "input_file": "/mnt/fin_bench/eval_data/1_aime/4_daily_eval_slim/aime_expert/2026-10-23.jsonl",
+        "input_index": 57
       },
       {
         "model": "aime_fast",
@@ -237,53 +405,39 @@
         "input_index": 2151
       },
       {
-        "model": "aime_fast",
-        "batch_id": "2026-10-23",
-        "case_id": "chat_once-88e50ffa-e802-407d-9d75-e787e15c673f",
-        "input_file": "/mnt/fin_bench/eval_data/1_aime/4_daily_eval_slim/aime_fast/2026-10-23.jsonl",
-        "input_index": 1249
+        "model": "aime_expert",
+        "batch_id": "2026-10-24",
+        "case_id": "thread_9b841f09497e4851bb5f37482dee9a38",
+        "input_file": "/mnt/fin_bench/eval_data/1_aime/4_daily_eval_slim/aime_expert/2026-10-24.jsonl",
+        "input_index": 96
       },
       {
         "model": "aime_fast",
-        "batch_id": "2026-10-23",
-        "case_id": "thread_4d2319b29f3f49dd9eaca6db6b6994c4",
-        "input_file": "/mnt/fin_bench/eval_data/1_aime/4_daily_eval_slim/aime_fast/2026-10-23.jsonl",
-        "input_index": 895
+        "batch_id": "2026-10-24",
+        "case_id": "thread_d8b76ca4e191491bb297a91be85aa446",
+        "input_file": "/mnt/fin_bench/eval_data/1_aime/4_daily_eval_slim/aime_fast/2026-10-24.jsonl",
+        "input_index": 250
+      },
+      {
+        "model": "aime_expert",
+        "batch_id": "2026-10-25",
+        "case_id": "thread_19e2042eb90b4074861b922b518b07e9",
+        "input_file": "/mnt/fin_bench/eval_data/1_aime/4_daily_eval_slim/aime_expert/2026-10-25.jsonl",
+        "input_index": 94
       },
       {
         "model": "aime_fast",
-        "batch_id": "2026-10-23",
-        "case_id": "thread_b1aa58fe3dc546e1aba559e98e1d7dea",
-        "input_file": "/mnt/fin_bench/eval_data/1_aime/4_daily_eval_slim/aime_fast/2026-10-23.jsonl",
-        "input_index": 2757
+        "batch_id": "2026-10-25",
+        "case_id": "thread_27e356a5e32d422788edb98babeb3dfc",
+        "input_file": "/mnt/fin_bench/eval_data/1_aime/4_daily_eval_slim/aime_fast/2026-10-25.jsonl",
+        "input_index": 173
       },
       {
-        "model": "aime_fast",
+        "model": "aime_expert",
         "batch_id": "2026-10-23",
-        "case_id": "chat_once-9fb8b246-a504-4bd9-b6c0-8fd010155132",
-        "input_file": "/mnt/fin_bench/eval_data/1_aime/4_daily_eval_slim/aime_fast/2026-10-23.jsonl",
-        "input_index": 878
-      },
-      {
-        "model": "aime_fast",
-        "batch_id": "2026-10-23",
-        "case_id": "thread_d4560ad9674a4fada8c3ee229bcbd993",
-        "input_file": "/mnt/fin_bench/eval_data/1_aime/4_daily_eval_slim/aime_fast/2026-10-23.jsonl",
-        "input_index": 524
-      },
-      {
-        "model": "aime_fast",
-        "batch_id": "2026-10-23",
-        "case_id": "thread_353de321132e4ce39cbce114560c380e",
-        "input_file": "/mnt/fin_bench/eval_data/1_aime/4_daily_eval_slim/aime_fast/2026-10-23.jsonl",
-        "input_index": 2111
-      },
-      {
-        "model": "aime_fast",
-        "batch_id": "2026-10-23",
-        "case_id": "chat_once-b3dfb81e-4a4c-4041-9ee1-f69ff0c76e5d",
-        "input_file": "/mnt/fin_bench/eval_data/1_aime/4_daily_eval_slim/aime_fast/2026-10-23.jsonl",
-        "input_index": 1508
+        "case_id": "chat_once-fb116194-152b-4e51-b001-20427dc1782e",
+        "input_file": "/mnt/fin_bench/eval_data/1_aime/4_daily_eval_slim/aime_expert/2026-10-23.jsonl",
+        "input_index": 79
       },
       {
         "model": "aime_fast",
@@ -293,11 +447,333 @@
         "input_index": 340
       },
       {
+        "model": "aime_expert",
+        "batch_id": "2026-10-24",
+        "case_id": "thread_85a59ff8431448c9b44f54c80e3f2a29",
+        "input_file": "/mnt/fin_bench/eval_data/1_aime/4_daily_eval_slim/aime_expert/2026-10-24.jsonl",
+        "input_index": 21
+      },
+      {
+        "model": "aime_fast",
+        "batch_id": "2026-10-24",
+        "case_id": "thread_5b92b4e815f548bc9c6f85f065f178fe",
+        "input_file": "/mnt/fin_bench/eval_data/1_aime/4_daily_eval_slim/aime_fast/2026-10-24.jsonl",
+        "input_index": 356
+      },
+      {
+        "model": "aime_expert",
+        "batch_id": "2026-10-25",
+        "case_id": "thread_63ae1ff6a28e42a490843d48bfaafaa7",
+        "input_file": "/mnt/fin_bench/eval_data/1_aime/4_daily_eval_slim/aime_expert/2026-10-25.jsonl",
+        "input_index": 56
+      },
+      {
+        "model": "aime_fast",
+        "batch_id": "2026-10-25",
+        "case_id": "thread_d9c9aba999fe473c831132407a97e438",
+        "input_file": "/mnt/fin_bench/eval_data/1_aime/4_daily_eval_slim/aime_fast/2026-10-25.jsonl",
+        "input_index": 376
+      },
+      {
+        "model": "aime_expert",
+        "batch_id": "2026-10-23",
+        "case_id": "thread_f698bd4200d346a69e96ed13ce61648d",
+        "input_file": "/mnt/fin_bench/eval_data/1_aime/4_daily_eval_slim/aime_expert/2026-10-23.jsonl",
+        "input_index": 382
+      },
+      {
         "model": "aime_fast",
         "batch_id": "2026-10-23",
-        "case_id": "chat_once-f2f9f590-16fa-4cd9-b6b9-efa1134f6b6b",
+        "case_id": "thread_cc15e8efb370435dbf9694e697c4a6f8",
         "input_file": "/mnt/fin_bench/eval_data/1_aime/4_daily_eval_slim/aime_fast/2026-10-23.jsonl",
-        "input_index": 773
+        "input_index": 84
+      },
+      {
+        "model": "aime_expert",
+        "batch_id": "2026-10-24",
+        "case_id": "chat_once-f95ce5ac-af2a-480d-b693-934c0703e291",
+        "input_file": "/mnt/fin_bench/eval_data/1_aime/4_daily_eval_slim/aime_expert/2026-10-24.jsonl",
+        "input_index": 228
+      },
+      {
+        "model": "aime_fast",
+        "batch_id": "2026-10-24",
+        "case_id": "chat_once-fc3143b9-6236-410a-8bb2-8111bb4b03aa",
+        "input_file": "/mnt/fin_bench/eval_data/1_aime/4_daily_eval_slim/aime_fast/2026-10-24.jsonl",
+        "input_index": 224
+      },
+      {
+        "model": "aime_expert",
+        "batch_id": "2026-10-25",
+        "case_id": "thread_1d29f03b4e12479da93e85e826864d13",
+        "input_file": "/mnt/fin_bench/eval_data/1_aime/4_daily_eval_slim/aime_expert/2026-10-25.jsonl",
+        "input_index": 74
+      },
+      {
+        "model": "aime_fast",
+        "batch_id": "2026-10-25",
+        "case_id": "thread_7a2fa1f4fa03442886601749c4e7b4d9",
+        "input_file": "/mnt/fin_bench/eval_data/1_aime/4_daily_eval_slim/aime_fast/2026-10-25.jsonl",
+        "input_index": 402
+      },
+      {
+        "model": "aime_expert",
+        "batch_id": "2026-10-23",
+        "case_id": "thread_1cf4733b5bcf4f588759410b57539ea9",
+        "input_file": "/mnt/fin_bench/eval_data/1_aime/4_daily_eval_slim/aime_expert/2026-10-23.jsonl",
+        "input_index": 43
+      },
+      {
+        "model": "aime_fast",
+        "batch_id": "2026-10-23",
+        "case_id": "thread_4d2319b29f3f49dd9eaca6db6b6994c4",
+        "input_file": "/mnt/fin_bench/eval_data/1_aime/4_daily_eval_slim/aime_fast/2026-10-23.jsonl",
+        "input_index": 895
+      },
+      {
+        "model": "aime_expert",
+        "batch_id": "2026-10-24",
+        "case_id": "thread_ccb075d162184d308a6e56d4ef504c4c",
+        "input_file": "/mnt/fin_bench/eval_data/1_aime/4_daily_eval_slim/aime_expert/2026-10-24.jsonl",
+        "input_index": 98
+      },
+      {
+        "model": "aime_fast",
+        "batch_id": "2026-10-24",
+        "case_id": "thread_228ecbabe598421885ce48b506a223b8",
+        "input_file": "/mnt/fin_bench/eval_data/1_aime/4_daily_eval_slim/aime_fast/2026-10-24.jsonl",
+        "input_index": 479
+      },
+      {
+        "model": "aime_expert",
+        "batch_id": "2026-10-25",
+        "case_id": "thread_995c9dec2f7e4f479f402912bac8bd08",
+        "input_file": "/mnt/fin_bench/eval_data/1_aime/4_daily_eval_slim/aime_expert/2026-10-25.jsonl",
+        "input_index": 8
+      },
+      {
+        "model": "aime_fast",
+        "batch_id": "2026-10-25",
+        "case_id": "chat_once-fdb64f14-ec11-490a-8575-369f40b96cbb",
+        "input_file": "/mnt/fin_bench/eval_data/1_aime/4_daily_eval_slim/aime_fast/2026-10-25.jsonl",
+        "input_index": 472
+      },
+      {
+        "model": "aime_expert",
+        "batch_id": "2026-10-23",
+        "case_id": "thread_cb7d069f97d94637a1efe88034c85c85",
+        "input_file": "/mnt/fin_bench/eval_data/1_aime/4_daily_eval_slim/aime_expert/2026-10-23.jsonl",
+        "input_index": 145
+      },
+      {
+        "model": "aime_fast",
+        "batch_id": "2026-10-23",
+        "case_id": "thread_071c34e064a24d8e9c358edfb2f917ce",
+        "input_file": "/mnt/fin_bench/eval_data/1_aime/4_daily_eval_slim/aime_fast/2026-10-23.jsonl",
+        "input_index": 919
+      },
+      {
+        "model": "aime_expert",
+        "batch_id": "2026-10-24",
+        "case_id": "thread_d51ef22806374a29aaa8d386276b0038",
+        "input_file": "/mnt/fin_bench/eval_data/1_aime/4_daily_eval_slim/aime_expert/2026-10-24.jsonl",
+        "input_index": 32
+      },
+      {
+        "model": "aime_fast",
+        "batch_id": "2026-10-24",
+        "case_id": "thread_6dae3614f9734ba7b295d58f0775dacf",
+        "input_file": "/mnt/fin_bench/eval_data/1_aime/4_daily_eval_slim/aime_fast/2026-10-24.jsonl",
+        "input_index": 186
+      },
+      {
+        "model": "aime_expert",
+        "batch_id": "2026-10-25",
+        "case_id": "thread_ece1a4eddab84e388d2d18e9ef1fc5c2",
+        "input_file": "/mnt/fin_bench/eval_data/1_aime/4_daily_eval_slim/aime_expert/2026-10-25.jsonl",
+        "input_index": 59
+      },
+      {
+        "model": "aime_fast",
+        "batch_id": "2026-10-25",
+        "case_id": "chat_once-c9b8c200-150d-4a43-a351-41728247c0b3",
+        "input_file": "/mnt/fin_bench/eval_data/1_aime/4_daily_eval_slim/aime_fast/2026-10-25.jsonl",
+        "input_index": 60
+      },
+      {
+        "model": "aime_expert",
+        "batch_id": "2026-10-23",
+        "case_id": "thread_0c79014ba306413b97bd299ee1a6dfaf",
+        "input_file": "/mnt/fin_bench/eval_data/1_aime/4_daily_eval_slim/aime_expert/2026-10-23.jsonl",
+        "input_index": 64
+      },
+      {
+        "model": "aime_fast",
+        "batch_id": "2026-10-23",
+        "case_id": "thread_c94e29b5b4724931ba3dc5cbeacf33a7",
+        "input_file": "/mnt/fin_bench/eval_data/1_aime/4_daily_eval_slim/aime_fast/2026-10-23.jsonl",
+        "input_index": 472
+      },
+      {
+        "model": "aime_expert",
+        "batch_id": "2026-10-24",
+        "case_id": "thread_021b0370302f45ca8443ed38b1b51f11",
+        "input_file": "/mnt/fin_bench/eval_data/1_aime/4_daily_eval_slim/aime_expert/2026-10-24.jsonl",
+        "input_index": 184
+      },
+      {
+        "model": "aime_fast",
+        "batch_id": "2026-10-24",
+        "case_id": "thread_a6c1ba40a9564ebb918dd671e4d500c8",
+        "input_file": "/mnt/fin_bench/eval_data/1_aime/4_daily_eval_slim/aime_fast/2026-10-24.jsonl",
+        "input_index": 665
+      },
+      {
+        "model": "aime_expert",
+        "batch_id": "2026-10-25",
+        "case_id": "thread_927a5280572946919e209417a18342d2",
+        "input_file": "/mnt/fin_bench/eval_data/1_aime/4_daily_eval_slim/aime_expert/2026-10-25.jsonl",
+        "input_index": 53
+      },
+      {
+        "model": "aime_fast",
+        "batch_id": "2026-10-25",
+        "case_id": "thread_f109de7f156c4ab7ade1173403f70dc2",
+        "input_file": "/mnt/fin_bench/eval_data/1_aime/4_daily_eval_slim/aime_fast/2026-10-25.jsonl",
+        "input_index": 114
+      },
+      {
+        "model": "aime_expert",
+        "batch_id": "2026-10-23",
+        "case_id": "thread_1ae605423b1a40a89206712935a4dd9b",
+        "input_file": "/mnt/fin_bench/eval_data/1_aime/4_daily_eval_slim/aime_expert/2026-10-23.jsonl",
+        "input_index": 49
+      },
+      {
+        "model": "aime_fast",
+        "batch_id": "2026-10-23",
+        "case_id": "thread_8407b4f25d6e4eb5bd3381f78683c9ea",
+        "input_file": "/mnt/fin_bench/eval_data/1_aime/4_daily_eval_slim/aime_fast/2026-10-23.jsonl",
+        "input_index": 737
+      },
+      {
+        "model": "aime_expert",
+        "batch_id": "2026-10-24",
+        "case_id": "thread_a3b984ca12e94c70819384e12b223561",
+        "input_file": "/mnt/fin_bench/eval_data/1_aime/4_daily_eval_slim/aime_expert/2026-10-24.jsonl",
+        "input_index": 49
+      },
+      {
+        "model": "aime_fast",
+        "batch_id": "2026-10-24",
+        "case_id": "thread_b4bbc86f533a46d4a07a39f66bca77fd",
+        "input_file": "/mnt/fin_bench/eval_data/1_aime/4_daily_eval_slim/aime_fast/2026-10-24.jsonl",
+        "input_index": 149
+      },
+      {
+        "model": "aime_expert",
+        "batch_id": "2026-10-25",
+        "case_id": "thread_7e28c83e51bd4b068701fcb4f0ebadbe",
+        "input_file": "/mnt/fin_bench/eval_data/1_aime/4_daily_eval_slim/aime_expert/2026-10-25.jsonl",
+        "input_index": 28
+      },
+      {
+        "model": "aime_fast",
+        "batch_id": "2026-10-25",
+        "case_id": "thread_8a44f0e2421b41ce9a55ed6b567076af",
+        "input_file": "/mnt/fin_bench/eval_data/1_aime/4_daily_eval_slim/aime_fast/2026-10-25.jsonl",
+        "input_index": 335
+      },
+      {
+        "model": "aime_expert",
+        "batch_id": "2026-10-23",
+        "case_id": "thread_82ba994839ee4a36b705f93da3dcb13b",
+        "input_file": "/mnt/fin_bench/eval_data/1_aime/4_daily_eval_slim/aime_expert/2026-10-23.jsonl",
+        "input_index": 287
+      },
+      {
+        "model": "aime_fast",
+        "batch_id": "2026-10-23",
+        "case_id": "thread_071e0c3b50d24c3082852b2415412e10",
+        "input_file": "/mnt/fin_bench/eval_data/1_aime/4_daily_eval_slim/aime_fast/2026-10-23.jsonl",
+        "input_index": 2462
+      },
+      {
+        "model": "aime_expert",
+        "batch_id": "2026-10-24",
+        "case_id": "thread_d62adbd8eabe4c49bd760afadecaa7aa",
+        "input_file": "/mnt/fin_bench/eval_data/1_aime/4_daily_eval_slim/aime_expert/2026-10-24.jsonl",
+        "input_index": 215
+      },
+      {
+        "model": "aime_fast",
+        "batch_id": "2026-10-24",
+        "case_id": "thread_105216d72124425598ca02e798110886",
+        "input_file": "/mnt/fin_bench/eval_data/1_aime/4_daily_eval_slim/aime_fast/2026-10-24.jsonl",
+        "input_index": 148
+      },
+      {
+        "model": "aime_expert",
+        "batch_id": "2026-10-23",
+        "case_id": "thread_d0720fb6a967414ca0b8c53e11b6257c",
+        "input_file": "/mnt/fin_bench/eval_data/1_aime/4_daily_eval_slim/aime_expert/2026-10-23.jsonl",
+        "input_index": 213
+      },
+      {
+        "model": "aime_fast",
+        "batch_id": "2026-10-23",
+        "case_id": "thread_2d11cd2f0ced44209e8a4298214ab634",
+        "input_file": "/mnt/fin_bench/eval_data/1_aime/4_daily_eval_slim/aime_fast/2026-10-23.jsonl",
+        "input_index": 1114
+      },
+      {
+        "model": "aime_expert",
+        "batch_id": "2026-10-24",
+        "case_id": "thread_808832a190324cbf86d11f6fb99eb116",
+        "input_file": "/mnt/fin_bench/eval_data/1_aime/4_daily_eval_slim/aime_expert/2026-10-24.jsonl",
+        "input_index": 115
+      },
+      {
+        "model": "aime_fast",
+        "batch_id": "2026-10-24",
+        "case_id": "thread_1561ac7cb01647e48cd397ce1756ad7e",
+        "input_file": "/mnt/fin_bench/eval_data/1_aime/4_daily_eval_slim/aime_fast/2026-10-24.jsonl",
+        "input_index": 592
+      },
+      {
+        "model": "aime_expert",
+        "batch_id": "2026-10-23",
+        "case_id": "thread_d034153b92f8431ba7f18dffc4a7a617",
+        "input_file": "/mnt/fin_bench/eval_data/1_aime/4_daily_eval_slim/aime_expert/2026-10-23.jsonl",
+        "input_index": 403
+      },
+      {
+        "model": "aime_fast",
+        "batch_id": "2026-10-23",
+        "case_id": "thread_4c508d1388f243acb4baffbf057e59bc",
+        "input_file": "/mnt/fin_bench/eval_data/1_aime/4_daily_eval_slim/aime_fast/2026-10-23.jsonl",
+        "input_index": 1426
+      },
+      {
+        "model": "aime_expert",
+        "batch_id": "2026-10-24",
+        "case_id": "thread_5fad92afff624e29ba2b1de31ecbcb0c",
+        "input_file": "/mnt/fin_bench/eval_data/1_aime/4_daily_eval_slim/aime_expert/2026-10-24.jsonl",
+        "input_index": 30
+      },
+      {
+        "model": "aime_fast",
+        "batch_id": "2026-10-24",
+        "case_id": "chat_once-b9cb76df-de6b-4441-afe7-caa5568ba4ea",
+        "input_file": "/mnt/fin_bench/eval_data/1_aime/4_daily_eval_slim/aime_fast/2026-10-24.jsonl",
+        "input_index": 593
+      },
+      {
+        "model": "aime_expert",
+        "batch_id": "2026-10-23",
+        "case_id": "thread_2e01bc50694f4d9db43b01f97c4842f0",
+        "input_file": "/mnt/fin_bench/eval_data/1_aime/4_daily_eval_slim/aime_expert/2026-10-23.jsonl",
+        "input_index": 345
       },
       {
         "model": "aime_fast",
@@ -305,6 +781,545 @@
         "case_id": "chat_once-866a3c7d-58b4-44f6-9dd9-ffdf0aa2048b",
         "input_file": "/mnt/fin_bench/eval_data/1_aime/4_daily_eval_slim/aime_fast/2026-10-23.jsonl",
         "input_index": 415
+      },
+      {
+        "model": "aime_expert",
+        "batch_id": "2026-10-24",
+        "case_id": "thread_3af97c8f5ef640a8a76e99b5a9b677d5",
+        "input_file": "/mnt/fin_bench/eval_data/1_aime/4_daily_eval_slim/aime_expert/2026-10-24.jsonl",
+        "input_index": 36
+      },
+      {
+        "model": "aime_fast",
+        "batch_id": "2026-10-24",
+        "case_id": "thread_315d0d9c7a024268bc0a6abc54166a44",
+        "input_file": "/mnt/fin_bench/eval_data/1_aime/4_daily_eval_slim/aime_fast/2026-10-24.jsonl",
+        "input_index": 302
+      },
+      {
+        "model": "aime_expert",
+        "batch_id": "2026-10-23",
+        "case_id": "thread_b01dfab498ee43a6bdef9d23d9810453",
+        "input_file": "/mnt/fin_bench/eval_data/1_aime/4_daily_eval_slim/aime_expert/2026-10-23.jsonl",
+        "input_index": 240
+      },
+      {
+        "model": "aime_fast",
+        "batch_id": "2026-10-23",
+        "case_id": "thread_7662ea560dbb4e6d9fb99442fc6c7c89",
+        "input_file": "/mnt/fin_bench/eval_data/1_aime/4_daily_eval_slim/aime_fast/2026-10-23.jsonl",
+        "input_index": 2110
+      },
+      {
+        "model": "aime_expert",
+        "batch_id": "2026-10-24",
+        "case_id": "thread_f32ccc4a5bbe4845b6ed42209d338f61",
+        "input_file": "/mnt/fin_bench/eval_data/1_aime/4_daily_eval_slim/aime_expert/2026-10-24.jsonl",
+        "input_index": 155
+      },
+      {
+        "model": "aime_fast",
+        "batch_id": "2026-10-24",
+        "case_id": "chat_once-e4770195-95c0-45b6-b48d-c907a79fdff5",
+        "input_file": "/mnt/fin_bench/eval_data/1_aime/4_daily_eval_slim/aime_fast/2026-10-24.jsonl",
+        "input_index": 458
+      },
+      {
+        "model": "aime_expert",
+        "batch_id": "2026-10-23",
+        "case_id": "thread_d8320714ce3942a993830a9741142847",
+        "input_file": "/mnt/fin_bench/eval_data/1_aime/4_daily_eval_slim/aime_expert/2026-10-23.jsonl",
+        "input_index": 364
+      },
+      {
+        "model": "aime_fast",
+        "batch_id": "2026-10-23",
+        "case_id": "thread_279f6333ec63405c8dce2eb0d29b15e3",
+        "input_file": "/mnt/fin_bench/eval_data/1_aime/4_daily_eval_slim/aime_fast/2026-10-23.jsonl",
+        "input_index": 485
+      },
+      {
+        "model": "aime_expert",
+        "batch_id": "2026-10-24",
+        "case_id": "thread_4df3fd77682047949e7d87f043cd6f3b",
+        "input_file": "/mnt/fin_bench/eval_data/1_aime/4_daily_eval_slim/aime_expert/2026-10-24.jsonl",
+        "input_index": 131
+      },
+      {
+        "model": "aime_expert",
+        "batch_id": "2026-10-23",
+        "case_id": "thread_b233379334104b13a4e0105cf0037821",
+        "input_file": "/mnt/fin_bench/eval_data/1_aime/4_daily_eval_slim/aime_expert/2026-10-23.jsonl",
+        "input_index": 50
+      },
+      {
+        "model": "aime_fast",
+        "batch_id": "2026-10-23",
+        "case_id": "thread_a5cb4d34e9f74966985d893805f4bbb1",
+        "input_file": "/mnt/fin_bench/eval_data/1_aime/4_daily_eval_slim/aime_fast/2026-10-23.jsonl",
+        "input_index": 289
+      },
+      {
+        "model": "aime_expert",
+        "batch_id": "2026-10-24",
+        "case_id": "thread_c53183dd18c345ca8a51b9a938bfbd28",
+        "input_file": "/mnt/fin_bench/eval_data/1_aime/4_daily_eval_slim/aime_expert/2026-10-24.jsonl",
+        "input_index": 197
+      },
+      {
+        "model": "aime_expert",
+        "batch_id": "2026-10-23",
+        "case_id": "thread_8723801555c54a1eafafb08088152cbc",
+        "input_file": "/mnt/fin_bench/eval_data/1_aime/4_daily_eval_slim/aime_expert/2026-10-23.jsonl",
+        "input_index": 96
+      },
+      {
+        "model": "aime_fast",
+        "batch_id": "2026-10-23",
+        "case_id": "thread_c1304a87871640ce9893d881cdcca68c",
+        "input_file": "/mnt/fin_bench/eval_data/1_aime/4_daily_eval_slim/aime_fast/2026-10-23.jsonl",
+        "input_index": 593
+      },
+      {
+        "model": "aime_expert",
+        "batch_id": "2026-10-24",
+        "case_id": "thread_825b7955424c4a5c9e8fb7f24f44df68",
+        "input_file": "/mnt/fin_bench/eval_data/1_aime/4_daily_eval_slim/aime_expert/2026-10-24.jsonl",
+        "input_index": 292
+      },
+      {
+        "model": "aime_expert",
+        "batch_id": "2026-10-23",
+        "case_id": "thread_856176e847f447ca8114942fdaa26929",
+        "input_file": "/mnt/fin_bench/eval_data/1_aime/4_daily_eval_slim/aime_expert/2026-10-23.jsonl",
+        "input_index": 376
+      },
+      {
+        "model": "aime_fast",
+        "batch_id": "2026-10-23",
+        "case_id": "chat_once-f2f9f590-16fa-4cd9-b6b9-efa1134f6b6b",
+        "input_file": "/mnt/fin_bench/eval_data/1_aime/4_daily_eval_slim/aime_fast/2026-10-23.jsonl",
+        "input_index": 773
+      },
+      {
+        "model": "aime_expert",
+        "batch_id": "2026-10-24",
+        "case_id": "thread_aad585b1efd04ef985992881fb62b15e",
+        "input_file": "/mnt/fin_bench/eval_data/1_aime/4_daily_eval_slim/aime_expert/2026-10-24.jsonl",
+        "input_index": 147
+      },
+      {
+        "model": "aime_expert",
+        "batch_id": "2026-10-23",
+        "case_id": "thread_4173b47175bf4be69a68d33229793eab",
+        "input_file": "/mnt/fin_bench/eval_data/1_aime/4_daily_eval_slim/aime_expert/2026-10-23.jsonl",
+        "input_index": 108
+      },
+      {
+        "model": "aime_fast",
+        "batch_id": "2026-10-23",
+        "case_id": "thread_4dd1f75a540e45d0aa094ecc1e489851",
+        "input_file": "/mnt/fin_bench/eval_data/1_aime/4_daily_eval_slim/aime_fast/2026-10-23.jsonl",
+        "input_index": 2072
+      },
+      {
+        "model": "aime_expert",
+        "batch_id": "2026-10-24",
+        "case_id": "thread_c533d15d1d2643c28aacc8f01c155863",
+        "input_file": "/mnt/fin_bench/eval_data/1_aime/4_daily_eval_slim/aime_expert/2026-10-24.jsonl",
+        "input_index": 167
+      },
+      {
+        "model": "aime_expert",
+        "batch_id": "2026-10-23",
+        "case_id": "thread_6751a98d2fc840a78a76c6c977dbef5c",
+        "input_file": "/mnt/fin_bench/eval_data/1_aime/4_daily_eval_slim/aime_expert/2026-10-23.jsonl",
+        "input_index": 264
+      },
+      {
+        "model": "aime_fast",
+        "batch_id": "2026-10-23",
+        "case_id": "thread_0a97001dd93b437ba12798dcff5bfd9a",
+        "input_file": "/mnt/fin_bench/eval_data/1_aime/4_daily_eval_slim/aime_fast/2026-10-23.jsonl",
+        "input_index": 1444
+      },
+      {
+        "model": "aime_expert",
+        "batch_id": "2026-10-24",
+        "case_id": "thread_5551275b9e5c41729479ebf168ef051a",
+        "input_file": "/mnt/fin_bench/eval_data/1_aime/4_daily_eval_slim/aime_expert/2026-10-24.jsonl",
+        "input_index": 279
+      },
+      {
+        "model": "aime_expert",
+        "batch_id": "2026-10-23",
+        "case_id": "thread_5ff01bfd8d0c4185a9635e83cad21ea3",
+        "input_file": "/mnt/fin_bench/eval_data/1_aime/4_daily_eval_slim/aime_expert/2026-10-23.jsonl",
+        "input_index": 397
+      },
+      {
+        "model": "aime_fast",
+        "batch_id": "2026-10-23",
+        "case_id": "chat_once-fbfe410a-aea9-45ab-b474-d57e81c88b6a",
+        "input_file": "/mnt/fin_bench/eval_data/1_aime/4_daily_eval_slim/aime_fast/2026-10-23.jsonl",
+        "input_index": 996
+      },
+      {
+        "model": "aime_expert",
+        "batch_id": "2026-10-24",
+        "case_id": "thread_446e9ba7f2d341f4b7f54ef38d3e2746",
+        "input_file": "/mnt/fin_bench/eval_data/1_aime/4_daily_eval_slim/aime_expert/2026-10-24.jsonl",
+        "input_index": 267
+      },
+      {
+        "model": "aime_expert",
+        "batch_id": "2026-10-23",
+        "case_id": "thread_529975de7567418d9ea19078d155200c",
+        "input_file": "/mnt/fin_bench/eval_data/1_aime/4_daily_eval_slim/aime_expert/2026-10-23.jsonl",
+        "input_index": 41
+      },
+      {
+        "model": "aime_fast",
+        "batch_id": "2026-10-23",
+        "case_id": "thread_8f666893deae4563a8239560fe86fcc1",
+        "input_file": "/mnt/fin_bench/eval_data/1_aime/4_daily_eval_slim/aime_fast/2026-10-23.jsonl",
+        "input_index": 538
+      },
+      {
+        "model": "aime_expert",
+        "batch_id": "2026-10-24",
+        "case_id": "thread_5c29b21da63b4b92bfeb83c5dfc32254",
+        "input_file": "/mnt/fin_bench/eval_data/1_aime/4_daily_eval_slim/aime_expert/2026-10-24.jsonl",
+        "input_index": 245
+      },
+      {
+        "model": "aime_expert",
+        "batch_id": "2026-10-23",
+        "case_id": "thread_47431d8f6a074f17bc29ae862720cb6a",
+        "input_file": "/mnt/fin_bench/eval_data/1_aime/4_daily_eval_slim/aime_expert/2026-10-23.jsonl",
+        "input_index": 45
+      },
+      {
+        "model": "aime_fast",
+        "batch_id": "2026-10-23",
+        "case_id": "thread_2326ffeff46c45a8bc7de37d907f0d0b",
+        "input_file": "/mnt/fin_bench/eval_data/1_aime/4_daily_eval_slim/aime_fast/2026-10-23.jsonl",
+        "input_index": 667
+      },
+      {
+        "model": "aime_expert",
+        "batch_id": "2026-10-24",
+        "case_id": "thread_b33781cbdd794d7ab04000a61c5bcdc1",
+        "input_file": "/mnt/fin_bench/eval_data/1_aime/4_daily_eval_slim/aime_expert/2026-10-24.jsonl",
+        "input_index": 71
+      },
+      {
+        "model": "aime_expert",
+        "batch_id": "2026-10-23",
+        "case_id": "thread_89c1a99843564600a1f56b9d2f72d014",
+        "input_file": "/mnt/fin_bench/eval_data/1_aime/4_daily_eval_slim/aime_expert/2026-10-23.jsonl",
+        "input_index": 246
+      },
+      {
+        "model": "aime_fast",
+        "batch_id": "2026-10-23",
+        "case_id": "chat_once-5526a757-3be8-4162-97c2-4ffba73707f3",
+        "input_file": "/mnt/fin_bench/eval_data/1_aime/4_daily_eval_slim/aime_fast/2026-10-23.jsonl",
+        "input_index": 1999
+      },
+      {
+        "model": "aime_expert",
+        "batch_id": "2026-10-24",
+        "case_id": "thread_026554ff66e6434baa9ca0ea30ab7607",
+        "input_file": "/mnt/fin_bench/eval_data/1_aime/4_daily_eval_slim/aime_expert/2026-10-24.jsonl",
+        "input_index": 47
+      },
+      {
+        "model": "aime_expert",
+        "batch_id": "2026-10-23",
+        "case_id": "thread_027a67cec84c4e72b3e9f1442b7d3eef",
+        "input_file": "/mnt/fin_bench/eval_data/1_aime/4_daily_eval_slim/aime_expert/2026-10-23.jsonl",
+        "input_index": 10
+      },
+      {
+        "model": "aime_fast",
+        "batch_id": "2026-10-23",
+        "case_id": "thread_07cdb74b6cf6406ab996122a8a5e6905",
+        "input_file": "/mnt/fin_bench/eval_data/1_aime/4_daily_eval_slim/aime_fast/2026-10-23.jsonl",
+        "input_index": 1098
+      },
+      {
+        "model": "aime_expert",
+        "batch_id": "2026-10-24",
+        "case_id": "thread_ba1e651f5c264441b60dd832fb531dba",
+        "input_file": "/mnt/fin_bench/eval_data/1_aime/4_daily_eval_slim/aime_expert/2026-10-24.jsonl",
+        "input_index": 225
+      },
+      {
+        "model": "aime_expert",
+        "batch_id": "2026-10-23",
+        "case_id": "thread_9a3f1d6272b44b1b998620bd37bcdb13",
+        "input_file": "/mnt/fin_bench/eval_data/1_aime/4_daily_eval_slim/aime_expert/2026-10-23.jsonl",
+        "input_index": 62
+      },
+      {
+        "model": "aime_fast",
+        "batch_id": "2026-10-23",
+        "case_id": "chat_once-cc92994b-c1e4-42a8-8050-211f6cef6bfa",
+        "input_file": "/mnt/fin_bench/eval_data/1_aime/4_daily_eval_slim/aime_fast/2026-10-23.jsonl",
+        "input_index": 735
+      },
+      {
+        "model": "aime_expert",
+        "batch_id": "2026-10-24",
+        "case_id": "thread_8fea540cc9f1444391044f76f9ec8dd9",
+        "input_file": "/mnt/fin_bench/eval_data/1_aime/4_daily_eval_slim/aime_expert/2026-10-24.jsonl",
+        "input_index": 282
+      },
+      {
+        "model": "aime_expert",
+        "batch_id": "2026-10-23",
+        "case_id": "thread_acb29fcb3c5c4b8781c765dcd56f38c0",
+        "input_file": "/mnt/fin_bench/eval_data/1_aime/4_daily_eval_slim/aime_expert/2026-10-23.jsonl",
+        "input_index": 16
+      },
+      {
+        "model": "aime_fast",
+        "batch_id": "2026-10-23",
+        "case_id": "thread_b7cf97c875f249079a0cb50b9fb8af85",
+        "input_file": "/mnt/fin_bench/eval_data/1_aime/4_daily_eval_slim/aime_fast/2026-10-23.jsonl",
+        "input_index": 316
+      },
+      {
+        "model": "aime_expert",
+        "batch_id": "2026-10-24",
+        "case_id": "thread_dbb1e9b9e31b4ab98feb99499adadbef",
+        "input_file": "/mnt/fin_bench/eval_data/1_aime/4_daily_eval_slim/aime_expert/2026-10-24.jsonl",
+        "input_index": 108
+      },
+      {
+        "model": "aime_expert",
+        "batch_id": "2026-10-23",
+        "case_id": "thread_89bd2a3662524484b2e74e2bba8b40ce",
+        "input_file": "/mnt/fin_bench/eval_data/1_aime/4_daily_eval_slim/aime_expert/2026-10-23.jsonl",
+        "input_index": 84
+      },
+      {
+        "model": "aime_fast",
+        "batch_id": "2026-10-23",
+        "case_id": "chat_once-88e50ffa-e802-407d-9d75-e787e15c673f",
+        "input_file": "/mnt/fin_bench/eval_data/1_aime/4_daily_eval_slim/aime_fast/2026-10-23.jsonl",
+        "input_index": 1249
+      },
+      {
+        "model": "aime_expert",
+        "batch_id": "2026-10-24",
+        "case_id": "thread_f9c0234042be4a489e46b3da78b11292",
+        "input_file": "/mnt/fin_bench/eval_data/1_aime/4_daily_eval_slim/aime_expert/2026-10-24.jsonl",
+        "input_index": 9
+      },
+      {
+        "model": "aime_expert",
+        "batch_id": "2026-10-23",
+        "case_id": "thread_572f6fc408dc41259ac17c232fb1a208",
+        "input_file": "/mnt/fin_bench/eval_data/1_aime/4_daily_eval_slim/aime_expert/2026-10-23.jsonl",
+        "input_index": 160
+      },
+      {
+        "model": "aime_fast",
+        "batch_id": "2026-10-23",
+        "case_id": "thread_f1439965a5244864834e730cb0ad7b9f",
+        "input_file": "/mnt/fin_bench/eval_data/1_aime/4_daily_eval_slim/aime_fast/2026-10-23.jsonl",
+        "input_index": 348
+      },
+      {
+        "model": "aime_expert",
+        "batch_id": "2026-10-24",
+        "case_id": "chat_once-0d93f217-c2dc-4a7d-ab79-50ca622dd370",
+        "input_file": "/mnt/fin_bench/eval_data/1_aime/4_daily_eval_slim/aime_expert/2026-10-24.jsonl",
+        "input_index": 17
+      },
+      {
+        "model": "aime_expert",
+        "batch_id": "2026-10-23",
+        "case_id": "thread_4edfe7c49a764c379ea2ea0327f1fb7f",
+        "input_file": "/mnt/fin_bench/eval_data/1_aime/4_daily_eval_slim/aime_expert/2026-10-23.jsonl",
+        "input_index": 202
+      },
+      {
+        "model": "aime_fast",
+        "batch_id": "2026-10-23",
+        "case_id": "thread_54dd9f0d66c547e6869141cb88c8b809",
+        "input_file": "/mnt/fin_bench/eval_data/1_aime/4_daily_eval_slim/aime_fast/2026-10-23.jsonl",
+        "input_index": 1269
+      },
+      {
+        "model": "aime_expert",
+        "batch_id": "2026-10-24",
+        "case_id": "thread_ee5c5970d1734620b00161004123c6e4",
+        "input_file": "/mnt/fin_bench/eval_data/1_aime/4_daily_eval_slim/aime_expert/2026-10-24.jsonl",
+        "input_index": 57
+      },
+      {
+        "model": "aime_expert",
+        "batch_id": "2026-10-23",
+        "case_id": "thread_4006b1f40b5940bb8a2b979d904d07a7",
+        "input_file": "/mnt/fin_bench/eval_data/1_aime/4_daily_eval_slim/aime_expert/2026-10-23.jsonl",
+        "input_index": 278
+      },
+      {
+        "model": "aime_fast",
+        "batch_id": "2026-10-23",
+        "case_id": "thread_8005d4f9ef7945b6a0c5ce6cef2d8c0e",
+        "input_file": "/mnt/fin_bench/eval_data/1_aime/4_daily_eval_slim/aime_fast/2026-10-23.jsonl",
+        "input_index": 1591
+      },
+      {
+        "model": "aime_expert",
+        "batch_id": "2026-10-23",
+        "case_id": "thread_9d4dee9b5fd24b4aa97582f26b7547b8",
+        "input_file": "/mnt/fin_bench/eval_data/1_aime/4_daily_eval_slim/aime_expert/2026-10-23.jsonl",
+        "input_index": 247
+      },
+      {
+        "model": "aime_fast",
+        "batch_id": "2026-10-23",
+        "case_id": "chat_once-476b8955-ad28-4b85-a6e8-da2ad7f9288e",
+        "input_file": "/mnt/fin_bench/eval_data/1_aime/4_daily_eval_slim/aime_fast/2026-10-23.jsonl",
+        "input_index": 1261
+      },
+      {
+        "model": "aime_expert",
+        "batch_id": "2026-10-23",
+        "case_id": "thread_786dc26499fa4194a4844f7149b6fecf",
+        "input_file": "/mnt/fin_bench/eval_data/1_aime/4_daily_eval_slim/aime_expert/2026-10-23.jsonl",
+        "input_index": 110
+      },
+      {
+        "model": "aime_fast",
+        "batch_id": "2026-10-23",
+        "case_id": "thread_ac850334117d4b7d980ef7419c97295e",
+        "input_file": "/mnt/fin_bench/eval_data/1_aime/4_daily_eval_slim/aime_fast/2026-10-23.jsonl",
+        "input_index": 2170
+      },
+      {
+        "model": "aime_expert",
+        "batch_id": "2026-10-23",
+        "case_id": "thread_0eba6df68df44510beeebf7bd57cc4e9",
+        "input_file": "/mnt/fin_bench/eval_data/1_aime/4_daily_eval_slim/aime_expert/2026-10-23.jsonl",
+        "input_index": 347
+      },
+      {
+        "model": "aime_fast",
+        "batch_id": "2026-10-23",
+        "case_id": "thread_b1aa58fe3dc546e1aba559e98e1d7dea",
+        "input_file": "/mnt/fin_bench/eval_data/1_aime/4_daily_eval_slim/aime_fast/2026-10-23.jsonl",
+        "input_index": 2757
+      },
+      {
+        "model": "aime_expert",
+        "batch_id": "2026-10-23",
+        "case_id": "chat_once-d7f2af08-79aa-4d7e-a18e-13401a97bc46",
+        "input_file": "/mnt/fin_bench/eval_data/1_aime/4_daily_eval_slim/aime_expert/2026-10-23.jsonl",
+        "input_index": 357
+      },
+      {
+        "model": "aime_fast",
+        "batch_id": "2026-10-23",
+        "case_id": "thread_d4560ad9674a4fada8c3ee229bcbd993",
+        "input_file": "/mnt/fin_bench/eval_data/1_aime/4_daily_eval_slim/aime_fast/2026-10-23.jsonl",
+        "input_index": 524
+      },
+      {
+        "model": "aime_expert",
+        "batch_id": "2026-10-23",
+        "case_id": "thread_d8928087e48a491280a12ced1d99af11",
+        "input_file": "/mnt/fin_bench/eval_data/1_aime/4_daily_eval_slim/aime_expert/2026-10-23.jsonl",
+        "input_index": 335
+      },
+      {
+        "model": "aime_fast",
+        "batch_id": "2026-10-23",
+        "case_id": "chat_once-ccc105c7-32c6-4b4c-bea8-8bc6f33aab16",
+        "input_file": "/mnt/fin_bench/eval_data/1_aime/4_daily_eval_slim/aime_fast/2026-10-23.jsonl",
+        "input_index": 577
+      },
+      {
+        "model": "aime_expert",
+        "batch_id": "2026-10-23",
+        "case_id": "thread_7a6bbb023aba4f19a414232819e43656",
+        "input_file": "/mnt/fin_bench/eval_data/1_aime/4_daily_eval_slim/aime_expert/2026-10-23.jsonl",
+        "input_index": 95
+      },
+      {
+        "model": "aime_fast",
+        "batch_id": "2026-10-23",
+        "case_id": "chat_once-f1ad0c97-89ad-48ce-b84b-566e148bb798",
+        "input_file": "/mnt/fin_bench/eval_data/1_aime/4_daily_eval_slim/aime_fast/2026-10-23.jsonl",
+        "input_index": 677
+      },
+      {
+        "model": "aime_expert",
+        "batch_id": "2026-10-23",
+        "case_id": "thread_1b05eb6f87db4d40a765338ed4f64322",
+        "input_file": "/mnt/fin_bench/eval_data/1_aime/4_daily_eval_slim/aime_expert/2026-10-23.jsonl",
+        "input_index": 285
+      },
+      {
+        "model": "aime_fast",
+        "batch_id": "2026-10-23",
+        "case_id": "chat_once-9ecd994c-1ee1-404a-b7da-31ab95f7c8a3",
+        "input_file": "/mnt/fin_bench/eval_data/1_aime/4_daily_eval_slim/aime_fast/2026-10-23.jsonl",
+        "input_index": 833
+      },
+      {
+        "model": "aime_expert",
+        "batch_id": "2026-10-23",
+        "case_id": "thread_d5e52ab165cc4aa9867bf469bae55ba5",
+        "input_file": "/mnt/fin_bench/eval_data/1_aime/4_daily_eval_slim/aime_expert/2026-10-23.jsonl",
+        "input_index": 154
+      },
+      {
+        "model": "aime_fast",
+        "batch_id": "2026-10-23",
+        "case_id": "chat_once-10c4be52-5e20-40de-8d95-3996210f1955",
+        "input_file": "/mnt/fin_bench/eval_data/1_aime/4_daily_eval_slim/aime_fast/2026-10-23.jsonl",
+        "input_index": 449
+      },
+      {
+        "model": "aime_expert",
+        "batch_id": "2026-10-23",
+        "case_id": "thread_17d8d090a2e246bd99d2d06c1d1001cd",
+        "input_file": "/mnt/fin_bench/eval_data/1_aime/4_daily_eval_slim/aime_expert/2026-10-23.jsonl",
+        "input_index": 44
+      },
+      {
+        "model": "aime_fast",
+        "batch_id": "2026-10-23",
+        "case_id": "thread_99371ece41a14a04af21714dfc7d5e48",
+        "input_file": "/mnt/fin_bench/eval_data/1_aime/4_daily_eval_slim/aime_fast/2026-10-23.jsonl",
+        "input_index": 1228
+      },
+      {
+        "model": "aime_expert",
+        "batch_id": "2026-10-23",
+        "case_id": "thread_84b0191fdb894c548ad58b689355b657",
+        "input_file": "/mnt/fin_bench/eval_data/1_aime/4_daily_eval_slim/aime_expert/2026-10-23.jsonl",
+        "input_index": 103
+      },
+      {
+        "model": "aime_fast",
+        "batch_id": "2026-10-23",
+        "case_id": "thread_d1c7e7cb93c64a38b04a9c89dc8acaa0",
+        "input_file": "/mnt/fin_bench/eval_data/1_aime/4_daily_eval_slim/aime_fast/2026-10-23.jsonl",
+        "input_index": 1967
+      },
+      {
+        "model": "aime_expert",
+        "batch_id": "2026-10-23",
+        "case_id": "thread_26d4bbce02ea4a5d990201de5497d40f",
+        "input_file": "/mnt/fin_bench/eval_data/1_aime/4_daily_eval_slim/aime_expert/2026-10-23.jsonl",
+        "input_index": 111
       },
       {
         "model": "aime_fast",
@@ -316,90 +1331,6 @@
       {
         "model": "aime_fast",
         "batch_id": "2026-10-23",
-        "case_id": "thread_8f666893deae4563a8239560fe86fcc1",
-        "input_file": "/mnt/fin_bench/eval_data/1_aime/4_daily_eval_slim/aime_fast/2026-10-23.jsonl",
-        "input_index": 538
-      },
-      {
-        "model": "aime_fast",
-        "batch_id": "2026-10-23",
-        "case_id": "thread_7662ea560dbb4e6d9fb99442fc6c7c89",
-        "input_file": "/mnt/fin_bench/eval_data/1_aime/4_daily_eval_slim/aime_fast/2026-10-23.jsonl",
-        "input_index": 2110
-      },
-      {
-        "model": "aime_fast",
-        "batch_id": "2026-10-23",
-        "case_id": "thread_071c34e064a24d8e9c358edfb2f917ce",
-        "input_file": "/mnt/fin_bench/eval_data/1_aime/4_daily_eval_slim/aime_fast/2026-10-23.jsonl",
-        "input_index": 919
-      },
-      {
-        "model": "aime_fast",
-        "batch_id": "2026-10-23",
-        "case_id": "thread_2326ffeff46c45a8bc7de37d907f0d0b",
-        "input_file": "/mnt/fin_bench/eval_data/1_aime/4_daily_eval_slim/aime_fast/2026-10-23.jsonl",
-        "input_index": 667
-      },
-      {
-        "model": "aime_fast",
-        "batch_id": "2026-10-23",
-        "case_id": "chat_once-5526a757-3be8-4162-97c2-4ffba73707f3",
-        "input_file": "/mnt/fin_bench/eval_data/1_aime/4_daily_eval_slim/aime_fast/2026-10-23.jsonl",
-        "input_index": 1999
-      },
-      {
-        "model": "aime_fast",
-        "batch_id": "2026-10-23",
-        "case_id": "thread_99371ece41a14a04af21714dfc7d5e48",
-        "input_file": "/mnt/fin_bench/eval_data/1_aime/4_daily_eval_slim/aime_fast/2026-10-23.jsonl",
-        "input_index": 1228
-      },
-      {
-        "model": "aime_fast",
-        "batch_id": "2026-10-23",
-        "case_id": "thread_8005d4f9ef7945b6a0c5ce6cef2d8c0e",
-        "input_file": "/mnt/fin_bench/eval_data/1_aime/4_daily_eval_slim/aime_fast/2026-10-23.jsonl",
-        "input_index": 1591
-      },
-      {
-        "model": "aime_fast",
-        "batch_id": "2026-10-23",
-        "case_id": "thread_c94e29b5b4724931ba3dc5cbeacf33a7",
-        "input_file": "/mnt/fin_bench/eval_data/1_aime/4_daily_eval_slim/aime_fast/2026-10-23.jsonl",
-        "input_index": 472
-      },
-      {
-        "model": "aime_fast",
-        "batch_id": "2026-10-23",
-        "case_id": "chat_once-cc92994b-c1e4-42a8-8050-211f6cef6bfa",
-        "input_file": "/mnt/fin_bench/eval_data/1_aime/4_daily_eval_slim/aime_fast/2026-10-23.jsonl",
-        "input_index": 735
-      },
-      {
-        "model": "aime_fast",
-        "batch_id": "2026-10-23",
-        "case_id": "thread_d9ec321017f74455b397315462dfdd35",
-        "input_file": "/mnt/fin_bench/eval_data/1_aime/4_daily_eval_slim/aime_fast/2026-10-23.jsonl",
-        "input_index": 442
-      },
-      {
-        "model": "aime_fast",
-        "batch_id": "2026-10-23",
-        "case_id": "thread_b7cf97c875f249079a0cb50b9fb8af85",
-        "input_file": "/mnt/fin_bench/eval_data/1_aime/4_daily_eval_slim/aime_fast/2026-10-23.jsonl",
-        "input_index": 316
-      },
-      {
-        "model": "aime_fast",
-        "batch_id": "2026-10-23",
-        "case_id": "thread_919174bc7a594e8a94106fee1dc6c617",
-        "input_file": "/mnt/fin_bench/eval_data/1_aime/4_daily_eval_slim/aime_fast/2026-10-23.jsonl",
-        "input_index": 382
-      },
-      {
-        "model": "aime_fast",
-        "batch_id": "2026-10-23",
         "case_id": "thread_46096733cf1b48d8af58a7b155bf31ef",
         "input_file": "/mnt/fin_bench/eval_data/1_aime/4_daily_eval_slim/aime_fast/2026-10-23.jsonl",
         "input_index": 2100
@@ -407,107 +1338,23 @@
       {
         "model": "aime_fast",
         "batch_id": "2026-10-23",
-        "case_id": "thread_07cdb74b6cf6406ab996122a8a5e6905",
+        "case_id": "chat_once-b3dfb81e-4a4c-4041-9ee1-f69ff0c76e5d",
         "input_file": "/mnt/fin_bench/eval_data/1_aime/4_daily_eval_slim/aime_fast/2026-10-23.jsonl",
-        "input_index": 1098
+        "input_index": 1508
       },
       {
         "model": "aime_fast",
         "batch_id": "2026-10-23",
-        "case_id": "thread_0a97001dd93b437ba12798dcff5bfd9a",
+        "case_id": "thread_eeed0ccd01094e6fbfe12f0c4ecd6ea0",
         "input_file": "/mnt/fin_bench/eval_data/1_aime/4_daily_eval_slim/aime_fast/2026-10-23.jsonl",
-        "input_index": 1444
+        "input_index": 467
       },
       {
         "model": "aime_fast",
         "batch_id": "2026-10-23",
-        "case_id": "thread_f42dce447b7943778c7480f43fb43aad",
+        "case_id": "thread_1d471abd583e47d6976633835a9ba0d5",
         "input_file": "/mnt/fin_bench/eval_data/1_aime/4_daily_eval_slim/aime_fast/2026-10-23.jsonl",
-        "input_index": 2427
-      },
-      {
-        "model": "aime_fast",
-        "batch_id": "2026-10-23",
-        "case_id": "thread_54dd9f0d66c547e6869141cb88c8b809",
-        "input_file": "/mnt/fin_bench/eval_data/1_aime/4_daily_eval_slim/aime_fast/2026-10-23.jsonl",
-        "input_index": 1269
-      },
-      {
-        "model": "aime_fast",
-        "batch_id": "2026-10-23",
-        "case_id": "chat_once-ccc105c7-32c6-4b4c-bea8-8bc6f33aab16",
-        "input_file": "/mnt/fin_bench/eval_data/1_aime/4_daily_eval_slim/aime_fast/2026-10-23.jsonl",
-        "input_index": 577
-      },
-      {
-        "model": "aime_fast",
-        "batch_id": "2026-10-23",
-        "case_id": "thread_49f161fc8a2747d3800f00e9f4a310d4",
-        "input_file": "/mnt/fin_bench/eval_data/1_aime/4_daily_eval_slim/aime_fast/2026-10-23.jsonl",
-        "input_index": 2281
-      },
-      {
-        "model": "aime_fast",
-        "batch_id": "2026-10-23",
-        "case_id": "thread_eb377222af464126bbfae69d5234e2fc",
-        "input_file": "/mnt/fin_bench/eval_data/1_aime/4_daily_eval_slim/aime_fast/2026-10-23.jsonl",
-        "input_index": 924
-      },
-      {
-        "model": "aime_fast",
-        "batch_id": "2026-10-23",
-        "case_id": "chat_once-9ecd994c-1ee1-404a-b7da-31ab95f7c8a3",
-        "input_file": "/mnt/fin_bench/eval_data/1_aime/4_daily_eval_slim/aime_fast/2026-10-23.jsonl",
-        "input_index": 833
-      },
-      {
-        "model": "aime_fast",
-        "batch_id": "2026-10-23",
-        "case_id": "thread_28319a12ee204988ba1265e34899de54",
-        "input_file": "/mnt/fin_bench/eval_data/1_aime/4_daily_eval_slim/aime_fast/2026-10-23.jsonl",
-        "input_index": 871
-      },
-      {
-        "model": "aime_fast",
-        "batch_id": "2026-10-23",
-        "case_id": "chat_once-476b8955-ad28-4b85-a6e8-da2ad7f9288e",
-        "input_file": "/mnt/fin_bench/eval_data/1_aime/4_daily_eval_slim/aime_fast/2026-10-23.jsonl",
-        "input_index": 1261
-      },
-      {
-        "model": "aime_fast",
-        "batch_id": "2026-10-23",
-        "case_id": "thread_4c508d1388f243acb4baffbf057e59bc",
-        "input_file": "/mnt/fin_bench/eval_data/1_aime/4_daily_eval_slim/aime_fast/2026-10-23.jsonl",
-        "input_index": 1426
-      },
-      {
-        "model": "aime_fast",
-        "batch_id": "2026-10-23",
-        "case_id": "thread_d1c7e7cb93c64a38b04a9c89dc8acaa0",
-        "input_file": "/mnt/fin_bench/eval_data/1_aime/4_daily_eval_slim/aime_fast/2026-10-23.jsonl",
-        "input_index": 1967
-      },
-      {
-        "model": "aime_fast",
-        "batch_id": "2026-10-23",
-        "case_id": "thread_4dd1f75a540e45d0aa094ecc1e489851",
-        "input_file": "/mnt/fin_bench/eval_data/1_aime/4_daily_eval_slim/aime_fast/2026-10-23.jsonl",
-        "input_index": 2072
-      },
-      {
-        "model": "aime_fast",
-        "batch_id": "2026-10-23",
-        "case_id": "chat_once-f1ad0c97-89ad-48ce-b84b-566e148bb798",
-        "input_file": "/mnt/fin_bench/eval_data/1_aime/4_daily_eval_slim/aime_fast/2026-10-23.jsonl",
-        "input_index": 677
-      },
-      {
-        "model": "aime_fast",
-        "batch_id": "2026-10-23",
-        "case_id": "thread_0ad886c688be46409ec99d7e9903e241",
-        "input_file": "/mnt/fin_bench/eval_data/1_aime/4_daily_eval_slim/aime_fast/2026-10-23.jsonl",
-        "input_index": 462
+        "input_index": 2392
       },
       {
         "model": "aime_fast",
@@ -519,6 +1366,83 @@
       {
         "model": "aime_fast",
         "batch_id": "2026-10-23",
+        "case_id": "chat_once-1f7de397-ff66-45d8-882c-c542680f1f87",
+        "input_file": "/mnt/fin_bench/eval_data/1_aime/4_daily_eval_slim/aime_fast/2026-10-23.jsonl",
+        "input_index": 803
+      },
+      {
+        "model": "aime_fast",
+        "batch_id": "2026-10-23",
+        "case_id": "thread_353de321132e4ce39cbce114560c380e",
+        "input_file": "/mnt/fin_bench/eval_data/1_aime/4_daily_eval_slim/aime_fast/2026-10-23.jsonl",
+        "input_index": 2111
+      },
+      {
+        "model": "aime_fast",
+        "batch_id": "2026-10-23",
+        "case_id": "thread_eb377222af464126bbfae69d5234e2fc",
+        "input_file": "/mnt/fin_bench/eval_data/1_aime/4_daily_eval_slim/aime_fast/2026-10-23.jsonl",
+        "input_index": 924
+      },
+      {
+        "model": "aime_fast",
+        "batch_id": "2026-10-23",
+        "case_id": "chat_once-fd04308f-d237-438a-bba6-c6a852861278",
+        "input_file": "/mnt/fin_bench/eval_data/1_aime/4_daily_eval_slim/aime_fast/2026-10-23.jsonl",
+        "input_index": 661
+      },
+      {
+        "model": "aime_fast",
+        "batch_id": "2026-10-23",
+        "case_id": "thread_d9ec321017f74455b397315462dfdd35",
+        "input_file": "/mnt/fin_bench/eval_data/1_aime/4_daily_eval_slim/aime_fast/2026-10-23.jsonl",
+        "input_index": 442
+      },
+      {
+        "model": "aime_fast",
+        "batch_id": "2026-10-23",
+        "case_id": "chat_once-9fb8b246-a504-4bd9-b6c0-8fd010155132",
+        "input_file": "/mnt/fin_bench/eval_data/1_aime/4_daily_eval_slim/aime_fast/2026-10-23.jsonl",
+        "input_index": 878
+      },
+      {
+        "model": "aime_fast",
+        "batch_id": "2026-10-23",
+        "case_id": "chat_once-584daaf5-fe63-491f-b0a0-64783ec072d9",
+        "input_file": "/mnt/fin_bench/eval_data/1_aime/4_daily_eval_slim/aime_fast/2026-10-23.jsonl",
+        "input_index": 455
+      },
+      {
+        "model": "aime_fast",
+        "batch_id": "2026-10-23",
+        "case_id": "thread_28319a12ee204988ba1265e34899de54",
+        "input_file": "/mnt/fin_bench/eval_data/1_aime/4_daily_eval_slim/aime_fast/2026-10-23.jsonl",
+        "input_index": 871
+      },
+      {
+        "model": "aime_fast",
+        "batch_id": "2026-10-23",
+        "case_id": "thread_919174bc7a594e8a94106fee1dc6c617",
+        "input_file": "/mnt/fin_bench/eval_data/1_aime/4_daily_eval_slim/aime_fast/2026-10-23.jsonl",
+        "input_index": 382
+      },
+      {
+        "model": "aime_fast",
+        "batch_id": "2026-10-23",
+        "case_id": "chat_once-08044cf0-2242-4d79-bf49-ba934068df5a",
+        "input_file": "/mnt/fin_bench/eval_data/1_aime/4_daily_eval_slim/aime_fast/2026-10-23.jsonl",
+        "input_index": 173
+      },
+      {
+        "model": "aime_fast",
+        "batch_id": "2026-10-23",
+        "case_id": "thread_0ad886c688be46409ec99d7e9903e241",
+        "input_file": "/mnt/fin_bench/eval_data/1_aime/4_daily_eval_slim/aime_fast/2026-10-23.jsonl",
+        "input_index": 462
+      },
+      {
+        "model": "aime_fast",
+        "batch_id": "2026-10-23",
         "case_id": "thread_6aeccb906a5240e6a8a20842531b3a8e",
         "input_file": "/mnt/fin_bench/eval_data/1_aime/4_daily_eval_slim/aime_fast/2026-10-23.jsonl",
         "input_index": 2215
@@ -526,933 +1450,9 @@
       {
         "model": "aime_fast",
         "batch_id": "2026-10-23",
-        "case_id": "thread_ac850334117d4b7d980ef7419c97295e",
+        "case_id": "thread_39e8628bb0c54fcaac857580976b38bf",
         "input_file": "/mnt/fin_bench/eval_data/1_aime/4_daily_eval_slim/aime_fast/2026-10-23.jsonl",
-        "input_index": 2170
-      },
-      {
-        "model": "aime_fast",
-        "batch_id": "2026-10-23",
-        "case_id": "thread_279f6333ec63405c8dce2eb0d29b15e3",
-        "input_file": "/mnt/fin_bench/eval_data/1_aime/4_daily_eval_slim/aime_fast/2026-10-23.jsonl",
-        "input_index": 485
-      },
-      {
-        "model": "aime_fast",
-        "batch_id": "2026-10-23",
-        "case_id": "thread_071e0c3b50d24c3082852b2415412e10",
-        "input_file": "/mnt/fin_bench/eval_data/1_aime/4_daily_eval_slim/aime_fast/2026-10-23.jsonl",
-        "input_index": 2462
-      },
-      {
-        "model": "aime_fast",
-        "batch_id": "2026-10-23",
-        "case_id": "thread_a5cb4d34e9f74966985d893805f4bbb1",
-        "input_file": "/mnt/fin_bench/eval_data/1_aime/4_daily_eval_slim/aime_fast/2026-10-23.jsonl",
-        "input_index": 289
-      },
-      {
-        "model": "aime_fast",
-        "batch_id": "2026-10-23",
-        "case_id": "thread_f1439965a5244864834e730cb0ad7b9f",
-        "input_file": "/mnt/fin_bench/eval_data/1_aime/4_daily_eval_slim/aime_fast/2026-10-23.jsonl",
-        "input_index": 348
-      },
-      {
-        "model": "aime_fast",
-        "batch_id": "2026-10-24",
-        "case_id": "chat_once-7bdd3bce-9954-4aee-a0bc-cb945bf840b7",
-        "input_file": "/mnt/fin_bench/eval_data/1_aime/4_daily_eval_slim/aime_fast/2026-10-24.jsonl",
-        "input_index": 482
-      },
-      {
-        "model": "aime_fast",
-        "batch_id": "2026-10-24",
-        "case_id": "chat_once-d570f3c2-1a50-4594-818c-f6d432f4b33b",
-        "input_file": "/mnt/fin_bench/eval_data/1_aime/4_daily_eval_slim/aime_fast/2026-10-24.jsonl",
-        "input_index": 45
-      },
-      {
-        "model": "aime_fast",
-        "batch_id": "2026-10-24",
-        "case_id": "thread_d8b76ca4e191491bb297a91be85aa446",
-        "input_file": "/mnt/fin_bench/eval_data/1_aime/4_daily_eval_slim/aime_fast/2026-10-24.jsonl",
-        "input_index": 250
-      },
-      {
-        "model": "aime_fast",
-        "batch_id": "2026-10-24",
-        "case_id": "chat_once-b9cb76df-de6b-4441-afe7-caa5568ba4ea",
-        "input_file": "/mnt/fin_bench/eval_data/1_aime/4_daily_eval_slim/aime_fast/2026-10-24.jsonl",
-        "input_index": 593
-      },
-      {
-        "model": "aime_fast",
-        "batch_id": "2026-10-24",
-        "case_id": "thread_506d8eae112f45b8a4e616b98bb2383e",
-        "input_file": "/mnt/fin_bench/eval_data/1_aime/4_daily_eval_slim/aime_fast/2026-10-24.jsonl",
-        "input_index": 208
-      },
-      {
-        "model": "aime_fast",
-        "batch_id": "2026-10-24",
-        "case_id": "chat_once-fc3143b9-6236-410a-8bb2-8111bb4b03aa",
-        "input_file": "/mnt/fin_bench/eval_data/1_aime/4_daily_eval_slim/aime_fast/2026-10-24.jsonl",
-        "input_index": 224
-      },
-      {
-        "model": "aime_fast",
-        "batch_id": "2026-10-24",
-        "case_id": "thread_6dae3614f9734ba7b295d58f0775dacf",
-        "input_file": "/mnt/fin_bench/eval_data/1_aime/4_daily_eval_slim/aime_fast/2026-10-24.jsonl",
-        "input_index": 186
-      },
-      {
-        "model": "aime_fast",
-        "batch_id": "2026-10-24",
-        "case_id": "chat_once-e4770195-95c0-45b6-b48d-c907a79fdff5",
-        "input_file": "/mnt/fin_bench/eval_data/1_aime/4_daily_eval_slim/aime_fast/2026-10-24.jsonl",
-        "input_index": 458
-      },
-      {
-        "model": "aime_fast",
-        "batch_id": "2026-10-24",
-        "case_id": "thread_b4bbc86f533a46d4a07a39f66bca77fd",
-        "input_file": "/mnt/fin_bench/eval_data/1_aime/4_daily_eval_slim/aime_fast/2026-10-24.jsonl",
-        "input_index": 149
-      },
-      {
-        "model": "aime_fast",
-        "batch_id": "2026-10-24",
-        "case_id": "thread_5b92b4e815f548bc9c6f85f065f178fe",
-        "input_file": "/mnt/fin_bench/eval_data/1_aime/4_daily_eval_slim/aime_fast/2026-10-24.jsonl",
-        "input_index": 356
-      },
-      {
-        "model": "aime_fast",
-        "batch_id": "2026-10-24",
-        "case_id": "thread_fb5aef6bf6fc4d3c92ed0c8de07889ed",
-        "input_file": "/mnt/fin_bench/eval_data/1_aime/4_daily_eval_slim/aime_fast/2026-10-24.jsonl",
-        "input_index": 522
-      },
-      {
-        "model": "aime_fast",
-        "batch_id": "2026-10-24",
-        "case_id": "thread_1561ac7cb01647e48cd397ce1756ad7e",
-        "input_file": "/mnt/fin_bench/eval_data/1_aime/4_daily_eval_slim/aime_fast/2026-10-24.jsonl",
-        "input_index": 592
-      },
-      {
-        "model": "aime_fast",
-        "batch_id": "2026-10-24",
-        "case_id": "thread_a6c1ba40a9564ebb918dd671e4d500c8",
-        "input_file": "/mnt/fin_bench/eval_data/1_aime/4_daily_eval_slim/aime_fast/2026-10-24.jsonl",
-        "input_index": 665
-      },
-      {
-        "model": "aime_fast",
-        "batch_id": "2026-10-24",
-        "case_id": "thread_315d0d9c7a024268bc0a6abc54166a44",
-        "input_file": "/mnt/fin_bench/eval_data/1_aime/4_daily_eval_slim/aime_fast/2026-10-24.jsonl",
-        "input_index": 302
-      },
-      {
-        "model": "aime_fast",
-        "batch_id": "2026-10-24",
-        "case_id": "thread_105216d72124425598ca02e798110886",
-        "input_file": "/mnt/fin_bench/eval_data/1_aime/4_daily_eval_slim/aime_fast/2026-10-24.jsonl",
-        "input_index": 148
-      },
-      {
-        "model": "aime_fast",
-        "batch_id": "2026-10-24",
-        "case_id": "thread_228ecbabe598421885ce48b506a223b8",
-        "input_file": "/mnt/fin_bench/eval_data/1_aime/4_daily_eval_slim/aime_fast/2026-10-24.jsonl",
-        "input_index": 479
-      },
-      {
-        "model": "aime_fast",
-        "batch_id": "2026-10-25",
-        "case_id": "chat_once-80cf0b1c-b51f-4163-8863-6ba8f12f517d",
-        "input_file": "/mnt/fin_bench/eval_data/1_aime/4_daily_eval_slim/aime_fast/2026-10-25.jsonl",
-        "input_index": 452
-      },
-      {
-        "model": "aime_fast",
-        "batch_id": "2026-10-25",
-        "case_id": "chat_once-fdb64f14-ec11-490a-8575-369f40b96cbb",
-        "input_file": "/mnt/fin_bench/eval_data/1_aime/4_daily_eval_slim/aime_fast/2026-10-25.jsonl",
-        "input_index": 472
-      },
-      {
-        "model": "aime_fast",
-        "batch_id": "2026-10-25",
-        "case_id": "thread_884a9f271bcf48518faf470ffc0a67f0",
-        "input_file": "/mnt/fin_bench/eval_data/1_aime/4_daily_eval_slim/aime_fast/2026-10-25.jsonl",
-        "input_index": 21
-      },
-      {
-        "model": "aime_fast",
-        "batch_id": "2026-10-25",
-        "case_id": "thread_74412479953645878e000288f62a4a10",
-        "input_file": "/mnt/fin_bench/eval_data/1_aime/4_daily_eval_slim/aime_fast/2026-10-25.jsonl",
-        "input_index": 429
-      },
-      {
-        "model": "aime_fast",
-        "batch_id": "2026-10-25",
-        "case_id": "thread_7a2fa1f4fa03442886601749c4e7b4d9",
-        "input_file": "/mnt/fin_bench/eval_data/1_aime/4_daily_eval_slim/aime_fast/2026-10-25.jsonl",
-        "input_index": 402
-      },
-      {
-        "model": "aime_fast",
-        "batch_id": "2026-10-25",
-        "case_id": "chat_once-c9b8c200-150d-4a43-a351-41728247c0b3",
-        "input_file": "/mnt/fin_bench/eval_data/1_aime/4_daily_eval_slim/aime_fast/2026-10-25.jsonl",
-        "input_index": 60
-      },
-      {
-        "model": "aime_fast",
-        "batch_id": "2026-10-25",
-        "case_id": "thread_8a44f0e2421b41ce9a55ed6b567076af",
-        "input_file": "/mnt/fin_bench/eval_data/1_aime/4_daily_eval_slim/aime_fast/2026-10-25.jsonl",
-        "input_index": 335
-      },
-      {
-        "model": "aime_fast",
-        "batch_id": "2026-10-25",
-        "case_id": "thread_f109de7f156c4ab7ade1173403f70dc2",
-        "input_file": "/mnt/fin_bench/eval_data/1_aime/4_daily_eval_slim/aime_fast/2026-10-25.jsonl",
-        "input_index": 114
-      },
-      {
-        "model": "aime_fast",
-        "batch_id": "2026-10-25",
-        "case_id": "thread_a40debc713144c42901844c882903160",
-        "input_file": "/mnt/fin_bench/eval_data/1_aime/4_daily_eval_slim/aime_fast/2026-10-25.jsonl",
-        "input_index": 261
-      },
-      {
-        "model": "aime_fast",
-        "batch_id": "2026-10-25",
-        "case_id": "thread_d9c9aba999fe473c831132407a97e438",
-        "input_file": "/mnt/fin_bench/eval_data/1_aime/4_daily_eval_slim/aime_fast/2026-10-25.jsonl",
-        "input_index": 376
-      },
-      {
-        "model": "aime_fast",
-        "batch_id": "2026-10-25",
-        "case_id": "thread_27e356a5e32d422788edb98babeb3dfc",
-        "input_file": "/mnt/fin_bench/eval_data/1_aime/4_daily_eval_slim/aime_fast/2026-10-25.jsonl",
-        "input_index": 173
-      },
-      {
-        "model": "aime_fast",
-        "batch_id": "2026-10-26",
-        "case_id": "thread_6632c2f9647646feb5454a3053fb1ba2",
-        "input_file": "/mnt/fin_bench/eval_data/1_aime/4_daily_eval_slim/aime_fast/2026-10-26.jsonl",
-        "input_index": 3
-      },
-      {
-        "model": "aime_expert",
-        "batch_id": "2026-10-19",
-        "case_id": "thread_cf1336b5f26344b18ac19dbba2a85b3d",
-        "input_file": "/mnt/fin_bench/eval_data/1_aime/4_daily_eval_slim/aime_expert/2026-10-19.jsonl",
-        "input_index": 2
-      },
-      {
-        "model": "aime_expert",
-        "batch_id": "2026-10-20",
-        "case_id": "thread_818fb4da8ae94f9c81c2299a4eaba4f9",
-        "input_file": "/mnt/fin_bench/eval_data/1_aime/4_daily_eval_slim/aime_expert/2026-10-20.jsonl",
-        "input_index": 26
-      },
-      {
-        "model": "aime_expert",
-        "batch_id": "2026-10-20",
-        "case_id": "thread_99b1dcc549f34d3ea6969a95f84d49d9",
-        "input_file": "/mnt/fin_bench/eval_data/1_aime/4_daily_eval_slim/aime_expert/2026-10-20.jsonl",
-        "input_index": 15
-      },
-      {
-        "model": "aime_expert",
-        "batch_id": "2026-10-20",
-        "case_id": "thread_5f46bbd9f7b840d099f630be2f69ff67",
-        "input_file": "/mnt/fin_bench/eval_data/1_aime/4_daily_eval_slim/aime_expert/2026-10-20.jsonl",
-        "input_index": 9
-      },
-      {
-        "model": "aime_expert",
-        "batch_id": "2026-10-21",
-        "case_id": "thread_9c05ce9be0294b6ab8c83639c1febfd5",
-        "input_file": "/mnt/fin_bench/eval_data/1_aime/4_daily_eval_slim/aime_expert/2026-10-21.jsonl",
-        "input_index": 6
-      },
-      {
-        "model": "aime_expert",
-        "batch_id": "2026-10-21",
-        "case_id": "thread_235520e535b7463f9a46e543bfc7a2f5",
-        "input_file": "/mnt/fin_bench/eval_data/1_aime/4_daily_eval_slim/aime_expert/2026-10-21.jsonl",
-        "input_index": 22
-      },
-      {
-        "model": "aime_expert",
-        "batch_id": "2026-10-21",
-        "case_id": "thread_47deaa4e4cf94a2689f238132b050997",
-        "input_file": "/mnt/fin_bench/eval_data/1_aime/4_daily_eval_slim/aime_expert/2026-10-21.jsonl",
-        "input_index": 12
-      },
-      {
-        "model": "aime_expert",
-        "batch_id": "2026-10-22",
-        "case_id": "thread_81f3fdf97d374992a1f0d8fc4600d14c",
-        "input_file": "/mnt/fin_bench/eval_data/1_aime/4_daily_eval_slim/aime_expert/2026-10-22.jsonl",
-        "input_index": 17
-      },
-      {
-        "model": "aime_expert",
-        "batch_id": "2026-10-22",
-        "case_id": "thread_2246d55cbc8d431aa4a4a7f103ca5028",
-        "input_file": "/mnt/fin_bench/eval_data/1_aime/4_daily_eval_slim/aime_expert/2026-10-22.jsonl",
-        "input_index": 6
-      },
-      {
-        "model": "aime_expert",
-        "batch_id": "2026-10-22",
-        "case_id": "thread_b5626e015eb44d4d855b765efa219826",
-        "input_file": "/mnt/fin_bench/eval_data/1_aime/4_daily_eval_slim/aime_expert/2026-10-22.jsonl",
-        "input_index": 8
-      },
-      {
-        "model": "aime_expert",
-        "batch_id": "2026-10-22",
-        "case_id": "thread_71f44c1104cd43ed92b3c5bc2d1f4a5f",
-        "input_file": "/mnt/fin_bench/eval_data/1_aime/4_daily_eval_slim/aime_expert/2026-10-22.jsonl",
-        "input_index": 0
-      },
-      {
-        "model": "aime_expert",
-        "batch_id": "2026-10-22",
-        "case_id": "thread_fdfb72a61bd1476ca0e99934c4edc819",
-        "input_file": "/mnt/fin_bench/eval_data/1_aime/4_daily_eval_slim/aime_expert/2026-10-22.jsonl",
-        "input_index": 42
-      },
-      {
-        "model": "aime_expert",
-        "batch_id": "2026-10-23",
-        "case_id": "chat_once-d7f2af08-79aa-4d7e-a18e-13401a97bc46",
-        "input_file": "/mnt/fin_bench/eval_data/1_aime/4_daily_eval_slim/aime_expert/2026-10-23.jsonl",
-        "input_index": 357
-      },
-      {
-        "model": "aime_expert",
-        "batch_id": "2026-10-23",
-        "case_id": "thread_4006b1f40b5940bb8a2b979d904d07a7",
-        "input_file": "/mnt/fin_bench/eval_data/1_aime/4_daily_eval_slim/aime_expert/2026-10-23.jsonl",
-        "input_index": 278
-      },
-      {
-        "model": "aime_expert",
-        "batch_id": "2026-10-23",
-        "case_id": "thread_acb29fcb3c5c4b8781c765dcd56f38c0",
-        "input_file": "/mnt/fin_bench/eval_data/1_aime/4_daily_eval_slim/aime_expert/2026-10-23.jsonl",
-        "input_index": 16
-      },
-      {
-        "model": "aime_expert",
-        "batch_id": "2026-10-23",
-        "case_id": "thread_c1115fba29374df7867f82eb576e3f26",
-        "input_file": "/mnt/fin_bench/eval_data/1_aime/4_daily_eval_slim/aime_expert/2026-10-23.jsonl",
-        "input_index": 57
-      },
-      {
-        "model": "aime_expert",
-        "batch_id": "2026-10-23",
-        "case_id": "thread_89c1a99843564600a1f56b9d2f72d014",
-        "input_file": "/mnt/fin_bench/eval_data/1_aime/4_daily_eval_slim/aime_expert/2026-10-23.jsonl",
-        "input_index": 246
-      },
-      {
-        "model": "aime_expert",
-        "batch_id": "2026-10-23",
-        "case_id": "thread_e6d682305033426487e98295a14b8f7a",
-        "input_file": "/mnt/fin_bench/eval_data/1_aime/4_daily_eval_slim/aime_expert/2026-10-23.jsonl",
-        "input_index": 181
-      },
-      {
-        "model": "aime_expert",
-        "batch_id": "2026-10-23",
-        "case_id": "thread_9a3f1d6272b44b1b998620bd37bcdb13",
-        "input_file": "/mnt/fin_bench/eval_data/1_aime/4_daily_eval_slim/aime_expert/2026-10-23.jsonl",
-        "input_index": 62
-      },
-      {
-        "model": "aime_expert",
-        "batch_id": "2026-10-23",
-        "case_id": "thread_786dc26499fa4194a4844f7149b6fecf",
-        "input_file": "/mnt/fin_bench/eval_data/1_aime/4_daily_eval_slim/aime_expert/2026-10-23.jsonl",
-        "input_index": 110
-      },
-      {
-        "model": "aime_expert",
-        "batch_id": "2026-10-23",
-        "case_id": "thread_b233379334104b13a4e0105cf0037821",
-        "input_file": "/mnt/fin_bench/eval_data/1_aime/4_daily_eval_slim/aime_expert/2026-10-23.jsonl",
-        "input_index": 50
-      },
-      {
-        "model": "aime_expert",
-        "batch_id": "2026-10-23",
-        "case_id": "thread_84b0191fdb894c548ad58b689355b657",
-        "input_file": "/mnt/fin_bench/eval_data/1_aime/4_daily_eval_slim/aime_expert/2026-10-23.jsonl",
-        "input_index": 103
-      },
-      {
-        "model": "aime_expert",
-        "batch_id": "2026-10-23",
-        "case_id": "thread_027a67cec84c4e72b3e9f1442b7d3eef",
-        "input_file": "/mnt/fin_bench/eval_data/1_aime/4_daily_eval_slim/aime_expert/2026-10-23.jsonl",
-        "input_index": 10
-      },
-      {
-        "model": "aime_expert",
-        "batch_id": "2026-10-23",
-        "case_id": "thread_f57bbb899a95403b945f43d6a9115385",
-        "input_file": "/mnt/fin_bench/eval_data/1_aime/4_daily_eval_slim/aime_expert/2026-10-23.jsonl",
-        "input_index": 100
-      },
-      {
-        "model": "aime_expert",
-        "batch_id": "2026-10-23",
-        "case_id": "thread_17d8d090a2e246bd99d2d06c1d1001cd",
-        "input_file": "/mnt/fin_bench/eval_data/1_aime/4_daily_eval_slim/aime_expert/2026-10-23.jsonl",
-        "input_index": 44
-      },
-      {
-        "model": "aime_expert",
-        "batch_id": "2026-10-23",
-        "case_id": "thread_47431d8f6a074f17bc29ae862720cb6a",
-        "input_file": "/mnt/fin_bench/eval_data/1_aime/4_daily_eval_slim/aime_expert/2026-10-23.jsonl",
-        "input_index": 45
-      },
-      {
-        "model": "aime_expert",
-        "batch_id": "2026-10-23",
-        "case_id": "thread_89bd2a3662524484b2e74e2bba8b40ce",
-        "input_file": "/mnt/fin_bench/eval_data/1_aime/4_daily_eval_slim/aime_expert/2026-10-23.jsonl",
-        "input_index": 84
-      },
-      {
-        "model": "aime_expert",
-        "batch_id": "2026-10-23",
-        "case_id": "thread_1cf4733b5bcf4f588759410b57539ea9",
-        "input_file": "/mnt/fin_bench/eval_data/1_aime/4_daily_eval_slim/aime_expert/2026-10-23.jsonl",
-        "input_index": 43
-      },
-      {
-        "model": "aime_expert",
-        "batch_id": "2026-10-23",
-        "case_id": "thread_ae3cacbec106410a8574e486b11338b8",
-        "input_file": "/mnt/fin_bench/eval_data/1_aime/4_daily_eval_slim/aime_expert/2026-10-23.jsonl",
-        "input_index": 115
-      },
-      {
-        "model": "aime_expert",
-        "batch_id": "2026-10-23",
-        "case_id": "thread_ced17aede08542ea9c5872a013860f01",
-        "input_file": "/mnt/fin_bench/eval_data/1_aime/4_daily_eval_slim/aime_expert/2026-10-23.jsonl",
-        "input_index": 63
-      },
-      {
-        "model": "aime_expert",
-        "batch_id": "2026-10-23",
-        "case_id": "thread_26d4bbce02ea4a5d990201de5497d40f",
-        "input_file": "/mnt/fin_bench/eval_data/1_aime/4_daily_eval_slim/aime_expert/2026-10-23.jsonl",
-        "input_index": 111
-      },
-      {
-        "model": "aime_expert",
-        "batch_id": "2026-10-23",
-        "case_id": "thread_4173b47175bf4be69a68d33229793eab",
-        "input_file": "/mnt/fin_bench/eval_data/1_aime/4_daily_eval_slim/aime_expert/2026-10-23.jsonl",
-        "input_index": 108
-      },
-      {
-        "model": "aime_expert",
-        "batch_id": "2026-10-23",
-        "case_id": "thread_d8928087e48a491280a12ced1d99af11",
-        "input_file": "/mnt/fin_bench/eval_data/1_aime/4_daily_eval_slim/aime_expert/2026-10-23.jsonl",
-        "input_index": 335
-      },
-      {
-        "model": "aime_expert",
-        "batch_id": "2026-10-23",
-        "case_id": "thread_7a6bbb023aba4f19a414232819e43656",
-        "input_file": "/mnt/fin_bench/eval_data/1_aime/4_daily_eval_slim/aime_expert/2026-10-23.jsonl",
-        "input_index": 95
-      },
-      {
-        "model": "aime_expert",
-        "batch_id": "2026-10-23",
-        "case_id": "thread_4edfe7c49a764c379ea2ea0327f1fb7f",
-        "input_file": "/mnt/fin_bench/eval_data/1_aime/4_daily_eval_slim/aime_expert/2026-10-23.jsonl",
-        "input_index": 202
-      },
-      {
-        "model": "aime_expert",
-        "batch_id": "2026-10-23",
-        "case_id": "thread_856176e847f447ca8114942fdaa26929",
-        "input_file": "/mnt/fin_bench/eval_data/1_aime/4_daily_eval_slim/aime_expert/2026-10-23.jsonl",
-        "input_index": 376
-      },
-      {
-        "model": "aime_expert",
-        "batch_id": "2026-10-23",
-        "case_id": "thread_9d4dee9b5fd24b4aa97582f26b7547b8",
-        "input_file": "/mnt/fin_bench/eval_data/1_aime/4_daily_eval_slim/aime_expert/2026-10-23.jsonl",
-        "input_index": 247
-      },
-      {
-        "model": "aime_expert",
-        "batch_id": "2026-10-23",
-        "case_id": "thread_d034153b92f8431ba7f18dffc4a7a617",
-        "input_file": "/mnt/fin_bench/eval_data/1_aime/4_daily_eval_slim/aime_expert/2026-10-23.jsonl",
-        "input_index": 403
-      },
-      {
-        "model": "aime_expert",
-        "batch_id": "2026-10-23",
-        "case_id": "thread_0c79014ba306413b97bd299ee1a6dfaf",
-        "input_file": "/mnt/fin_bench/eval_data/1_aime/4_daily_eval_slim/aime_expert/2026-10-23.jsonl",
-        "input_index": 64
-      },
-      {
-        "model": "aime_expert",
-        "batch_id": "2026-10-23",
-        "case_id": "thread_529975de7567418d9ea19078d155200c",
-        "input_file": "/mnt/fin_bench/eval_data/1_aime/4_daily_eval_slim/aime_expert/2026-10-23.jsonl",
-        "input_index": 41
-      },
-      {
-        "model": "aime_expert",
-        "batch_id": "2026-10-23",
-        "case_id": "thread_d0720fb6a967414ca0b8c53e11b6257c",
-        "input_file": "/mnt/fin_bench/eval_data/1_aime/4_daily_eval_slim/aime_expert/2026-10-23.jsonl",
-        "input_index": 213
-      },
-      {
-        "model": "aime_expert",
-        "batch_id": "2026-10-23",
-        "case_id": "thread_8723801555c54a1eafafb08088152cbc",
-        "input_file": "/mnt/fin_bench/eval_data/1_aime/4_daily_eval_slim/aime_expert/2026-10-23.jsonl",
-        "input_index": 96
-      },
-      {
-        "model": "aime_expert",
-        "batch_id": "2026-10-23",
-        "case_id": "thread_f698bd4200d346a69e96ed13ce61648d",
-        "input_file": "/mnt/fin_bench/eval_data/1_aime/4_daily_eval_slim/aime_expert/2026-10-23.jsonl",
-        "input_index": 382
-      },
-      {
-        "model": "aime_expert",
-        "batch_id": "2026-10-23",
-        "case_id": "thread_cb7d069f97d94637a1efe88034c85c85",
-        "input_file": "/mnt/fin_bench/eval_data/1_aime/4_daily_eval_slim/aime_expert/2026-10-23.jsonl",
-        "input_index": 145
-      },
-      {
-        "model": "aime_expert",
-        "batch_id": "2026-10-23",
-        "case_id": "thread_2e01bc50694f4d9db43b01f97c4842f0",
-        "input_file": "/mnt/fin_bench/eval_data/1_aime/4_daily_eval_slim/aime_expert/2026-10-23.jsonl",
-        "input_index": 345
-      },
-      {
-        "model": "aime_expert",
-        "batch_id": "2026-10-23",
-        "case_id": "thread_d5e52ab165cc4aa9867bf469bae55ba5",
-        "input_file": "/mnt/fin_bench/eval_data/1_aime/4_daily_eval_slim/aime_expert/2026-10-23.jsonl",
-        "input_index": 154
-      },
-      {
-        "model": "aime_expert",
-        "batch_id": "2026-10-23",
-        "case_id": "thread_0eba6df68df44510beeebf7bd57cc4e9",
-        "input_file": "/mnt/fin_bench/eval_data/1_aime/4_daily_eval_slim/aime_expert/2026-10-23.jsonl",
-        "input_index": 347
-      },
-      {
-        "model": "aime_expert",
-        "batch_id": "2026-10-23",
-        "case_id": "thread_5ff01bfd8d0c4185a9635e83cad21ea3",
-        "input_file": "/mnt/fin_bench/eval_data/1_aime/4_daily_eval_slim/aime_expert/2026-10-23.jsonl",
-        "input_index": 397
-      },
-      {
-        "model": "aime_expert",
-        "batch_id": "2026-10-23",
-        "case_id": "thread_1ae605423b1a40a89206712935a4dd9b",
-        "input_file": "/mnt/fin_bench/eval_data/1_aime/4_daily_eval_slim/aime_expert/2026-10-23.jsonl",
-        "input_index": 49
-      },
-      {
-        "model": "aime_expert",
-        "batch_id": "2026-10-23",
-        "case_id": "thread_6751a98d2fc840a78a76c6c977dbef5c",
-        "input_file": "/mnt/fin_bench/eval_data/1_aime/4_daily_eval_slim/aime_expert/2026-10-23.jsonl",
-        "input_index": 264
-      },
-      {
-        "model": "aime_expert",
-        "batch_id": "2026-10-23",
-        "case_id": "thread_1b05eb6f87db4d40a765338ed4f64322",
-        "input_file": "/mnt/fin_bench/eval_data/1_aime/4_daily_eval_slim/aime_expert/2026-10-23.jsonl",
-        "input_index": 285
-      },
-      {
-        "model": "aime_expert",
-        "batch_id": "2026-10-23",
-        "case_id": "thread_b01dfab498ee43a6bdef9d23d9810453",
-        "input_file": "/mnt/fin_bench/eval_data/1_aime/4_daily_eval_slim/aime_expert/2026-10-23.jsonl",
-        "input_index": 240
-      },
-      {
-        "model": "aime_expert",
-        "batch_id": "2026-10-23",
-        "case_id": "thread_572f6fc408dc41259ac17c232fb1a208",
-        "input_file": "/mnt/fin_bench/eval_data/1_aime/4_daily_eval_slim/aime_expert/2026-10-23.jsonl",
-        "input_index": 160
-      },
-      {
-        "model": "aime_expert",
-        "batch_id": "2026-10-23",
-        "case_id": "thread_82ba994839ee4a36b705f93da3dcb13b",
-        "input_file": "/mnt/fin_bench/eval_data/1_aime/4_daily_eval_slim/aime_expert/2026-10-23.jsonl",
-        "input_index": 287
-      },
-      {
-        "model": "aime_expert",
-        "batch_id": "2026-10-23",
-        "case_id": "chat_once-fb116194-152b-4e51-b001-20427dc1782e",
-        "input_file": "/mnt/fin_bench/eval_data/1_aime/4_daily_eval_slim/aime_expert/2026-10-23.jsonl",
-        "input_index": 79
-      },
-      {
-        "model": "aime_expert",
-        "batch_id": "2026-10-23",
-        "case_id": "thread_d8320714ce3942a993830a9741142847",
-        "input_file": "/mnt/fin_bench/eval_data/1_aime/4_daily_eval_slim/aime_expert/2026-10-23.jsonl",
-        "input_index": 364
-      },
-      {
-        "model": "aime_expert",
-        "batch_id": "2026-10-24",
-        "case_id": "chat_once-f95ce5ac-af2a-480d-b693-934c0703e291",
-        "input_file": "/mnt/fin_bench/eval_data/1_aime/4_daily_eval_slim/aime_expert/2026-10-24.jsonl",
-        "input_index": 228
-      },
-      {
-        "model": "aime_expert",
-        "batch_id": "2026-10-24",
-        "case_id": "thread_026554ff66e6434baa9ca0ea30ab7607",
-        "input_file": "/mnt/fin_bench/eval_data/1_aime/4_daily_eval_slim/aime_expert/2026-10-24.jsonl",
-        "input_index": 47
-      },
-      {
-        "model": "aime_expert",
-        "batch_id": "2026-10-24",
-        "case_id": "thread_9b841f09497e4851bb5f37482dee9a38",
-        "input_file": "/mnt/fin_bench/eval_data/1_aime/4_daily_eval_slim/aime_expert/2026-10-24.jsonl",
-        "input_index": 96
-      },
-      {
-        "model": "aime_expert",
-        "batch_id": "2026-10-24",
-        "case_id": "thread_c53183dd18c345ca8a51b9a938bfbd28",
-        "input_file": "/mnt/fin_bench/eval_data/1_aime/4_daily_eval_slim/aime_expert/2026-10-24.jsonl",
-        "input_index": 197
-      },
-      {
-        "model": "aime_expert",
-        "batch_id": "2026-10-24",
-        "case_id": "thread_fee62ded51e14bfe9adcc1857e4dd1f1",
-        "input_file": "/mnt/fin_bench/eval_data/1_aime/4_daily_eval_slim/aime_expert/2026-10-24.jsonl",
-        "input_index": 153
-      },
-      {
-        "model": "aime_expert",
-        "batch_id": "2026-10-24",
-        "case_id": "thread_92bf8bca92384a1d857a5836d611cc0f",
-        "input_file": "/mnt/fin_bench/eval_data/1_aime/4_daily_eval_slim/aime_expert/2026-10-24.jsonl",
-        "input_index": 203
-      },
-      {
-        "model": "aime_expert",
-        "batch_id": "2026-10-24",
-        "case_id": "thread_c697c9a3bc084c7a9df759eb70d80e22",
-        "input_file": "/mnt/fin_bench/eval_data/1_aime/4_daily_eval_slim/aime_expert/2026-10-24.jsonl",
-        "input_index": 150
-      },
-      {
-        "model": "aime_expert",
-        "batch_id": "2026-10-24",
-        "case_id": "thread_aad585b1efd04ef985992881fb62b15e",
-        "input_file": "/mnt/fin_bench/eval_data/1_aime/4_daily_eval_slim/aime_expert/2026-10-24.jsonl",
-        "input_index": 147
-      },
-      {
-        "model": "aime_expert",
-        "batch_id": "2026-10-24",
-        "case_id": "thread_3af97c8f5ef640a8a76e99b5a9b677d5",
-        "input_file": "/mnt/fin_bench/eval_data/1_aime/4_daily_eval_slim/aime_expert/2026-10-24.jsonl",
-        "input_index": 36
-      },
-      {
-        "model": "aime_expert",
-        "batch_id": "2026-10-24",
-        "case_id": "thread_ccb075d162184d308a6e56d4ef504c4c",
-        "input_file": "/mnt/fin_bench/eval_data/1_aime/4_daily_eval_slim/aime_expert/2026-10-24.jsonl",
-        "input_index": 98
-      },
-      {
-        "model": "aime_expert",
-        "batch_id": "2026-10-24",
-        "case_id": "thread_4df3fd77682047949e7d87f043cd6f3b",
-        "input_file": "/mnt/fin_bench/eval_data/1_aime/4_daily_eval_slim/aime_expert/2026-10-24.jsonl",
-        "input_index": 131
-      },
-      {
-        "model": "aime_expert",
-        "batch_id": "2026-10-24",
-        "case_id": "thread_d62adbd8eabe4c49bd760afadecaa7aa",
-        "input_file": "/mnt/fin_bench/eval_data/1_aime/4_daily_eval_slim/aime_expert/2026-10-24.jsonl",
-        "input_index": 215
-      },
-      {
-        "model": "aime_expert",
-        "batch_id": "2026-10-24",
-        "case_id": "thread_b33781cbdd794d7ab04000a61c5bcdc1",
-        "input_file": "/mnt/fin_bench/eval_data/1_aime/4_daily_eval_slim/aime_expert/2026-10-24.jsonl",
-        "input_index": 71
-      },
-      {
-        "model": "aime_expert",
-        "batch_id": "2026-10-24",
-        "case_id": "thread_bbc22627067d40f785ffbdba498c4340",
-        "input_file": "/mnt/fin_bench/eval_data/1_aime/4_daily_eval_slim/aime_expert/2026-10-24.jsonl",
-        "input_index": 200
-      },
-      {
-        "model": "aime_expert",
-        "batch_id": "2026-10-24",
-        "case_id": "thread_808832a190324cbf86d11f6fb99eb116",
-        "input_file": "/mnt/fin_bench/eval_data/1_aime/4_daily_eval_slim/aime_expert/2026-10-24.jsonl",
-        "input_index": 115
-      },
-      {
-        "model": "aime_expert",
-        "batch_id": "2026-10-24",
-        "case_id": "thread_021b0370302f45ca8443ed38b1b51f11",
-        "input_file": "/mnt/fin_bench/eval_data/1_aime/4_daily_eval_slim/aime_expert/2026-10-24.jsonl",
-        "input_index": 184
-      },
-      {
-        "model": "aime_expert",
-        "batch_id": "2026-10-24",
-        "case_id": "thread_c533d15d1d2643c28aacc8f01c155863",
-        "input_file": "/mnt/fin_bench/eval_data/1_aime/4_daily_eval_slim/aime_expert/2026-10-24.jsonl",
-        "input_index": 167
-      },
-      {
-        "model": "aime_expert",
-        "batch_id": "2026-10-24",
-        "case_id": "thread_f32ccc4a5bbe4845b6ed42209d338f61",
-        "input_file": "/mnt/fin_bench/eval_data/1_aime/4_daily_eval_slim/aime_expert/2026-10-24.jsonl",
-        "input_index": 155
-      },
-      {
-        "model": "aime_expert",
-        "batch_id": "2026-10-24",
-        "case_id": "thread_dbb1e9b9e31b4ab98feb99499adadbef",
-        "input_file": "/mnt/fin_bench/eval_data/1_aime/4_daily_eval_slim/aime_expert/2026-10-24.jsonl",
-        "input_index": 108
-      },
-      {
-        "model": "aime_expert",
-        "batch_id": "2026-10-24",
-        "case_id": "thread_ee5c5970d1734620b00161004123c6e4",
-        "input_file": "/mnt/fin_bench/eval_data/1_aime/4_daily_eval_slim/aime_expert/2026-10-24.jsonl",
-        "input_index": 57
-      },
-      {
-        "model": "aime_expert",
-        "batch_id": "2026-10-24",
-        "case_id": "thread_d51ef22806374a29aaa8d386276b0038",
-        "input_file": "/mnt/fin_bench/eval_data/1_aime/4_daily_eval_slim/aime_expert/2026-10-24.jsonl",
-        "input_index": 32
-      },
-      {
-        "model": "aime_expert",
-        "batch_id": "2026-10-24",
-        "case_id": "thread_ba1e651f5c264441b60dd832fb531dba",
-        "input_file": "/mnt/fin_bench/eval_data/1_aime/4_daily_eval_slim/aime_expert/2026-10-24.jsonl",
-        "input_index": 225
-      },
-      {
-        "model": "aime_expert",
-        "batch_id": "2026-10-24",
-        "case_id": "thread_85a59ff8431448c9b44f54c80e3f2a29",
-        "input_file": "/mnt/fin_bench/eval_data/1_aime/4_daily_eval_slim/aime_expert/2026-10-24.jsonl",
-        "input_index": 21
-      },
-      {
-        "model": "aime_expert",
-        "batch_id": "2026-10-24",
-        "case_id": "thread_f9c0234042be4a489e46b3da78b11292",
-        "input_file": "/mnt/fin_bench/eval_data/1_aime/4_daily_eval_slim/aime_expert/2026-10-24.jsonl",
-        "input_index": 9
-      },
-      {
-        "model": "aime_expert",
-        "batch_id": "2026-10-24",
-        "case_id": "thread_a3b984ca12e94c70819384e12b223561",
-        "input_file": "/mnt/fin_bench/eval_data/1_aime/4_daily_eval_slim/aime_expert/2026-10-24.jsonl",
-        "input_index": 49
-      },
-      {
-        "model": "aime_expert",
-        "batch_id": "2026-10-24",
-        "case_id": "thread_446e9ba7f2d341f4b7f54ef38d3e2746",
-        "input_file": "/mnt/fin_bench/eval_data/1_aime/4_daily_eval_slim/aime_expert/2026-10-24.jsonl",
-        "input_index": 267
-      },
-      {
-        "model": "aime_expert",
-        "batch_id": "2026-10-24",
-        "case_id": "thread_5551275b9e5c41729479ebf168ef051a",
-        "input_file": "/mnt/fin_bench/eval_data/1_aime/4_daily_eval_slim/aime_expert/2026-10-24.jsonl",
-        "input_index": 279
-      },
-      {
-        "model": "aime_expert",
-        "batch_id": "2026-10-24",
-        "case_id": "thread_8fea540cc9f1444391044f76f9ec8dd9",
-        "input_file": "/mnt/fin_bench/eval_data/1_aime/4_daily_eval_slim/aime_expert/2026-10-24.jsonl",
-        "input_index": 282
-      },
-      {
-        "model": "aime_expert",
-        "batch_id": "2026-10-24",
-        "case_id": "chat_once-0d93f217-c2dc-4a7d-ab79-50ca622dd370",
-        "input_file": "/mnt/fin_bench/eval_data/1_aime/4_daily_eval_slim/aime_expert/2026-10-24.jsonl",
-        "input_index": 17
-      },
-      {
-        "model": "aime_expert",
-        "batch_id": "2026-10-24",
-        "case_id": "thread_825b7955424c4a5c9e8fb7f24f44df68",
-        "input_file": "/mnt/fin_bench/eval_data/1_aime/4_daily_eval_slim/aime_expert/2026-10-24.jsonl",
-        "input_index": 292
-      },
-      {
-        "model": "aime_expert",
-        "batch_id": "2026-10-24",
-        "case_id": "thread_5fad92afff624e29ba2b1de31ecbcb0c",
-        "input_file": "/mnt/fin_bench/eval_data/1_aime/4_daily_eval_slim/aime_expert/2026-10-24.jsonl",
-        "input_index": 30
-      },
-      {
-        "model": "aime_expert",
-        "batch_id": "2026-10-24",
-        "case_id": "thread_5c29b21da63b4b92bfeb83c5dfc32254",
-        "input_file": "/mnt/fin_bench/eval_data/1_aime/4_daily_eval_slim/aime_expert/2026-10-24.jsonl",
-        "input_index": 245
-      },
-      {
-        "model": "aime_expert",
-        "batch_id": "2026-10-25",
-        "case_id": "chat_once-52847beb-dd29-43a6-b4c2-2fa7aa62a3c7",
-        "input_file": "/mnt/fin_bench/eval_data/1_aime/4_daily_eval_slim/aime_expert/2026-10-25.jsonl",
-        "input_index": 88
-      },
-      {
-        "model": "aime_expert",
-        "batch_id": "2026-10-25",
-        "case_id": "thread_7e28c83e51bd4b068701fcb4f0ebadbe",
-        "input_file": "/mnt/fin_bench/eval_data/1_aime/4_daily_eval_slim/aime_expert/2026-10-25.jsonl",
-        "input_index": 28
-      },
-      {
-        "model": "aime_expert",
-        "batch_id": "2026-10-25",
-        "case_id": "thread_ece1a4eddab84e388d2d18e9ef1fc5c2",
-        "input_file": "/mnt/fin_bench/eval_data/1_aime/4_daily_eval_slim/aime_expert/2026-10-25.jsonl",
-        "input_index": 59
-      },
-      {
-        "model": "aime_expert",
-        "batch_id": "2026-10-25",
-        "case_id": "thread_927a5280572946919e209417a18342d2",
-        "input_file": "/mnt/fin_bench/eval_data/1_aime/4_daily_eval_slim/aime_expert/2026-10-25.jsonl",
-        "input_index": 53
-      },
-      {
-        "model": "aime_expert",
-        "batch_id": "2026-10-25",
-        "case_id": "thread_7c13684ee7924c98b098cba54d122d03",
-        "input_file": "/mnt/fin_bench/eval_data/1_aime/4_daily_eval_slim/aime_expert/2026-10-25.jsonl",
-        "input_index": 96
-      },
-      {
-        "model": "aime_expert",
-        "batch_id": "2026-10-25",
-        "case_id": "thread_995c9dec2f7e4f479f402912bac8bd08",
-        "input_file": "/mnt/fin_bench/eval_data/1_aime/4_daily_eval_slim/aime_expert/2026-10-25.jsonl",
-        "input_index": 8
-      },
-      {
-        "model": "aime_expert",
-        "batch_id": "2026-10-25",
-        "case_id": "thread_19e2042eb90b4074861b922b518b07e9",
-        "input_file": "/mnt/fin_bench/eval_data/1_aime/4_daily_eval_slim/aime_expert/2026-10-25.jsonl",
-        "input_index": 94
-      },
-      {
-        "model": "aime_expert",
-        "batch_id": "2026-10-25",
-        "case_id": "thread_63ae1ff6a28e42a490843d48bfaafaa7",
-        "input_file": "/mnt/fin_bench/eval_data/1_aime/4_daily_eval_slim/aime_expert/2026-10-25.jsonl",
-        "input_index": 56
-      },
-      {
-        "model": "aime_expert",
-        "batch_id": "2026-10-25",
-        "case_id": "thread_1d29f03b4e12479da93e85e826864d13",
-        "input_file": "/mnt/fin_bench/eval_data/1_aime/4_daily_eval_slim/aime_expert/2026-10-25.jsonl",
-        "input_index": 74
-      },
-      {
-        "model": "aime_expert",
-        "batch_id": "2026-10-25",
-        "case_id": "thread_1219645998694ad6baaee891e53ef8d4",
-        "input_file": "/mnt/fin_bench/eval_data/1_aime/4_daily_eval_slim/aime_expert/2026-10-25.jsonl",
-        "input_index": 2
-      },
-      {
-        "model": "aime_expert",
-        "batch_id": "2026-10-25",
-        "case_id": "thread_bf50a04c9c6e41ffb85f934bbe225eb9",
-        "input_file": "/mnt/fin_bench/eval_data/1_aime/4_daily_eval_slim/aime_expert/2026-10-25.jsonl",
-        "input_index": 72
-      },
-      {
-        "model": "aime_expert",
-        "batch_id": "2026-10-26",
-        "case_id": "thread_4bfae8aaa567415889f2cf8103f5a98d",
-        "input_file": "/mnt/fin_bench/eval_data/1_aime/4_daily_eval_slim/aime_expert/2026-10-26.jsonl",
-        "input_index": 8
+        "input_index": 1292
       }
     ]
   },

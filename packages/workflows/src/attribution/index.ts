@@ -73,6 +73,11 @@ export function planAttributionUnit(candidate: Candidate, options: AttributionUn
 export async function planAttribution(config: AttributionConfig) {
   const indexed = await collectInputs(config, undefined, { materializeInputs: false });
   const catalog = indexed.catalog, tasks: PlannedTask[] = [];
+  if (config.inputs.records) {
+    const order = new Map(config.inputs.records.map((record, index) =>
+      [canonical([record.model, record.input_file, record.input_index + 1]), index]));
+    catalog.sort((a, b) => order.get(canonical([a.version, a.source, a.line]))! - order.get(canonical([b.version, b.source, b.line]))!);
+  }
   for (const candidate of catalog) tasks.push(...planAttributionUnit(candidate).tasks);
   const manifest = { config, tasks, inputCatalog: catalog } as RunManifest;
   const inputs = await loadRunInputs(manifest, undefined, undefined, undefined, normalizeInput);
