@@ -146,6 +146,8 @@ npm run report:relay -- --resolve <traceId> --outcome retry
 - `1_aime/1_7z_data/online_data` 与 `1_aime/2_daily_eval_input/<model>/<date>.jsonl`
 - `2_ifind/1_7z_data` 与 `2_ifind/2_daily_eval_input/<model>/<date>.jsonl`
 
+已处理的包仍留在收包目录，按日归档用 `node scripts/archive-processed-packages.mjs --apply`（默认只打印计划）。脚本只移动处理回执 `runtime/state/data-service/<来源>/root-archives.json` 与磁盘上大小、修改时间都一致的包，移到 `<收包目录>/3_processed_archives/<YYYYMMDD>/` 时保留修改时间，回执继续有效。目前支持问财与 AIME。
+
 工作台发现登记目录中的包并保存持久批次；日常来源手动启动后自动清洗积压并持续接入新包，专项由页面选择批次并手动清洗。AIME 接管时核对已有规范输入与增量收据，分别补齐评分和归因覆盖。新任务创建独立收包与输出目录，目录和状态说明见[数据服务](../data_service/README.md)。外部状态位于 `runtime/state/data-service`，SQLite、ready、偏移索引、进度和临时解压目录均不在 checkout。
 
 Host 热状态默认写入 `~/.cache/eval-agent-harness/hot`。该目录必须位于服务器本机 SSD，并通过 `EVAL_HOT_STATE_ROOT` 或服务环境调整；不要把热日志放到 `/mnt/aigc_team` 的 Ceph。正式 JSONL、`progress.jsonl`、报告和 `state.json` 仍写评测产物目录。
