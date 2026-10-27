@@ -37,6 +37,7 @@ export type ResultEncoder = (
 export function createRunRepository<Checkpoint>(
   codec: RunCodec<Checkpoint>,
   encodeResult: ResultEncoder,
+  options: { appendOnly?: boolean } = {},
 ): RunRepository {
   async function readState(run: string, taskIds?: ReadonlySet<string>): Promise<RunState> {
     const layout = locateRun(run);
@@ -140,7 +141,7 @@ export function createRunRepository<Checkpoint>(
           for (const [file, rows] of Object.entries(groups)) {
             let writer = files.get(file);
             if (!writer) files.set(file, writer = createResultFileWriter(path.join(directory, file)));
-            if (!initialized || updates.has(file)) {
+            if ((!initialized && !options.appendOnly) || updates.has(file)) {
               const all = new Map<string, JsonObject>();
               for (const result of exports.values())
                 if (result.file === file) all.set(result.id, result.row);

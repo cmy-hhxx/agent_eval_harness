@@ -61,9 +61,14 @@ export function createResultFileWriter(file: string) {
     async append(rows: Iterable<JsonObject>) {
       try {
         if (!revision || !sameFile(revision, await stat(file))) invalidate();
-        const handle = await open(file, "a"), next = new Map(spans);
+        const handle = await open(file, "a+"), next = new Map(spans);
         let offset = revision?.size ?? (await handle.stat()).size;
         try {
+          if (offset) {
+            const tail = Buffer.allocUnsafe(1);
+            await handle.read(tail, 0, 1, offset - 1);
+            if (tail[0] !== 10) throw new Error("Result file has an incomplete final line; append refused");
+          }
           for (const row of rows) {
             if (next.has(row)) throw new Error("Duplicate immutable result row");
             const bytes = Buffer.from(JSON.stringify(row) + "\n");

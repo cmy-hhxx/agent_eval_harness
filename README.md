@@ -4,7 +4,7 @@ TypeScript Host 编排评测任务，Pi Worker 执行模型与工具调用。Att
 
 开发先读 [AGENTS.md](AGENTS.md)。当前行为以源码、配置和 Schema 为准。
 
-归因正式文件一行对应一个 session，包含 `session_meta`、`turns[]`、`session_summary` 和 `session_problem`。每个 turn 只保留 `meta`、`summary`、`problem`、`is_correct`、`correct_reason`；组件与 turn 汇总是内部任务，只存在于运行状态和收据中。
+归因正式文件一行对应一条输入记录，包含 `session_meta`、`turns[]`、`session_summary` 和 `session_problem`。完整会话输入保留全部 trace；按 trace 抓取的记录可共享 `session_id` 并独立落盘，详见 [Attribution](docs/attribution.md)。每个 turn 只保留 `meta`、`summary`、`problem`、`is_correct`、`correct_reason`；组件与 turn 汇总是内部任务，只存在于运行状态和收据中。
 
 ## 远程工作台
 

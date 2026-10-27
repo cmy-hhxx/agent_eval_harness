@@ -1,6 +1,6 @@
 import test, { type TestContext } from "node:test";
 import assert from "node:assert/strict";
-import { readFile, readdir, rm } from "node:fs/promises";
+import { readFile, readdir, rm, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { DEFAULT_POLICY, emptyUsage, ValidationError, type AttemptSpec, type RunState, type WorkflowDefinition } from "@eval/contracts";
 import { AgentRegistry, RunStore } from "@eval/host";
@@ -39,6 +39,75 @@ async function fixture(t: TestContext) {
   t.after(() => rm(f.directory, { recursive: true, force: true }));
   return f;
 }
+
+test("same session different captured traces append unchanged and resume by trace identity", async t => {
+  const capture = (caseId: string, question: string) => ({
+    batch_id: "batch", case_id: caseId, has_standard_answer: false,
+    meta: { session_id: "shared-session", case_id: caseId, n_traces: 1, n_messages: 4 },
+    traces: [trace("shared-session", question, `${question}回答`, "Search")],
+  } as unknown as RawInput);
+  const f = await fixtureConfig([[capture("capture-1", "第一问"), capture("capture-2", "第二问")], [], [], []]);
+  t.after(() => rm(f.directory, { recursive: true, force: true }));
+  const config = { ...f.config, workflow: "attribution", inputs: { ...f.config.inputs,
+    versions: f.config.inputs.versions.slice(0, 1) } } as AttributionConfig;
+  const plan = await planAttribution(config), run = path.join(f.directory, "captured-traces");
+  const sessions = plan.tasks.filter(task => task.stage === "attribution-session");
+  assert.equal(sessions.length, 2, "captured records are evaluated independently");
+  const state: RunState = { manifest: { format: "evaluation-run", debug: false, runId: "captured-traces", status: "running",
+    engine: fakeIdentity, evaluatorVersion: fakeEvaluatorVersion, config, tasks: plan.tasks, inputCatalog: plan.catalog,
+    inputs: {}, states: Object.fromEntries(plan.tasks.map(task => [task.id, { status: "pending", attempts: 0 }])),
+    preflight: plan.summary, startedAt: 1 }, receipts: {}, usage: emptyUsage(), recordedAttempts: 0 };
+  const registry = new AgentRegistry([attributionAgent]);
+  const complete = (index: number, target: RunState) => {
+    const task = sessions[index]!, candidate = (task.data as AttributionTaskData).candidate;
+    const raw = plan.inputs[candidate.input_id] as RawInput;
+    const turn = { meta: raw.turns![0]!.meta!, summary: `第${index + 1}轮总结`, problem: [], is_correct: null,
+      correct_reason: "未提供标准答案。" };
+    const dependency = { taskId: task.dependencies.trace0!, attemptId: "trace", submissionId: `trace-${index}`,
+      evaluatorVersion: fakeEvaluatorVersion, judge: "fixture", status: "succeeded" as const, acceptedAt: 1,
+      evaluation: turn, audit: emptyAudit(), usage: emptyUsage() };
+    const binding = bindAttribution(task, plan.inputs, { trace0: dependency });
+    const evaluation = registry.resolve(binding, { session_summary: `记录${index + 1}总结`, session_problem: [] }, emptyAudit());
+    target.receipts[task.id] = { ...dependency, taskId: task.id, submissionId: `session-${index}`, evaluation };
+    target.manifest.states[task.id] = { status: "succeeded", attempts: 1 };
+  };
+  complete(0, state);
+  await attributionRepository.createResultWriter(run, plan.inputs)(state);
+  const file = path.join(run, "results/attribution.jsonl");
+  const original = "  " + (await readFile(file, "utf8")).trimEnd() + " \n";
+  await writeFile(file, original);
+  const inode = (await stat(file)).ino;
+  // A same-run checkpoint's result reference is resolved from its source trace directory.
+  state.receipts[sessions[0]!.id]!.exported!.id = "shared-session";
+  await attributionRepository.writeRun(run, state);
+  const resumed = await attributionRepository.readRun(run);
+  assert.deepEqual(resumed.receipts[sessions[0]!.id]!.evaluation, state.receipts[sessions[0]!.id]!.evaluation);
+  complete(1, resumed);
+  const hot = new RunHotStore(":memory:", runJournalIdentity(resumed));
+  for (const task of sessions) hot.append({ at: 1, receipts: { [task.id]: resumed.receipts[task.id]! } });
+  const store = new RunStore(run, resumed, plan.inputs, { repository: attributionRepository, agents: registry,
+    taskSource: attributionWorkflow }, undefined, hot);
+  t.after(() => store.close());
+  await store.flushOutbox(true);
+  assert.equal(store.outboxStatus().count, 0, "pending receipts must drain through normal outbox delivery");
+  assert.equal(hot.eventsAfter().length, 2, "delivery retains original accepted journal events");
+  const writer = attributionRepository.createResultWriter(run, plan.inputs);
+  await writer(resumed);
+  await writer(resumed);
+  assert.equal((await stat(file)).ino, inode, "existing output file must not be replaced");
+  const text = await readFile(file, "utf8");
+  assert(text.startsWith(original), "existing result bytes must remain unchanged");
+  const rows = text.trim().split("\n").map(line => JSON.parse(line));
+  assert.equal(rows.length, 2);
+  assert.deepEqual(rows.map(row => row.session_meta.session_id), ["shared-session", "shared-session"]);
+  assert.deepEqual(rows.map(row => row.turns[0].meta.trace_id), ["shared-session-trace-第一问", "shared-session-trace-第二问"]);
+  await attributionRepository.writeRun(run, resumed);
+  const restored = await attributionRepository.readRun(run);
+  assert.equal(restored.receipts[sessions[1]!.id]!.submissionId, "session-1");
+  restored.receipts[sessions[1]!.id]!.evaluation = { ...(restored.receipts[sessions[1]!.id]!.evaluation as object), session_summary: "冲突正文" };
+  await assert.rejects(attributionRepository.createResultWriter(run, plan.inputs)(restored), /结果 ID 对应冲突结果/);
+  assert.equal(await readFile(file, "utf8"), text);
+});
 
 for (const workflow of [attributionWorkflow, comparisonWorkflow] as WorkflowDefinition[])
   for (const resume of [false, true])
@@ -342,8 +411,8 @@ test("a completed session is appended before the run ends and resume does not du
     state.receipts[taskId] = { taskId, attemptId: `attempt-${taskId}`, submissionId: `submission-${taskId}`,
       evaluatorVersion: fakeEvaluatorVersion, judge: "fixture", status: "succeeded", acceptedAt: 1,
       evaluation: { session_meta: { session_id: sessionId }, turns: [
-        { meta: {}, summary: "第一轮完成。", problem: [], is_correct: null, correct_reason: "无给定标准。" },
-        { meta: {}, summary: "第二轮完成。", problem: [], is_correct: null, correct_reason: "无给定标准。" },
+        { meta: { trace_id: `${sessionId}-trace-第一问` }, summary: "第一轮完成。", problem: [], is_correct: null, correct_reason: "无给定标准。" },
+        { meta: { trace_id: `${sessionId}-trace-第二问` }, summary: "第二轮完成。", problem: [], is_correct: null, correct_reason: "无给定标准。" },
       ], session_summary: `${sessionId} 完成。`, session_problem: [] }, audit: emptyAudit(), usage: emptyUsage() };
     state.manifest.states[taskId] = { status: "succeeded", attempts: 1 };
   };

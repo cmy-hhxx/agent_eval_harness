@@ -174,7 +174,21 @@ export const attributionWorkflow: WorkflowDefinition = {
   },
 };
 
+/** Captured records may share a conversation; only the same ordered traces share a result identity. */
+function attributionResultId(row: JsonObject): string {
+  const meta = row.session_meta as JsonObject;
+  const traces = (row.turns as { meta: JsonObject }[]).map(turn => turn.meta.trace_id ?? null);
+  if (!meta.session_id && !meta.case_id && traces.every(id => id === null))
+    throw new Error("Attribution 结果缺少 session、case 或 trace 身份");
+  return canonical([meta.session_id ?? meta.case_id ?? null, traces]);
+}
+
 interface Checkpoint { workflow: "attribution"; manifest: Omit<RunManifest, "tasks" | "states" | "inputs" | "inputCatalog">; inputs: Record<string, Candidate>; tasks: Record<string, { task: Omit<PlannedTask, "id" | "data">; data: Omit<AttributionTaskData, "candidate"> & { input_id: string }; state: RunManifest["states"][string]; receipt?: any }>; usage: RunState["usage"]; recordedAttempts: number }
+function resultReference(checkpoint: Checkpoint, row: Checkpoint["tasks"][string]) {
+  const candidate = checkpoint.inputs[row.data.input_id];
+  return { ...row.receipt.exported, id: canonical([candidate.session_id ?? candidate.case_id,
+    turns(candidate).map(trace => trace.trace_id)]) };
+}
 const codec: RunCodec<Checkpoint> = {
   encode(state) {
     const { tasks, states, inputs: _inputs, inputCatalog, ...manifest } = state.manifest;
@@ -183,13 +197,14 @@ const codec: RunCodec<Checkpoint> = {
         if (receipt) { const { evaluation, submitted: _submitted, exported, ...rest } = receipt; saved = { ...rest, ...(exported ? { exported: { id: exported.id, file: exported.file } } : { evaluation }) }; }
         return [id, { task: definition, data: { ...info, input_id: info.candidate.input_id }, state: states[id], ...(saved ? { receipt: saved } : {}) }]; })) };
   },
-  references(checkpoint, ids) { return Object.entries(checkpoint.tasks).flatMap(([id, row]) => (!ids || ids.has(id)) && row.receipt?.exported ? [row.receipt.exported] : []); },
-  resultId: row => String((row.session_meta as JsonObject).session_id ?? (row.session_meta as JsonObject).case_id),
+  references(checkpoint, ids) { return Object.entries(checkpoint.tasks).flatMap(([id, row]) => (!ids || ids.has(id)) && row.receipt?.exported ? [resultReference(checkpoint, row)] : []); },
+  resultId: attributionResultId,
   decode(checkpoint, read, ids) {
     const tasks: PlannedTask[] = [], receipts: RunState["receipts"] = {}, states: RunManifest["states"] = {};
     for (const [id, row] of Object.entries(checkpoint.tasks)) {
       tasks.push({ id, ...row.task, data: { ...row.data, candidate: checkpoint.inputs[row.data.input_id] } }); states[id] = row.state;
-      if (row.receipt && (!ids || ids.has(id))) { const saved = row.receipt, exported = saved.exported ? { ...saved.exported, row: read(saved.exported) } : undefined;
+      if (row.receipt && (!ids || ids.has(id))) { const saved = row.receipt, reference = saved.exported ? resultReference(checkpoint, row) : undefined,
+        exported = reference ? { ...reference, row: read(reference) } : undefined;
         receipts[id] = { ...saved, evaluation: saved.evaluation ?? structuredClone(exported!.row), audit: saved.audit ?? { calls: 0, requiredReadCalls: 0, traceReads: [], viewedImages: [], calculations: [], artifacts: [] }, ...(exported ? { exported } : {}) }; }
     }
     return { manifest: { ...checkpoint.manifest, tasks, states, inputs: {}, inputCatalog: Object.values(checkpoint.inputs) }, receipts,
@@ -200,8 +215,8 @@ const repository = createRunRepository(codec, (task, state) => {
   if (task.stage !== "attribution-session") return null;
   const row = structuredClone(state.receipts[task.id]!.evaluation) as JsonObject;
   if (!validateSession(row)) throw new Error("Attribution session 导出契约无效：" + JSON.stringify(validateSession.errors));
-  return { id: String((row.session_meta as JsonObject).session_id ?? (task.data as AttributionTaskData).candidate.case_id), file: "attribution.jsonl", row };
-});
+  return { id: attributionResultId(row), file: "attribution.jsonl", row };
+}, { appendOnly: true });
 export const attributionRepository = { ...repository, createResultWriter(run: string, inputs: Record<string, unknown>) { return repository.createResultWriter(run, inputs); } };
 
 export async function validateAttributionRun(state: RunState) {

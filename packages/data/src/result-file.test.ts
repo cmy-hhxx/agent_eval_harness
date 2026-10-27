@@ -5,6 +5,15 @@ import path from "node:path";
 import os from "node:os";
 import { createResultFileWriter } from "./result-file.js";
 
+test("append refuses an interrupted final line without changing committed bytes", async t => {
+  const dir = await mkdtemp(path.join(os.tmpdir(), "eval-result-tail-"));
+  t.after(() => rm(dir, { recursive: true, force: true }));
+  const file = path.join(dir, "results.jsonl"), original = '{"id":"one"}\n{"id":';
+  await writeFile(file, original);
+  await assert.rejects(createResultFileWriter(file).append([{ id: "two" }]), /incomplete final line/);
+  assert.equal(await readFile(file, "utf8"), original);
+});
+
 test("result replacement copies unchanged UTF-8 rows without serializing their bodies again", async t => {
   const dir = await mkdtemp(path.join(os.tmpdir(), "eval-result-copy-"));
   t.after(() => rm(dir, { recursive: true, force: true }));
