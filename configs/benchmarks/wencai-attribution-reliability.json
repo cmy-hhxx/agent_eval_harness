@@ -3,7 +3,7 @@
     "judge": {
       "channel": "evaluation-gateway",
       "model": "deepseek-v4.1-flash",
-      "thinking": "medium"
+      "thinking": "high"
     }
   },
   "execution": {
