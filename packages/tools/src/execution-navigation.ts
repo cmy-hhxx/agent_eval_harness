@@ -220,8 +220,7 @@ export const readResponsibilityChainTool: Omit<ToolDefinition, "description"> = 
         total_quote_chars: point.end - point.start, truncated: true, ...next(point.start) }];
       const excerpt = cite(inputId, point.message_index, source, point.start, end);
       chars.used += excerpt.quote.length;
-      ctx.audit.traceReads.push({ candidate: args.candidate, ...coordinates, start: point.start, end });
-      return [{ ...coordinates, evidence_index: register(excerpt.evidence_id), start: point.start, end,
+      return [{ ...coordinates, evidence_id: excerpt.evidence_id, start: point.start, end,
         quote_chars: excerpt.quote.length, quote: excerpt.quote,
         ...(end < point.end ? { total_quote_chars: point.end - point.start, truncated: true, ...next(end) } : {}) }];
     });
@@ -246,6 +245,35 @@ export const readResponsibilityChainTool: Omit<ToolDefinition, "description"> = 
       responsibility_choices: choices.filter(item => sameChain.some(boundary => boundary.transition_index === item.transition_index)),
       returned_chars: chars.used,
     };
-    return { content: [{ type: "text", text: JSON.stringify(result) }], details: result };
+    const fields = ["request", "original_return", "actual_input", "output", "request_context"] as const;
+    const page = { ...result, responsibility_choices_total: result.responsibility_choices.length,
+      responsibility_choices: result.responsibility_choices.slice(0, 8),
+      omitted_entries: Object.fromEntries(fields.map(field => [field, 0])),
+      continuation: null as { tool: string; arguments: Record<string, unknown> } | null };
+    const continueNavigation = () => { page.continuation = { tool: "read_execution",
+      arguments: { candidate: args.candidate, view: "boundaries", offset: 0 } }; };
+    if (page.responsibility_choices.length < page.responsibility_choices_total) continueNavigation();
+    // Fit generated envelopes before registering evidence, so generic artifact previews
+    // cannot silently hide text already marked as read. Full boundaries remain navigable.
+    while (JSON.stringify(page).length > ctx.policy.maxOutputChars) {
+      const field = fields.reduce((largest, key) => page[key].length > page[largest].length ? key : largest);
+      if (page[field].length) {
+        const removed = page[field].pop()!;
+        page.returned_chars -= typeof removed.quote === "string" ? removed.quote.length : 0;
+        page.omitted_entries[field]!++;
+      } else if (page.responsibility_choices.length) page.responsibility_choices.pop();
+      else throw new Error("输出预算无法容纳责任链导航，请增大 maxOutputChars 或用 read_execution 定向分页");
+      continueNavigation();
+    }
+    for (const field of fields) for (const item of page[field]) {
+      if (typeof item.evidence_id !== "string") continue;
+      const point = parseEvidenceCoordinates(item.evidence_id)!;
+      if (point.kind === "image") continue;
+      item.evidence_index = register(item.evidence_id);
+      delete item.evidence_id;
+      ctx.audit.traceReads.push({ candidate: args.candidate, message_index: point.message_index,
+        kind: point.kind, path: point.path, start: point.start, end: point.end });
+    }
+    return { content: [{ type: "text", text: JSON.stringify(page) }], details: page };
   },
 };

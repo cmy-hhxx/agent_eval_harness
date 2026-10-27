@@ -264,3 +264,30 @@ test("responsibility scene budgets register only displayed characters and expose
     assert.deepEqual(f.ctx.audit.traceReads, [{ candidate: "answer", message_index: 0, kind: "text", path: "/content", start: 0, end: 3 }]);
   } finally { await f.close(); }
 });
+
+
+test("large responsibility scenes fit the visible envelope and retain navigation for omitted evidence", async () => {
+  const f = await setup();
+  try {
+    f.ctx.policy.maxOutputChars = 2000;
+    Object.assign(f.ctx.materialNavigation!.answer as object, { boundaries: [
+      { transition_index: 1, kind: "execution", chain_index: 1, chain_indices: [1],
+        before: Array.from({ length: 10 }, (_, i) => proof(i)), after: Array.from({ length: 10 }, (_, i) => proof(i + 10)) },
+    ] });
+    const runtime = new ToolRuntime(f.ctx, createRegistry().select(["read_responsibility_chain", "read_execution"]));
+    const result = await runtime.execute("read_responsibility_chain", { candidate: "answer", transition_index: 1 }, new AbortController().signal);
+    assert(!result.isError, result.content[0].text);
+    const value = JSON.parse(result.content[0].text!);
+    assert.equal(value.artifact, undefined, "generated evidence must not disappear into an artifact preview");
+    assert(value.omitted_entries.request + value.omitted_entries.original_return > 0);
+    assert.equal(value.continuation.tool, "read_execution");
+    assert(result.content[0].text!.length <= f.ctx.policy.maxOutputChars);
+    assert.equal(f.ctx.audit.evidenceBank!.length, value.request.length + value.original_return.length);
+    assert.equal(f.ctx.audit.traceReads.length, value.request.length + value.original_return.length);
+    const next = await runtime.execute(value.continuation.tool, value.continuation.arguments, new AbortController().signal);
+    assert(!next.isError, next.content[0].text);
+    const boundary = JSON.parse(next.content[0].text!).items[0];
+    assert.equal(boundary.before_count, 10);
+    assert.equal(boundary.after_count, 10);
+  } finally { await f.close(); }
+});
