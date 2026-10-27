@@ -1,5 +1,5 @@
 {
-  "evaluatorVersion": "r410",
+  "evaluatorVersion": "r411",
   "inputs": {
     "timing_unit": "ms",
     "versions": [
@@ -84,27 +84,30 @@
   },
   "models": {
     "judge": {
-      "thinking": "medium",
+      "thinking": "low",
       "channel": "evaluation-gateway"
     }
   },
   "bindings": {
     "criteria": {
-      "profile": "judge"
+      "profile": "judge",
+      "thinking": "low"
     },
     "attribution": {
       "profile": "judge",
-      "thinking": "high"
+      "thinking": "low"
     },
     "comparison": {
-      "profile": "judge"
+      "profile": "judge",
+      "thinking": "low"
     },
     "rewrite": {
       "profile": "judge",
       "thinking": "low"
     },
     "clustering": {
-      "profile": "judge"
+      "profile": "judge",
+      "thinking": "low"
     },
     "instruction-review": {
       "profile": "judge",

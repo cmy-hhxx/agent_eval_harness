@@ -2,7 +2,7 @@
   "models": {
     "judge": {
       "model": "deepseek-v4.1-flash",
-      "thinking": "high"
+      "thinking": "low"
     }
   },
   "execution": {
@@ -11,15 +11,15 @@
   "bindings": {
     "criteria": {
       "profile": "judge",
-      "thinking": "high"
+      "thinking": "low"
     },
     "attribution": {
       "profile": "judge",
-      "thinking": "high"
+      "thinking": "low"
     },
     "comparison": {
       "profile": "judge",
-      "thinking": "high"
+      "thinking": "low"
     },
     "rewrite": {
       "profile": "judge",
