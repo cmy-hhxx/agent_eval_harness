@@ -131,7 +131,14 @@ export async function main(argv) {
   const { freezeNightInputs, runNightBatch, createChannelRequests } = await import("../dist/apps/host/src/night-evaluation.js");
   const { loadConfig } = await import("../dist/apps/host/src/config.js");
   const { createBalancedModels } = await import("../dist/apps/host/src/balanced-models.js");
-  const { configurationSecrets } = await import("../dist/apps/host/src/settings.js");
+  const { configurationSecrets, readSettings, applySettings } = await import("../dist/apps/host/src/settings.js");
+  const settings = await readSettings(config.settingsFile);
+  const bypass = [settings.environment.NO_PROXY, settings.environment.no_proxy, process.env.NO_PROXY, process.env.no_proxy,
+    "localhost", "127.0.0.1", "::1", ...Object.values(settings.channels).map(channel => new URL(channel.baseUrl).hostname)]
+    .filter(Boolean).join(",");
+  settings.environment.NO_PROXY = bypass;
+  settings.environment.no_proxy = bypass;
+  applySettings(settings);
   const hosts = {};
   for (const source of priority) {
     hosts[source] = await loadConfig(config.hostConfigs[source]);

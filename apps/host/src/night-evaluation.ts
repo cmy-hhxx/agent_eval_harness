@@ -55,7 +55,15 @@ export async function runNightBatch(options: {
   for (const [file, revision] of Object.entries(options.revisions))
     if (await fileSourceReader.revision(file) !== revision) throw new Error("Frozen input changed: " + file);
   const evaluation = host.evaluation;
-  evaluation.inputs = options.inputs;
+  evaluation.inputs = structuredClone(options.inputs);
+  if (evaluation.inputs.records) {
+    const records = evaluation.inputs.records;
+    evaluation.inputs.versions = evaluation.inputs.versions.filter(version =>
+      records.some(record => record.model === version.id)).map(version => ({ ...version,
+      sources: [...new Set(records.filter(record => record.model === version.id).map(record => record.input_file))]
+        .map(file => ({ kind: "file" as const, path: file })),
+    }));
+  }
   evaluation.output = { kind: "directory", path: options.output };
   evaluation.execution = { ...evaluation.execution, concurrency: options.requests.concurrency(),
     taskConcurrency: options.requests.concurrency(), sessionWindow: options.requests.concurrency() };
