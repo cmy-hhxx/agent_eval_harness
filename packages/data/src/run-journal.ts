@@ -1,4 +1,5 @@
 import { mkdirSync } from "node:fs";
+import { open } from "node:fs/promises";
 import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import type {
@@ -10,7 +11,7 @@ import type {
   Usage,
 } from "@eval/contracts";
 import { canonical, safeId } from "@eval/contracts";
-import { appendJsonl, readJsonl } from "./files.js";
+import { appendJsonl } from "./files.js";
 
 export type ManifestJournalPatch = Partial<Omit<RunManifest, "tasks" | "states" | "inputCatalog">> & {
   inputCatalog?: unknown[];
@@ -214,17 +215,51 @@ export function runProgressFile(run: string): string { return path.join(run, "pr
 
 const progressSequences = new Map<string, number>();
 
+/** Checkpoints cover the prefix, so read only the newest journal rows on resume. */
+async function* progressRows(file: string): AsyncGenerator<StoredRunJournalEvent> {
+  const handle = await open(file, "r");
+  try {
+    let position = (await handle.stat()).size;
+    let parts: Buffer[] = [];
+    const decode = (buffers: Buffer[]): StoredRunJournalEvent | undefined => {
+      const line = Buffer.concat(buffers).toString("utf8");
+      if (!line.trim()) return undefined;
+      const row = JSON.parse(line) as StoredRunJournalEvent;
+      if (!Number.isSafeInteger(row.seq) || row.seq < 1 || !row.event)
+        throw new Error("进度事件流损坏：" + file);
+      return row;
+    };
+    while (position > 0) {
+      const start = Math.max(0, position - 64 * 1024);
+      const chunk = Buffer.allocUnsafe(position - start);
+      let offset = 0;
+      while (offset < chunk.length) {
+        const { bytesRead } = await handle.read(chunk, offset, chunk.length - offset, start + offset);
+        if (!bytesRead) throw new Error("读取期间进度事件流被截断：" + file);
+        offset += bytesRead;
+      }
+      position = start;
+      let end = chunk.length;
+      for (let index = end - 1; index >= 0; index--) {
+        if (chunk[index] !== 10) continue;
+        const row = decode([chunk.subarray(index + 1, end), ...parts]);
+        if (row) yield row;
+        parts = [];
+        end = index;
+      }
+      if (end) parts.unshift(chunk.subarray(0, end));
+    }
+    const row = decode(parts);
+    if (row) yield row;
+  } finally { await handle.close(); }
+}
+
 async function progressSequence(file: string): Promise<number> {
   const cached = progressSequences.get(file);
   if (cached !== undefined) return cached;
   let sequence = 0;
   try {
-    for await (const row of readJsonl(file)) {
-      const value = row as { seq?: unknown; event?: unknown };
-      if (!Number.isSafeInteger(value.seq) || (value.seq as number) < 1 || !value.event)
-        throw new Error("进度事件流损坏：" + file);
-      sequence = Math.max(sequence, value.seq as number);
-    }
+    for await (const row of progressRows(file)) { sequence = row.seq; break; }
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
   }
@@ -238,7 +273,8 @@ export async function appendProgressJournal(run: string, events: readonly Stored
   const file = runProgressFile(run), current = await progressSequence(file);
   const rows = events.filter(event => event.seq > current).sort((a, b) => a.seq - b.seq);
   if (!rows.length) return;
-  if (rows[0]!.seq !== current + 1) throw new Error("进度事件流缺少连续序号");
+  if (rows.some((row, index) => row.seq !== current + index + 1))
+    throw new Error("进度事件流缺少连续序号");
   await appendJsonl(file, rows.map(row => ({ seq: row.seq, event: row.event })));
   progressSequences.set(file, rows.at(-1)!.seq);
 }
@@ -246,13 +282,14 @@ export async function appendProgressJournal(run: string, events: readonly Stored
 export async function readProgressJournal(run: string, after = 0): Promise<StoredRunJournalEvent[]> {
   const events: StoredRunJournalEvent[] = [];
   try {
-    for await (const row of readJsonl(runProgressFile(run))) {
-      const value = row as { seq?: unknown; event?: unknown };
-      if (!Number.isSafeInteger(value.seq) || (value.seq as number) <= after || !value.event) continue;
-      events.push({ seq: value.seq as number, event: value.event as RunJournalDelta });
+    for await (const row of progressRows(runProgressFile(run))) {
+      const previous = events.at(-1);
+      if (previous && row.seq !== previous.seq - 1) throw new Error("进度事件流缺少连续序号");
+      if (row.seq <= after) break;
+      events.push(row);
     }
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
   }
-  return events.sort((a, b) => a.seq - b.seq);
+  return events.reverse();
 }

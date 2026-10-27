@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { emptyUsage, type RunState } from "@eval/contracts";
@@ -9,6 +9,7 @@ import {
   isRunJournalProjection,
   appendProgressJournal,
   readProgressJournal,
+  runProgressFile,
   RunHotStore,
   runHotFile,
   runJournalIdentity,
@@ -89,4 +90,19 @@ test("progress journal appends ordered events and replays only after the checkpo
   await appendProgressJournal(root, events.slice(0, 2));
   await appendProgressJournal(root, events);
   assert.deepEqual((await readProgressJournal(root, 1)).map(event => event.seq), [2, 3]);
+  await assert.rejects(appendProgressJournal(root, [
+    { seq: 4, event: { at: 4 } }, { seq: 6, event: { at: 6 } },
+  ]), /连续序号/);
+});
+
+test("checkpoint replay seeks backward across large UTF-8 rows without parsing covered history", async t => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "eval-progress-tail-"));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const event = { at: 2, manifest: { config: { text: "评测".repeat(40_000) } } };
+  await writeFile(runProgressFile(root), 'covered history\n' + JSON.stringify({ seq: 1, event: { at: 1 } }) + '\n' +
+    JSON.stringify({ seq: 2, event }) + '\n' + JSON.stringify({ seq: 3, event: { at: 3 } }) + '\n');
+  assert.deepEqual(await readProgressJournal(root, 1), [{ seq: 2, event }, { seq: 3, event: { at: 3 } }]);
+  assert.deepEqual(await readProgressJournal(root, 3), []);
+  await appendProgressJournal(root, [{ seq: 4, event: { at: 4 } }]);
+  assert.deepEqual((await readProgressJournal(root, 2)).map(row => row.seq), [3, 4]);
 });
