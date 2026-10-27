@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {Ajv2020} from 'ajv/dist/2020.js';
 import {ValidationError,type AgentRequest,type ToolAudit} from '@eval/contracts';
-import {comparisonProfile} from './index.js';
+import {comparisonProfile,comparisonSlotChoices} from './index.js';
 import {requestComparisonSubmission} from '../../../../tests/fixtures/comparison-submission.js';
 import type {ComparisonInput,ComparisonResult} from './types.js';
 import example from './fixtures/example.json' with {type:'json'};
@@ -98,4 +98,12 @@ test('formal resource advantage must match measured dominance',()=>{
  const resource=result.decision_basis.comparisons.at(-1)!;
  resource.better_candidates=['B'];
  rejected(()=>comparisonProfile.validate!(request,result,audit),'comparison_resource_direction_invalid');
+});
+
+test('comparison slot payload does not multiply accepted findings by criterion count',()=>{
+ const {request,input}=fixture();problem(input);
+ const before=JSON.stringify(comparisonSlotChoices(request));
+ input.attributions.A.Problem[0]!.reason='完整归因证据'.repeat(10000);
+ assert.equal(JSON.stringify(comparisonSlotChoices(request)),before);
+ assert.equal(input.attributions.A.Problem[0]!.reason.length,60000);
 });

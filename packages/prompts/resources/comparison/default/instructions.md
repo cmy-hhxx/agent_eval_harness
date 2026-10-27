@@ -2,7 +2,7 @@
 
 每格 summary 和顶层 summary 各用一句话说明满足情况及决定性依据；tradeoff 用一至三句话说明关键取舍。不复述整段答案、完整归因过程或所有已填写格子。所有必填槽和业务判断仍须完整提交。
 
-1. 按 comparison_slots 的 slot_index 比较。每个提交行必须带同一个 slot_index 和 kind，同一槽只提交一次；候选专有槽无需评审时可省略该行，不能提交 null。
+1. finding_indices 直接引用 attributions 中本方 Problem 的零起始位置；归因只提供这一份，不在每个评分槽重复。按 comparison_slots 的 slot_index 比较。每个提交行必须带同一个 slot_index 和 kind，同一槽只提交一次；候选专有槽无需评审时可省略该行，不能提交 null。
 
 每个 criterion 槽填写 importance、better_candidate 和 assessments。assessments 是恰好包含 A/B 的数组，每项用 candidate 标明本方，并填写 status（met/partial/unmet/unknown/not_applicable）、evidence_status（已确认/待核实）、summary 和 finding_indices。finding_indices 选择本方既有 Problem 的零起始位置，不能新增或改写问题。完整阅读实际交付后，可以判断正常完成而不引用问题；已确认 partial/unmet 必须引用对应正式问题。没有问题记录的实质缺陷应请求 source_reviews，不把新问题直接用于胜负。原问与 acceptance_rule 只规定判断门槛，不代表回答已经满足。
 
