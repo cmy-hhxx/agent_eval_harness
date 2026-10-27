@@ -468,6 +468,7 @@ export async function runEvaluation(options: RunOptions): Promise<Record<string,
         recovery: state.failure,
         inputs: Object.entries(task.inputIds).map(([name, id]) => ({
           ...manifest.inputs[id],
+          id,
           name,
         })),
         hostUrl,
