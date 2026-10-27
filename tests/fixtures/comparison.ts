@@ -13,7 +13,7 @@ import { sessionProblems, type SessionAttributionResult, type SessionProblem } f
 import type { ComparisonResult, TaskData } from "@eval/workflows/comparison";
 import type { RawInput } from "@eval/workflows/inputs";
 import { comparisonSubmission } from "./comparison-submission.js";
-import type { ComparisonSlot } from "@eval/agents/comparison";
+import type { ComparisonSlot, ComparisonAttribution } from "@eval/agents/comparison";
 import { comparisonWorkflow } from "@eval/workflows/comparison";
 
 export const fakeIdentity: EngineIdentity = {
@@ -222,12 +222,12 @@ export function taskResult(spec: Pick<AttemptSpec, "evaluation" | "prompt" | "in
     const result = comparisonResult(labels);
     result.task_analysis = fixtureAnalysis(material.task_analysis, spec.inputs);
     for(const label of labels){
-      const failed=material.attributions?.[label] && sessionProblems(material.attributions[label]!).length > 0;
+      const failed=(material.attributions?.[label]?.Problem.length ?? 0) > 0;
       result.assessments[label]={meets_core:!failed,core_failure_refs:failed?[result.task_analysis.requirements[0].id]:[],summary:failed?'关键结果错误。':'正确给出结果。'};
     }
     result.decision_basis.comparisons=[...result.task_analysis.requirements,...result.task_analysis.scoring_points,...result.task_analysis.red_flags].map((criterion)=>({
       aspect:criterion.text,criterion_ids:[criterion.id],importance:'high' as const,better_candidates:[],assessments:Object.fromEntries(labels.map(label=>{
-        const defects=material.attributions?.[label] ? sessionProblems(material.attributions[label]!) : [],failed=!result.assessments[label].meets_core;
+        const defects=material.attributions?.[label]?.Problem ?? [],failed=!result.assessments[label].meets_core;
         return [label,{status:failed?'unmet':'met',evidence_status:'已确认',summary:failed?'结果与加法规则不符。':'完成受控要求。',finding_indices:defects.map((_,i)=>i)}];
       }))}));
     result.ranking = [labels.filter((label) => result.assessments[label]!.meets_core),
@@ -285,7 +285,7 @@ const materialOf = (spec: { prompt: string }, revealed?: unknown) =>
     ground_truth: { available: boolean; value: unknown };
     task_analysis: ModelTaskAnalysis;
     candidates: Record<string, { question: string; final_answer: string; final_message_index: number }>;
-    attributions?: Record<string, SessionAttributionResult>;
+    attributions?: Record<string, ComparisonAttribution>;
     answer?: { question: string; final_answer: string; final_message_index: number;
       catalog: { message_index: number; name?: string | null; type: string; role?: string }[];
       norm_directory: { norm_index: number; requirement_index: number | null; evidence: { reference: { evidence_index: number } }[] }[];
@@ -429,15 +429,13 @@ export function draftFor(spec: Pick<AttemptSpec, "evaluation" | "inputs" | "prom
   if(material.answer&&"session_meta" in result) return taskResult(spec,revealed);
   if ("assessments" in result) {
     const choices = (material as unknown as { comparison_slots: { aspect:string; scope:string; optional:boolean; kind:ComparisonSlot["kind"];
-      standards:{text:string}[]; observations:Record<string,{text:string}[]> }[] }).comparison_slots;
+      standards:{text:string}[] }[] }).comparison_slots;
     if (!choices) throw new Error("Comparison fixture requires its program slot directory");
     const analysis = fixtureAnalysis(material.task_analysis, spec.inputs);
     const criteria = [...analysis.requirements,...analysis.scoring_points,...analysis.red_flags];
     const slots: ComparisonSlot[] = choices.map(choice => ({ aspect:choice.aspect,kind:choice.kind,optional:choice.optional,shared:choice.scope === "pair",
       criterion_ids:choice.standards.map(standard => criteria.find(criterion => criterion.text === standard.text)!.id),
-      finding_indices:Object.fromEntries(Object.entries(choice.observations).map(([candidate,observations]) => [candidate,
-        observations.map(observation => material.attributions?.[candidate]
-          ? sessionProblems(material.attributions[candidate]!).findIndex(finding => finding.problem_phenomena === observation.text) : -1)])) }));
+      finding_indices:Object.fromEntries(Object.keys(result.assessments as object).map(candidate => [candidate,[]])) }));
     return comparisonSubmission(result as unknown as ComparisonResult,slots);
   }
   return result;

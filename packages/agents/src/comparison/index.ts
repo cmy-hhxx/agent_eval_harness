@@ -27,7 +27,6 @@ export const comparisonProfile: AgentProfile = {
   evidenceSelections: true,
   resultSchema,
   ...agentPrompt("comparison", toolNames, { fileSubmission: false }),
-  jsonStringSubmission: true,
   toolNames,
   validate: validateEvaluation,
   validateSubmission: (request, _draft, audit) => [

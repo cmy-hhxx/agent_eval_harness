@@ -291,6 +291,10 @@ function bindSourceTask(
   }
   const input = { task_analysis, ground_truth: { available: data.reference !== null, value: reference }, candidates: materials,
     ...(comparisonDraft ? { comparison_draft: comparisonDraft } : {}), attributions };
+  const focus = taskFocus(materials, input.ground_truth,
+    Object.fromEntries(Object.entries(data.candidates).map(([label, candidate]) =>
+      [label, inputs[candidate.input_id] as RawInput])));
+  for (const answer of Object.values(focus.answers)) delete answer.final_answer;
   const binding: AgentBinding = {
     agent: "comparison",
     profile: data.verificationAudit ? "verification" : "default",
@@ -304,9 +308,7 @@ function bindSourceTask(
         })) }, sources, task_analysis as TaskAnalysis)
       : { ...input, task_analysis: taskAnalysisPresentation(task_analysis as TaskAnalysis,
           Object.fromEntries(Object.entries(sources).map(([label,source]) => [label,source.id]))),
-        task_focus: taskFocus(materials, input.ground_truth,
-          Object.fromEntries(Object.entries(data.candidates).map(([label, candidate]) =>
-            [label, inputs[candidate.input_id] as RawInput]))),
+        task_focus: focus,
         comparison_scope: comparisonScope({ input, sources }),
         comparison_slots: comparisonSlotChoices({ input, sources }),
         attributions,

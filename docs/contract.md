@@ -122,7 +122,7 @@ Comparison 按 comparison_slots 显式选择 slot_index 与 kind，提交 import
 |---|---|
 | Criteria、Rewrite、Clustering | `submit_evaluation` 直接对象 |
 | Attribution | 一条回答、公开基准、可选标准答案与过程事实；输出评审总结、问题及证据责任、标准一致性，不读问题库；在工作目录写 JSON 文件后用 `submit_evaluation_file({path})` 提交，修复用 `edit_json` 的 JSON Pointer 局部修改同一文件 |
-| 普通 Comparison | `submit_evaluation({json})` 传完整 JSON 字符串 |
+| 普通 Comparison | `submit_evaluation({...})` 直接传结构化判决，避免整份 JSON 二次转义 |
 | 独立核验 | `inspect_material({path})` 保存首查，随后开放文件提交 |
 
 Rewrite 当前提交 `rewrites: [{id,text}]`，数量、顺序与 ID 由请求的动态 Schema 固定。其他阶段编号及字段约束以各自 submission Schema 和 Profile 为准。
