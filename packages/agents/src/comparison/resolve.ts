@@ -62,8 +62,10 @@ export function resolveComparison(request: AgentRequest, draft: unknown): Compar
       better_candidate: row.better_candidate,
       ...(sourceSlots[row.slot_index].kind === "criterion" ? { assessments: (["A", "B"] as const).map(candidate => {
         const side = candidate.toLowerCase();
-        return { candidate, status: row[`${side}_status`], evidence_status: row[`${side}_evidence`],
-          summary: row[`${side}_summary`], finding_indices: row[`${side}_findings`] };
+        const status = row[`${side}_status`], findings: number[] = row[`${side}_findings`];
+        const evidence_status = status === "unknown" || findings.some(index =>
+          input.attributions[candidate].Problem[index]?.evidence_status === "待核实") ? "待核实" : "已确认";
+        return { candidate, status, evidence_status, summary: row[`${side}_summary`], finding_indices: findings };
       }) } : {}),
     })),
   };

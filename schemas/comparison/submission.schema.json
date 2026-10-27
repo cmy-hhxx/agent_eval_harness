@@ -145,11 +145,9 @@
         "slot_index",
         "importance",
         "a_status",
-        "a_evidence",
         "a_summary",
         "a_findings",
         "b_status",
-        "b_evidence",
         "b_summary",
         "b_findings"
       ],
@@ -181,12 +179,6 @@
             "not_applicable"
           ]
         },
-        "a_evidence": {
-          "enum": [
-            "已确认",
-            "待核实"
-          ]
-        },
         "a_summary": {
           "type": "string",
           "minLength": 1
@@ -206,12 +198,6 @@
             "unmet",
             "unknown",
             "not_applicable"
-          ]
-        },
-        "b_evidence": {
-          "enum": [
-            "已确认",
-            "待核实"
           ]
         },
         "b_summary": {

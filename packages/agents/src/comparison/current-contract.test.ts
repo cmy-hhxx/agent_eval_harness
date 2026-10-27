@@ -66,9 +66,20 @@ test('comparison core failure cannot rest on a low-importance requirement',()=>{
  draft.relative_preference='B';
  rejected(()=>accept(request,draft),'core_failure_unproven');
 });
-test('uncertain attribution evidence cannot be promoted to established comparison evidence',()=>{
+test('comparison derives uncertainty from accepted findings without asking the model to repeat it',()=>{
  const {request,input,draft}=fixture();problem(input,'A','待核实');draft.comparisons[0]!.assessments!.find(item=>item.candidate==='A')!.finding_indices=[0];
- rejected(()=>accept(request,draft),'finding_evidence_strengthened');
+ const before=structuredClone(input.attributions),result=accept(request,draft);
+ assert.equal(result.decision_basis.comparisons[0].assessments.A.evidence_status,'待核实');
+ assert.deepEqual(input.attributions,before);
+});
+test('unknown comparison status mechanically stays unverified and cannot support an advantage',()=>{
+ const {request,draft}=fixture();draft.comparisons[0]!.assessments!.find(item=>item.candidate==='A')!.status='unknown';
+ const flat=flatComparisonSubmission(draft);
+ assert(!Object.hasOwn(flat.comparisons[0],'a_evidence'));
+ assert(!Object.hasOwn(flat.comparisons[0],'b_evidence'));
+ assert.equal(accept(request,draft).decision_basis.comparisons[0].assessments.A.evidence_status,'待核实');
+ draft.comparisons[0]!.better_candidate='B';
+ rejected(()=>accept(request,draft),'comparison_advantage_unproven');
 });
 test('comparison cannot cite another or nonexistent problem position',()=>{
  const {request,draft}=fixture();draft.comparisons[0]!.assessments!.find(item=>item.candidate==='A')!.finding_indices=[19];

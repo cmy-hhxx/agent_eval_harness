@@ -53,7 +53,7 @@ export function flatComparisonSubmission(value: ComparisonSubmission) {
  const {assessments,comparisons,...decision}=value;
  return {...decision,...Object.fromEntries(assessments.flatMap(({candidate,meets_core,core_failure_refs,summary})=>{
   const side=candidate.toLowerCase();return [[`${side}_core`,meets_core],[`${side}_core_refs`,core_failure_refs],[`${side}_summary`,summary]];
- })),comparisons:comparisons.map(({kind: _kind,assessments,...row})=>({...row,...Object.fromEntries((assessments??[]).flatMap(({candidate,status,evidence_status,summary,finding_indices})=>{
-  const side=candidate.toLowerCase();return [[`${side}_status`,status],[`${side}_evidence`,evidence_status],[`${side}_summary`,summary],[`${side}_findings`,finding_indices]];
+ })),comparisons:comparisons.map(({kind: _kind,assessments,...row})=>({...row,...Object.fromEntries((assessments??[]).flatMap(({candidate,status,summary,finding_indices})=>{
+  const side=candidate.toLowerCase();return [[`${side}_status`,status],[`${side}_summary`,summary],[`${side}_findings`,finding_indices]];
  }))}))};
 }

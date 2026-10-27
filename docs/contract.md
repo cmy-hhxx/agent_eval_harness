@@ -127,7 +127,7 @@ Comparison 按 comparison_slots 显式选择 slot_index 与 kind，提交 import
 
 Rewrite 当前提交 `rewrites: [{id,text}]`，数量、顺序与 ID 由请求的动态 Schema 固定。其他阶段编号及字段约束以各自 submission Schema 和 Profile 为准。
 
-Comparison 模型提交采用平铺字段：顶层 `a_core/a_core_refs/a_summary` 与对应的 `b_*`；每个 comparisons 行含 `slot_index/importance/better_candidate` 和 `a_status/a_evidence/a_summary/a_findings`、对应的 `b_*`。资源行只需槽位与重要性。程序绑定行类型并组装正式结果，模型不重复输出 candidate、kind 或嵌套 assessments；落盘判决与统计契约保持不变。
+Comparison 模型提交采用平铺字段：顶层 `a_core/a_core_refs/a_summary` 与对应的 `b_*`；每个 comparisons 行含 `slot_index/importance/better_candidate` 和 `a_status/a_summary/a_findings`、对应的 `b_*`。资源行只需槽位与重要性。证据状态由程序从 status 与引用 Problem 推导：unknown 或引用待核实问题时为待核实，模型不输出 a_evidence/b_evidence。程序绑定行类型并组装正式结果，模型不重复输出 candidate、kind 或嵌套 assessments；落盘判决与统计契约保持不变。
 
 Comparison 判词及其改写中的候选标记和独立 A/B 均按本场盲测映射还原真实组名；已还原组名、A股/A类等业务名称与原始 quote 不做替换。改写输入和回填采用同一映射，不能把裸 A/B 直接当真实组别。续跑或重建报告时也修复已落盘 comparison 及其 rewrite 的展示文本；保留原始判决收据、证据及归因，不重新调用模型。
 

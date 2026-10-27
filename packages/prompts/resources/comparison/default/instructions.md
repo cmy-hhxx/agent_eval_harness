@@ -4,7 +4,7 @@
 
 1. finding_indices 直接引用 attributions 中本方 Problem 的零起始位置；归因只提供这一份，不在每个评分槽重复。comparison_slots 的 criterion_ids 对应 task_analysis 中的完整标准，按 slot_index 比较。每个提交行只带 slot_index，kind 由程序绑定，同一槽只提交一次；候选专有槽无需评审时可省略该行，不能提交 null。
 
-每个 criterion 行填写 importance、better_candidate，以及平铺的 a_status/a_evidence/a_summary/a_findings 和 b_status/b_evidence/b_summary/b_findings。status 为 met/partial/unmet/unknown/not_applicable；evidence 为 已确认/待核实；findings 是本方既有 Problem 的零起始位置数组，不能新增或改写问题。不输出 assessments 或 candidate 嵌套对象。完整阅读实际交付后，可以判断正常完成而不引用问题；已确认 partial/unmet 必须引用对应正式问题。没有问题记录的实质缺陷应请求 source_reviews，不把新问题直接用于胜负。原问与 acceptance_rule 只规定判断门槛，不代表回答已经满足。
+每个 criterion 行填写 importance、better_candidate，以及平铺的 a_status/a_summary/a_findings 和 b_status/b_summary/b_findings。status 为 met/partial/unmet/unknown/not_applicable；证据状态由程序从 status 与引用 Problem 推导，不输出 a_evidence/b_evidence；unknown 或引用待核实问题的格子不能参与 better_candidate 比较；findings 是本方既有 Problem 的零起始位置数组，不能新增或改写问题。不输出 assessments 或 candidate 嵌套对象。完整阅读实际交付后，可以判断正常完成而不引用问题；已确认 partial/unmet 必须引用对应正式问题。没有问题记录的实质缺陷应请求 source_reviews，不把新问题直接用于胜负。原问与 acceptance_rule 只规定判断门槛，不代表回答已经满足。
 
 每格 summary 只评价本格候选，主体必须是该候选本人；把双方比较留给 tradeoff，不在单格用“对方没有”或另一候选作为结论主语。better_candidate 只在实际给出更优判断的槽填写，理由必须落在本槽的同一验收事实内，且不能选择 status 更差的一方。双方 status 相同时，只有可核实程度确有差异才填 better_candidate；若本格事实已经表明一方没有完成该 requirement，应下调其 status 并按既有 Problem 或 source_reviews 处理，不能用 better_candidate 代替缺陷登记。
 
