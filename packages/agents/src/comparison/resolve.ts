@@ -69,18 +69,8 @@ export function resolveComparison(request: AgentRequest, draft: unknown): Compar
   };
   const qualityWinner = value.quality_winner ?? null;
   const labels = Object.keys(input.candidates), slots = comparisonSlots(request);
-  const rowIssues: ValidationIssue[] = [], submittedAssessments = new Map<string, ComparisonResult["assessments"][string]>();
-  for (const [index, row] of value.assessments.entries()) {
-    if (submittedAssessments.has(row.candidate))
-      rowIssues.push({ category: "decision", code: "comparison_assessment_duplicate", path: `/assessments/${index}/candidate`,
-        message: "每个候选只能提交一次核心完成评估。", actual: row.candidate, expected: labels });
-    const { candidate, ...assessment } = row;
-    submittedAssessments.set(candidate, assessment);
-  }
-  for (const candidate of labels) if (!submittedAssessments.has(candidate))
-    rowIssues.push({ category: "decision", code: "comparison_assessment_missing", path: "/assessments",
-      message: "核心完成评估必须逐候选提交一次。", expected: labels });
-  const assessments = Object.fromEntries(submittedAssessments);
+  const rowIssues: ValidationIssue[] = [];
+  const assessments = Object.fromEntries(value.assessments.map(({ candidate, ...assessment }) => [candidate, assessment]));
   const reviews = requiredSourceReviews(request);
   const conflicts = value.scope_conflicts ?? [], conflictIssues: ValidationIssue[] = [], selected = new Set<number>();
   if (conflicts.length && (qualityWinner !== null || value.relative_preference !== null))
@@ -139,20 +129,7 @@ export function resolveComparison(request: AgentRequest, draft: unknown): Compar
     if (slot.kind === "resource") rowAssessments = Object.fromEntries(labels.map(label => [label,
       { summary: comparisonResourceText(comparisonResourceMetrics(input,label)), finding_indices:[],
         ...comparisonSlotCellState(input,label,slot) }]));
-    else {
-      const cells = new Map<string, ComparisonResult["decision_basis"]["comparisons"][number]["assessments"][string]>();
-      for (const [cellIndex, cell] of (row.assessments ?? []).entries()) {
-        if (cells.has(cell.candidate))
-          rowIssues.push({ category: "decision", code: "comparison_cell_duplicate", path: `/comparisons/${index}/assessments/${cellIndex}/candidate`,
-            message: "同一槽位内每个候选只能提交一次评估。", actual: cell.candidate, expected: labels });
-        const { candidate, ...assessment } = cell;
-        cells.set(candidate, assessment);
-      }
-      for (const label of labels) if (!cells.has(label))
-        rowIssues.push({ category: "decision", code: "comparison_cell_missing", path: `/comparisons/${index}/assessments`,
-          message: "同一槽位须逐候选提交评估。", expected: labels });
-      rowAssessments = Object.fromEntries(cells);
-    }
+    else rowAssessments = Object.fromEntries(row.assessments!.map(({ candidate, ...assessment }) => [candidate, assessment]));
     const resolved = { aspect: slot.aspect, criterion_ids: [...slot.criterion_ids], importance: row.importance,
       better_candidates: betterCandidate ? [betterCandidate] : [],
       assessments: rowAssessments };
