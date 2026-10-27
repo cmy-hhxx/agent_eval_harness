@@ -157,7 +157,7 @@ test("configuration composes layered files and resolves bound models", async () 
   assert.equal(host.models.bindings.criteria?.profile, "judge");
   assert.equal(host.models.bindings.comparison?.profile, "judge");
   assert.equal(host.models.bindings.rewrite?.profile, "judge");
-  assert.equal(host.models.models.judge?.thinking, "medium");
+  assert.equal(host.models.models.judge?.thinking, "low");
   assert.equal(host.evaluation.execution.concurrency, 8);
   assert.deepEqual(host.evaluation.rewrite, { attribution: true, comparison: true, comparisonItems: true, clustering: true });
   assert.equal(host.evaluation.output.path, "/mnt/fin_bench/eval_data/0_wencai/eval_output/0_daily_eval");
@@ -173,7 +173,7 @@ test("configuration composes layered files and resolves bound models", async () 
   for (const stage of ["criteria", "attribution", "comparison", "rewrite", "clustering"]) {
     assert.equal(modelForStage(stage).model, "your-gateway-model-id");
     assert.equal(modelForStage(stage).maxOutputTokens, 32768);
-    const thinking = stage === "attribution" ? "high" : stage === "rewrite" ? "low" : "medium";
+    const thinking = "low";
     assert.equal(modelForStage(stage).thinking, thinking);
     assert.equal(unconfigured(stage).thinking, thinking, "stage settings remain explicit when the profile uses its default");
   }
@@ -182,7 +182,7 @@ test("configuration composes layered files and resolves bound models", async () 
     models: { ...resolved.models.models, judge: { ...resolved.models.models.judge!, thinking: "high" } },
     bindings: { ...resolved.models.bindings, comparison: { ...resolved.models.bindings.comparison, thinking: "low" } },
   });
-  assert.equal(overridden("attribution").thinking, "high", "explicit profile reasoning is preserved");
+  assert.equal(overridden("attribution").thinking, "low", "stage reasoning overrides the profile default");
   assert.equal(overridden("comparison").thinking, "low", "stage reasoning overrides the profile default");
   assert.equal(overridden("rewrite").thinking, "low", "polish stays low even when the judge profile is high");
   await assert.rejects(loadComparisonConfig(file, { channels: {}, agent: {}, automation: { channels: [] }, environment: {} }), /Unknown.*channel/);
