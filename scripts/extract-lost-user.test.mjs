@@ -1,5 +1,5 @@
 import { strict as assert } from "node:assert";
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
@@ -191,6 +191,15 @@ test("extract rebuilds the channel tree and reports rejects", async () => {
       assert.equal(incremental.duplicates, 1);
       assert.equal(incremental.files["aime_expert/2026-10-10"], 2);
       assert.equal((await readFile(path.join(target, "aime_expert/2026-10-10.jsonl"), "utf8")).trim().split("\n").length, 2);
+
+      // Archiving moves the package but keeps its name, so the manifest still
+      // matches and nothing is extracted twice.
+      const archived = path.join(source, "3_processed_archives", "20261010");
+      await mkdir(archived, { recursive: true });
+      for (const name of [first, second]) await rename(path.join(source, name), path.join(archived, name));
+      const afterArchive = await extract({ source, target, sevenZip: stub, quiet: true, log: () => {} });
+      assert.equal(afterArchive.unchanged, true);
+      assert.equal(afterArchive.archives, 2);
     } finally {
       delete process.env.STUB_DATA;
     }

@@ -47,6 +47,7 @@ const fastFiles = [
   "scripts/aime-slim.test.mjs",
   "scripts/archive-processed-packages.test.mjs",
   "scripts/extract-lost-user.test.mjs",
+  "scripts/watch-lost-user.test.mjs",
   "scripts/benchmark.test.mjs",
   "data_service/dashboard.test.mjs",
 ];
@@ -75,6 +76,7 @@ const repositoryTests = [
   "scripts/attribution-review-tree.test.mjs",
   "scripts/extract-lost-user.test.mjs",
   "scripts/attribution-review-view.test.mjs",
+  "scripts/watch-lost-user.test.mjs",
   "scripts/mongo-contracts.test.mjs",
   "scripts/benchmark.test.mjs",
   "scripts/publish.test.mjs",

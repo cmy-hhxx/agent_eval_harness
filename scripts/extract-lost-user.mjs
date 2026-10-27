@@ -449,17 +449,33 @@ function caseIdOf(prefix) {
   return matched ? matched[1] : null;
 }
 
-/** Signatures of the packages currently in the inbox. */
-async function archiveSignatures(source, archives) {
+/**
+ * Every package under the inbox, keyed by file name. Processed packages keep
+ * their name when the watcher moves them under `3_processed_archives/`, so the
+ * same package is still found after archiving and never re-published.
+ */
+async function scanPackages(source) {
+  const packages = new Map();
+  for (const entry of await readdir(source, { withFileTypes: true, recursive: true })) {
+    if (!entry.isFile() || !/\.7z$/i.test(entry.name)) continue;
+    if (packages.has(entry.name)) throw new Error(`收包目录存在同名压缩包：${entry.name}`);
+    packages.set(entry.name, path.join(entry.parentPath ?? entry.path ?? source, entry.name));
+  }
+  if (!packages.size) throw new Error(`收包目录没有 .7z：${source}`);
+  return packages;
+}
+
+/** Signatures of the given packages, keyed by file name. */
+async function archiveSignatures(packages, names) {
   const signatures = {};
-  for (const name of archives) {
-    const info = await stat(path.join(source, name));
+  for (const name of names) {
+    const info = await stat(packages.get(name));
     signatures[name] = { size: info.size, mtimeMs: info.mtimeMs };
   }
   return signatures;
 }
 
-async function readState(target) {
+export async function readState(target) {
   try {
     const value = JSON.parse(await readFile(path.join(target, STATE_NAME), "utf8"));
     if (!isObject(value) || value.version !== 2 || !isObject(value.archives) || !isObject(value.files)) return null;
@@ -477,9 +493,9 @@ async function readState(target) {
  * removed, a published file shorter than recorded) falls back to a full rebuild.
  * A file longer than recorded is a partially appended run and is truncated first.
  */
-async function planRun({ source, target, archives, state }) {
+async function planRun({ packages, target, archives, state }) {
   if (!state) return { mode: "full" };
-  const signatures = await archiveSignatures(source, archives);
+  const signatures = await archiveSignatures(packages, archives);
   if (Object.keys(state.archives).some((name) => !signatures[name] ||
       signatures[name].size !== state.archives[name].size || signatures[name].mtimeMs !== state.archives[name].mtimeMs)) {
     return { mode: "full" };
@@ -508,7 +524,7 @@ async function planRun({ source, target, archives, state }) {
  * Extract and normalize the archives assigned to one worker.
  * Chunk files are written under `staging`; nothing in the target is touched.
  */
-async function processArchives({ source, staging, sevenZip, rank, names, known = {} }) {
+async function processArchives({ staging, sevenZip, rank, entries, known = {} }) {
   const summary = { rows: 0, accepted: 0, duplicates: 0, invalid: 0, skipped: new Map(), files: [] };
   const streams = new Map();
   const identities = new Set();
@@ -557,8 +573,7 @@ async function processArchives({ source, staging, sevenZip, rank, names, known =
     summary.accepted += 1;
   };
 
-  for (const name of names) {
-    const archive = path.join(source, name);
+  for (const { name, path: archive } of entries) {
     const members = await membersOf(sevenZip, archive);
     if (!members.length) throw new Error(`${name}: 压缩包没有 JSONL 成员`);
     for (const member of members) {
@@ -686,15 +701,12 @@ export async function extract({
   concurrency = DEFAULT_CONCURRENCY, log = console.log,
 } = {}) {
   const started = Date.now();
-  const archives = (await readdir(source, { withFileTypes: true }))
-    .filter((entry) => entry.isFile() && /\.7z$/i.test(entry.name))
-    .map((entry) => entry.name)
-    .sort();
-  if (!archives.length) throw new Error(`收包目录没有 .7z：${source}`);
+  const packages = await scanPackages(source);
+  const archives = [...packages.keys()].sort();
 
   if (dryRun) {
     for (const name of archives) {
-      const file = path.join(source, name);
+      const file = packages.get(name);
       const size = (await stat(file)).size;
       const members = await membersOf(sevenZip, file);
       log(`${name} (${size} bytes)`);
@@ -705,7 +717,7 @@ export async function extract({
 
   await mkdir(target, { recursive: true });
   const state = await readState(target);
-  const plan = refresh ? { mode: "full" } : await planRun({ source, target, archives, state });
+  const plan = refresh ? { mode: "full" } : await planRun({ packages, target, archives, state });
   if (plan.mode === "current") {
     const files = Object.fromEntries(Object.entries(state.files).map(([key, entry]) => [key, entry.rows]));
     return {
@@ -716,15 +728,15 @@ export async function extract({
 
   const pending = plan.mode === "incremental" ? plan.pending : archives;
   const known = plan.mode === "incremental" ? plan.known : {};
-  const signatures = await archiveSignatures(source, pending);
+  const signatures = await archiveSignatures(packages, pending);
   const staging = await mkdtemp(path.join(tmpdir(), "lost-user-"));
   try {
     const workers = Math.max(1, Math.min(concurrency, pending.length));
     // Contiguous slices keep rank order equal to archive order.
     const buckets = Array.from({ length: workers }, () => []);
-    pending.forEach((name, rank) => buckets[Math.floor(rank * workers / pending.length)].push({ rank, name }));
+    pending.forEach((name, rank) => buckets[Math.floor(rank * workers / pending.length)].push({ rank, name, path: packages.get(name) }));
     const summaries = await Promise.all(buckets.map((bucket, index) => startWorker({
-      source, staging, sevenZip, rank: index, names: bucket.map((entry) => entry.name), known,
+      staging, sevenZip, rank: index, entries: bucket, known,
     })));
 
     const groups = new Map();
