@@ -6,6 +6,8 @@ TypeScript Host 编排评测任务，Pi Worker 执行模型与工具调用。Att
 
 只准备待评测数据、不启动评测或外部清洗：在服务器执行 `bash auto_renew.sh`，持续处理问财与 AIME 日常收包、归档、清洗完成监控和瘦身交付。支持存量补齐、断点续跑与统一日志，运行方法见[日常数据自动更新](docs/auto-renew.md)。
 
+临时按问财 → 流失用户 → AIME 日常分配两路评测额度，并持续接收流失增量，见[夜间三路评测](docs/night-evaluation.md)。
+
 归因正式文件一行对应一条输入记录，包含 `session_meta`、`turns[]`、`session_summary` 和 `session_problem`。完整会话输入保留全部 trace；按 trace 抓取的记录可共享 `session_id` 并独立落盘，详见 [Attribution](docs/attribution.md)。每个 turn 只保留 `meta`、`summary`、`problem`、`is_correct`、`correct_reason`；组件与 turn 汇总是内部任务，只存在于运行状态和收据中。
 
 ## 远程工作台
