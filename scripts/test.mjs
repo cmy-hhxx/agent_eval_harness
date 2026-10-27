@@ -44,6 +44,7 @@ const fastFiles = [
   "dist/packages/workflows/src/review/public-trace.test.js",
   "dist/tests/architecture/dependencies.test.js",
   "scripts/attribution-review-view.test.mjs",
+  "scripts/extract-lost-user.test.mjs",
   "scripts/benchmark.test.mjs",
   "data_service/dashboard.test.mjs",
 ];
@@ -69,6 +70,7 @@ const concurrency = Math.min(2, availableParallelism());
 const repositoryTests = [
   "scripts/attribution-review-tree.test.mjs",
   "scripts/attribution-review-view.test.mjs",
+  "scripts/extract-lost-user.test.mjs",
   "scripts/mongo-contracts.test.mjs",
   "scripts/benchmark.test.mjs",
   "scripts/publish.test.mjs",
