@@ -9,6 +9,7 @@
 3. 恢复热日志和 progress 投影：只允许补充缺失的导出引用，拒绝判词或状态冲突；热库丢失时不复用事件序号；本次配置在重放后生效，旧 receipt 保留原版本。
 4. 运行 typecheck、快速回归、完整回归与 Worker/SDK 集成检查。分别记录本次回归和既有失败，未全绿不能声明正式验收通过。
 5. 用下列固定样本验证交付与耗时，复核问题、证据和结论。随后逐项减少重复材料传递、文件写入和无效模型往返；每次只改一个变量，并在相同样本与配置上比较。
+6. 小样本成功后，冻结足够多的问财、AIME session，分别按 8 → 16 → 32 → 64 并发压测。每档保持相同样本、模型、推理强度与修复额度；只有完整 session 成功率、质量复核和吞吐均满足要求才继续升档。若 429、超时、恢复或校验失败增加，先定位瓶颈，不直接加并发。可调度任务不足的档位不计作该并发的验证。
 
 ## 固定小样本
 
@@ -24,6 +25,6 @@ node dist/apps/host/src/cli.js preflight --config configs/host.json --config con
 node dist/apps/host/src/cli.js run --config configs/host.json --config configs/benchmarks/aime-attribution-reliability.json --run-id aime-reliability-baseline --test-eval --debug
 ```
 
-每轮记录 Git commit、完整生效配置、输入业务 ID、run ID、成功 session 数、失败类型、端到端耗时、各阶段 p50/p95、模型请求/输出 token、工具调用、内容修复次数、Host 校验与落盘时间。未结束 attempt 单列，不能计为成功或作为零耗时。串行执行两种来源，避免争用配额影响比较。
+每轮记录 Git commit、完整生效配置、输入业务 ID、run ID、成功 session 数、失败类型、端到端耗时、各阶段 p50/p95、模型请求/输出 token、工具调用、内容修复次数、Host 校验与落盘时间。未结束 attempt 单列，不能计为成功或作为零耗时。串行执行两种来源，避免争用配额影响比较。提示词或材料优化使用新的 run ID，不在已完成的 baseline 上续跑来比较性能；同 run 续跑只用于验证中断恢复和配置生效。
 
 质量复核检查每个问题是否有原文依据、责任组件是否准确、证据坐标是否有效，以及是否漏掉关键问题。JSON 和 Schema 通过只是结构检查，不能替代质量复核。性能改动须同时比较完整 session 的结果与失败率；减少推理强度、截断有效证据、跳过长 session 均不作为本轮优化手段。

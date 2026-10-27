@@ -91,9 +91,16 @@ export function bindAttribution(task: PlannedTask, inputs: Record<string, unknow
     final_index: trace.final_index ?? data.candidate.final_index } : data.candidate;
   if (task.stage === "attribution-component") {
     const binding = bindAttributionMaterial(traceCandidate, traceRaw, analysis);
+    const navigation = binding.materialNavigation!.answer as { responsibility_choices: {
+      component: string; kind: string; message_index: number | null; transition_index: number;
+    }[] };
+    const choices = navigation.responsibility_choices.filter(choice => choice.component === data.component);
+    const entrypoints = choices.slice(0, 8).map(choice => ({ component: choice.component, kind: choice.kind, message_index: choice.message_index,
+        read_request: { tool: "read_responsibility_chain", arguments: { candidate: "answer", transition_index: choice.transition_index } } }));
     return { ...binding, profile: "component", request: { ...binding.request, input: { ...binding.request.input,
       component: data.component, trace_index: traceIndex } }, modelInput: { ...(binding.modelInput ?? binding.request.input),
-      component: data.component, trace_index: traceIndex } };
+      component: data.component, trace_index: traceIndex, component_entrypoints: entrypoints,
+      component_entrypoints_total: choices.length } };
   }
   if (task.stage === "attribution-trace") {
     return { agent: "attribution", profile: "trace", request: { sources: {}, input: {

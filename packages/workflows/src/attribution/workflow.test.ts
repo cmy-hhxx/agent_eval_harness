@@ -129,6 +129,39 @@ test("an attribution plan fans out one component task per trace component and on
   assert.equal((component.request.input as { trace_index?: number }).trace_index, 0);
 });
 
+test("component entrypoints stay bounded while preserving every source call and the full navigation", async t => {
+  const messages: RawInput["messages"] = [{ type: "user_question", role: "user", content: "核对十次查询。" }];
+  for (let index = 0; index < 10; index++) messages.push(
+    { type: "tool_call", name: "finquery", call_id: `query-${index}`, input: { query: `Q${index}` } },
+    { type: "tool_result", name: "finquery", call_id: `query-${index}`, output: { rows: [{ value: index }] } });
+  messages.push({ type: "llm_turn", input_messages: [{ role: "user", content: "核对十次查询。" }],
+    output: [{ role: "assistant", content: "查询完成。" }] }, { type: "final_answer", content: "查询完成。" });
+  const f = await fixtureConfig([[{ batch_id: "batch", case_id: "queries", messages }], [], [], []]);
+  f.config.inputs.versions[0]!.adapter = "b";
+  t.after(() => rm(f.directory, { recursive: true, force: true }));
+  const plan = await planAttribution({ ...f.config, workflow: "attribution", inputs: { ...f.config.inputs,
+    versions: f.config.inputs.versions.slice(0, 1) } });
+  assert.deepEqual(plan.summary.issues, []);
+  const task = plan.tasks.find(task => (task.data as AttributionTaskData).component === "finquery 取数服务")!;
+  const directed = bindAttribution(task, plan.inputs, {});
+  const entries = directed.modelInput!.component_entrypoints as { component: string; message_index: number;
+    read_request: { tool: string; arguments: { candidate: string; transition_index: number } } }[];
+  assert.equal(entries.length, 8, "large sessions must not copy the whole component directory into the prompt");
+  assert.equal(directed.modelInput!.component_entrypoints_total, 10);
+  const navigation = directed.materialNavigation!.answer as { responsibility_choices: { component: string; transition_index: number }[] };
+  assert.equal(navigation.responsibility_choices.filter(choice => choice.component === "finquery 取数服务").length, 10);
+  assert(navigation.responsibility_choices.some(choice => choice.component !== "finquery 取数服务"),
+    "cross-component context remains available for causal checks");
+  assert.deepEqual((directed.request.sources.answer!.value as RawInput).messages, messages);
+  for (const entry of entries) {
+    assert.equal(entry.component, "finquery 取数服务");
+    assert.equal(entry.read_request.tool, "read_responsibility_chain");
+    assert.equal(entry.read_request.arguments.candidate, "answer");
+    assert(navigation.responsibility_choices.some(choice => choice.component === entry.component &&
+      choice.transition_index === entry.read_request.arguments.transition_index));
+  }
+});
+
 test("planning filters execution locators and always creates one final-generation task per trace", () => {
   const candidate = { input_id: "11111111-1111-4111-8111-111111111111", case_id: "case", turns: [{
     trace_index: 0, trace_id: "trace", question: "问题", final_index: 1, component_names: ["llm-call-7", "span-4f26f1fabe23fc3c", "planner-search"],
