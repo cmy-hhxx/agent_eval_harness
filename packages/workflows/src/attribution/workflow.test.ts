@@ -146,6 +146,10 @@ for (const workflow of [attributionWorkflow, comparisonWorkflow] as WorkflowDefi
       for (const task of components) {
         const dependencies = Object.fromEntries(Object.entries(task.dependencies).map(([key, id]) => [key, state.receipts[id]]));
         const binding = workflow.bind(task, plan.inputs, dependencies, { tasks: plan.tasks });
+        if (resume && workflow.id === "attribution")
+          for (const [name, id] of Object.entries(task.inputIds))
+            assert.equal(state.manifest.inputs[id]?.id, binding.request.sources[name]!.id,
+              "resumed task sources must retain their manifest IDs before dispatch");
         const prepared = agents.prepare(binding), raw = binding.request.sources.answer!.value as RawInput;
         const messageIndex = raw.messages.length - 1;
         const source = evidenceSources(raw.messages[messageIndex]).find(source => source.kind === "text")!;

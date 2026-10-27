@@ -207,7 +207,9 @@ const codec: RunCodec<Checkpoint> = {
         exported = reference ? { ...reference, row: read(reference) } : undefined;
         receipts[id] = { ...saved, evaluation: saved.evaluation ?? structuredClone(exported!.row), audit: saved.audit ?? { calls: 0, requiredReadCalls: 0, traceReads: [], viewedImages: [], calculations: [], artifacts: [] }, ...(exported ? { exported } : {}) }; }
     }
-    return { manifest: { ...checkpoint.manifest, tasks, states, inputs: {}, inputCatalog: Object.values(checkpoint.inputs) }, receipts,
+    return { manifest: { ...checkpoint.manifest, tasks, states,
+      inputs: Object.fromEntries(Object.keys(checkpoint.inputs).map(id => [id, { id, name: id }])),
+      inputCatalog: Object.values(checkpoint.inputs) }, receipts,
       usage: checkpoint.usage, recordedAttempts: checkpoint.recordedAttempts };
   },
 };
