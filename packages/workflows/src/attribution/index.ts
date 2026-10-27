@@ -1,7 +1,7 @@
 import path from "node:path";
 import { randomUUID } from "node:crypto";
 import { Ajv2020 } from "ajv/dist/2020.js";
-import { canonical, type AgentBinding, type JsonObject, type PlannedTask, type RunManifest, type RunState, type SubmissionReceipt, type TaskAnalysis, type WorkflowDefinition, type WorkflowScheduling } from "@eval/contracts";
+import { canonical, resolveEvidenceSelection, type AgentBinding, type JsonObject, type PlannedTask, type RunManifest, type RunState, type SubmissionReceipt, type TaskAnalysis, type WorkflowDefinition, type WorkflowScheduling } from "@eval/contracts";
 import { createRunRepository, readJson, type RunCodec } from "@eval/data";
 import { attributionComponentLabel, type ComponentReviewResult, type TraceAttributionResult } from "@eval/agents/attribution";
 import { collectInputs, contentText, loadRunInputs, normalizeInput, normalizeTraceInput, type Candidate, type EvaluationConfig } from "@eval/workflows/inputs";
@@ -145,7 +145,14 @@ export const attributionWorkflow: WorkflowDefinition = {
   advance(task, receipt, _state, inputs) {
     if (task.stage === "attribution-component") {
       const data = task.data as AttributionTaskData, session = inputs[data.candidate.input_id];
-      validateOriginalAttributionEvidence(receipt.evaluation, { [data.candidate.input_id]: normalizeTraceInput(session, data.traceIndex ?? 0) }, receipt.audit, receipt.submitted);
+      const submitted = receipt.submitted as { problems: { evidence: { index: number }[] }[] };
+      const evaluation = receipt.evaluation as ComponentReviewResult;
+      // Public results omit internal IDs; recover them from the submitted selections before checking original bytes.
+      const evidence = { problems: evaluation.problems.map((problem, i) => ({ evidence: problem.evidence.map((item, j) => ({
+        ...item, ...resolveEvidenceSelection(receipt.audit.evidenceBank ?? [],
+          { evidence_index: submitted.problems[i].evidence[j].index }, `/problems/${i}/evidence/${j}/index`),
+      })) })) };
+      validateOriginalAttributionEvidence(evidence, { [data.candidate.input_id]: normalizeTraceInput(session, data.traceIndex ?? 0) }, receipt.audit, receipt.submitted);
     }
     return { tasks: [] };
   },

@@ -1,12 +1,56 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { raw, sessionRaw } from "../../../../tests/fixtures/comparison.js";
-import { normalizeInput } from "./normalize.js";
+import { normalizeInput, normalizeTraceInput } from "./normalize.js";
 import { adapt } from "./records.js";
 import { originalAnswerUsage } from "../comparison/experience.js";
 import { answerTurnContexts, normativeSources, originalUserTimestamp } from "@eval/tools";
 
 const version = { id: "independent", name: "Independent", adapter: "a", sources: [] };
+
+function pooledTrace() {
+  const pool = [{ role: "system", content: "核对数据。" }, { role: "user", content: "收入是多少？" },
+    { role: "tool", content: "收入 42 亿元。" }];
+  const tools = [{ type: "function", function: { name: "finquery", parameters: { type: "object" } } }];
+  const messages = [{ type: "user_question", content: "收入是多少？" },
+    { type: "llm_turn", input_messages: { messages: [pool[0], pool[1]], tools, extra: "keep" }, output: [] },
+    { type: "llm_turn", input_messages: [pool[0], pool[1], pool[2]], output: [{ role: "assistant", content: "42 亿元。" }] },
+    { type: "final_answer", content: "42 亿元。" }];
+  const slim = { messages: messages.map((message, index) => index === 1
+    ? { ...message, input_messages: { messages: [0, 1], tools: 0, extra: "keep" } }
+    : index === 2 ? { ...message, input_messages: [0, 1, 2] } : message), message_pool: pool, tool_sets: [tools] };
+  return { messages, slim };
+}
+
+test("slim message pools restore exact evidence paths and share repeated snapshots without changing the source", () => {
+  const { messages, slim } = pooledTrace(), before = structuredClone(slim);
+  const flat = normalizeInput(slim);
+  assert.deepEqual(flat.messages, messages);
+  assert.equal(JSON.stringify(flat.messages), JSON.stringify(messages), "JSON parent offsets and property order must survive expansion");
+  assert.equal(Object.hasOwn(flat, "message_pool"), false);
+  assert.equal(Object.hasOwn(flat, "tool_sets"), false);
+  const first = flat.messages[1].input_messages as { messages: unknown[] }, second = flat.messages[2].input_messages as unknown[];
+  assert.equal(first.messages[0], second[0], "shared messages are not deep-copied for every model turn");
+  const source = { case_id: "pooled", meta: {}, traces: [{ ...slim, meta: { trace_id: "first" } },
+    { messages, meta: { trace_id: "second" } }] };
+  for (const index of [0, 1]) assert.deepEqual(normalizeTraceInput(source, index).messages, messages);
+  assert.deepEqual(slim, before);
+  assert.deepEqual(normalizeInput(flat), flat);
+  const contexts = answerTurnContexts(flat);
+  assert.deepEqual(contexts, answerTurnContexts({ messages }));
+});
+
+test("slim input rejects dangling, fractional and malformed references instead of losing evidence", () => {
+  for (const reference of [-1, 3, 1.5, "0", null, {}]) {
+    const { slim } = pooledTrace();
+    slim.messages[2].input_messages = [reference] as never;
+    assert.throws(() => normalizeInput(slim), /message_pool/u);
+  }
+  const { slim } = pooledTrace();
+  (slim.messages[1].input_messages as { tools: number }).tools = 2;
+  assert.throws(() => normalizeInput(slim), /tool_sets/u);
+  assert.throws(() => normalizeInput({ messages: slim.messages, message_pool: {} }), /message_pool/u);
+});
 
 test("a single trace without timing uses explicit session milliseconds without replacing trace values", () => {
   const source = sessionRaw();
@@ -32,7 +76,8 @@ test("single-trace input selects its message format independently of the configu
     assert.equal(record.final_index, 1);
     assert.equal(record.question, "计算2+2");
     assert.equal(record.reference, "4");
-    assert.equal(record.trace_id, "trace-q1");
+    assert.equal(record.trace_id, "session-trace");
+    assert.equal(record.turns?.[0].trace_id, "trace-q1");
     assert.equal(record.llm, "session-model");
     assert.equal(record.answer_timing.finish_seconds, 1.2);
     const openai = { ...source, traces: [{ ...source.traces[0], messages: raw().messages }] };
@@ -42,7 +87,7 @@ test("single-trace input selects its message format independently of the configu
   assert.equal(material.messages, source.traces[0].messages);
   assert.equal(material.request_time, undefined, "trace timestamp is not a request timestamp");
   assert.equal(originalUserTimestamp(material), null);
-  assert.equal(originalAnswerUsage(material).total_tokens, 30, "trace usage overrides session totals");
+  assert.equal(originalAnswerUsage(normalizeTraceInput(material, 0)).total_tokens, 30, "trace usage overrides session totals in the trace view");
   assert.equal(material.turns?.length, 1, "session turn directory stays addressable");
   assert.equal(material.turns?.[0]?.messages, source.traces[0].messages);
   assert.deepEqual(source.traces, before.traces, "source content and message indices stay intact");

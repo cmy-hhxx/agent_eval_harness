@@ -17,7 +17,7 @@ function trace(sessionId: string, question: string, answer: string, tools: strin
     meta: { trace_id: `${sessionId}-trace-${question}`, session_id: sessionId, n_messages: 4, tool_names_text: tools, skill_names_text: "" },
     messages: [
       { type: "user_question", role: "user", content: question },
-      { type: "llm_turn", name: "expert", input_messages: [{ role: "user", content: question }],
+      { type: "llm_turn", name: "expert", system_prompt: "PRIVATE_SYSTEM_SENTINEL", input_messages: [{ role: "user", content: question }],
         output: [{ role: "assistant", content: "", tool_calls: [{ id: `call-${question}`, function: { name: tools.split(",")[0], arguments: "{}" } }] }] },
       { type: "tool_result", name: tools.split(",")[0], output: { rows: [] } },
       { type: "final_answer", role: "assistant", content: answer },
@@ -26,9 +26,12 @@ function trace(sessionId: string, question: string, answer: string, tools: strin
 }
 
 function session(sessionId = "session-1"): RawInput {
+  const first = trace(sessionId, "第一问", "第一答", "FinQuery,Search");
   return { batch_id: "batch", case_id: sessionId, has_standard_answer: false,
     meta: { session_id: sessionId, case_id: sessionId, n_traces: 2, n_messages: 8 },
-    traces: [trace(sessionId, "第一问", "第一答", "FinQuery,Search"), trace(sessionId, "第二问", "第二答", " web_search ")] } as unknown as RawInput;
+    traces: [{ ...first, message_pool: [{ role: "user", content: "第一问" }],
+      messages: first.messages.map((message, index) => index === 1 ? { ...message, input_messages: [0] } : message) },
+      trace(sessionId, "第二问", "第二答", " web_search ")] } as unknown as RawInput;
 }
 
 async function fixture(t: TestContext) {
@@ -97,7 +100,19 @@ for (const workflow of [attributionWorkflow, comparisonWorkflow] as WorkflowDefi
         await assert.rejects(store.accept({ ...submission, evaluation: { problems: [{ ...problem,
           evidence: [{ index: bank.length + 1, reason: "不存在的证据不能接受。" }] }] } }), ValidationError);
         assert.equal(await store.receipt(task.id), undefined);
-        const receipt = await store.accept(submission);
+        const projectedSource = evidenceSources(raw.messages[1]).find(source => source.path === "/system_prompt")!;
+        const projected = cite(binding.request.sources.answer!.id, 1, projectedSource, 0, projectedSource.text.length);
+        const projectedBank = [...bank, projected.evidence_id];
+        await store.registerEvidenceBank({ taskId: task.id, attemptId: spec.attemptId, evidenceBank: projectedBank });
+        await assert.rejects(store.accept({ ...submission, audit: { ...emptyAudit(), evidenceBank: projectedBank },
+          evaluation: { problems: [{ ...problem, evidence: [{ index: projectedBank.length, reason: "展示占位符不能证明原始记录缺失。" }] }] } }), error => {
+          assert(error instanceof ValidationError);
+          assert(error.issues?.some(issue => issue.code === "evidence_original_scope" && issue.path === "/problems/0/evidence/0/index"));
+          assert(!JSON.stringify(error.issues).includes("PRIVATE_SYSTEM_SENTINEL"));
+          return true;
+        });
+        assert.equal(await store.receipt(task.id), undefined);
+        const receipt = await store.accept({ ...submission, audit: { ...submission.audit, evidenceBank: projectedBank } });
         assert.equal(receipt.status, "succeeded");
         assert.equal((await store.receipt(task.id))!.submissionId, submission.submissionId);
         assert.equal(state.manifest.states[task.id]!.status, "succeeded");

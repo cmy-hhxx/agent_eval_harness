@@ -42,6 +42,8 @@ const fastFiles = [
   "dist/packages/tools/src/required-reading.test.js",
   "dist/packages/workflows/src/comparison/attribution-contract.test.js",
   "dist/packages/workflows/src/attribution/workflow.test.js",
+  "dist/packages/workflows/src/inputs/normalize.test.js",
+  "dist/packages/workflows/src/comparison/instruction-review.test.js",
   "dist/packages/workflows/src/comparison/optional-verification.test.js",
   "dist/packages/workflows/src/comparison/relative-preference.test.js",
   "dist/packages/workflows/src/comparison/simple-flow.test.js",
