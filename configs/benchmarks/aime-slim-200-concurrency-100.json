@@ -99,9 +99,9 @@
       {
         "model": "aime_fast",
         "batch_id": "2026-10-22",
-        "case_id": "thread_099004b5c2c146e3ac5a79b0189de5a2",
+        "case_id": "thread_e5147eebef354312ba6cf08803cbb6f0",
         "input_file": "/mnt/fin_bench/eval_data/1_aime/4_daily_eval_slim/aime_fast/2026-10-22.jsonl",
-        "input_index": 158
+        "input_index": 153
       },
       {
         "model": "aime_fast",
@@ -120,9 +120,9 @@
       {
         "model": "aime_fast",
         "batch_id": "2026-10-22",
-        "case_id": "thread_d6d9947092994d498d23e37f4fec72f8",
+        "case_id": "thread_c69e108b1fa64eeaa40133208234cdc0",
         "input_file": "/mnt/fin_bench/eval_data/1_aime/4_daily_eval_slim/aime_fast/2026-10-22.jsonl",
-        "input_index": 26
+        "input_index": 100
       },
       {
         "model": "aime_fast",
@@ -547,16 +547,16 @@
       {
         "model": "aime_fast",
         "batch_id": "2026-10-23",
-        "case_id": "thread_977ef04731064ae69043f029c2340bf8",
+        "case_id": "thread_a5cb4d34e9f74966985d893805f4bbb1",
         "input_file": "/mnt/fin_bench/eval_data/1_aime/4_daily_eval_slim/aime_fast/2026-10-23.jsonl",
-        "input_index": 2407
+        "input_index": 289
       },
       {
         "model": "aime_fast",
         "batch_id": "2026-10-23",
-        "case_id": "thread_a3648fe1513a456eb2159ea57cd6b232",
+        "case_id": "thread_f1439965a5244864834e730cb0ad7b9f",
         "input_file": "/mnt/fin_bench/eval_data/1_aime/4_daily_eval_slim/aime_fast/2026-10-23.jsonl",
-        "input_index": 109
+        "input_index": 348
       },
       {
         "model": "aime_fast",
@@ -666,9 +666,9 @@
       {
         "model": "aime_fast",
         "batch_id": "2026-10-24",
-        "case_id": "thread_05a15c34139440bb81f78a6b6137cc3b",
+        "case_id": "thread_228ecbabe598421885ce48b506a223b8",
         "input_file": "/mnt/fin_bench/eval_data/1_aime/4_daily_eval_slim/aime_fast/2026-10-24.jsonl",
-        "input_index": 220
+        "input_index": 479
       },
       {
         "model": "aime_fast",
@@ -1128,9 +1128,9 @@
       {
         "model": "aime_expert",
         "batch_id": "2026-10-23",
-        "case_id": "thread_d6176549fb1b4151a3bf7c208eddac27",
+        "case_id": "thread_82ba994839ee4a36b705f93da3dcb13b",
         "input_file": "/mnt/fin_bench/eval_data/1_aime/4_daily_eval_slim/aime_expert/2026-10-23.jsonl",
-        "input_index": 71
+        "input_index": 287
       },
       {
         "model": "aime_expert",
@@ -1142,9 +1142,9 @@
       {
         "model": "aime_expert",
         "batch_id": "2026-10-23",
-        "case_id": "thread_9f0d28cf8c5a4d3bb1db97fba3e591cb",
+        "case_id": "thread_d8320714ce3942a993830a9741142847",
         "input_file": "/mnt/fin_bench/eval_data/1_aime/4_daily_eval_slim/aime_expert/2026-10-23.jsonl",
-        "input_index": 354
+        "input_index": 364
       },
       {
         "model": "aime_expert",
@@ -1450,9 +1450,9 @@
       {
         "model": "aime_expert",
         "batch_id": "2026-10-26",
-        "case_id": "thread_d06b49a5e33847e98b0ceaeb00bc4d81",
+        "case_id": "thread_4bfae8aaa567415889f2cf8103f5a98d",
         "input_file": "/mnt/fin_bench/eval_data/1_aime/4_daily_eval_slim/aime_expert/2026-10-26.jsonl",
-        "input_index": 4
+        "input_index": 8
       }
     ]
   },

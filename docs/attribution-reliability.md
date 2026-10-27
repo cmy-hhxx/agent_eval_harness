@@ -31,7 +31,18 @@ node dist/apps/host/src/cli.js run --config configs/host.json --config configs/b
 
 ## AIME 全日期 200 条、100 并发
 
-`configs/benchmarks/aime-slim-200-concurrency-100.json` 固定了 2026-10-19 至 2026-10-26 的 200 条 session（Fast、Expert 各 100）。按每个模式的日期数量分配，再在各日期内按 JSONL 行长度分层选择，保留长尾。共 305 个 trace、105 条含共享池的 session；源文件仍在 `4_daily_eval_slim`，没有复制正文。抽样时全量为 5,493 条；后续新增不进入本次固定测试。
+`configs/benchmarks/aime-slim-200-concurrency-100.json` 固定了 2026-10-19 至 2026-10-26 的 200 条 session（Fast、Expert 各 100）。按每个模式的日期数量分配，再在各日期内按 JSONL 行长度分层选择，保留长尾。源文件仍在 `4_daily_eval_slim`，没有复制正文。抽样时全量为 5,493 条；后续新增不进入本次固定测试。
+
+首次预检发现 8 条输入异常，已在同日期、同模式中按最接近的行长度补入有效样本；异常不计成功，未放松输入校验。以下行号从 1 开始，数据源修复前，全量耗时估算不代表这些输入能被成功评测。
+
+| 模式 | 日期 | 原行号 | 异常 |
+| --- | --- | --- | --- |
+| Fast | 2026-10-22 | 27、159 | 外层 trace/message 数量与正文不一致 |
+| Fast | 2026-10-23 | 110、2408 | 外层 trace/message 数量与正文不一致 |
+| Fast | 2026-10-24 | 221 | 外层 trace/message 数量与正文不一致 |
+| Expert | 2026-10-23 | 72 | 外层 trace/message 数量与正文不一致 |
+| Expert | 2026-10-23 | 355 | trace 2 用户问题为空 |
+| Expert | 2026-10-26 | 5 | 外层 trace/message 数量与正文不一致 |
 
 使用 100 并发、100 session 窗口和原有 high 推理及修复预算，运行时不启用逐 token debug 归档。记录实际峰值并发、完整 session 成功率、总耗时、分模式吞吐、限流、超时和内容拒绝。估算全量时按 Fast/Expert 实际数量加权，不能把这批均衡抽样直接等比例放大；输入文件变化时重新核对样本坐标。
 
