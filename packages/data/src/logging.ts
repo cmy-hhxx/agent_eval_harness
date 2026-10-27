@@ -40,7 +40,8 @@ class Journal {
     private readonly runtime: boolean,
   ) {}
 
-  async append(record: JsonObject): Promise<void> {
+  async append(records: JsonObject[]): Promise<void> {
+    if (!records.length) return;
     const handle = await open(this.file, "a+");
     try {
       const info = await handle.stat();
@@ -73,14 +74,21 @@ class Journal {
         // Only an unfinished final line is removed. Complete malformed records remain visible as errors.
         if (pending.length) await handle.truncate(this.offset);
       }
-      const key = keyFor(record);
-      const deduplicate = !this.runtime || record.level !== "error";
-      if (deduplicate && this.seen.has(key)) return;
-      const bytes = Buffer.from(JSON.stringify(record) + "\n");
+      const rows: string[] = [];
+      const added = new Map<string, number>();
+      for (const record of records) {
+        const key = keyFor(record);
+        const deduplicate = !this.runtime || record.level !== "error";
+        if (deduplicate && (this.seen.has(key) || added.has(key))) continue;
+        rows.push(JSON.stringify(record) + "\n");
+        if (deduplicate) added.set(key, Date.parse(String(record.time)));
+      }
+      if (!rows.length) return;
+      const bytes = Buffer.from(rows.join(""));
       await handle.writeFile(bytes);
       await handle.sync();
       this.offset += bytes.length;
-      if (deduplicate) this.seen.set(key, Date.parse(String(record.time)));
+      for (const [key, time] of added) this.seen.set(key, time);
     } finally {
       await handle.close();
     }
@@ -91,29 +99,42 @@ export function createFileLogger(options: { directory: string; lockDirectory: st
   const secrets = new Set(options.secrets || []);
   const runtime = new Journal(path.join(options.directory, "runtime.log"), true);
   const evaluations = new Journal(path.join(options.directory, "evaluation.log"), false);
-  let queue = Promise.resolve();
+  const queue: { journal?: Journal; record?: JsonObject; resolve: (saved: boolean) => void }[] = [];
+  let flushing = false;
   let lastFailure = "";
 
-  async function locked(operation: () => Promise<void>): Promise<boolean> {
-    const next = queue.then(() => withLogWriterLock(options.lockDirectory, async () => {
-      await mkdir(options.directory, { recursive: true });
-      for (const name of ["runtime.log", "evaluation.log"]) {
-        const handle = await open(path.join(options.directory, name), "a");
-        await handle.close();
+  async function flush(): Promise<void> {
+    while (queue.length) {
+      const batch = queue.splice(0, 500);
+      let saved = false;
+      try {
+        await withLogWriterLock(options.lockDirectory, async () => {
+          await mkdir(options.directory, { recursive: true });
+          for (const name of ["runtime.log", "evaluation.log"]) {
+            const handle = await open(path.join(options.directory, name), "a");
+            await handle.close();
+          }
+          for (const journal of [runtime, evaluations])
+            await journal.append(batch.filter(item => item.journal === journal).map(item => item.record!));
+        });
+        lastFailure = "";
+        saved = true;
+      } catch (error) {
+        const message = redact(errorText(error), [...secrets]);
+        if (message !== lastFailure) console.error(`日志写入失败：${message}`);
+        lastFailure = message;
       }
-      await operation();
-      lastFailure = "";
-    }));
-    queue = next.catch(() => {});
-    try {
-      await next;
-      return true;
-    } catch (error) {
-      const message = redact(errorText(error), [...secrets]);
-      if (message !== lastFailure) console.error(`日志写入失败：${message}`);
-      lastFailure = message;
-      return false;
+      for (const item of batch) item.resolve(saved);
     }
+    flushing = false;
+  }
+  function locked(journal?: Journal, record?: JsonObject): Promise<boolean> {
+    return new Promise(resolve => {
+      queue.push({ journal, record, resolve });
+      if (flushing) return;
+      flushing = true;
+      queueMicrotask(() => void flush());
+    });
   }
   const clean = (value: unknown): JsonObject =>
     JSON.parse(
@@ -122,8 +143,7 @@ export function createFileLogger(options: { directory: string; lockDirectory: st
   const sink: LogSink = {
     async error(error, context) {
       const message = redact(errorText(error), [...secrets]);
-      await locked(() =>
-        runtime.append(
+      await locked(runtime,
           clean({
             time: new Date().toISOString(),
             level: "error",
@@ -135,22 +155,21 @@ export function createFileLogger(options: { directory: string; lockDirectory: st
               : {}),
             ...(error instanceof Error ? { detail: inspect(error, { depth: null, maxStringLength: null, maxArrayLength: null }) } : {}),
           }),
-        ),
       );
     },
     async evaluation(record) {
-      return locked(() => evaluations.append(clean(record)));
+      return locked(evaluations, clean(record));
     },
   };
   return {
     ...sink,
     async event(event: string, context: JsonObject & { component: string }) {
-      return locked(() => runtime.append(clean({
+      return locked(runtime, clean({
         ...context, time: new Date().toISOString(), level: "info", pid: process.pid,
         event,
-      })));
+      }));
     },
-    initialize: () => locked(async () => {}),
+    initialize: () => locked(),
     addSecrets: (...values: string[]) => {
       for (const value of values) if (value) secrets.add(value);
     },
