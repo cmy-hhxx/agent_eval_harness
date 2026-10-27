@@ -207,8 +207,10 @@ export async function main(argv) {
       return writes;
     };
     await save();
+    const requestPriorities = { comparison: 0, "attribution-session": 1, "attribution-trace": 2,
+      "attribution-component": 3, criteria: 4 };
     const requests = createChannelRequests(Object.fromEntries(config.channels.map(channel => [channel, 200])),
-      { wencai: 7, lost: 2, aime: 1 });
+      { wencai: 7, lost: 2, aime: 1 }, context => requestPriorities[context.stage] ?? 5);
     const writeRequests = () => writeJson(requestFile, requests.snapshot());
     await writeRequests();
     requestTimer = setInterval(() => { void writeRequests().catch(error => logger.error(error,

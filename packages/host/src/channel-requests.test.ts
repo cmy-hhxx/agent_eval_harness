@@ -35,3 +35,23 @@ test("cancelled queued calls cannot take a permit; unknown channels and duplicat
   release();
   const next = await control.acquire(context("channel", "next"), signal); next();
 });
+
+test("downstream priority applies within the weighted lane and preserves FIFO ties", async () => {
+  const control = createChannelRequests({ channel: 1 }, { wencai: 7, aime: 1 },
+    value => value.stage === "attribution-session" ? 0 : 1);
+  const signal = new AbortController().signal, order: string[] = [];
+  const call = (id: string, group: string, stage: string) => control.acquire({
+    ...context("channel", id), trafficGroup: group, stage,
+  }, signal).then(release => { order.push(id); return release; });
+  const release = await call("active", "wencai", "attribution-component");
+  const component = call("component", "wencai", "attribution-component");
+  const first = call("first", "wencai", "attribution-session");
+  const second = call("second", "wencai", "attribution-session");
+  const other = call("other", "aime", "attribution-session");
+  release();
+  (await first)();
+  (await second)();
+  (await component)();
+  (await other)();
+  assert.deepEqual(order, ["active", "first", "second", "component", "other"]);
+});

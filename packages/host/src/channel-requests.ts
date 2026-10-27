@@ -1,7 +1,8 @@
-import type { ModelRequestControl } from "./model-requests.js";
+import type { ModelRequestContext, ModelRequestControl } from "./model-requests.js";
 
 /** One permit per live provider request, shared by every run in this process. */
-export function createChannelRequests(limits: Record<string, number>, weights: Record<string, number> = { default: 1 }) {
+export function createChannelRequests(limits: Record<string, number>, weights: Record<string, number> = { default: 1 },
+  priority: (context: ModelRequestContext) => number = () => 0) {
   if (!Object.keys(limits).length || Object.values(limits).some(value => !Number.isSafeInteger(value) || value < 1))
     throw new Error("Channel request limits must be positive integers");
   if (!Object.keys(weights).length || Object.values(weights).some(value => !Number.isSafeInteger(value) || value < 1))
@@ -10,7 +11,7 @@ export function createChannelRequests(limits: Record<string, number>, weights: R
   const calls = new Set<string>();
   const credits = new Map<string, Map<string, number>>();
   const usage = new Map<string, { active: number; granted: number }>();
-  const waiting: { channel: string; group: string; grant(): void }[] = [];
+  const waiting: { channel: string; group: string; priority: number; grant(): void }[] = [];
   function pump() {
     for (const channel of Object.keys(limits)) {
       const credit = credits.get(channel) ?? new Map<string, number>();
@@ -25,7 +26,12 @@ export function createChannelRequests(limits: Record<string, number>, weights: R
         }
         if (!selected) break;
         credit.set(selected, credit.get(selected)! - total);
-        const index = waiting.findIndex(item => item.channel === channel && item.group === selected);
+        let index = -1;
+        for (let candidate = 0; candidate < waiting.length; candidate++) {
+          const item = waiting[candidate];
+          if (item.channel === channel && item.group === selected &&
+              (index < 0 || item.priority < waiting[index].priority)) index = candidate;
+        }
         waiting.splice(index, 1)[0].grant();
       }
     }
@@ -51,7 +57,7 @@ export function createChannelRequests(limits: Record<string, number>, weights: R
           reject(signal.reason);
           pump();
         };
-        const item = { channel, group, grant() {
+        const item = { channel, group, priority: priority(context), grant() {
           signal.removeEventListener("abort", abort);
           active.set(channel, (active.get(channel) ?? 0) + 1);
           const groupKey = JSON.stringify([channel, group]), counter = usage.get(groupKey) ?? { active: 0, granted: 0 };
