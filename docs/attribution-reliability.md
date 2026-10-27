@@ -73,3 +73,5 @@ node dist/apps/host/src/cli.js run --config configs/host.json --config configs/b
 责任链按完整工具响应体预算裁切展示条目，省略计数与完整目录入口显式保留；只有最终展示页注册证据和已读范围，避免通用大响应预览隐藏已登记材料。
 
 组件提示词要求提交前核对否定断言与自身现象、引文的一致性，并区分缺失、冲突与未核验；相关样本仍需在同批真实压测中复核，提示词修正本身不构成质量验收。
+
+第二轮 high 发生一次 submission_file_invalid：模型反复提交未创建的 evaluation-draft.json，fileErrors 耗尽而 contentSubmissions 仍为 0。第三轮组件归因直接使用结构化 submit_evaluation，去掉强制写文件与 edit_json；结果 Schema、原文证据校验与内容修复预算保持不变。

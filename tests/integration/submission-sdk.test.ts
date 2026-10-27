@@ -9,6 +9,8 @@ import { createAutomationModels } from "../../apps/host/src/automation-models.js
 import { body, json, listen } from "@eval/runtime/http";
 import { fixtureConfig } from "../fixtures/comparison.js";
 import { services } from "../fixtures/services.js";
+import { attributionAgent } from "@eval/agents/attribution";
+import { attributionWorkflow, attributionRepository, planAttribution } from "@eval/workflows/attribution";
 
     test(`pi: Responses falls back on quota exhaustion and preserves original JSON and tool validation`, { timeout: 60000 }, async () => {
       const { directory, config, models } = await fixtureConfig();
@@ -131,3 +133,62 @@ import { services } from "../fixtures/services.js";
         await rm(directory, { recursive: true, force: true });
       }
     });
+
+
+test("pi: component attribution submits and repairs original evidence without a draft file", { timeout: 60000 }, async t => {
+  const f = await fixtureConfig([[{ batch_id: "batch", case_id: "inline", messages: [
+    { type: "user_question", role: "user", content: "2+2等于多少？" },
+    { type: "final_answer", role: "assistant", content: "2+2=5。" },
+  ] }], [], [], []]);
+  t.after(() => rm(f.directory, { recursive: true, force: true }));
+  f.config.inputs.versions[0]!.adapter = "b";
+  const config = { ...f.config, workflow: "attribution" as const, inputs: { ...f.config.inputs, versions: f.config.inputs.versions.slice(0, 1) } };
+  const plan = await planAttribution(config), task = plan.tasks.find(task => task.stage === "attribution-component")!;
+  const agents = new AgentRegistry([attributionAgent]);
+  const prepared = agents.prepare(attributionWorkflow.bind(task, plan.inputs, {}, { tasks: plan.tasks }));
+  assert.equal(prepared.evaluation.fileSubmission, false, "component judgments must not depend on creating a filesystem draft");
+  let requests = 0;
+  const errors: string[] = [];
+  const gateway = await listen(async (req, res) => {
+    try {
+      const payload = object(await body(req));
+      const definitions = payload.tools as Record<string, unknown>[];
+      assert(definitions.some(tool => tool.name === "submit_evaluation"));
+      assert(!definitions.some(tool => tool.name === "submit_evaluation_file"));
+      assert(++requests <= 2);
+      const args = { problems: [{ label: "基本算术计算错误", definition: "基本运算的最终结果与正确数值不符。",
+        problem_phenomena: "回答把2加2写成5。", reason: "2加2等于4，最终给出的5错误。",
+        evidence: [{ index: requests === 1 ? 99999 : 1, reason: "原文直接给出错误算式。" }] }] };
+      const call = { type: "function_call", id: `fc_${requests}`, call_id: `call_${requests}`,
+        name: "submit_evaluation", arguments: JSON.stringify(args) };
+      res.writeHead(200, { "content-type": "text/event-stream" });
+      res.end([
+        { type: "response.output_item.added", output_index: 0, item: { ...call, arguments: "" } },
+        { type: "response.output_item.done", output_index: 0, item: call },
+        { type: "response.completed", response: { id: `resp_${requests}`, status: "completed", output: [call],
+          usage: { input_tokens: 10, output_tokens: 5, total_tokens: 15 } } },
+      ].map((event, sequence_number) => `event: ${event.type}\ndata: ${JSON.stringify({ ...event, sequence_number })}\n\n`).join(""));
+    } catch (error) { errors.push(String(error)); json(res, { error: String(error) }, 500); }
+  });
+  const keyName = "EVAL_CHANNEL_KEY_evaluation_Hgateway", previous = process.env[keyName];
+  process.env[keyName] = "local-fixture-secret";
+  try {
+    const runId = "inline-component";
+    await runEvaluation({ runId, output: config.output, config, plan: { ...plan, tasks: [task] },
+      engine: "pi", evaluatorVersion: "fixture", modelForStage: () => ({ ...f.models.models.judge!, baseUrl: gateway.url + "/v1", thinking: "off", model: "fixture", contextWindow: 100000, maxOutputTokens: 10000 }),
+      policy: { ...config.execution, repairAttempts: 1, maxToolCalls: 1 }, concurrency: 1, retries: 0, retryDelaySeconds: 0,
+      agents, repository: attributionRepository, taskSource: attributionWorkflow, runtime: services.runtime });
+    assert.deepEqual(errors, []);
+    const saved = await attributionRepository.readRun(path.join(config.output.path, runId));
+    const receipt = saved.receipts[task.id]!;
+    assert.equal(saved.manifest.states[task.id].status, "succeeded", JSON.stringify(saved.manifest.states[task.id]));
+    assert.equal(requests, 2, "invalid evidence still consumes one content repair");
+    assert.equal(receipt.submissionStats?.contentSubmissions, 2);
+    assert.equal(receipt.submissionStats?.fileErrors, 0);
+    assert.equal(receipt.audit.calls, 0, "submission needs neither code execution nor a draft file");
+    assert.equal((receipt.evaluation as { problems: { evidence: { quote: string }[] }[] }).problems[0].evidence[0].quote, "2+2=5。");
+  } finally {
+    if (previous === undefined) delete process.env[keyName]; else process.env[keyName] = previous;
+    await gateway.close(); await rm(f.directory, { recursive: true, force: true });
+  }
+});

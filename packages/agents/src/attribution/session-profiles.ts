@@ -18,9 +18,9 @@ import type { ComponentReviewResult, SessionAttributionResult, SessionProblem, T
 
 const componentTools = [
   "read_execution", "read_responsibility_chain", "read_trace", "search_trace", "view_image", "calculate", "execute_code",
-  "read_artifact", "edit_json",
+  "read_artifact",
 ];
-const componentPrompt = agentPrompt("attribution", componentTools, { profile: "component", fileSubmission: true });
+const componentPrompt = agentPrompt("attribution", componentTools, { profile: "component", fileSubmission: false });
 const tracePrompt = agentPrompt("attribution", [], { profile: "trace", fileSubmission: false });
 const sessionPrompt = agentPrompt("attribution", [], { profile: "session", fileSubmission: false });
 const componentSchema = new Ajv2020({ allErrors: true, strict: false }).compile(componentSubmissionSchema);
