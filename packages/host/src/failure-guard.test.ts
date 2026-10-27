@@ -4,6 +4,17 @@ import { FailureGuard } from "./failure-guard.js";
 import type { StagePause, ValidationIssue } from "@eval/contracts";
 
 const issue = (path: string): ValidationIssue => ({ category: "structure", code: "rewrite_context_prefix", path, message: "wrong subject" });
+test("disabled guard clears saved pauses and never pauses on content or Host faults", () => {
+  const pauses: StagePause[] = [{ stage: "rewrite", category: "structure", code: "invalid", path: "/", taskIds: ["old"], at: 1 }];
+  const guard = new FailureGuard(pauses, { enabled: false, windowSize: 2, threshold: 2 });
+  assert.deepEqual(pauses, []);
+  for (let index = 0; index < 4; index++) {
+    assert.equal(guard.observe("rewrite", String(index), [issue("/rewrites/0/text")]), undefined);
+    assert.equal(guard.observe("rewrite", String(index), [{ category: "interruption", code: "host_submission_failed", path: "/" }]), undefined);
+  }
+  assert.equal(guard.paused("rewrite"), false);
+  assert.deepEqual(pauses, []);
+});
 test("a Host submission fault pauses its stage immediately while transport outages keep the threshold", () => {
   for (const code of ["host_submission_failed", "host_inspection_failed"]) {
     const guard = new FailureGuard([], { windowSize: 10000, threshold: 10000 });

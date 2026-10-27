@@ -2,7 +2,8 @@ import type { FailureGuardPolicy, StagePause, ValidationIssue } from "@eval/cont
 
 export const DEFAULT_FAILURE_GUARD: FailureGuardPolicy = { windowSize: 50, threshold: 5 };
 export function validateFailureGuard(policy: FailureGuardPolicy): void {
-  if (!policy || !Number.isInteger(policy.windowSize) || !Number.isInteger(policy.threshold) ||
+  if (!policy || (policy.enabled !== undefined && typeof policy.enabled !== "boolean") ||
+    !Number.isInteger(policy.windowSize) || !Number.isInteger(policy.threshold) ||
     policy.threshold < 2 || policy.windowSize < policy.threshold)
     throw new Error("failureGuard requires windowSize >= threshold >= 2 (integers)");
 }
@@ -13,9 +14,11 @@ export class FailureGuard {
   private readonly windows = new Map<string, Outcome[]>();
   constructor(readonly pauses: StagePause[], readonly policy = DEFAULT_FAILURE_GUARD) {
     validateFailureGuard(policy);
+    if (policy.enabled === false) pauses.splice(0);
   }
   paused(stage: string): boolean { return this.pauses.some((pause) => pause.stage === stage); }
   observe(stage: string, taskId: string, issues: Outcome["issues"], now = Date.now()): StagePause | undefined {
+    if (this.policy.enabled === false) return;
     if (this.paused(stage)) return;
     const normalized = issues.map(({ category, code, path }) => ({ category, code, path: path.replace(/\/\d+(?=\/|$)/g, "/*") }));
     const window = (this.windows.get(stage) ?? []).filter((entry) => entry.taskId !== taskId);

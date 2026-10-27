@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 import { randomUUID } from "node:crypto";
+import { homedir } from "node:os";
 import { readdir, stat } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -10,8 +11,9 @@ import { lostHelper, prepareLost, registerPreparedLost } from "./night-data.mjs"
 
 const root = fileURLToPath(new URL("../", import.meta.url));
 const priority = ["wencai", "lost", "aime"];
-export const nextJob = state => priority.flatMap(source => state.jobs.filter(job =>
-  job.source === source && job.status === "queued"))[0];
+export const nextJob = (state, now = Date.now()) => priority.flatMap(source => state.jobs.filter(job =>
+  job.source === source && job.status === "queued"))[0] ?? priority.flatMap(source => state.jobs.filter(job =>
+  job.source === source && job.status === "failed" && (job.retryAt ?? 0) <= now))[0];
 
 export function dailyJobs(source, frozen, output) {
   const dates = [...new Set(frozen.inputs.records.map(row => row.batch_id))].sort();
@@ -47,21 +49,25 @@ export function createNightDispatcher(state, { save, record, run }) {
       if (active) throw new Error("Evaluation dispatcher is already active");
       const job = nextJob(state);
       if (!job) return false;
+      if (job.status === "failed") job.retryFailed = true;
       active = { job, pause: new AbortController() };
       job.status = "running";
+      delete job.error;
+      delete job.retryAt;
       await save();
       await record("evaluation_started", { source: job.source, runId: job.runId });
       try {
         const result = await run(job, active.pause.signal);
         job.status = result.complete ? "completed" : active.pause.signal.aborted ? "queued" : "failed";
         job.result = result.result;
-        if (job.status === "failed") job.error = "评测未全部成功；检查正式 run 状态后使用 --retry-failed 续跑";
+        if (job.status === "failed") job.error = "评测未全部成功；保留已接受结果，等待自动续跑";
       } catch (error) {
         job.status = "failed";
         job.error = error.message;
       } finally {
         active = undefined;
       }
+      if (job.status === "failed") job.retryAt = Date.now() + 60_000;
       await save();
       await record("evaluation_settled", { source: job.source, runId: job.runId, status: job.status, error: job.error });
       return true;
@@ -106,8 +112,8 @@ export async function main(argv) {
   if (command === "status") {
     const state = await readJson(stateFile);
     console.log(JSON.stringify({ intake: state.closed ? "closed" : "open", pending: state.pending,
-      preparationError: state.preparationError, jobs: state.jobs.map(({ source, runId, status, error }) =>
-        ({ source, runId, status, error })) }, null, 2));
+      preparationError: state.preparationError, jobs: state.jobs.map(({ source, runId, status, error, retryAt }) =>
+        ({ source, runId, status, error, retryAt })) }, null, 2));
     return;
   }
   if (command === "close-input") {
@@ -121,7 +127,7 @@ export async function main(argv) {
   process.env.EVAL_CONFIG_FILE = config.settingsFile;
   process.env.EVAL_LOG_DIR = path.join(config.runtimeRoot, "log");
   process.env.EVAL_LOG_LOCK_DIR = path.join(config.runtimeRoot, "state/log-writer");
-  process.env.EVAL_HOT_STATE_ROOT = path.join(config.runtimeRoot, "state/host-hot");
+  process.env.EVAL_HOT_STATE_ROOT ??= path.join(homedir(), ".cache/eval-agent-harness/hot");
   const { freezeNightInputs, runNightBatch, createChannelRequests } = await import("../dist/apps/host/src/night-evaluation.js");
   const { loadConfig } = await import("../dist/apps/host/src/config.js");
   const { createBalancedModels } = await import("../dist/apps/host/src/balanced-models.js");

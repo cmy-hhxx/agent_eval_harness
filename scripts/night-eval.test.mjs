@@ -6,7 +6,7 @@ import test from "node:test";
 import { spawn } from "node:child_process";
 import { once } from "node:events";
 import { fileSourceReader } from "@eval/data";
-import { admitLost, createNightDispatcher, dailyJobs, resolveNightConfig } from "./night-eval.mjs";
+import { admitLost, createNightDispatcher, dailyJobs, nextJob, resolveNightConfig } from "./night-eval.mjs";
 import { deliverLost, ingestLost, lostHelper, registerPreparedLost } from "./night-data.mjs";
 import { scanInbox } from "./auto-renew.mjs";
 import { slimRecord, expandRecord } from "./aime-slim.mjs";
@@ -239,6 +239,31 @@ test("incremental admission survives restart and honors the two-hour interval", 
   assert.equal(admitLost(resumed, versions, "/out", 7200000, 7200000), true);
   assert.equal(resumed.jobs.length, 2);
   assert.notEqual(resumed.jobs[0].runId, resumed.jobs[1].runId);
+});
+
+test("failed batches back off, allow queued work, and automatically resume the same run", async () => {
+  const state = { jobs: [{ source: "wencai", runId: "w", status: "queued" }, { source: "aime", runId: "a", status: "queued" }] };
+  const runs = [];
+  const dispatch = createNightDispatcher(state, { save: async () => {}, record: async () => {}, run: async job => {
+    runs.push(job.runId);
+    if (runs.length === 1) throw new Error("gateway unavailable");
+    return { complete: true };
+  } });
+  const before = Date.now();
+  await dispatch.step();
+  const failed = state.jobs[0];
+  assert.equal(failed.status, "failed");
+  assert.ok(failed.retryAt >= before + 60_000);
+  assert.equal(nextJob(state, failed.retryAt), state.jobs[1]);
+  await dispatch.step();
+  assert.equal(nextJob(state, failed.retryAt - 1), undefined);
+  assert.equal(nextJob(state, failed.retryAt), failed);
+  failed.retryAt = 0;
+  await dispatch.step();
+  assert.deepEqual(runs, ["w", "a", "w"]);
+  assert.equal(failed.retryFailed, true);
+  assert.equal(failed.status, "completed");
+  assert.equal(failed.error, undefined);
 });
 
 test("stable archive is extracted once, archived, and resumes an interrupted hard-link move", async t => {

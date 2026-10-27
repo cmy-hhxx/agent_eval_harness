@@ -619,6 +619,7 @@ export interface RunManifest {
   journalSequence?: number;
 }
 export interface FailureGuardPolicy {
+  enabled?: boolean;
   windowSize: number;
   threshold: number;
 }

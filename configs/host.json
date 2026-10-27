@@ -118,6 +118,7 @@
     "concurrency": 8,
     "sessionWindow": 16,
     "failureGuard": {
+      "enabled": false,
       "windowSize": 50,
       "threshold": 5
     },

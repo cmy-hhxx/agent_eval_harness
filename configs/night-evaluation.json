@@ -1,7 +1,7 @@
 {
   "dataRoot": "/mnt/fin_bench/eval_data",
   "runtimeRoot": "/mnt/aigc_team/user_workspace/chenmingyang/eval_harness/runtime",
-  "settingsFile": "/mnt/aigc_team/user_workspace/chenmingyang/eval_harness/runtime/config/post-training.ini",
+  "settingsFile": "/mnt/aigc_team/user_workspace/chenmingyang/eval_harness/runtime/config/config.ini",
   "python": "python3",
   "sevenZip": "7z",
   "pollSeconds": 30,
@@ -9,8 +9,8 @@
   "admissionSeconds": 7200,
   "channels": ["evaluation-gateway", "evaluation-gateway-2"],
   "hostConfigs": {
-    "wencai": ["host.json", "night-wencai.json"],
-    "lost": ["host.json", "attribution.json", "night-aime.json"],
-    "aime": ["host.json", "attribution.json", "night-aime.json"]
+    "wencai": ["host.json", "automations-host.json", "night-wencai.json"],
+    "lost": ["host.json", "attribution.json", "automations-host.json", "night-aime.json"],
+    "aime": ["host.json", "attribution.json", "automations-host.json", "night-aime.json"]
   }
 }

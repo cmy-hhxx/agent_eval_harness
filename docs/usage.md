@@ -190,7 +190,7 @@ npm run eval -- run --run-id pi-001 --config configs/host.json --config configs/
 
 task / result 可重复；成功任务不重评，必要未完成依赖进入清单。准备不重置内容和加载账本。
 
-同阶段、不同任务的同类错误达到 failureGuard 阈值时暂停该阶段，其他健康阶段继续。提交或材料核查的 Host 程序、协议错误无需等待阈值，首个失败即暂停该阶段；网络交付故障仍按原阈值处理。修复原因后显式解除：
+当前 `configs/host.json` 使用 `execution.failureGuard.enabled: false` 关闭阶段熔断，续跑时也清除既有阶段暂停；失败仍保留真实状态和结果校验，其他任务继续。显式设为 `true` 时，同阶段、不同任务的同类错误达到 failureGuard 阈值才暂停该阶段，其他健康阶段继续。提交或材料核查的 Host 程序、协议错误在启用熔断时首个失败即暂停；网络交付故障仍按阈值处理。启用熔断后修复原因可显式解除：
 
 ```bash
 npm run eval -- run --run-id pi-001 --resume-stage rewrite \

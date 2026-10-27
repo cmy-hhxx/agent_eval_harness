@@ -4,7 +4,7 @@
 
 ## 启动与交付
 
-使用已完成 bootstrap/build 的服务器 checkout。默认配置为 `configs/night-evaluation.json`，INI 路径和 `hostConfigs` 可指向 checkout 外的现行配置；路径相对该 JSON 解析。启动前用 `check` 核对实际输入、渠道和清洗状态。问财流程有独立改动时，在合并后让 `hostConfigs.wencai` 指向合并后的配置。
+使用已完成 bootstrap/build 的服务器 checkout。默认配置为 `configs/night-evaluation.json`，读取服务器 `runtime/config/config.ini` 的两个渠道，并通过 `automations-host.json` 选择当前评测模型与 low thinking。INI 路径和 `hostConfigs` 可指向 checkout 外的现行配置；路径相对该 JSON 解析。启动前用 `check` 核对实际输入、渠道和清洗状态。
 
 ```bash
 node scripts/night-eval.mjs check
@@ -30,7 +30,7 @@ node scripts/night-eval.mjs close-input
 3. 流失就绪队列清空时运行 AIME 日常。新流失批次登记后停止派发新的日常任务，已派发任务继续完成，状态保存后切换；之后按原 run 恢复日常。
 4. 两个配置渠道分别硬限 **200 个实际模型请求**，整条管线最多 400。工具调用与材料准备不占请求许可。额度只约束该管线，外部清洗等其他进程在相同网关上的请求独立计算。
 
-运行失败会保存错误，保留同一 run 的已接受结果，并继续其他可运行批次。失败批次不计为完成。修正原因后停止管线，再执行 `run --retry-failed` 重试；这沿用 Host 的累计预算，不清空失败记录或绕过业务校验。
+当前 Host 配置关闭阶段熔断。运行失败会保存错误，保留同一 run 的已接受结果，并继续其他排队批次；失败批次至少等待 60 秒，在排队批次清空后自动续跑，无需人工重新启动。失败批次不计为完成。自动续跑沿用 Host 的累计预算，不清空失败记录或绕过业务校验；永久输入错误或已耗尽内容预算仍明确显示失败并等待修复。也可停止管线后执行 `run --retry-failed` 立即补跑。
 
 ## 流失数据链路
 
