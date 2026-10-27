@@ -186,6 +186,24 @@ test("provider capabilities preserve explicit max reasoning and opt-out of devel
   }
 });
 const evaluation = (toolNames: string[]) => ({ systemPrompt: "Exact rules", toolNames, outputSchema: { type: "object" }, fileSubmission: false });
+test("navigation reads may share a model turn while exhausted and submission-only requests cannot", () => {
+  const contract = evaluation(["read_responsibility_chain", "read_trace"]);
+  for (const api of ["openai-completions", "openai-responses"] as const) {
+    const tool = (name: string) => api === "openai-completions" ? { type: "function", function: { name } } : { type: "function", name };
+    const payload = { tools: [tool("read_responsibility_chain"), tool("read_trace"), tool("submit_evaluation")],
+      reasoning: { effort: "low" }, input: [{ role: "user", content: "完整原文与坐标" }] };
+    const original = structuredClone(payload);
+    const result = transformPayload(payload, { ...model, api }, contract) as Record<string, unknown>;
+    assert.equal(result.parallel_tool_calls, true);
+    assert.deepEqual(result.reasoning, original.reasoning);
+    assert.deepEqual(result.input, original.input);
+    transformPayload(payload, { ...model, api }, contract, ["submit_evaluation"]);
+    assert.equal(result.parallel_tool_calls, false);
+    assert.equal(payload.tools.length, 1);
+    assert.equal((transformPayload({ tools: [tool("submit_evaluation")] }, { ...model, api }, evaluation([])) as
+      Record<string, unknown>).parallel_tool_calls, false);
+  }
+});
 const request = () => ({
   model: model.model,
   input: [

@@ -50,3 +50,7 @@ node dist/apps/host/src/cli.js run --config configs/host.json --config configs/b
 node dist/apps/host/src/cli.js preflight --config configs/host.json --config configs/benchmarks/aime-slim-200-concurrency-100.json
 node dist/apps/host/src/cli.js run --config configs/host.json --config configs/benchmarks/aime-slim-200-concurrency-100.json --run-id aime-slim-200-c100 --test-eval
 ```
+
+低推理对照使用相同的 200 条记录、100 并发和内容校验，叠加 `configs/benchmarks/aime-slim-low-channel-2.json`，将全部归因阶段设为 `low`，通过 `evaluation-gateway-2` 调用同一 `deepseek-v4.1-flash`，独立 run ID 为 `aime-slim-200-c100-low`。先用 `model-probe --stage attribution-component --execute` 核实渠道与工具调用。两个 run 可同时执行，但共享服务器资源；渠道和推理强度同时变化，测得差异不能只归因于推理强度。
+
+目标是冷启动之后每分钟完成约 30 条完整 session。以正式 session 收据的接受时间计算连续窗口吞吐，另报启动、并发爬升和收尾时间；不能把 component 或 trace 当作 session。100 个槽位要达到此目标，每条 session 的所有任务及重试合计平均只能占用约 200 秒槽位时间。对照须按业务 ID 比较问题、责任组件和原文证据；结构通过率、问题数量或更少的输出 token 均不能单独证明质量不下降。

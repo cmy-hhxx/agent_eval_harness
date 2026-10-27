@@ -1,0 +1,27 @@
+{
+  "models": {
+    "judge": {
+      "channel": "evaluation-gateway-2",
+      "model": "deepseek-v4.1-flash",
+      "thinking": "low"
+    }
+  },
+  "bindings": {
+    "attribution": {
+      "profile": "judge",
+      "thinking": "low"
+    },
+    "attribution-component": {
+      "profile": "judge",
+      "thinking": "low"
+    },
+    "attribution-trace": {
+      "profile": "judge",
+      "thinking": "low"
+    },
+    "attribution-session": {
+      "profile": "judge",
+      "thinking": "low"
+    }
+  }
+}
