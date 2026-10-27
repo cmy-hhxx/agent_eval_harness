@@ -18,6 +18,7 @@ export interface WorkerExit {
 export interface WorkerProcess {
   readonly pid: number;
   readonly url: string;
+  readonly urls: readonly string[];
   readonly exited: Promise<WorkerExit>;
   close(): Promise<void>;
 }
@@ -25,10 +26,11 @@ export interface WorkerProcess {
 export async function spawnWorker(
   engine: Engine,
   directory: string,
-  paths: { root: string; workerEntry: string },
+  paths: { root: string; workerEntry: string; workerSlots?: number },
 ): Promise<WorkerProcess> {
   await mkdir(directory, { recursive: true });
-  const proc = fork(paths.workerEntry, ["--engine", engine, "--directory", directory, "--root", paths.root], {
+  const proc = fork(paths.workerEntry, ["--engine", engine, "--directory", directory, "--root", paths.root,
+    "--slots", String(paths.workerSlots ?? 1)], {
     // Isolate shell/group signals; IPC loss and explicit close still supervise it.
     detached: true,
     stdio: ["ignore", "pipe", "pipe", "ipc"],
@@ -41,6 +43,7 @@ export async function spawnWorker(
   });
   let stderr = "";
   let url: string | undefined;
+  let urls: string[] = [];
   let expectedClose = false;
   let disconnectedAt: number | null = null;
   let exitedAt = 0;
@@ -88,15 +91,16 @@ export async function spawnWorker(
       });
       proc.once("exit", fail);
       proc.on("message", (message) => {
-        const value = message as { type?: string; url?: string };
+        const value = message as { type?: string; url?: string; urls?: string[] };
         if (value.type === "ready" && value.url) {
           clearTimeout(timeout);
           proc.off("exit", fail);
+          urls = value.urls ?? [value.url];
           resolve(value.url);
         }
       });
     });
-    return Object.freeze({ pid: proc.pid!, url, exited, close });
+    return Object.freeze({ pid: proc.pid!, url, urls: Object.freeze(urls), exited, close });
   } catch (error) {
     await close();
     throw error;

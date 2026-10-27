@@ -48,7 +48,7 @@ import { createModelRequests, type ModelRequestControl } from "./model-requests.
 export type { ModelRequestControl, ModelRequestContext } from "./model-requests.js";
 
 export interface RunOptions extends EvaluationServices {
-  runtime: { root: string; workerEntry: string };
+  runtime: { root: string; workerEntry: string; workerSlots?: number };
   snapshots?: Record<string, unknown>;
   report?: (run: string) => Promise<Record<string, unknown>>;
   runId: string;
@@ -111,8 +111,8 @@ export async function runEvaluation(options: RunOptions): Promise<Record<string,
   const owned: Awaited<ReturnType<typeof spawnWorker>>[] = [];
   const exitedWorkers = new WeakSet<(typeof owned)[number]>();
   const workerExitLogs: Promise<void>[] = [];
-  async function launchWorker(engine: Engine, directory: string) {
-    const worker = await spawnWorker(engine, directory, options.runtime);
+  async function launchWorker(engine: Engine, directory: string, workerSlots = options.runtime.workerSlots ?? 1) {
+    const worker = await spawnWorker(engine, directory, { ...options.runtime, workerSlots });
     workerExitLogs.push(worker.exited.then(async (exit) => {
       exitedWorkers.add(worker);
       if (exit.expectedClose) return;
@@ -374,7 +374,7 @@ export async function runEvaluation(options: RunOptions): Promise<Record<string,
       // Bind capacity to its process, not a port that another child may later reuse.
       if (!worker.owner || !exitedWorkers.has(worker.owner)) return false;
       const replacement = await launchWorker(identity.engine,
-        path.join(working, "workers", `${identity.engine}-${randomUUID()}`));
+        path.join(working, "workers", `${identity.engine}-${randomUUID()}`), 1);
       owned.push(replacement);
       worker.owner = replacement;
       worker.url = replacement.url;
@@ -934,8 +934,10 @@ export async function runEvaluation(options: RunOptions): Promise<Record<string,
           try {
             worker = await launchWorker(identity.engine, path.join(working, "workers", `${identity.engine}-${randomUUID()}`));
             owned.push(worker);
-            const health = await request<WorkerStatus>(`${worker.url}/api/health`);
-            eligible.push({ url: worker.url, health, owner: worker });
+            const owner = worker;
+            const slots = await Promise.all(worker.urls.map(async url => ({ url,
+              health: await request<WorkerStatus>(`${url}/api/health`), owner })));
+            eligible.push(...slots);
           } catch (error) {
             const cause = error instanceof Error ? error.cause as { code?: string } | undefined : undefined;
             const transient = error instanceof Error && (error.name === "TimeoutError" ||

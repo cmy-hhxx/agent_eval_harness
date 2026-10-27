@@ -78,6 +78,7 @@ export async function runNightBatch(options: {
     throw new Error("Evaluation preflight failed: " + JSON.stringify(plan.summary.issues));
   if (!saved && !plan.tasks.length) throw new Error("No evaluation tasks");
   const result = await runEvaluation({ ...selected, ...createBalancedModels(host.models, options.channels),
+    runtime: { ...selected.runtime, workerSlots: 8 },
     runId: options.runId, output: evaluation.output, engine: "pi", evaluatorVersion: host.evaluatorVersion,
     config: evaluation, plan, policy: evaluation.execution, concurrency: evaluation.execution.concurrency,
     taskConcurrency: evaluation.execution.taskConcurrency, modelRequests: options.requests,
