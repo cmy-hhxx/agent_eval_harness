@@ -19,6 +19,7 @@ export function presentedMaterialReads(material: JsonObject, candidate: string, 
   visit(material.final_evidence);
   visit(material.trace_overview);
   visit(material.review_sections);
+  visit(material.component_scene);
   for(const block of (object(material.answer_generation)?.reasoning_blocks??[]) as JsonObject[])
     visit({...block,quote:block.text});
   visit(object(material.citation_inventory)?.references);
@@ -33,7 +34,7 @@ function materialEvidence(value: unknown, bank: EvidenceBank): unknown {
   if (!material) return value;
   const project = <T>(value: T) => projectEvidenceReferences(value, bank);
   const array = (value: unknown) => Array.isArray(value) ? value : [];
-  const generated = ["execution_graph", "transition_evidence", "final_evidence", "question_evidence", "answer_generation", "criterion_instruction_sources", "trace_overview", "review_sections"];
+  const generated = ["execution_graph", "transition_evidence", "final_evidence", "question_evidence", "answer_generation", "criterion_instruction_sources", "trace_overview", "review_sections", "component_scene"];
   const result = { ...material };
   for (const field of generated) if (Object.hasOwn(material, field)) result[field] = project(material[field]);
   const graph = object(result.execution_graph);

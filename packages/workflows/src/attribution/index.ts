@@ -95,7 +95,7 @@ export function bindAttribution(task: PlannedTask, inputs: Record<string, unknow
   const traceCandidate = trace ? { ...data.candidate, trace_id: trace.trace_id, question: trace.question,
     final_index: trace.final_index ?? data.candidate.final_index } : data.candidate;
   if (task.stage === "attribution-component") {
-    const binding = bindAttributionMaterial(traceCandidate, traceRaw, analysis);
+    const binding = bindAttributionMaterial(traceCandidate, traceRaw, analysis, { component: data.component });
     const navigation = binding.materialNavigation!.answer as { responsibility_choices: {
       component: string; kind: string; message_index: number | null; transition_index: number;
     }[] };

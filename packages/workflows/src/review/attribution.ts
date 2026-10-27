@@ -1,4 +1,4 @@
-import { attributionNavigation, initialAttributionMaterial } from "./attribution-navigation.js";
+import { attributionNavigation, initialAttributionMaterial, initialComponentScene } from "./attribution-navigation.js";
 import { businessChains } from "./business-chains.js";
 import { isToolSpan } from "../inputs/adapters.js";
 import { workflowText } from "@eval/prompts";
@@ -220,7 +220,7 @@ export function modelMaterial(material: Record<string, unknown>, candidate: stri
 
 /** Both workflows adapt their public task and trace into this single Attribution contract. */
 export function bindAttributionMaterial(candidate: Candidate, original: RawInput, analysis?: TaskAnalysis,
-  options: { reference?: unknown; initialContextChars?: number } = {}): AgentBinding {
+  options: { reference?: unknown; initialContextChars?: number; component?: string } = {}): AgentBinding {
   const started = performance.now();
   const raw = attributionTrace(original, candidate.input_id, candidate.final_index);
   const task_analysis: TaskAnalysis = analysis ?? { task_type: "回答评审", goal: candidate.question,
@@ -301,7 +301,8 @@ export function bindAttributionMaterial(candidate: Candidate, original: RawInput
   const modelInput = { candidate_id: input.candidate_id, material_availability: input.material_availability,
     ground_truth: input.ground_truth,
     task_analysis: taskAnalysisPresentation(task_analysis, { answer: candidate.input_id }, answer.criterion_instruction_sources),
-    answer: initialAttributionMaterial(answer, raw, navigation) };
+    answer: { ...initialAttributionMaterial(answer, raw, navigation),
+      ...(options.component ? { component_scene: initialComponentScene(raw, original, candidate.input_id, navigation, options.component) } : {}) } };
   return { agent: "attribution", profile: "default", request: { input, sources }, modelInput,
     preparationTimings: { materialMs: performance.now() - started, directoryMs },
     materialNavigation: { answer: navigation },

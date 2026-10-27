@@ -6,7 +6,7 @@ import { DEFAULT_POLICY, emptyUsage, ValidationError, type AttemptSpec, type Run
 import { AgentRegistry, RunStore } from "@eval/host";
 import { RunHotStore, runJournalIdentity } from "@eval/data";
 import { comparisonWorkflow, comparisonRepository } from "@eval/workflows/comparison";
-import { cite, evidenceSources } from "@eval/tools";
+import { cite, evidenceSources, parseEvidenceCoordinates } from "@eval/tools";
 import { attributionAgent } from "@eval/agents/attribution";
 import { fixtureConfig, emptyAudit, fakeEvaluatorVersion, fakeIdentity, criteriaResultForTask } from "../../../../tests/fixtures/comparison.js";
 import { planAttribution, planAttributionUnit, bindAttribution, attributionRepository, attributionWorkflow, type AttributionConfig, type AttributionTaskData } from "./index.js";
@@ -158,6 +158,43 @@ test("explicit attribution records retain their requested session order instead 
   assert.deepEqual(selected.tasks.filter(task => task.stage === "attribution-session")
     .map(task => (task.data as AttributionTaskData).candidate.case_id), ["second", "first"]);
   assert.equal(selected.tasks.length, original.tasks.length);
+});
+
+test("component startup presents bounded original evidence with stable selectable references and precise read coverage", async t => {
+  const f = await fixtureConfig([[{ batch_id: "batch", case_id: "scene", messages: [
+    { type: "user_question", role: "user", content: "核对查询结果。" },
+    { type: "tool_call", name: "finquery", call_id: "q1", input: { query: "收入" } },
+    { type: "tool_result", name: "finquery", call_id: "q1", output: { rows: [{ value: 10 }] } },
+    { type: "llm_turn", system_prompt: "PRIVATE_SYSTEM_SENTINEL", input_messages: [{ role: "user", content: "核对查询结果。" }],
+      output: [{ role: "assistant", content: "收入是10。" }] },
+    { type: "final_answer", content: "收入是10。" },
+  ] }], [], [], []]);
+  f.config.inputs.versions[0]!.adapter = "b";
+  t.after(() => rm(f.directory, { recursive: true, force: true }));
+  const plan = await planAttribution({ ...f.config, workflow: "attribution", inputs: { ...f.config.inputs,
+    versions: f.config.inputs.versions.slice(0, 1) } } as AttributionConfig);
+  const task = plan.tasks.find(task => task.stage === "attribution-component" &&
+    (task.data as AttributionTaskData).component === "finquery 取数服务")!;
+  const binding = bindAttribution(task, plan.inputs, {}), registry = new AgentRegistry([attributionAgent]);
+  const material = binding.modelInput!.answer as Record<string, any>, scene = material.component_scene;
+  assert(scene?.entries.length > 0);
+  assert(scene.entries.length <= 8);
+  assert(!JSON.stringify(scene).includes("PRIVATE_SYSTEM_SENTINEL"));
+  const prepared = registry.prepare(binding), bank = [...prepared.evidenceBank];
+  const source = binding.request.sources.answer!.value as RawInput;
+  for (const entry of scene.entries) {
+    const point = parseEvidenceCoordinates(entry.reference.evidence_id)!;
+    assert(point.kind !== "image");
+    assert(entry.quote.length > 0 && entry.quote.length <= 400);
+    assert.equal(entry.quote, evidenceSources(source.messages[point.message_index])
+      .find(source => source.kind === point.kind && source.path === point.path)!.text.slice(point.start, point.end));
+    assert(bank.includes(entry.reference.evidence_id));
+    assert(binding.presentedReads!.some(read => read.message_index === point.message_index && read.path === point.path &&
+      read.start <= point.start && read.end >= point.end));
+  }
+  prepared.renderAttempt(DEFAULT_POLICY, { ...emptyAudit(), evidenceBank: bank, errors: [], contentSubmissions: 0,
+    fileErrors: 0, repeatedErrors: 0, stopped: false, attemptId: "previous" });
+  assert.deepEqual(prepared.evidenceBank, bank);
 });
 
 test("component entrypoints stay bounded while preserving every source call and the full navigation", async t => {

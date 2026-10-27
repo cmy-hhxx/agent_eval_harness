@@ -1,4 +1,4 @@
-import { displayEvidence, images, parseEvidenceCoordinates, visualCaptureMarkers, type TraceComponentIdentity, type TableCheckResult } from "@eval/tools";
+import { cite, evidenceSources, displayEvidence, images, parseEvidenceCoordinates, visualCaptureMarkers, type TraceComponentIdentity, type TableCheckResult } from "@eval/tools";
 import { responsibilityComponentName, responsibilityComponent, transferChanged, type ResponsibilityMaterial, type AttributionExecutionNode, type AttributionTransition, type AttributionNorm } from "@eval/agents/attribution";
 import type { JsonObject } from "@eval/contracts";
 import { tableChecksPresentation } from "./attribution-presentation.js";
@@ -76,4 +76,38 @@ export function initialAttributionMaterial(answer: JsonObject, raw: RawInput, na
       { evidence_id: string; message_index: number; quote: string }[]>).map(([key, entries]) => [key, entries.map(({ quote, ...item }) =>
       ({ ...displayEvidence(quote.length <= 200 ? { ...item, quote } : { ...item, quote_preview: quote.slice(0, 200), has_more: true }), ...readRequest(item) }))])),
   };
+}
+
+/** Preload a bounded part of the selected component, with exact original coordinates. */
+export function initialComponentScene(raw: RawInput, original: RawInput, inputId: string,
+  navigation: ReturnType<typeof attributionNavigation>, component: string) {
+  const choices = navigation.responsibility_choices.filter(choice => choice.component === component);
+  const sources = new Map<number, ReturnType<typeof evidenceSources>>();
+  const originals = new Map<number, ReturnType<typeof evidenceSources>>();
+  const entries = [];
+  const seen = new Set<string>();
+  for (const choice of choices.slice(0, 2)) {
+    const boundary = navigation.boundaries.find(boundary => boundary.transition_index === choice.transition_index)!;
+    for (const [part, items] of [["before", boundary.before], ["after", boundary.after]] as const) {
+      for (const item of items) {
+        if (entries.length >= 8) break;
+        const point = parseEvidenceCoordinates(item.evidence_id);
+        if (!point || point.kind === "image") continue;
+        if (!sources.has(point.message_index)) sources.set(point.message_index, evidenceSources(raw.messages[point.message_index]));
+        if (!originals.has(point.message_index)) originals.set(point.message_index, evidenceSources(original.messages[point.message_index]));
+        const source = sources.get(point.message_index)!.find(source => source.kind === point.kind && source.path === point.path);
+        const originalSource = originals.get(point.message_index)!.find(source => source.kind === point.kind && source.path === point.path);
+        if (!source || source.quotable === false || !originalSource) continue;
+        const end = Math.min(point.end, point.start + 400);
+        const evidence = cite(inputId, point.message_index, source, point.start, end);
+        if (!evidence.quote || evidence.quote !== originalSource.text.slice(point.start, end) || seen.has(evidence.evidence_id)) continue;
+        seen.add(evidence.evidence_id);
+        entries.push({ transition_index: choice.transition_index, part, ...displayEvidence(evidence),
+          end_offset: point.end, has_more: end < point.end,
+          ...(end < point.end ? { next_request: { candidate: "answer", message_index: point.message_index,
+            kind: point.kind, path: point.path, offset: end, max_chars: Math.min(16000, point.end - end) } } : {}) });
+      }
+    }
+  }
+  return { component, partial: true, entries, responsibility_choices_total: choices.length };
 }
