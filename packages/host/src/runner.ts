@@ -298,10 +298,19 @@ export async function runEvaluation(options: RunOptions): Promise<Record<string,
           const disconnected = new AbortController();
           const close = () => { if (!res.writableEnded) disconnected.abort(new Error("Model permit connection closed")); };
           res.once("close", close);
+          // A low-weight lane can legitimately wait beyond the HTTP idle timeout.
+          // JSON whitespace keeps the control connection alive without granting a permit.
+          res.writeHead(200, { "content-type": "application/json; charset=utf-8" });
+          res.write(" ");
+          const keepAlive = setInterval(() => {
+            if (!res.destroyed && !res.writableEnded) res.write(" ");
+          }, 15_000);
+          keepAlive.unref();
           try {
             await modelRequests.acquire(attemptId, callId, AbortSignal.any([controller.signal, disconnected.signal]));
-            return json(res, { admitted: true });
-          } finally { res.off("close", close); }
+            res.end(JSON.stringify({ admitted: true }));
+            return;
+          } finally { clearInterval(keepAlive); res.off("close", close); }
         }
         throw new HttpError(405, "Method not allowed");
       }
