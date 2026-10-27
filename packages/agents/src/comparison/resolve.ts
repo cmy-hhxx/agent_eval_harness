@@ -11,15 +11,16 @@ import { comparisonSlots, comparisonSlotChoices, comparisonSlotCellState, compar
 export function comparisonSubmissionSchema(request: AgentRequest) {
   const result = structuredClone(schema) as Record<string, any>, slots = comparisonSlots(request);
   const labels = Object.keys((request.input as unknown as ComparisonInput).candidates);
-  const rowSchemas = slots.map((slot, index) => {
-    const row = structuredClone(slot.kind === "resource" ? schema.$defs.resource : schema.$defs.commentary) as Record<string, any>;
-    row.properties.slot_index = { const: index };
-    row.properties.kind = { const: slot.kind };
-    if (slot.kind === "criterion") {
+  const rowSchemas = (["criterion", "resource"] as const).flatMap(kind => {
+    const indices = slots.flatMap((slot, index) => slot.kind === kind ? [index] : []);
+    if (!indices.length) return [];
+    const row = structuredClone(kind === "resource" ? schema.$defs.resource : schema.$defs.commentary) as Record<string, any>;
+    row.properties.slot_index = { enum: indices };
+    if (kind === "criterion") {
       row.properties.better_candidate = { enum: [...labels, null] };
       row.properties.assessments.items.properties.candidate = { enum: labels };
     }
-    return row;
+    return [row];
   });
   const requiredSlots = slots.filter(slot => !slot.optional).length;
   Object.assign(result.properties.comparisons, { minItems: requiredSlots, maxItems: slots.length, items: { oneOf: rowSchemas } });

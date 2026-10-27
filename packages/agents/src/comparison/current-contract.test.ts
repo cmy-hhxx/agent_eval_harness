@@ -36,6 +36,16 @@ test('comparison resolves rows by slot_index and rejects duplicate candidate cel
  const duplicate=structuredClone(draft);duplicate.comparisons.find(row=>row.slot_index===0)!.assessments![1]!.candidate='A';
  rejected(()=>accept(request,duplicate),'comparison_cell_duplicate');
 });
+test('comparison schema groups row kinds while rejecting wrong kind and unknown slot',()=>{
+ const {request,input,draft}=fixture();
+ for(let i=0;i<20;i++) input.task_analysis.requirements.push({...input.task_analysis.requirements[0],id:`extra-${i}`});
+ const schema=comparisonProfile.modelSubmissionSchema!(request) as any;
+ assert.equal(schema.properties.comparisons.items.oneOf.length,1);
+ const validate=new Ajv2020({strict:false}).compile(schema.properties.comparisons.items);
+ assert(validate(draft.comparisons[0]));
+ assert(!validate({...draft.comparisons[0],slot_index:1000}));
+ assert(!validate({...draft.comparisons[0],kind:'resource'}));
+});
 test('comparison records existing defect as common core failure without an attribution core field',()=>{
  const {request,input,draft}=fixture();problem(input);
  const assessment=draft.assessments.find(item=>item.candidate==='A')!;

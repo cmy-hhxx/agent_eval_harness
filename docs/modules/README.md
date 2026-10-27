@@ -41,6 +41,8 @@ Comparison 与 Answer-review 各自拥有配置和规划，不互相依赖；共
 
 Comparison 的归因输入由自身公开契约定义，Workflow 显式投影摘要、任务标准、判据、核心结论、正确性核查和 finding；保留证据坐标、数值与表格核查、标准答案冲突事实和原序号，隔离责任调查及内部 finding ID。表格来源复核在投影前从完整归因派生。`rewritten` 只属于 Workflow 导出与展示，不进入 Agent 原始结果。各 Agent Profile 声明提交方式和草稿预算，Prompts 只渲染传入选项。
 
+常规 Comparison 的模型材料只呈现一份完整会话问答，不重复附加 turns、正文引用副本和引用目录；长答案直接呈现，冲突仍可定向读取来源。提交 Schema 按 criterion/resource 分组约束槽位编号，不为每个槽重复整份行定义。可选 verification 的分段读取流程保持独立。
+
 验证先找模块同目录的 .test.ts，跨模块行为看 tests/integration/host；直接 SDK 看 tests/integration。具体命令见[开发指南](../development.md#验证)。
 
 工作台结果与分析入口：`apps/host/src/dashboard-analysis.ts` 登记任务/批次/运行选择和分析占用；`packages/workflows/src/comparison/analysis-scope.ts` 投影已接受归因身份，`clustering-job.ts` 校验冻结来源并复用独立作业。`packages/data/src/run-artifacts.ts` 枚举公开报告与结果，页面不读取 state 或 debug 材料。

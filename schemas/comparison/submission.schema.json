@@ -118,7 +118,7 @@
               "boolean",
               "null"
             ],
-            "description": "照录来源core_assessment；证据不足时仅needs_review可为null。核心失败明确引用已确认的requirements。"
+            "description": "独立判断主要交付是否可用；证据不足时仅needs_review可为null。核心失败明确引用已确认的requirements。"
           },
           "summary": {
             "type": "string",

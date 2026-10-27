@@ -180,7 +180,9 @@ function bindSourceTask(
       const finalIndex = raw.messages.length - 1;
       const finalSources = messageContentSources(raw.messages[finalIndex]);
       const finalBlockLimit = Math.max(16000, data.initialContextChars ?? 16000);
-      const deferred = finalSources.filter((source) => source.text.length > finalBlockLimit);
+      // Comparison already owns the session's QA text. Present it once, including long
+      // answers, instead of requiring tool round trips to read the same delivery again.
+      const deferred = data.verificationAudit ? finalSources.filter((source) => source.text.length > finalBlockLimit) : [];
       const final = deferred.reduce(
         (text, source) => text.replaceAll(source.text, ""),
         contentText(raw.messages[finalIndex].content),
@@ -308,8 +310,12 @@ function bindSourceTask(
         comparison_scope: comparisonScope({ input, sources }),
         comparison_slots: comparisonSlotChoices({ input, sources }),
         attributions,
-        candidates: Object.fromEntries(Object.entries(materials).map(([label, material]) =>
-        [label, modelMaterial(material, label, sources[label].value as RawInput, sources[label].id)])) },
+        candidates: Object.fromEntries(Object.entries(materials).map(([label, material]) => {
+          const { turns: _turns, final_evidence: _evidence, initial_material: _initial,
+            citation_inventory: _citations, answer_generation: _generation, note: _note, ...delivery } =
+            { ...material, ...modelMaterial(material, label, sources[label].value as RawInput, sources[label].id) };
+          return [label, delivery];
+        })) },
   };
   if (data.prediction && binding.modelInput)
     binding.modelInput.prediction_evaluation = workflowText("prediction-evaluation");
