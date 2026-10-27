@@ -40,7 +40,8 @@ function unitTaskKey(candidate: Candidate, stage: AttributionStage, traceIndex?:
 /** Build one answer's canonical component -> trace -> session unit. */
 export function planAttributionUnit(candidate: Candidate, options: AttributionUnitOptions = {}) {
   const traceList = turns(candidate), previous = new Map((options.previousTasks ?? [])
-    .filter(task => task.stage.startsWith("attribution-"))
+    .filter(task => task.stage.startsWith("attribution-") &&
+      (task.data as AttributionTaskData).candidate.input_id === candidate.input_id)
     .map(task => [unitTaskKey((task.data as AttributionTaskData).candidate, task.stage as AttributionStage,
       (task.data as AttributionTaskData).traceIndex, (task.data as AttributionTaskData).component,
       (task.data as Record<string, unknown>).attributionIdentity as string | undefined), task]));
