@@ -13,6 +13,13 @@ export const comparisonWorkflow: WorkflowDefinition = {
   bind: bindTask,
   advance: advanceReview,
   observesFailures: task => !(task.data as TaskData).verificationAudit,
+  scheduling: {
+    stagePriority: stage => {
+      const rank = ["comparison", "attribution-session", "attribution-trace", "attribution-component", "criteria",
+        "instruction-review", "rewrite", "clustering"].indexOf(stage);
+      return rank < 0 ? 4 : rank;
+    },
+  },
   canStart: (task, manifest) => task.stage === "comparison"
     ? Object.values(task.dependencies).every(id => manifest.states[id]?.status === "succeeded")
     : ["rewrite", "instruction-review"].includes(task.stage)

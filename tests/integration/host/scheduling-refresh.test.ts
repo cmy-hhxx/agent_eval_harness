@@ -8,6 +8,7 @@ import path from "node:path";
 import { DEFAULT_POLICY, type EngineIdentity, type PlannedTask, type RunRepository, type RunState } from "@eval/contracts";
 import { readJson, writeJson } from "@eval/data";
 import { AgentRegistry, runEvaluation } from "@eval/host";
+import { comparisonWorkflow } from "@eval/workflows/comparison";
 
 test("completion during Worker startup refreshes downstream admission before the upstream backlog", async () => {
   const directory = await mkdtemp(path.join(os.tmpdir(), "scheduling-refresh-"));
@@ -49,7 +50,8 @@ process.once("disconnect", close);
 `);
   try {
     await runEvaluation({ repository, agents, runtime: { root: directory, workerEntry },
-      taskSource: { id: "fixture", bind: () => ({ agent: "fixture", profile: "default", request: { input: {}, sources: {} } }) },
+      taskSource: { id: "fixture", scheduling: comparisonWorkflow.scheduling,
+        bind: () => ({ agent: "fixture", profile: "default", request: { input: {}, sources: {} } }) },
       runId: "refresh", output: { kind: "directory", path: directory }, config: {},
       plan: { tasks, inputs: {}, summary: {} }, engine: "pi", identity, evaluatorVersion: "fixture",
       policy: { ...DEFAULT_POLICY, timeoutSeconds: 10, idleTimeoutSeconds: 10 },
