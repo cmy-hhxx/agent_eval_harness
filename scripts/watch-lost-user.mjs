@@ -54,8 +54,36 @@ export async function inboxPackages(source) {
   return packages;
 }
 
+/** Every package name already sitting in the archive tree. */
+export async function archivedNames(archiveDir) {
+  const names = new Set();
+  for (const entry of await readdir(archiveDir, { withFileTypes: true, recursive: true }).catch(() => [])) {
+    if (entry.isFile() && /\.7z$/i.test(entry.name)) names.add(entry.name);
+  }
+  return names;
+}
+
 /**
- * Day folder for a package. Data-service names end in `_YYYYMMDD_HHMMSS`; a
+ * A re-export can reuse a package name with different content. Rename the
+ * incoming file with its upload time so both versions keep a stable identity;
+ * the package day still comes from the original `_YYYYMMDD_` part.
+ */
+export async function renameIncoming({ source, name, archived }) {
+  const info = await stat(path.join(source, name));
+  const stamp = new Date(info.mtimeMs).toISOString().replaceAll("-", "").replaceAll(":", "").replace("T", "").slice(0, 14);
+  const extension = path.extname(name);
+  const stem = name.slice(0, -extension.length);
+  let candidate, counter = 0;
+  do {
+    counter += 1;
+    candidate = `${stem}_b${stamp}${counter > 1 ? "_" + counter : ""}${extension}`;
+  } while (archived.has(candidate) || existsSync(path.join(source, candidate)));
+  await rename(path.join(source, name), path.join(source, candidate));
+  archived.add(candidate);
+  return candidate;
+}
+
+/** Day folder for a package. Data-service names end in `_YYYYMMDD_HHMMSS`; a
  * lost-user name ends in `_YYYYMMDD_<sequence>`. Falls back to today.
  */
 export function packageDay(name, now = new Date()) {
@@ -135,17 +163,50 @@ async function main() {
     }
 
     if (inbox.size) {
-      try {
-        const summary = await extract({ source, target, sevenZip: values["seven-zip"], quiet: true, log: note });
+      const initial = await readState(target);
+      const archived = await archivedNames(archiveDir);
+      let names = [...inbox.keys()].sort();
+      for (const name of [...names]) {
+        if (!archived.has(name)) continue;
+        const unique = await renameIncoming({ source, name, archived });
+        names = names.map((entry) => entry === name ? unique : entry);
+        log(`同名包改名：${name} -> ${unique}`);
+      }
+
+      const run = async (batch, full = false) => {
+        const summary = await extract({
+          source, target, sevenZip: values["seven-zip"], quiet: true, log: note,
+          include: full || !initial ? null : batch,
+        });
         const state = await readState(target);
         const total = Object.values(state?.files ?? {}).reduce((sum, file) => sum + file.rows, 0);
         if (summary.accepted) log(`解压完成：新增 ${summary.accepted} 条，累计 ${total} 条`);
         else if (summary.unchanged) log(`输入已是最新：累计 ${total} 条`);
-        const { moved, kept } = await archiveProcessed({ source, archiveDir, names: [...inbox.keys()], state });
+        const { moved, kept } = await archiveProcessed({ source, archiveDir, names: batch, state });
         if (moved.length) log(`归档 ${moved.length} 个包：${moved.join(", ")}`);
         for (const entry of kept) log(`保留 ${entry.name}：${entry.reason}`);
+      };
+
+      try {
+        await run(names);
       } catch (error) {
-        log(`处理失败，保留收包等待重试：${error.message}`);
+        if (/需要全量重建/.test(error.message)) {
+          log(`输入清单失效，改为全量重建：${error.message}`);
+          try {
+            await run(names, true);
+          } catch (failure) {
+            log(`处理失败，保留收包等待重试：${failure.message}`);
+          }
+        } else {
+          log(`批量处理失败：${error.message}；改为逐包处理`);
+          for (const name of names) {
+            try {
+              await run([name]);
+            } catch (failure) {
+              log(`${name} 处理失败，保留收包等待重试：${failure.message}`);
+            }
+          }
+        }
       }
     } else {
       note("收包目录为空");

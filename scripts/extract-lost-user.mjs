@@ -493,12 +493,13 @@ export async function readState(target) {
  * removed, a published file shorter than recorded) falls back to a full rebuild.
  * A file longer than recorded is a partially appended run and is truncated first.
  */
-async function planRun({ packages, target, archives, state }) {
+async function planRun({ packages, allPackages, target, archives, state }) {
   if (!state) return { mode: "full" };
-  const signatures = await archiveSignatures(packages, archives);
-  if (Object.keys(state.archives).some((name) => !signatures[name] ||
-      signatures[name].size !== state.archives[name].size || signatures[name].mtimeMs !== state.archives[name].mtimeMs)) {
-    return { mode: "full" };
+  for (const [name, recorded] of Object.entries(state.archives)) {
+    const file = allPackages.get(name);
+    if (!file) return { mode: "full" };
+    const info = await stat(file);
+    if (info.size !== recorded.size || info.mtimeMs !== recorded.mtimeMs) return { mode: "full" };
   }
   for (const [key, entry] of Object.entries(state.files)) {
     const [channel, day] = key.split("/");
@@ -697,11 +698,20 @@ class GroupFile {
  * Returns the summary used by the CLI and the tests.
  */
 export async function extract({
-  source, target, sevenZip = "7z", dryRun = false, quiet = false, refresh = false,
+  source, target, sevenZip = "7z", dryRun = false, quiet = false, refresh = false, include = null,
   concurrency = DEFAULT_CONCURRENCY, log = console.log,
 } = {}) {
   const started = Date.now();
-  const packages = await scanPackages(source);
+  const allPackages = await scanPackages(source);
+  let packages = allPackages;
+  if (Array.isArray(include)) {
+    packages = new Map();
+    for (const name of include) {
+      const file = allPackages.get(name);
+      if (!file) throw new Error(`收包目录缺少压缩包：${name}`);
+      packages.set(name, file);
+    }
+  }
   const archives = [...packages.keys()].sort();
 
   if (dryRun) {
@@ -717,7 +727,8 @@ export async function extract({
 
   await mkdir(target, { recursive: true });
   const state = await readState(target);
-  const plan = refresh ? { mode: "full" } : await planRun({ packages, target, archives, state });
+  const plan = refresh ? { mode: "full" } : await planRun({ packages, allPackages, target, archives, state });
+  if (plan.mode === "full" && Array.isArray(include)) throw new Error("输入清单缺失或失效，需要全量重建");
   if (plan.mode === "current") {
     const files = Object.fromEntries(Object.entries(state.files).map(([key, entry]) => [key, entry.rows]));
     return {

@@ -200,6 +200,13 @@ test("extract rebuilds the channel tree and reports rejects", async () => {
       const afterArchive = await extract({ source, target, sevenZip: stub, quiet: true, log: () => {} });
       assert.equal(afterArchive.unchanged, true);
       assert.equal(afterArchive.archives, 2);
+
+      const scoped = await extract({ source, target, sevenZip: stub, include: [first], quiet: true, log: () => {} });
+      assert.equal(scoped.unchanged, true);
+      await assert.rejects(
+        extract({ source, target, sevenZip: stub, include: ["missing.7z"], quiet: true, log: () => {} }),
+        /缺少压缩包/,
+      );
     } finally {
       delete process.env.STUB_DATA;
     }

@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
 
-import { archiveProcessed, packageDay } from "./watch-lost-user.mjs";
+import { archiveProcessed, archivedNames, packageDay, renameIncoming } from "./watch-lost-user.mjs";
 
 test("package day comes from the package name, with a date fallback", () => {
   assert.equal(packageDay("lost_user_20261010_0001.7z"), "20261010");
@@ -35,6 +35,31 @@ test("archiving moves processed packages and never overwrites an archived copy",
     assert.deepEqual(second.moved, []);
     assert.equal(second.kept[0].reason, "archived_copy_exists");
     assert.equal(await readFile(path.join(archiveDir, "20261010", "lost_user_20261010_0001.7z"), "utf8"), "one");
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("an incoming name that already exists in the archive is renamed, not replaced", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "lost-user-rename-"));
+  try {
+    const source = path.join(root, "inbox");
+    const archiveDir = path.join(root, "archive");
+    await mkdir(source, { recursive: true });
+    await mkdir(path.join(archiveDir, "20261010"), { recursive: true });
+    await writeFile(path.join(archiveDir, "20261010", "lost_user_20261010_0001.7z"), "old");
+    await writeFile(path.join(source, "lost_user_20261010_0001.7z"), "new");
+    await writeFile(path.join(source, "lost_user_20261010_0009.7z"), "fresh");
+    const before = (await stat(path.join(source, "lost_user_20261010_0001.7z"))).mtimeMs;
+
+    const archived = await archivedNames(archiveDir);
+    assert.deepEqual([...archived], ["lost_user_20261010_0001.7z"]);
+    const renamed = await renameIncoming({ source, name: "lost_user_20261010_0001.7z", archived });
+    assert.match(renamed, /^lost_user_20261010_0001_b\d{14}\.7z$/);
+    assert.equal(await readFile(path.join(source, renamed), "utf8"), "new");
+    assert.equal((await stat(path.join(source, renamed))).mtimeMs, before);
+    assert.equal(await stat(path.join(source, "lost_user_20261010_0001.7z")).catch(() => null), null);
+    assert.equal(packageDay(renamed), "20261010");
   } finally {
     await rm(root, { recursive: true, force: true });
   }
