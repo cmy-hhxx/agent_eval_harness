@@ -1,0 +1,250 @@
+#!/usr/bin/env node
+import { randomUUID } from "node:crypto";
+import { readdir, stat } from "node:fs/promises";
+import path from "node:path";
+import { fileURLToPath, pathToFileURL } from "node:url";
+import { parseArgs } from "node:util";
+import { setTimeout as delay } from "node:timers/promises";
+import { createFileLogger, exists, readJson, runLock, writeJson } from "@eval/data";
+import { lostHelper, prepareLost, registerPreparedLost } from "./night-data.mjs";
+
+const root = fileURLToPath(new URL("../", import.meta.url));
+const priority = ["wencai", "lost", "aime"];
+export const nextJob = state => priority.flatMap(source => state.jobs.filter(job =>
+  job.source === source && job.status === "queued"))[0];
+
+export function dailyJobs(source, frozen, output) {
+  const dates = [...new Set(frozen.inputs.records.map(row => row.batch_id))].sort();
+  if (dates.some(date => !/^\d{4}-\d{2}-\d{2}$/.test(date))) throw new Error("日常输入必须按业务日期分批");
+  return dates.map(date => ({ source, runId: date, output, status: "queued", revisions: frozen.revisions,
+    inputs: { ...frozen.inputs, records: frozen.inputs.records.filter(row => row.batch_id === date) } }));
+}
+
+export function admitLost(state, versions, output, now, intervalMs) {
+  if (now < state.nextAdmissionAt) return false;
+  let added = false;
+  for (const delivery of state.deliveries.filter(item => !item.admitted)) {
+    state.jobs.push({ source: "lost", runId: `lost-${randomUUID()}`, output, status: "queued",
+      revisions: { [delivery.file]: delivery.revision },
+      inputs: { versions: versions.filter(version => version.id === delivery.model).map(version =>
+        ({ ...version, sources: [{ kind: "file", path: delivery.file }] })) } });
+    delivery.admitted = true;
+    added = true;
+  }
+  state.nextAdmissionAt = now + intervalMs;
+  return added;
+}
+
+export function createNightDispatcher(state, { save, record, run }) {
+  let active;
+  return {
+    preempt() {
+      if (active?.job.source === "aime" && state.jobs.some(job => job.source === "lost" && job.status === "queued"))
+        active.pause.abort(new Error("Lost-user batch ready"));
+    },
+    pause() { active?.pause.abort(new Error("Night pipeline stopping")); },
+    async step() {
+      if (active) throw new Error("Evaluation dispatcher is already active");
+      const job = nextJob(state);
+      if (!job) return false;
+      active = { job, pause: new AbortController() };
+      job.status = "running";
+      await save();
+      await record("evaluation_started", { source: job.source, runId: job.runId });
+      try {
+        const result = await run(job, active.pause.signal);
+        job.status = result.complete ? "completed" : active.pause.signal.aborted ? "queued" : "failed";
+        job.result = result.result;
+        if (job.status === "failed") job.error = "评测未全部成功；检查正式 run 状态后使用 --retry-failed 续跑";
+      } catch (error) {
+        job.status = "failed";
+        job.error = error.message;
+      } finally {
+        active = undefined;
+      }
+      await save();
+      await record("evaluation_settled", { source: job.source, runId: job.runId, status: job.status, error: job.error });
+      return true;
+    },
+  };
+}
+
+export function resolveNightConfig(value, configFile) {
+  const config = structuredClone(value);
+  for (const key of ["runtimeRoot", "dataRoot", "settingsFile"])
+    if (typeof config[key] !== "string" || !path.isAbsolute(config[key])) throw new Error(`${key} 必须为绝对路径`);
+  for (const key of ["pollSeconds", "stableSeconds", "admissionSeconds"])
+    if (!Number.isSafeInteger(config[key]) || config[key] < 1) throw new Error(`Invalid ${key}`);
+  if (!Array.isArray(config.channels) || config.channels.length !== 2 || new Set(config.channels).size !== 2 ||
+      config.channels.some(channel => typeof channel !== "string" || !channel)) throw new Error("需要两个不同的评测渠道");
+  for (const source of priority) {
+    if (!Array.isArray(config.hostConfigs?.[source]) || !config.hostConfigs[source].length)
+      throw new Error("Missing hostConfigs." + source);
+    config.hostConfigs[source] = config.hostConfigs[source].map(file => path.resolve(path.dirname(configFile), file));
+  }
+  const aime = path.join(config.dataRoot, "1_aime");
+  config.lost = { inbox: path.join(aime, "1_7z_data/lost_user"),
+    inputDirectory: path.join(aime, "5_lost_user_eval_input"), cleanDirectory: path.join(aime, "6_lost_user_eval_clean"),
+    targetDirectory: path.join(aime, "6_lost_user_eval_clean_slim"), stableSeconds: config.stableSeconds,
+    sevenZip: config.sevenZip };
+  config.outputs = { wencai: path.join(config.dataRoot, "0_wencai/eval_output/0_daily_eval"),
+    lost: path.join(aime, "eval_output/3_lost_user_eval"), aime: path.join(aime, "eval_output/0_daily_eval") };
+  return config;
+}
+
+export async function main(argv) {
+  const { values, positionals } = parseArgs({ args: argv, allowPositionals: true, options: {
+    config: { type: "string", default: path.join(root, "configs/night-evaluation.json") },
+    "retry-failed": { type: "boolean" },
+  } });
+  const command = positionals[0] ?? "check";
+  if (positionals.length > 1 || !["check", "run", "status", "close-input"].includes(command))
+    throw new Error("用法：node scripts/night-eval.mjs check|run|status|close-input [--config FILE] [--retry-failed]");
+  const config = resolveNightConfig(await readJson(values.config), values.config);
+  const directory = path.join(config.runtimeRoot, "state/night-evaluation");
+  const stateFile = path.join(directory, "state.json"), closeFile = path.join(directory, "close-input.json");
+  if (command === "status") {
+    const state = await readJson(stateFile);
+    console.log(JSON.stringify({ intake: state.closed ? "closed" : "open", pending: state.pending,
+      preparationError: state.preparationError, jobs: state.jobs.map(({ source, runId, status, error }) =>
+        ({ source, runId, status, error })) }, null, 2));
+    return;
+  }
+  if (command === "close-input") {
+    if (!await exists(stateFile)) throw new Error("管线尚未初始化");
+    if (!await exists(closeFile)) await writeJson(closeFile, {
+      requestedAt: new Date().toISOString(), packages: (await readdir(config.lost.inbox)).filter(name => /\.7z$/i.test(name)).sort(),
+    });
+    console.log("已停止接收新包；截止时已在收包目录的包仍会等待上传稳定、清洗及评测。");
+    return;
+  }
+  process.env.EVAL_CONFIG_FILE = config.settingsFile;
+  process.env.EVAL_LOG_DIR = path.join(config.runtimeRoot, "log");
+  process.env.EVAL_LOG_LOCK_DIR = path.join(config.runtimeRoot, "state/log-writer");
+  process.env.EVAL_HOT_STATE_ROOT = path.join(config.runtimeRoot, "state/host-hot");
+  const { freezeNightInputs, runNightBatch, createChannelRequests } = await import("../dist/apps/host/src/night-evaluation.js");
+  const { loadConfig } = await import("../dist/apps/host/src/config.js");
+  const { createBalancedModels } = await import("../dist/apps/host/src/balanced-models.js");
+  const { configurationSecrets } = await import("../dist/apps/host/src/settings.js");
+  const hosts = {};
+  for (const source of priority) {
+    hosts[source] = await loadConfig(config.hostConfigs[source]);
+    if (hosts[source].workflow !== (source === "wencai" ? "comparison" : "attribution")) throw new Error("Invalid workflow: " + source);
+    createBalancedModels(hosts[source].models, config.channels);
+  }
+  const call = request => lostHelper(config.python, request);
+  for (const folder of [config.lost.inbox, config.lost.inputDirectory, config.lost.cleanDirectory, config.lost.targetDirectory])
+    if (!(await stat(folder)).isDirectory()) throw new Error("Not a directory: " + folder);
+  const manifest = await readJson(path.join(config.lost.inputDirectory, ".extract-lost-user.json"));
+  if (!manifest.files || !manifest.archives) throw new Error("Invalid extraction manifest");
+  if (command === "check") {
+    console.log(JSON.stringify({ source: "lost_prepared", ...await registerPreparedLost(config.lost, { records: {}, deliveries: [] }, call) }));
+    for (const source of ["wencai", "aime"]) {
+      const frozen = await freezeNightInputs(config.hostConfigs[source], source === "wencai" ? "comparison" : "attribution");
+      console.log(JSON.stringify({ source, records: frozen.inputs.records.length, output: config.outputs[source] }));
+    }
+    for (const key of Object.keys(manifest.files)) {
+      const [model, day] = key.split("/");
+      console.log(JSON.stringify({ source: "lost", file: key, ...await call({ operation: "snapshot", ...config.lost, model, name: day + ".jsonl" }) }));
+    }
+    return;
+  }
+  const release = await runLock(directory);
+  let releaseInput;
+  const logger = createFileLogger({ directory: process.env.EVAL_LOG_DIR, lockDirectory: process.env.EVAL_LOG_LOCK_DIR,
+    secrets: configurationSecrets() });
+  const abort = new AbortController(), sleepAbort = new AbortController();
+  let stopping = false, dispatcher;
+  const stop = () => { stopping = true; sleepAbort.abort(); dispatcher?.pause(); };
+  process.on("SIGINT", stop); process.on("SIGTERM", stop);
+  const wait = ms => delay(ms, undefined, { signal: sleepAbort.signal }).catch(error => { if (!stopping) throw error; });
+  try {
+    releaseInput = await runLock(config.lost.inputDirectory, { createDirectory: false });
+    if (!await logger.initialize()) throw new Error("统一日志初始化失败");
+    const record = async (event, details = {}) => {
+      if (!await logger.event(event, { component: "night-evaluation", ...details, attempt_id: randomUUID() }))
+        throw new Error("统一日志写入失败");
+      console.log(JSON.stringify({ event, ...details }));
+    };
+    let state;
+    if (await exists(stateFile)) {
+      state = await readJson(stateFile);
+      if (!state || !Array.isArray(state.jobs) || !Array.isArray(state.deliveries) || !state.records || !state.cleaned ||
+          !state.observed || !state.pending || !Number.isFinite(state.nextAdmissionAt)) throw new Error("Invalid night pipeline state");
+      for (const job of state.jobs) {
+        if (!priority.includes(job.source) || !["queued", "running", "completed", "failed"].includes(job.status))
+          throw new Error("Invalid night job state");
+        if (job.output !== config.outputs[job.source]) throw new Error("管线输出目录发生变化");
+        if (job.status === "running" || values["retry-failed"] && job.status === "failed") {
+          job.status = "queued"; delete job.error;
+          job.retryFailed = values["retry-failed"] === true;
+        }
+      }
+    } else {
+      const wencai = await freezeNightInputs(config.hostConfigs.wencai, "comparison");
+      const aime = await freezeNightInputs(config.hostConfigs.aime, "attribution");
+      state = { jobs: [...dailyJobs("wencai", wencai, config.outputs.wencai), ...dailyJobs("aime", aime, config.outputs.aime)],
+        observed: {}, cleaned: {}, records: {}, deliveries: [], pending: {}, nextAdmissionAt: 0 };
+      const prepared = await registerPreparedLost(config.lost, state, call);
+      if (prepared.rows) admitLost(state, hosts.lost.evaluation.inputs.versions, config.outputs.lost, Date.now(), config.admissionSeconds * 1000);
+      await record("prepared_slim_registered", prepared);
+    }
+    let writes = Promise.resolve();
+    const save = () => {
+      const snapshot = structuredClone(state);
+      writes = writes.then(() => writeJson(stateFile, snapshot));
+      return writes;
+    };
+    await save();
+    const requests = createChannelRequests(Object.fromEntries(config.channels.map(channel => [channel, 200])));
+    dispatcher = createNightDispatcher(state, { save, record, run: (job, pauseSignal) => runNightBatch({
+      ...job, configs: config.hostConfigs[job.source], workflow: job.source === "wencai" ? "comparison" : "attribution",
+      channels: config.channels, requests, signal: abort.signal, pauseSignal,
+    }) });
+    let prepared = state.jobs.some(job => job.source === "lost"), dataReady = false;
+    const prepare = async () => {
+      do {
+        try {
+          if (await exists(closeFile)) state.closed = await readJson(closeFile);
+          dataReady = false;
+          dataReady = await prepareLost(config.lost, state, save, record, call, () => stopping);
+          delete state.preparationError;
+          if (state.closed) state.nextAdmissionAt = 0;
+          const added = admitLost(state, hosts.lost.evaluation.inputs.versions, config.outputs.lost, Date.now(), config.admissionSeconds * 1000);
+          await save();
+          if (added) dispatcher.preempt();
+        } catch (error) {
+          state.preparationError = error.message;
+          await save();
+          await record("preparation_failed", { error: error.message });
+        }
+        prepared = true;
+        if (!stopping) await wait(config.pollSeconds * 1000);
+      } while (!stopping);
+    };
+    const evaluate = async () => {
+      while (!stopping) {
+        if (prepared || nextJob(state)?.source === "wencai") {
+          if (await dispatcher.step()) continue;
+          if (state.closed && dataReady && !state.preparationError && state.deliveries.every(item => item.admitted) &&
+              state.jobs.every(job => job.status === "completed")) {
+            await record("completed", { jobs: state.jobs.length }); stop(); break;
+          }
+        }
+        await wait(1000);
+      }
+    };
+    const guard = task => task.catch(error => { stop(); abort.abort(error); throw error; });
+    const outcomes = await Promise.allSettled([guard(prepare()), guard(evaluate())]);
+    for (const outcome of outcomes) if (outcome.status === "rejected") throw outcome.reason;
+    await save();
+    await record("stopped", { closed: Boolean(state.closed), failed: state.jobs.filter(job => job.status === "failed").length });
+  } finally {
+    process.off("SIGINT", stop); process.off("SIGTERM", stop);
+    await releaseInput?.();
+    await release();
+  }
+}
+
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href)
+  main(process.argv.slice(2)).catch(error => { console.error(error.message); process.exitCode = 1; });

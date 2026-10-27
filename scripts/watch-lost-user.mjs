@@ -34,6 +34,7 @@ import { mkdir, readdir, rename, stat } from "node:fs/promises";
 import path from "node:path";
 import { parseArgs } from "node:util";
 import { pathToFileURL } from "node:url";
+import { runLock } from "@eval/data";
 
 import { archiveDay } from "./archive-processed-packages.mjs";
 import { extract, readState } from "./extract-lost-user.mjs";
@@ -142,6 +143,8 @@ async function main() {
   const log = (message) => console.log(`[${stamp()}] ${message}`);
   const note = values.quiet ? () => {} : log;
 
+  const release = await runLock(target);
+  try {
   const seen = new Map();
   for (;;) {
     const inbox = await inboxPackages(source).catch(() => new Map());
@@ -215,6 +218,7 @@ async function main() {
     if (values.once) return;
     await sleep(interval);
   }
+  } finally { await release(); }
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {

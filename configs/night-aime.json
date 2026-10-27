@@ -1,0 +1,9 @@
+{
+  "workflow": "attribution",
+  "inputs": {
+    "versions": [
+      { "id": "aime_fast", "name": "AIME Fast", "adapter": "a", "sources": [{ "kind": "directory", "path": "/mnt/fin_bench/eval_data/1_aime/4_daily_eval_input_clean_slim/aime_fast" }] },
+      { "id": "aime_expert", "name": "AIME Expert", "adapter": "a", "sources": [{ "kind": "directory", "path": "/mnt/fin_bench/eval_data/1_aime/4_daily_eval_input_clean_slim/aime_expert" }] }
+    ]
+  }
+}

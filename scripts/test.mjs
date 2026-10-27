@@ -27,6 +27,8 @@ const workerPattern = [
   "unsubmitted idle recovery",
 ].join("|");
 const fastFiles = [
+  "dist/packages/host/src/channel-requests.test.js",
+  "scripts/night-eval.test.mjs",
   "dist/packages/agents/src/attribution/responsibility.test.js",
   "dist/packages/agents/src/comparison/current-contract.test.js",
   "dist/packages/agents/src/clustering/profile.test.js",
@@ -79,6 +81,7 @@ const hostFiles = full ? await testFiles(["dist/tests/integration/host"]) : [];
 // their existing deadlines without extending timeouts or retrying failed tests.
 const concurrency = Math.min(2, availableParallelism());
 const repositoryTests = [
+  "scripts/night-eval.test.mjs",
   "scripts/aime-slim.test.mjs",
   "scripts/auto-renew.test.mjs",
   "scripts/archive-processed-packages.test.mjs",
