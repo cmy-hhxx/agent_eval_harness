@@ -22,6 +22,26 @@ export { acceptedRewrites, acceptedRewriteProjection, sourceRewriteTasks } from 
 import { displayComparison } from "./candidate-display.js";
 export { display, displayComparison } from "./candidate-display.js";
 
+/** Refresh display-only fields of a durable row without changing judgments or evidence. */
+export function displayComparisonRow(row: JsonObject, task: PlannedTask): JsonObject {
+  const models = row.models as Record<string, { version: string }>;
+  const names = Object.fromEntries(Object.entries((task.data as TaskData).candidates)
+    .map(([label, candidate]) => [label, models[candidate.version].version]));
+  const view = structuredClone(row);
+  const prose = (item: JsonObject, field: string) => { item[field] = displayComparison(item[field], names); };
+  for (const item of Object.values(view.assessments as Record<string, JsonObject>)) prose(item, "summary");
+  for (const item of Object.values(view.verdicts as Record<string, JsonObject>)) prose(item, "reason");
+  view.task_analysis = displayComparison(view.task_analysis, names);
+  const basis = view.decision_basis as JsonObject;
+  prose(basis, "tradeoff");
+  for (const item of basis.comparisons as JsonObject[]) {
+    prose(item, "aspect");
+    for (const assessment of Object.values(item.assessments as Record<string, JsonObject>)) prose(assessment, "summary");
+  }
+  if (view.rewritten) for (const item of (view.rewritten as JsonObject).rewrites as JsonObject[]) prose(item, "text");
+  return view;
+}
+
 /** Derive every two-way verdict from the group ranking plus per-candidate core classification. */
 function deriveVerdicts(
   candidates: Record<string, { version: string }>,
@@ -207,6 +227,12 @@ export function encodeResult(task: PlannedTask, state: RunState, inputs: Record<
     const file = receipt.exported.file ?? (data.stage === "comparison" && data.verificationAudit ? "comparison-verification.jsonl"
       : data.stage === "comparison" && (receipt.evaluation as ComparisonResult).status === "needs_review" ? "comparison-review.jsonl"
       : resultFile(data.stage === "rewrite" ? data.rewriteOf!.stage : task.stage as Stage));
+    if (task.stage === "comparison" && receipt.exported.row.evaluation_type === "group_model_comparison") {
+      const row = displayComparisonRow(receipt.exported.row, task);
+      // Presentation repairs may replace a durable row; accepted model receipts remain immutable.
+      if (JSON.stringify(row) !== JSON.stringify(receipt.exported.row))
+        return { ...receipt.exported, file, row, auxiliary: true };
+    }
     return { ...receipt.exported, file };
   }
   if (task.stage === "criteria") {

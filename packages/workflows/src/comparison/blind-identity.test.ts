@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import type { PlannedTask, RunState, SubmissionReceipt } from "@eval/contracts";
 import type { ComparisonResult, TaskData } from "./types.js";
-import { comparisonRow } from "./results.js";
+import { comparisonRow, displayComparisonRow, encodeResult } from "./results.js";
 import { display, displayComparison } from "./candidate-display.js";
 import { acceptedRewriteProjection } from "./rewrite-projection.js";
 import { bindTask } from "./binding.js";
@@ -47,6 +47,19 @@ for (const [subject, text, expected] of [
   assert.equal(polished.verdicts.a_expert__vs__b_expert.reason, expected);
   assert.equal(polished.verdicts.a_expert__vs__b_expert.winner_name, "B组Expert");
   assert.deepEqual(polished.evaluations.a_expert, before);
+  const saved = structuredClone(row) as any;
+  saved.decision_basis.tradeoff = text;
+  saved.assessments.b_expert.summary = text;
+  saved.rewritten = { evaluator_version: fakeEvaluatorVersion, rewrites: [{ id: "assessment.A.summary", text }] };
+  const durable = { ...source, exported: { id: saved.comparison_id, file: "comparison.jsonl", row: saved } };
+  const replay = encodeResult(task, { receipts: { [task.id]: durable } } as unknown as RunState, {})!;
+  assert.equal(replay.auxiliary, true);
+  assert.equal((replay.row.decision_basis as any).tradeoff, expected);
+  assert.deepEqual((replay.row.rewritten as any).rewrites, [{ id: "assessment.A.summary", text: expected }]);
+  assert.deepEqual(replay.row.evaluations, saved.evaluations);
+  assert.deepEqual(replay.row.ranking, saved.ranking);
+  assert.deepEqual(displayComparisonRow(replay.row, task), replay.row);
+  assert.equal(saved.decision_basis.tradeoff, text);
 });
 
 test("candidate display is idempotent and preserves source quotes and business identifiers", () => {
