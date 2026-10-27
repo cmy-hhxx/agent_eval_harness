@@ -930,10 +930,29 @@ export async function runEvaluation(options: RunOptions): Promise<Record<string,
         if (options.taskSource.canStart?.(task, manifest) === false) continue;
         if (running.size >= taskConcurrency()) break;
         if (!options.workerUrls?.length && eligible.every((worker) => busy.has(worker) || unavailable.has(worker))) {
-          const worker = await launchWorker(identity.engine, path.join(working, "workers", `${identity.engine}-${randomUUID()}`));
-          owned.push(worker);
-          const health = await request<WorkerStatus>(`${worker.url}/api/health`);
-          eligible.push({ url: worker.url, health, owner: worker });
+          let worker: (typeof owned)[number] | undefined;
+          try {
+            worker = await launchWorker(identity.engine, path.join(working, "workers", `${identity.engine}-${randomUUID()}`));
+            owned.push(worker);
+            const health = await request<WorkerStatus>(`${worker.url}/api/health`);
+            eligible.push({ url: worker.url, health, owner: worker });
+          } catch (error) {
+            const cause = error instanceof Error ? error.cause as { code?: string } | undefined : undefined;
+            const transient = error instanceof Error && (error.name === "TimeoutError" ||
+              error.message === "fetch failed" || ["ECONNRESET", "ETIMEDOUT", "UND_ERR_SOCKET", "UND_ERR_CONNECT_TIMEOUT"].includes(cause?.code ?? ""));
+            if (!transient) throw error;
+            await worker?.close();
+            const state = manifest.states[task.id];
+            state.transportFailures = (state.transportFailures ?? 0) + 1;
+            state.reason = "Worker startup network failure: " + errorText(error);
+            if (state.transportFailures > options.retries) state.status = "failed";
+            else state.nextRetryAt = Date.now() + options.retryDelaySeconds * 1000 * 2 ** (state.transportFailures - 1);
+            await current.save(task.id);
+            await options.logger?.error(error, { component: "host", event: "worker_startup_failed", run_id: options.runId,
+              task_id: task.id, stage: task.stage });
+            scheduled = true;
+            continue;
+          }
         }
         if (eligible.every((worker) => busy.has(worker) || unavailable.has(worker))) break;
         const acceptedDependencies = await current.dependencies(task);

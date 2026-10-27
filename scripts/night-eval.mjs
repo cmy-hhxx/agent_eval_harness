@@ -44,6 +44,7 @@ export function createNightDispatcher(state, { save, record, run }) {
       const job = nextJob(state, source);
       if (!job) return false;
       const pause = new AbortController();
+      let detail;
       active.set(source, pause);
       job.status = "running";
       delete job.error;
@@ -57,11 +58,12 @@ export function createNightDispatcher(state, { save, record, run }) {
       } catch (error) {
         job.status = "failed";
         job.error = error.message;
+        detail = error.stack;
       } finally {
         active.delete(source);
       }
       await save();
-      await record("evaluation_settled", { source: job.source, runId: job.runId, status: job.status, error: job.error });
+      await record("evaluation_settled", { source: job.source, runId: job.runId, status: job.status, error: job.error, detail });
       return true;
     },
   };
