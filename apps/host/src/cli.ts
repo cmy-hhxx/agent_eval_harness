@@ -379,6 +379,7 @@ dashboard: --port 4173 在本机启动控制看板`,
   if ("workflow" in config && config.workflow === "attribution") {
     process.exitCode = await runAttributionWorkflowCommand({ ...host, workflow: "attribution", evaluation: config }, {
       command, runId: values["run-id"], debug: values.debug, workers: values.worker,
+      skipFailed: values["skip-failed"],
       discoverInputs: values["discover-inputs"], resumeStages: values["resume-stage"], balanceChannels: values["balance-channels"],
     });
     return;

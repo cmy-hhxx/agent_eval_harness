@@ -13,6 +13,7 @@ export async function readAttributionWorkflowCommand(command: "status" | "valida
 
 export async function runAttributionWorkflowCommand(host: AttributionHostConfig, options: {
   command: string; runId?: string; debug?: boolean; workers?: string[]; discoverInputs?: boolean;
+  skipFailed?: boolean;
   resumeStages?: string[]; balanceChannels?: boolean; signal?: AbortSignal;
 }) {
   if (!["preflight", "run"].includes(options.command)) throw new Error("Attribution 只支持 preflight 或 run");
@@ -40,6 +41,7 @@ export async function runAttributionWorkflowCommand(host: AttributionHostConfig,
       policy: host.evaluation.execution, concurrency: host.evaluation.execution.concurrency,
       taskConcurrency: host.evaluation.execution.taskConcurrency, retries: host.evaluation.execution.retries,
       retryDelaySeconds: host.evaluation.execution.retryDelaySeconds, discoverInputs: options.discoverInputs,
+      skipFailed: options.skipFailed,
       resumeStages: options.resumeStages, workerUrls: options.workers, failureGuard: host.evaluation.execution.failureGuard,
       signal: controller.signal, debug: options.debug, onProgress: console.log });
     console.log(JSON.stringify(result, null, 2));

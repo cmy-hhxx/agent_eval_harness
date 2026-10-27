@@ -161,7 +161,7 @@ tail -f log/runtime.log
 
 相同 run-id 保留原筛选、A/B 映射、UUID、成功收据和累计用量；代码、模型、预算、评测器变化不阻止续跑。未完成任务使用当前有效材料与配置，发现原范围内新增任务。新增日期、模型集合或重评成功结果使用新 ID。
 
-试跑、补失败或定向改写会保存 executionScope。普通续跑只执行该清单，不发现输入或按开关重规划；`--discover-inputs` 才释放范围，且不扩大原 batch/case/limit 条件。`--skip-failed` 推进其他可完成任务，保留已有失败状态。
+试跑、补失败或定向改写会保存 executionScope。普通续跑只执行该清单，不发现输入或按开关重规划；`--discover-inputs` 才释放范围，且不扩大原 batch/case/limit 条件。`run --skip-failed` 在 Comparison 与独立 Attribution 中均保留既有 `failed / timed_out / blocked` 状态和尝试次数，只推进其余可完成任务；`--resume-stage STAGE` 可同时解除指定阶段的暂停，不会取消跳过策略。
 
 | 预算/故障 | 恢复规则 |
 |---|---|
