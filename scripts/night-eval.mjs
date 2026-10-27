@@ -11,9 +11,7 @@ import { lostHelper, prepareLost, registerPreparedLost } from "./night-data.mjs"
 
 const root = fileURLToPath(new URL("../", import.meta.url));
 const priority = ["wencai", "lost", "aime"];
-export const nextJob = (state, now = Date.now()) => priority.flatMap(source => state.jobs.filter(job =>
-  job.source === source && job.status === "queued"))[0] ?? priority.flatMap(source => state.jobs.filter(job =>
-  job.source === source && job.status === "failed" && (job.retryAt ?? 0) <= now))[0];
+export const nextJob = (state, source) => state.jobs.find(job => job.source === source && job.status === "queued");
 
 export function dailyJobs(source, frozen, output) {
   const dates = [...new Set(frozen.inputs.records.map(row => row.batch_id))].sort();
@@ -38,36 +36,30 @@ export function admitLost(state, versions, output, now, intervalMs) {
 }
 
 export function createNightDispatcher(state, { save, record, run }) {
-  let active;
+  const active = new Map();
   return {
-    preempt() {
-      if (active?.job.source === "aime" && state.jobs.some(job => job.source === "lost" && job.status === "queued"))
-        active.pause.abort(new Error("Lost-user batch ready"));
-    },
-    pause() { active?.pause.abort(new Error("Night pipeline stopping")); },
-    async step() {
-      if (active) throw new Error("Evaluation dispatcher is already active");
-      const job = nextJob(state);
+    pause() { for (const pause of active.values()) pause.abort(new Error("Night pipeline stopping")); },
+    async step(source) {
+      if (active.has(source)) throw new Error("Evaluation dispatcher is already active: " + source);
+      const job = nextJob(state, source);
       if (!job) return false;
-      if (job.status === "failed") job.retryFailed = true;
-      active = { job, pause: new AbortController() };
+      const pause = new AbortController();
+      active.set(source, pause);
       job.status = "running";
       delete job.error;
-      delete job.retryAt;
       await save();
       await record("evaluation_started", { source: job.source, runId: job.runId });
       try {
-        const result = await run(job, active.pause.signal);
-        job.status = result.complete ? "completed" : active.pause.signal.aborted ? "queued" : "failed";
+        const result = await run(job, pause.signal);
+        job.status = result.complete ? "completed" : pause.signal.aborted ? "queued" : "failed";
         job.result = result.result;
-        if (job.status === "failed") job.error = "评测未全部成功；保留已接受结果，等待自动续跑";
+        if (job.status === "failed") job.error = "评测未全部成功；保留成功结果和失败状态，不自动补跑";
       } catch (error) {
         job.status = "failed";
         job.error = error.message;
       } finally {
-        active = undefined;
+        active.delete(source);
       }
-      if (job.status === "failed") job.retryAt = Date.now() + 60_000;
       await save();
       await record("evaluation_settled", { source: job.source, runId: job.runId, status: job.status, error: job.error });
       return true;
@@ -101,19 +93,20 @@ export function resolveNightConfig(value, configFile) {
 export async function main(argv) {
   const { values, positionals } = parseArgs({ args: argv, allowPositionals: true, options: {
     config: { type: "string", default: path.join(root, "configs/night-evaluation.json") },
-    "retry-failed": { type: "boolean" },
   } });
   const command = positionals[0] ?? "check";
   if (positionals.length > 1 || !["check", "run", "status", "close-input"].includes(command))
-    throw new Error("用法：node scripts/night-eval.mjs check|run|status|close-input [--config FILE] [--retry-failed]");
+    throw new Error("用法：node scripts/night-eval.mjs check|run|status|close-input [--config FILE]");
   const config = resolveNightConfig(await readJson(values.config), values.config);
   const directory = path.join(config.runtimeRoot, "state/night-evaluation");
   const stateFile = path.join(directory, "state.json"), closeFile = path.join(directory, "close-input.json");
+  const requestFile = path.join(directory, "model-requests.json");
   if (command === "status") {
     const state = await readJson(stateFile);
     console.log(JSON.stringify({ intake: state.closed ? "closed" : "open", pending: state.pending, excludedInputs: state.excludedInputs,
-      preparationError: state.preparationError, jobs: state.jobs.map(({ source, runId, status, error, retryAt }) =>
-        ({ source, runId, status, error, retryAt })) }, null, 2));
+      modelRequests: await exists(requestFile) ? await readJson(requestFile) : undefined,
+      preparationError: state.preparationError, jobs: state.jobs.map(({ source, runId, status, error }) =>
+        ({ source, runId, status, error })) }, null, 2));
     return;
   }
   if (command === "close-input") {
@@ -167,7 +160,7 @@ export async function main(argv) {
   const logger = createFileLogger({ directory: process.env.EVAL_LOG_DIR, lockDirectory: process.env.EVAL_LOG_LOCK_DIR,
     secrets: configurationSecrets() });
   const abort = new AbortController(), sleepAbort = new AbortController();
-  let stopping = false, dispatcher;
+  let stopping = false, dispatcher, requestTimer;
   const stop = () => { stopping = true; sleepAbort.abort(); dispatcher?.pause(); };
   process.on("SIGINT", stop); process.on("SIGTERM", stop);
   const wait = ms => delay(ms, undefined, { signal: sleepAbort.signal }).catch(error => { if (!stopping) throw error; });
@@ -188,9 +181,10 @@ export async function main(argv) {
         if (!priority.includes(job.source) || !["queued", "running", "completed", "failed"].includes(job.status))
           throw new Error("Invalid night job state");
         if (job.output !== config.outputs[job.source]) throw new Error("管线输出目录发生变化");
-        if (job.status === "running" || values["retry-failed"] && job.status === "failed") {
+        delete job.retryAt;
+        delete job.retryFailed;
+        if (job.status === "running") {
           job.status = "queued"; delete job.error;
-          job.retryFailed = values["retry-failed"] === true;
         }
       }
     } else {
@@ -211,12 +205,19 @@ export async function main(argv) {
       return writes;
     };
     await save();
-    const requests = createChannelRequests(Object.fromEntries(config.channels.map(channel => [channel, 200])));
+    const requests = createChannelRequests(Object.fromEntries(config.channels.map(channel => [channel, 200])),
+      { wencai: 7, lost: 2, aime: 1 });
+    const writeRequests = () => writeJson(requestFile, requests.snapshot());
+    await writeRequests();
+    requestTimer = setInterval(() => { void writeRequests().catch(error => logger.error(error,
+      { component: "night-evaluation", event: "request_metrics_failed" })); }, 10_000);
     dispatcher = createNightDispatcher(state, { save, record, run: (job, pauseSignal) => runNightBatch({
       ...job, configs: config.hostConfigs[job.source], workflow: job.source === "wencai" ? "comparison" : "attribution",
-      channels: config.channels, requests, signal: abort.signal, pauseSignal,
+      channels: config.channels, requests: { concurrency: requests.concurrency,
+        acquire: (context, signal) => requests.acquire({ ...context, trafficGroup: job.source }, signal) },
+      signal: abort.signal, pauseSignal,
     }) });
-    let prepared = state.jobs.some(job => job.source === "lost"), dataReady = false;
+    let dataReady = false;
     const prepare = async () => {
       do {
         try {
@@ -225,36 +226,36 @@ export async function main(argv) {
           dataReady = await prepareLost(config.lost, state, save, record, call, () => stopping);
           delete state.preparationError;
           if (state.closed) state.nextAdmissionAt = 0;
-          const added = admitLost(state, hosts.lost.evaluation.inputs.versions, config.outputs.lost, Date.now(), config.admissionSeconds * 1000);
+          admitLost(state, hosts.lost.evaluation.inputs.versions, config.outputs.lost, Date.now(), config.admissionSeconds * 1000);
           await save();
-          if (added) dispatcher.preempt();
         } catch (error) {
           state.preparationError = error.message;
           await save();
           await record("preparation_failed", { error: error.message });
         }
-        prepared = true;
         if (!stopping) await wait(config.pollSeconds * 1000);
       } while (!stopping);
     };
-    const evaluate = async () => {
+    const evaluate = async source => {
       while (!stopping) {
-        if (prepared || nextJob(state)?.source === "wencai") {
-          if (await dispatcher.step()) continue;
-          if (state.closed && dataReady && !state.preparationError && state.deliveries.every(item => item.admitted) &&
-              state.jobs.every(job => job.status === "completed")) {
-            await record("completed", { jobs: state.jobs.length }); stop(); break;
-          }
+        if (await dispatcher.step(source)) continue;
+        if (state.closed && dataReady && !state.preparationError && state.deliveries.every(item => item.admitted) &&
+            state.jobs.every(job => ["completed", "failed"].includes(job.status)) && !stopping) {
+          stop();
+          const failed = state.jobs.filter(job => job.status === "failed").length;
+          await record(failed ? "finished_with_failures" : "completed", { jobs: state.jobs.length, failed }); break;
         }
         await wait(1000);
       }
     };
     const guard = task => task.catch(error => { stop(); abort.abort(error); throw error; });
-    const outcomes = await Promise.allSettled([guard(prepare()), guard(evaluate())]);
+    const outcomes = await Promise.allSettled([guard(prepare()), ...priority.map(source => guard(evaluate(source)))]);
     for (const outcome of outcomes) if (outcome.status === "rejected") throw outcome.reason;
     await save();
+    await writeRequests();
     await record("stopped", { closed: Boolean(state.closed), failed: state.jobs.filter(job => job.status === "failed").length });
   } finally {
+    clearInterval(requestTimer);
     process.off("SIGINT", stop); process.off("SIGTERM", stop);
     await releaseInput?.();
     await release();

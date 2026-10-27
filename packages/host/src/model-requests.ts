@@ -6,6 +6,7 @@ export interface ModelRequestContext {
   taskId: string;
   stage: string;
   model: ModelConfig;
+  trafficGroup?: string;
 }
 export interface ModelRequestControl {
   concurrency(): number;

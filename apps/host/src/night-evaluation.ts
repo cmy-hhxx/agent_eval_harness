@@ -48,7 +48,6 @@ export async function runNightBatch(options: {
   configs: string[]; workflow: "comparison" | "attribution"; inputs: EvaluationInputs;
   revisions: Record<string, string>; output: string; runId: string; channels: string[];
   requests: ModelRequestControl; signal: AbortSignal; pauseSignal: AbortSignal;
-  retryFailed?: boolean;
 }) {
   const host = await loadConfig(options.configs);
   if (host.workflow !== options.workflow) throw new Error("Unexpected night workflow");
@@ -74,9 +73,6 @@ export async function runNightBatch(options: {
     ? { ...services, report: undefined, taskSource: attributionWorkflow, repository: attributionRepository }
     : services;
   const saved = await exists(runLayout(evaluation.output, options.runId).stateFile);
-  const resumeStages = saved && options.retryFailed
-    ? (await selected.repository.readRun(runLayout(evaluation.output, options.runId).directory)).manifest.pausedStages?.map(pause => pause.stage)
-    : undefined;
   const plan = saved ? { tasks: [], inputs: {}, summary: {} } : await selected.taskSource.plan(evaluation);
   if (!saved && Array.isArray(plan.summary.issues) && plan.summary.issues.length)
     throw new Error("Evaluation preflight failed: " + JSON.stringify(plan.summary.issues));
@@ -86,7 +82,8 @@ export async function runNightBatch(options: {
     config: evaluation, plan, policy: evaluation.execution, concurrency: evaluation.execution.concurrency,
     taskConcurrency: evaluation.execution.taskConcurrency, modelRequests: options.requests,
     retries: evaluation.execution.retries, retryDelaySeconds: evaluation.execution.retryDelaySeconds,
-    failureGuard: evaluation.execution.failureGuard, resumeStages, signal: options.signal, pauseSignal: options.pauseSignal });
+    skipFailed: true,
+    failureGuard: evaluation.execution.failureGuard, signal: options.signal, pauseSignal: options.pauseSignal });
   const unfinished = ["pending", "running", "failed", "blocked", "timed_out", "cancelled"]
     .some(status => result.execution_task_statuses[status]);
   return { complete: !unfinished && !result.paused_stages.length, result };

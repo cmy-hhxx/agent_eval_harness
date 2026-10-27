@@ -203,29 +203,24 @@ test("changed, duplicate, or removed delivered identities fail instead of silent
   await assert.rejects(f.deliver(), /删除了已交付记录/);
 });
 
-test("lost-user arrival drains the active daily task, then resumes the same daily run", async () => {
-  const state = { jobs: [{ source: "wencai", runId: "w", status: "queued" }, { source: "aime", runId: "a", status: "queued" }] };
+test("three sources dispatch concurrently and reject duplicate active runs within one source", async () => {
+  const sources = ["wencai", "lost", "aime"];
+  const state = { jobs: sources.map(source => ({ source, runId: source, status: "queued" })) };
   const runs = [];
   let drain, started;
+  const barrier = new Promise(resolve => { drain = resolve; });
   const running = new Promise(resolve => { started = resolve; });
-  const dispatch = createNightDispatcher(state, { save: async () => {}, record: async () => {}, run: async (job, signal) => {
+  const dispatch = createNightDispatcher(state, { save: async () => {}, record: async () => {}, run: async job => {
     runs.push(job.runId);
-    if (job.source === "aime" && runs.filter(id => id === "a").length === 1) {
-      started(signal);
-      await new Promise(resolve => { drain = resolve; });
-      return { complete: false };
-    }
+    if (runs.length === 3) started();
+    await barrier;
     return { complete: true };
   } });
-  await dispatch.step();
-  const daily = dispatch.step(), pause = await running;
-  state.jobs.push({ source: "lost", runId: "l", status: "queued" }); dispatch.preempt();
-  assert.equal(pause.aborted, true);
-  assert.deepEqual(runs, ["w", "a"]);
-  await assert.rejects(dispatch.step(), /already active/);
-  drain(); await daily;
-  await dispatch.step(); await dispatch.step();
-  assert.deepEqual(runs, ["w", "a", "l", "a"]);
+  const active = sources.map(source => dispatch.step(source));
+  await running;
+  assert.deepEqual(runs, sources);
+  await assert.rejects(dispatch.step("aime"), /already active/);
+  drain(); await Promise.all(active);
   assert.ok(state.jobs.every(job => job.status === "completed"));
 });
 
@@ -241,29 +236,24 @@ test("incremental admission survives restart and honors the two-hour interval", 
   assert.notEqual(resumed.jobs[0].runId, resumed.jobs[1].runId);
 });
 
-test("failed batches back off, allow queued work, and automatically resume the same run", async () => {
-  const state = { jobs: [{ source: "wencai", runId: "w", status: "queued" }, { source: "aime", runId: "a", status: "queued" }] };
+test("failed batches remain failed while later work continues, including after restart", async () => {
+  const state = { jobs: [{ source: "wencai", runId: "w", status: "queued" }, { source: "wencai", runId: "next", status: "queued" }] };
   const runs = [];
   const dispatch = createNightDispatcher(state, { save: async () => {}, record: async () => {}, run: async job => {
     runs.push(job.runId);
     if (runs.length === 1) throw new Error("gateway unavailable");
     return { complete: true };
   } });
-  const before = Date.now();
-  await dispatch.step();
+  await dispatch.step("wencai");
   const failed = state.jobs[0];
   assert.equal(failed.status, "failed");
-  assert.ok(failed.retryAt >= before + 60_000);
-  assert.equal(nextJob(state, failed.retryAt), state.jobs[1]);
-  await dispatch.step();
-  assert.equal(nextJob(state, failed.retryAt - 1), undefined);
-  assert.equal(nextJob(state, failed.retryAt), failed);
-  failed.retryAt = 0;
-  await dispatch.step();
-  assert.deepEqual(runs, ["w", "a", "w"]);
-  assert.equal(failed.retryFailed, true);
-  assert.equal(failed.status, "completed");
-  assert.equal(failed.error, undefined);
+  assert.equal(failed.retryAt, undefined);
+  assert.equal(nextJob(state, "wencai"), state.jobs[1]);
+  await dispatch.step("wencai");
+  assert.equal(await dispatch.step("wencai"), false);
+  assert.deepEqual(runs, ["w", "next"]);
+  assert.equal(failed.status, "failed");
+  assert.equal(nextJob(JSON.parse(JSON.stringify(state)), "wencai"), undefined);
 });
 
 test("stable archive is extracted once, archived, and resumes an interrupted hard-link move", async t => {

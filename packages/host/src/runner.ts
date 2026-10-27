@@ -258,6 +258,9 @@ export async function runEvaluation(options: RunOptions): Promise<Record<string,
       } else if (attemptsExhausted(task)) {
         state.status = "failed";
         state.reason ??= `Task attempt limit reached: ${state.attempts}/${options.policy.maxTaskAttempts}`;
+      } else if ((state.transportFailures ?? 0) > options.retries) {
+        state.status = "failed";
+        state.reason ??= `Network retry limit reached: ${options.retries}`;
       } else if (options.skipFailed && ["failed", "timed_out", "blocked"].includes(state.status)) {
         continue;
       } else if (contentRemaining(task) <= 0) {
@@ -397,7 +400,7 @@ export async function runEvaluation(options: RunOptions): Promise<Record<string,
         await atomicWrite(path.join(destination, artifact.id), bytes);
       }
     }
-    const retryBudgets = new Map<string, { transport: number; content: number }>();
+    const retryBudgets = new Map<string, { content: number }>();
     async function execute(
       task: PlannedTask,
       worker: (typeof workers)[number],
@@ -411,7 +414,7 @@ export async function runEvaluation(options: RunOptions): Promise<Record<string,
       const taskModel = () => options.modelForTask?.(task, state.channel) ?? options.modelForStage(task.stage);
       const model = taskModel();
       const retries = retryBudgets.get(task.id) ?? {
-        transport: 0, content: 0,
+        content: 0,
       };
       retryBudgets.set(task.id, retries);
       if (paused(task)) return;
@@ -797,9 +800,11 @@ export async function runEvaluation(options: RunOptions): Promise<Record<string,
         contentLedgerConfirmed && contentRemaining(task) > 0 &&
         (record.status ?? status)?.modelQuotaExhausted === true && options.onModelQuotaExhausted?.(model, task) === true &&
         taskModel().provider !== model.provider;
+      if (!receipt && status?.retryable && !controller.signal.aborted && !rerouted)
+        state.transportFailures = (state.transportFailures ?? 0) + 1;
       const retryingTransport = !receipt && status?.retryable && contentLedgerConfirmed &&
         !state.failure?.stopped && !attemptsExhausted(task) && contentRemaining(task) > 0 &&
-        retries.transport < options.retries;
+        (state.transportFailures ?? 0) <= options.retries;
       // Count a transport outage only after this task's bounded retries. At high
       // concurrency, one brief outage must not preempt every task's first retry.
       const pause = controller.signal.aborted || rerouted || retryingTransport || !observesFailures(task)
@@ -855,18 +860,15 @@ export async function runEvaluation(options: RunOptions): Promise<Record<string,
       }
       if (controller.signal.aborted || paused(task) || attemptsExhausted(task) || state.failure?.stopped ||
         !contentLedgerConfirmed || contentRemaining(task) <= 0) return;
-      if (rerouted) {
-        // A new channel has its own transport budget; content accounting remains unchanged.
-        retries.transport = 0;
-      } else if (status?.retryable) {
-        if (retries.transport++ >= options.retries) return;
-      } else if (
+      if (status?.retryable && !rerouted) {
+        if ((state.transportFailures ?? 0) > options.retries) return;
+      } else if (!rerouted &&
         state.failure?.draft &&
         state.failure.errors.some((e) => ["structure", "evidence", "decision"].includes(e.category))
       ) {
         if (retries.content++ >= 1) return;
-      } else return;
-      const retryDelay = !rerouted && status?.retryable ? options.retryDelaySeconds * 1000 * 2 ** Math.max(0, retries.transport - 1) : 0;
+      } else if (!rerouted) return;
+      const retryDelay = !rerouted && status?.retryable ? options.retryDelaySeconds * 1000 * 2 ** Math.max(0, (state.transportFailures ?? 1) - 1) : 0;
       state.status = "pending";
       state.nextRetryAt = Date.now() + retryDelay;
       await current.save(task.id);

@@ -574,6 +574,8 @@ export interface TaskState {
   status: "pending" | "running" | "succeeded" | "failed" | "blocked" | "cancelled" | "timed_out";
   attemptId?: string;
   attempts: number;
+  /** Network failures charged to this task across automatic retries and restarts. */
+  transportFailures?: number;
   reason?: string;
   failure?: FailureContext;
   repeatedErrors?: number;
