@@ -6,6 +6,34 @@ import { writeJson, writeJsonl } from "@eval/data";
 import { createChannelRequests, freezeNightInputs, runNightBatch } from "../../../apps/host/src/night-evaluation.js";
 import { fixtureConfig, raw } from "../../fixtures/comparison.js";
 
+for (const workflow of ["comparison", "attribution"] as const) {
+  test(`night ${workflow} records invalid inputs and continues valid work without accepting incomplete comparisons`, async t => {
+    const f = await fixtureConfig();
+    t.after(() => rm(f.directory, { recursive: true, force: true }));
+    const versions = f.config.inputs.versions;
+    const good = { ...raw("good"), batch_id: "2026-10-27" };
+    for (const version of versions) {
+      const file = path.join(f.directory, ".prepared", version.id, "2026-10-27.jsonl");
+      await mkdir(path.dirname(file), { recursive: true });
+      const bad = { ...raw("bad"), batch_id: "2026-10-27" };
+      if (version.id === "b_fast") bad.messages = [];
+      await writeJsonl(file, [good, bad]);
+      version.sources = [{ kind: "file", path: file }];
+    }
+    const config = path.join(f.directory, "night-host.json");
+    await writeJson(config, { ...f.config, workflow, evaluatorVersion: "fixture", inputs: { versions },
+      models: { judge: { channel: "evaluation-gateway", model: "fixture", thinking: "off" } },
+      bindings: { attribution: { profile: "judge" } } });
+    const frozen = await freezeNightInputs([config], workflow);
+    assert.equal(frozen.inputs.records!.length, workflow === "comparison" ? 4 : 7);
+    assert.equal(frozen.excludedInputs.length, workflow === "comparison" ? 4 : 1);
+    assert(frozen.inputs.records!.every(row => row.case_id !== "bad" || workflow === "attribution"));
+    assert(frozen.excludedInputs.some(issue => issue.version === "b_fast" && issue.line === 2));
+    await appendFile(versions[0].sources[0].path, JSON.stringify(good) + "\n");
+    await assert.rejects(freezeNightInputs([config], workflow), /duplicate_input/);
+  });
+}
+
 test("night input snapshot excludes archived data, ignores later files and rejects rewritten frozen inputs before model calls", async t => {
   const f = await fixtureConfig();
   t.after(() => rm(f.directory, { recursive: true, force: true }));

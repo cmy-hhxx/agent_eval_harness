@@ -111,7 +111,7 @@ export async function main(argv) {
   const stateFile = path.join(directory, "state.json"), closeFile = path.join(directory, "close-input.json");
   if (command === "status") {
     const state = await readJson(stateFile);
-    console.log(JSON.stringify({ intake: state.closed ? "closed" : "open", pending: state.pending,
+    console.log(JSON.stringify({ intake: state.closed ? "closed" : "open", pending: state.pending, excludedInputs: state.excludedInputs,
       preparationError: state.preparationError, jobs: state.jobs.map(({ source, runId, status, error, retryAt }) =>
         ({ source, runId, status, error, retryAt })) }, null, 2));
     return;
@@ -147,7 +147,7 @@ export async function main(argv) {
     console.log(JSON.stringify({ source: "lost_prepared", ...await registerPreparedLost(config.lost, { records: {}, deliveries: [] }, call) }));
     for (const source of ["wencai", "aime"]) {
       const frozen = await freezeNightInputs(config.hostConfigs[source], source === "wencai" ? "comparison" : "attribution");
-      console.log(JSON.stringify({ source, records: frozen.inputs.records.length, output: config.outputs[source] }));
+      console.log(JSON.stringify({ source, records: frozen.inputs.records.length, excludedInputs: frozen.excludedInputs, output: config.outputs[source] }));
     }
     for (const key of Object.keys(manifest.files)) {
       const [model, day] = key.split("/");
@@ -190,7 +190,9 @@ export async function main(argv) {
       const wencai = await freezeNightInputs(config.hostConfigs.wencai, "comparison");
       const aime = await freezeNightInputs(config.hostConfigs.aime, "attribution");
       state = { jobs: [...dailyJobs("wencai", wencai, config.outputs.wencai), ...dailyJobs("aime", aime, config.outputs.aime)],
+        excludedInputs: { wencai: wencai.excludedInputs, aime: aime.excludedInputs },
         observed: {}, cleaned: {}, records: {}, deliveries: [], pending: {}, nextAdmissionAt: 0 };
+      await record("inputs_excluded", state.excludedInputs);
       const prepared = await registerPreparedLost(config.lost, state, call);
       if (prepared.rows) admitLost(state, hosts.lost.evaluation.inputs.versions, config.outputs.lost, Date.now(), config.admissionSeconds * 1000);
       await record("prepared_slim_registered", prepared);

@@ -24,13 +24,24 @@ export async function freezeNightInputs(configs: string[], workflow: "comparison
     for (const file of files) revisions[file] = await fileSourceReader.revision(file);
   }
   const scan = await collectInputs({ inputs }, undefined, { materializeInputs: false });
-  if (scan.issues.length) throw new Error("Input preflight failed: " + JSON.stringify(scan.issues));
-  if (!scan.catalog.length) throw new Error("No prepared evaluation records");
-  inputs.records = scan.catalog.map(row => ({ model: row.version, batch_id: row.batch_id, case_id: row.case_id,
+  const blocking = scan.issues.filter(issue => !Number.isInteger(issue.line) ||
+    !(issue.errors as { code: string }[] | undefined)?.every(error => ["input_invalid", "input_json_invalid"].includes(error.code)));
+  if (blocking.length) throw new Error("Input preflight failed: " + JSON.stringify(blocking));
+  const excludedCases = new Set(workflow === "comparison"
+    ? scan.issues.map(issue => JSON.stringify([issue.batch_id, issue.case_id])) : []);
+  const excludedInputs = [...scan.issues];
+  const catalog = scan.catalog.filter(row => {
+    if (!excludedCases.has(JSON.stringify([row.batch_id, row.case_id]))) return true;
+    excludedInputs.push({ source: row.source, line: row.line, batch_id: row.batch_id, case_id: row.case_id,
+      version: row.version, reason: "比较组存在无效输入，无法形成完整对局" });
+    return false;
+  });
+  if (!catalog.length) throw new Error("No prepared evaluation records");
+  inputs.records = catalog.map(row => ({ model: row.version, batch_id: row.batch_id, case_id: row.case_id,
     input_file: row.source, input_index: row.line - 1, ...(row.trace_id ? { trace_id: row.trace_id } : {}) }));
   for (const [file, revision] of Object.entries(revisions))
     if (await fileSourceReader.revision(file) !== revision) throw new Error("Input changed while freezing: " + file);
-  return { inputs, revisions };
+  return { inputs, revisions, excludedInputs };
 }
 
 export async function runNightBatch(options: {
