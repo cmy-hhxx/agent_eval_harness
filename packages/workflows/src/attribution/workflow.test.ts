@@ -241,6 +241,47 @@ test("planning filters execution locators and always creates one final-generatio
   assert.equal(components.some(component => /^(?:llm[-_]?call|span)[-_: /]/iu.test(component ?? "")), false);
 });
 
+test("trace correctness without a standard is program-owned and survives session assembly", async t => {
+  const f = await fixture(t);
+  const plan = await planAttribution({ ...f.config, workflow: "attribution", inputs: { ...f.config.inputs,
+    versions: f.config.inputs.versions.slice(0, 1) } });
+  const task = plan.tasks.find(task => task.stage === "attribution-trace")!;
+  const binding = bindAttribution(task, plan.inputs, {}), registry = new AgentRegistry([attributionAgent]);
+  assert.deepEqual(binding.request.input.ground_truth, { available: false, value: null });
+  const prepared = registry.prepare(binding);
+  assert.deepEqual(Object.keys(prepared.evaluation.outputSchema.properties as object), ["summary"]);
+  const expected = { meta: binding.request.input.trace_meta, summary: "已审查本轮。", problem: [],
+    is_correct: null, correct_reason: "未提供标准答案，无法判断回答与标准答案是否一致；已确认的问题独立保留。" };
+  for (const fields of [{}, ...[0, 1, null].map(is_correct => ({ is_correct, correct_reason: "与标准答案一致。" }))]) {
+    const result = registry.resolve(binding, { summary: expected.summary, ...fields }, emptyAudit());
+    registry.validate(binding, result, emptyAudit());
+    assert.deepEqual(result, expected);
+  }
+  const sessionTask = plan.tasks.find(task => task.stage === "attribution-session")!;
+  const sessionBinding = bindAttribution(sessionTask, plan.inputs, { trace0: { evaluation: expected } as never });
+  const result = registry.resolve(sessionBinding, { session_summary: "整场汇总。", session_problem: [] }, emptyAudit()) as { turns: unknown[] };
+  assert.deepEqual(result.turns, [expected]);
+});
+
+for (const reference of [0, false, "给定标准答案"]) test(`trace passes through standard ${JSON.stringify(reference)} and requires a comparison`, async t => {
+  const raw = session(); raw.has_standard_answer = true; raw.meta!.std_answer = reference;
+  const f = await fixtureConfig([[raw], [], [], []]);
+  t.after(() => rm(f.directory, { recursive: true, force: true }));
+  const plan = await planAttribution({ ...f.config, workflow: "attribution", inputs: { ...f.config.inputs,
+    versions: f.config.inputs.versions.slice(0, 1) } });
+  const task = plan.tasks.find(task => task.stage === "attribution-trace")!;
+  const binding = bindAttribution(task, plan.inputs, {}), registry = new AgentRegistry([attributionAgent]);
+  assert.deepEqual(binding.request.input.ground_truth, { available: true, value: reference });
+  assert.deepEqual(registry.prepare(binding).evaluation.outputSchema.required, ["summary", "is_correct", "correct_reason"]);
+  assert.throws(() => registry.resolve(binding, { summary: "已审查本轮。" }, emptyAudit()), ValidationError);
+  for (const is_correct of [0, 1, null]) {
+    const result = registry.resolve(binding, { summary: "已审查本轮。", is_correct, correct_reason: "依据给定标准作比较。" }, emptyAudit()) as { is_correct: unknown; correct_reason: string };
+    registry.validate(binding, result, emptyAudit());
+    assert.equal(result.is_correct, is_correct);
+    assert.equal(result.correct_reason, "依据给定标准作比较。");
+  }
+});
+
 test("only the session task exports one attribution row while component and trace tasks stay in state", async t => {
   const f = await fixture(t);
   const config = { ...f.config, workflow: "attribution", inputs: { ...f.config.inputs,

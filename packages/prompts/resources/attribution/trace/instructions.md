@@ -1,5 +1,5 @@
 - 对照原问、完整最终回答和组件 Problem，写一条简洁 summary。
-- 有标准答案时 is_correct 填 1 表示一致、0 表示不一致、null 表示给定标准无法支持判断；没有标准答案时固定 null。
-- correct_reason 必须说明比较对象、依据和原因；无标准答案时说明没有给定标准。
+- ground_truth.available 为 true 时，is_correct 填 1 表示与给定标准一致、0 表示不一致、null 表示给定标准无法支持判断；correct_reason 说明比较对象、依据和原因。
+- ground_truth.available 为 false 时只提交 summary；程序固定输出 is_correct=null 和“未提供标准答案，无法判断回答与标准答案是否一致；已确认的问题独立保留。”，不要自行判定或编写正确性理由。
 - 不新增、删除或改写组件 Problem。组件已确认的问题与最终正确性分别判断。
 - 信息缺失、信息冲突与未核验必须区分；现象、原因和所引事实保持一致，已有日期或说明不得改写成未提供。

@@ -111,6 +111,7 @@ export function bindAttribution(task: PlannedTask, inputs: Record<string, unknow
     return { agent: "attribution", profile: "trace", request: { sources: {}, input: {
       ...(analysis ? { task_analysis: analysis } : {}),
       trace_meta: session.turns?.[traceIndex]?.meta ?? traceRaw.meta ?? {}, trace_index: traceIndex,
+      ground_truth: { available: traceCandidate.reference !== null, value: traceCandidate.reference },
       question: traceCandidate.question, answer: contentText(traceRaw.messages[traceCandidate.final_index]?.content),
       problems: Object.entries(dependencies).filter(([label]) => label.startsWith("component"))
         .flatMap(([, receipt]) => (receipt?.evaluation as ComponentReviewResult | undefined)?.problems ?? []) } } };

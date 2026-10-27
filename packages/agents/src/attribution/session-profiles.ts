@@ -1,6 +1,6 @@
 import { Ajv2020 } from "ajv/dist/2020.js";
 import { ValidationError, resolveEvidenceSelection, schemaIssues, selectEvidence, type AgentProfile, type AgentRequest, type JsonObject, type ToolAudit } from "@eval/contracts";
-import { agentPrompt, attributionConditionalRules } from "@eval/prompts";
+import { agentPrompt, attributionConditionalRules, attributionNoStandardReason } from "@eval/prompts";
 import { cite, evidenceSources, parseEvidenceCoordinates } from "@eval/tools";
 import componentRequestSchema from "../../../../schemas/attribution/component-request.schema.json" with { type: "json" };
 import componentSubmissionSchema from "../../../../schemas/attribution/component-submission.schema.json" with { type: "json" };
@@ -24,6 +24,9 @@ const componentPrompt = agentPrompt("attribution", componentTools, { profile: "c
 const tracePrompt = agentPrompt("attribution", [], { profile: "trace", fileSubmission: false });
 const sessionPrompt = agentPrompt("attribution", [], { profile: "session", fileSubmission: false });
 const componentSchema = new Ajv2020({ allErrors: true, strict: false }).compile(componentSubmissionSchema);
+const traceWithStandardSchema = { ...traceSubmissionSchema, required: ["summary", "is_correct", "correct_reason"] };
+const validateTraceWithStandard = new Ajv2020({ allErrors: true, strict: false }).compile(traceWithStandardSchema);
+const traceHasStandard = (request: AgentRequest) => (request.input.ground_truth as { available: boolean }).available;
 const copy = <T>(value: T): T => structuredClone(value);
 const inline = <T>(value: T): T => {
   const result = copy(value) as Record<string, unknown>;
@@ -159,8 +162,17 @@ export const componentAttributionProfile: AgentProfile = {
 
 export const traceAttributionProfile: AgentProfile = {
   id: "trace",
-  requestSchema: { type: "object", required: ["trace_meta", "question", "answer", "problems"], additionalProperties: true },
+  requestSchema: { type: "object", required: ["trace_meta", "question", "answer", "problems", "ground_truth"],
+    properties: { ground_truth: { type: "object", required: ["available", "value"],
+      properties: { available: { type: "boolean" }, value: {} }, additionalProperties: false } }, additionalProperties: true },
   submissionSchema: traceSubmissionSchema,
+  modelSubmissionSchema(request) {
+    return traceHasStandard(request) ? traceWithStandardSchema : { ...traceSubmissionSchema,
+      properties: { summary: traceSubmissionSchema.properties.summary } };
+  },
+  validateSubmission(request, draft) {
+    return traceHasStandard(request) && !validateTraceWithStandard(draft) ? schemaIssues(validateTraceWithStandard.errors, draft) : [];
+  },
   resultSchema: traceResult,
   ...tracePrompt,
   toolNames: [],
@@ -168,7 +180,8 @@ export const traceAttributionProfile: AgentProfile = {
     const value = draft as { summary: string; is_correct: 1 | 0 | null; correct_reason: string };
     const result: TraceAttributionResult = { meta: (request.input.trace_meta ?? {}) as JsonObject,
       summary: value.summary, problem: (request.input.problems ?? []) as SessionProblem[],
-      is_correct: value.is_correct, correct_reason: value.correct_reason };
+      is_correct: traceHasStandard(request) ? value.is_correct : null,
+      correct_reason: traceHasStandard(request) ? value.correct_reason : attributionNoStandardReason };
     return result;
   },
 };

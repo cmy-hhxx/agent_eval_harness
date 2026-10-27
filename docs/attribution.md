@@ -87,7 +87,7 @@ Component 提交在 Schema 与证据坐标校验之外，会硬拒绝占位/空�
 
 ## Trace 与 Session 汇总
 
-Trace 汇总读取完整 Q/A 和组件 Problem，输出 `summary`、`is_correct`、`correct_reason`，不改写组件问题。Session 汇总只读取 QAQAQA 与各 trace 评测输出，不读取完整原始轨迹；它输出 `session_summary` 与同 Problem 结构的 `session_problem`，证据引用已有 trace Problem。
+Trace 汇总读取完整 Q/A、显式 ground_truth 和组件 Problem，不改写组件问题。有标准答案时模型提交 `summary`、`is_correct`、`correct_reason`；无标准答案时模型仅提交 `summary`，程序固定输出 `is_correct=null`，理由为“未提供标准答案，无法判断回答与标准答案是否一致；已确认的问题独立保留。”，不采用模型自行生成的正确性值或理由。Session 汇总只读取 QAQAQA 与各 trace 评测输出，不读取完整原始轨迹；它输出 `session_summary` 与同 Problem 结构的 `session_problem`，证据引用已有 trace Problem。
 
 ## Comparison
 
