@@ -144,6 +144,7 @@ export class RunStore {
   private readonly logged = new Set<string>();
   private outboxTimer?: ReturnType<typeof setInterval>;
   private outboxFlush?: Promise<void>;
+  private receiptLogs?: Promise<void>;
   private checkpointRun?: Promise<void>;
   private fallbackSave?: Promise<void>;
   private outboxStarted = false;
@@ -234,7 +235,14 @@ export class RunStore {
         }
         this.outboxMetrics.lastError = undefined;
         this.updateAdmission();
-        await this.logExportedReceipts();
+        // Shared log IO must not hold up the next projection of accepted results.
+        if (!this.receiptLogs) {
+          this.receiptLogs = this.logExportedReceipts().catch(async error => {
+            await this.services.logger?.error(error, {
+              component: "host", event: "receipt_log_failed", run_id: this.manifest.runId,
+            });
+          }).finally(() => { this.receiptLogs = undefined; });
+        }
       } catch (error) {
         this.outboxMetrics.failures++;
         this.outboxMetrics.lastError = error instanceof Error ? error.message : String(error);
@@ -280,6 +288,7 @@ export class RunStore {
     if (this.outboxStarted) await this.flushOutbox(true);
     await this.fallbackSave;
     await this.checkpointRun;
+    await this.receiptLogs;
     this.outboxTimer = undefined;
     this.journal.close();
   }
