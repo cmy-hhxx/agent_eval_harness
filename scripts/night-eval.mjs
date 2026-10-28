@@ -88,7 +88,9 @@ export function createNightDispatcher(state, { save, record, run, canOverlap = a
         await record("evaluation_started", { source: job.source, runId: job.runId, tailOf: current[0]?.runId });
         try {
           const result = await run(job, pause.signal);
-          job.status = result.complete ? "completed" : pause.signal.aborted ? "queued" : "failed";
+          const resumable = pause.signal.aborted && ["pending", "running"]
+            .some(status => result.result.execution_task_statuses[status]);
+          job.status = result.complete ? "completed" : resumable ? "queued" : "failed";
           job.result = result.result;
           if (job.status === "failed") job.error = "评测未全部成功；保留成功结果和失败状态，不自动补跑";
         } catch (error) {

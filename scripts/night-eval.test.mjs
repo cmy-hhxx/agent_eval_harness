@@ -291,7 +291,8 @@ test("lost business dates preempt later admission, drain in flight, and skip fai
       revisions: { ["/slim/" + i]: "r" } })) };
   let finish, signal;
   const dispatch = createNightDispatcher(state, { save: async () => {}, record: async () => {},
-    run: async (_job, pause) => { signal = pause; await new Promise(resolve => { finish = resolve; }); return { complete: false }; } });
+    run: async (_job, pause) => { signal = pause; await new Promise(resolve => { finish = resolve; });
+      return { complete: false, result: { execution_task_statuses: { pending: 1, failed: 1 } } }; } });
   await dispatch.step("lost");
   await new Promise(resolve => setImmediate(resolve));
   state.jobs.slice(1).forEach(job => { job.status = "queued"; });
