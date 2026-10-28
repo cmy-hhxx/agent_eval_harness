@@ -380,15 +380,32 @@ export async function runEvaluation(options: RunOptions): Promise<Record<string,
     const deferWorker = (worker: (typeof workers)[number]) => unavailable.set(worker, {
       since: unavailable.get(worker)?.since ?? Date.now(), checkAt: Date.now() + 1000,
     });
+    const replacements = new WeakMap<(typeof owned)[number], Promise<void>>();
     async function replaceExitedWorker(worker: (typeof workers)[number]): Promise<boolean> {
       // Bind capacity to its process, not a port that another child may later reuse.
-      if (!worker.owner || !exitedWorkers.has(worker.owner)) return false;
-      const replacement = await launchWorker(identity.engine,
-        path.join(working, "workers", `${identity.engine}-${randomUUID()}`), 1);
-      owned.push(replacement);
-      worker.owner = replacement;
-      worker.url = replacement.url;
-      worker.health = await request<WorkerStatus>(`${worker.url}/api/health`);
+      const owner = worker.owner;
+      if (!owner || !exitedWorkers.has(owner)) return false;
+      let pending = replacements.get(owner);
+      if (!pending) {
+        pending = (async () => {
+          const slots = eligible.filter(slot => slot.owner === owner);
+          const replacement = await launchWorker(identity.engine,
+            path.join(working, "workers", `${identity.engine}-${randomUUID()}`), owner.urls.length);
+          owned.push(replacement);
+          try {
+            if (replacement.urls.length !== slots.length) throw new Error("Replacement Worker slot count changed");
+            const health = await Promise.all(replacement.urls.map(url => request<WorkerStatus>(url + "/api/health")));
+            if (health.some(value => canonical(value.identity) !== canonical(identity)))
+              throw new Error("Replacement Worker build changed");
+            slots.forEach((slot, index) => {
+              slot.owner = replacement; slot.url = replacement.urls[index]; slot.health = health[index];
+              unavailable.delete(slot);
+            });
+          } catch (error) { await replacement.close(); throw error; }
+        })().finally(() => { replacements.delete(owner); });
+        replacements.set(owner, pending);
+      }
+      await pending;
       return true;
     }
     for (const worker of eligible) if (worker.health.activeAttempt) deferWorker(worker);
@@ -940,7 +957,8 @@ export async function runEvaluation(options: RunOptions): Promise<Record<string,
         if (sessionId && !admission!.admitted.has(sessionId)) continue;
         if (options.taskSource.canStart?.(task, manifest) === false) continue;
         if (running.size >= taskConcurrency()) break;
-        if (!options.workerUrls?.length && eligible.every((worker) => busy.has(worker) || unavailable.has(worker))) {
+        if (!options.workerUrls?.length && eligible.length < taskConcurrency() &&
+            eligible.every((worker) => busy.has(worker) || unavailable.has(worker))) {
           let worker: (typeof owned)[number] | undefined;
           try {
             worker = await launchWorker(identity.engine, path.join(working, "workers", `${identity.engine}-${randomUUID()}`));
@@ -1040,6 +1058,7 @@ export async function runEvaluation(options: RunOptions): Promise<Record<string,
             runningChannels.delete(task.id);
             busy.delete(worker);
             completions++;
+            wake();
           });
         running.set(task.id, promise);
         // Binding can be CPU-heavy. Let dispatched Workers, permits and checkpoints
@@ -1056,7 +1075,7 @@ export async function runEvaluation(options: RunOptions): Promise<Record<string,
           ? Math.max(0, manifest.executionLimits.stopStartingAt - Date.now()) : Infinity;
         const waitMs = Math.min(options.modelRequests ? 100 : Infinity, dispatchWait, unavailable.size ? 1000 : Infinity, ...retryDeadlines.map(at => Math.max(0, at - Date.now())));
         let timer: ReturnType<typeof setTimeout> | undefined;
-        try { await Promise.race([...running.values(), changed,
+        try { await Promise.race([changed,
           ...(Number.isFinite(waitMs) ? [new Promise(resolve => { timer = setTimeout(resolve, waitMs); })] : [])]); }
         finally { clearTimeout(timer); }
       }

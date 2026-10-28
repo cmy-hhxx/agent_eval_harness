@@ -18,9 +18,9 @@ export function summarizeAttemptCosts(attempts, expected, complete) {
       ? rows.reduce((total, row) => total + row.metrics.usage[key], 0) : null]));
     const model_seconds = rows.every(row => Number.isFinite(row.metrics?.timings?.modelMs))
       ? rows.reduce((total, row) => total + row.metrics.timings.modelMs / 1000, 0) : null;
-    const model_response_rounds = rows.every(row => Number.isSafeInteger(row.modelRounds))
+    const model_turns = rows.every(row => Number.isSafeInteger(row.modelRounds))
       ? rows.reduce((total, row) => total + row.modelRounds, 0) : null;
-    return { attempts: rows.length, usage, model_seconds, model_response_rounds };
+    return { attempts: rows.length, usage, model_seconds, model_turns };
   };
   const measured = attempts.filter(row => row.metrics), total = sum(measured);
   const missing = Math.max(0, expected - measured.length);
@@ -35,7 +35,7 @@ export function summarizeAttemptCosts(attempts, expected, complete) {
     cost_per_complete_result: complete && !missing ? {
       usage: Object.fromEntries(fields.map(key => [key, total.usage[key] === null ? null : total.usage[key] / complete])),
       model_seconds: total.model_seconds === null ? null : total.model_seconds / complete,
-      model_response_rounds: total.model_response_rounds === null ? null : total.model_response_rounds / complete,
+      model_turns: total.model_turns === null ? null : total.model_turns / complete,
     } : null };
 }
 
@@ -45,9 +45,9 @@ export async function countModelRounds(file) {
   if (!await exists(file)) return undefined;
   let rounds = 0;
   for await (const line of readJsonlText(file)) {
-    if (!line.includes('"message_start"')) continue;
+    if (!line.includes('"turn_start"')) continue;
     const event = JSON.parse(line);
-    if (event.type === "model" && event.data?.type === "message_start" && event.data?.message?.role === "assistant") rounds++;
+    if (event.type === "model" && event.data?.type === "turn_start") rounds++;
   }
   return rounds;
 }
@@ -105,7 +105,7 @@ export async function measureAttributionRun(run) {
     elapsed_seconds: elapsed, concurrency: manifest.config.execution.concurrency,
     attribution_cost: summarizeAttemptCosts(attribution.flatMap(([, group]) => group.attempt_costs),
       attribution.reduce((total, [, group]) => total + group.attempts, 0), complete),
-    cost_limits: "Primary attribution includes criteria/component/trace/session attempts, including failures and retries; dimensions/comparison are separate stages. Repair category includes whole attempts with cumulative content submissions > 1, not repair-only cost, and overlaps retries/failures. SDK model time includes quota waits; it is not provider compute time. Model response rounds count archived assistant message_start events, not hidden HTTP retries or tool calls. Missing metrics or event archives are unknown. Tokens are provider-reported; no monetary price is inferred.",
+    cost_limits: "Primary attribution includes criteria/component/trace/session attempts, including failures and retries; dimensions/comparison are separate stages. Repair category includes whole attempts with cumulative content submissions > 1, not repair-only cost, and overlaps retries/failures. SDK model time includes quota waits; it is not provider compute time. Model turns count archived SDK turn_start events, including turns cancelled while queued; hidden HTTP retries and tool calls are not model turns. Missing metrics or event archives are unknown. Tokens are provider-reported; no monetary price is inferred.",
     stages: Object.fromEntries(Object.entries(stages).map(([stage, group]) => {
       const { completed_seconds, accepted_at, attempt_costs, ...counts } = group;
       return [stage, { ...counts, coverage: group.accepted / group.planned,

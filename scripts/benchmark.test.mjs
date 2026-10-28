@@ -19,7 +19,7 @@ test("attribution cost includes failed and retry attempts and refuses an incompl
   const report = summarizeAttemptCosts(attempts, 2, 1);
   assert.equal(report.cost_per_complete_result.usage.totalTokens, 200);
   assert.equal(report.cost_per_complete_result.model_seconds, 2);
-  assert.equal(report.cost_per_complete_result.model_response_rounds, 7);
+  assert.equal(report.cost_per_complete_result.model_turns, 7);
   assert.equal(report.unsuccessful.usage.totalTokens, 100);
   assert.equal(report.timed_out.attempts, 1);
   assert.equal(report.retries.attempts, 1);
@@ -29,17 +29,18 @@ test("attribution cost includes failed and retry attempts and refuses an incompl
   assert.equal(summarizeAttemptCosts([{ metrics: {} }], 1, 1).cost_per_complete_result.usage.totalTokens, null);
 });
 
-test("model cost counts assistant response starts without confusing tools, tokens or missing archives", async t => {
+test("model cost counts SDK turns when archived message starts omit roles", async t => {
   const directory = await mkdtemp(path.join(os.tmpdir(), "model-rounds-"));
   t.after(() => rm(directory, { recursive: true, force: true }));
   const file = path.join(directory, "events.jsonl");
   assert.equal(await countModelRounds(file), undefined);
   const events = [
-    { type: "model", data: { type: "message_start", message: { role: "assistant" } } },
-    { type: "model", data: { type: "message_start", message: { role: "toolResult" } } },
-    { type: "tool_start", data: { name: "message_start" } },
+    { type: "model", data: { type: "turn_start" } },
+    { type: "model", data: { type: "message_start" } },
+    { type: "tool_start", data: { name: "turn_start" } },
     { type: "model", data: { type: "message_end", message: { role: "assistant" } } },
-    { type: "model", data: { type: "message_start", message: { role: "assistant" } } },
+    { type: "model", data: { type: "turn_start" } },
+    { type: "model", data: { type: "message_start" } },
   ].map(event => JSON.stringify(event)).join("\n") + "\n";
   await writeFile(file, events);
   assert.equal(await countModelRounds(file), 2);
