@@ -101,7 +101,8 @@ test("session inputs preserve every valid trace and reject ambiguous or incomple
     [{ ...source.traces[0], messages: [] }], [{ ...source.traces[0], messages: [null] }]])
     assert.throws(() => normalizeInput({ ...source, traces }));
   assert.throws(() => normalizeInput({ ...source, messages: raw().messages }), /同时包含/);
-  assert.throws(() => normalizeInput({ ...source, meta: { ...source.meta, n_traces: 2 } }), /n_traces/);
+  for (const n_traces of [0, 1.5, "2", null])
+    assert.throws(() => normalizeInput({ ...source, meta: { ...source.meta, n_traces } }), /n_traces/);
   assert.throws(() => normalizeInput({ ...source, meta: { ...source.meta, n_messages: "2" } }), /n_messages/);
   assert.throws(() => normalizeInput({ ...source, traces: [{ ...source.traces[0],
     meta: { ...source.traces[0].meta, session_id: "another" } }] }), /session_id.*冲突/);
@@ -126,6 +127,18 @@ test("session inputs preserve every valid trace and reject ambiguous or incomple
     traces: [source.traces[0], second] }, version, "fixture", 1, "batch");
   assert.equal(record.turns?.length, 2);
   assert.deepEqual(record.turns?.map(trace => trace.question), ["计算2+2", "计算3+3"]);
+});
+
+test("trace captures preserve the original session count and evaluate only the captured traces", () => {
+  const source = sessionRaw();
+  source.meta.n_traces = 7;
+  const before = structuredClone(source), material = normalizeInput(source);
+  assert.equal(material.meta!.n_traces, 7);
+  assert.equal(material.session_meta!.n_traces, 7);
+  assert.equal(material.turns!.length, 1);
+  assert.equal(adapt(source, version, "fixture", 1, "batch").turns!.length, 1);
+  assert.strictEqual(material.turns![0]!.messages, source.traces[0]!.messages);
+  assert.deepEqual(source, before);
 });
 
 test("type-only question and final markers preserve governing context, timestamps and exact evidence", () => {

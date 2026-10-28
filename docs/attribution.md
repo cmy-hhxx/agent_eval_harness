@@ -1,6 +1,6 @@
 # Session 归因
 
-Attribution 是独立 workflow，入口为 `workflow: "attribution"`。输入扫描以一行为一条评测记录，保留该记录的全部 trace，任何 trace 没有完整最终回答时整条记录过滤。按 trace 抓取的数据可有多行共享同一个 `session_id`；每条记录独立评测和落盘，不自动合并上下文。完整会话输入仍以一行保留全部 trace。Score、Rewrite、指令遵循归因 和 Clustering 都不属于这条 workflow。
+Attribution 是独立 workflow，入口为 `workflow: "attribution"`。输入扫描以一行为一条评测记录，保留该记录的全部 trace，任何 trace 没有完整最终回答时整条记录过滤。按 trace 抓取的数据可有多行共享同一个 `session_id`；每条记录独立评测和落盘，不自动合并上下文。`meta.n_traces` 保留来源会话的总数，允许大于当前记录实际包含的 trace 数量，但必须是不小于实际数量的整数；规划和进度只统计当前 `traces[]`，不补造缺省上下文。完整会话输入仍以一行保留全部 trace。Score、Rewrite、指令遵循归因 和 Clustering 都不属于这条 workflow。
 
 AIME 的 `4_daily_eval_slim` JSONL 可以直接作为输入。每个 trace 的 `message_pool` 和 `tool_sets` 在输入边界按索引恢复：保持消息顺序、对象字段顺序和原始证据路径，不改写正文，不另存展开后的输入文件。重复消息共享内存中的对象，内部规范投影也复用共享结构；缺失、越界或非整数引用报错，不把坏引用当成空材料。未使用共享池的 trace 保持原样。
 

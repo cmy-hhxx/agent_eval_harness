@@ -49,8 +49,8 @@ export function normalizeInput(value: unknown): RawInput {
     if (metadata.ok === false) throw new Error("trace 采集失败");
     return { meta: metadata, messages: trace.messages } as SessionTurn;
   });
-  if (session.n_traces !== undefined && session.n_traces !== turns.length)
-    throw new Error("meta.n_traces 与实际数量不一致");
+  if (session.n_traces !== undefined && (!Number.isSafeInteger(session.n_traces) || Number(session.n_traces) < turns.length))
+    throw new Error("meta.n_traces 必须是不小于当前记录 trace 数量的整数");
   const totalMessages = turns.reduce((total, turn) => total + turn.messages.length, 0);
   if (session.n_messages !== undefined && session.n_messages !== totalMessages)
     throw new Error("meta.n_messages 与会话消息总数不一致");

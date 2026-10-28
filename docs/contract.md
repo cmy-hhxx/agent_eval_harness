@@ -65,6 +65,8 @@ Attribution 每条输入记录导出一行，包含 `session_meta`、`turns[]`�
 
 适配器 `a` 读取 OpenAI 风格消息及 GPT 采集的 `span`（`reasoning` 元数据，以及带 `output` 的 `thinking` 或 `tool-*` 记录）；工具 span 的输出参与证据导航，`reasoning` 元数据和思考 span 不作为工具返回，不改写原消息或证据坐标。`b` 读取显式轮次，两者与模型厂商无关。统一入口接受 `{meta,traces:[{meta,messages}]}` 并规范化为 `turns[]`；每轮都必须有完整最终回答，任意一轮缺失时整条 session 过滤。不重排消息、不拼造最终回答；事件元信息按各自 turn 保留。
 
+按 trace 抓取的记录可保留原会话的 `meta.n_traces`，其值必须是不小于当前 `traces.length` 的整数；实际评测范围由当前 `traces[]` 确定，元信息原样保留，不按总数补造上下文。消息数量、共享池引用和记录身份继续校验。
+
 原始消息中的 `role: null` 表示未记录角色；生成 Agent 请求的 catalog 时省略该可选字段，保留原始输入及证据坐标，不推断或补造角色。
 
 原始输入只保留在数据源。运行、索引、续跑及文件变化处理见[使用指南](usage.md#输入治理)。
