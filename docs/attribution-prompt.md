@@ -17,9 +17,9 @@ Attribution workflow 使用三个独立 profile，共用 `attribution/taxonomy.j
 
 ## Session
 
-`attribution/session` 只接收 QAQAQA 和各 trace 的评测输出。它关注跨问答的目标延续、上下文一致性、前后结论冲突和整体交付逻辑，输出 `session_summary` 与同 Problem 结构的 `session_problem`。
+`attribution/session` 的模型材料只包含完整、有序的原始 QA 和原文证据编号，不包含各 trace 的 summary、Problem 或正确性结论。它只关注跨问答的目标延续、上下文一致性、前后结论冲突和整体交付逻辑，输出 `session_summary` 与同 Problem 结构的 `session_problem`；已有 Trace 结果由程序原样回填到 `turns[]`。
 
-`session_problem` 必须引用已有 trace Problem 作为证据来源，不重新读取原始轨迹，也不能凭空新增不可追溯证据。
+`session_problem` 内部 evidence 使用 `{index, reason}` 引用 QA 原文的证据编号，复用原文校验与坐标解析机制，正式结果保留原始 trace、消息与文本路径。局部问题仅留在 `turns[]`，跨 QA 矛盾须由不同 QA 原文共同支持，合理的条件更新不算矛盾。
 
 ## 程序边界
 

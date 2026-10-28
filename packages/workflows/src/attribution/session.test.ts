@@ -70,9 +70,6 @@ test("session evidence resolves cross-QA contradictions directly to original tex
   const invalidBank = [...prepared.evidenceBank];
   invalidBank[indices[0]! - 1] = evidenceId(f.candidate.input_id, 1, "text", "/content", 0, 9999);
   assert.throws(() => f.registry.resolve(binding, draft, { ...audit, evidenceBank: invalidBank }), ValidationError);
-  const old = structuredClone(draft) as unknown as { session_problem: { evidence: unknown[] }[] };
-  old.session_problem[0]!.evidence = [{ trace_index: 0, problem_index: 0, reason: "评语" }];
-  assert.throws(() => f.registry.resolve(binding, old, audit), ValidationError);
 });
 
 test("session evidence covers long QA without truncating or rewriting the original text", () => {
