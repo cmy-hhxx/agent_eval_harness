@@ -60,6 +60,7 @@ const fastFiles = [
   "scripts/extract-lost-user.test.mjs",
   "scripts/watch-lost-user.test.mjs",
   "scripts/benchmark.test.mjs",
+  "scripts/compact-progress.test.mjs",
   "data_service/dashboard.test.mjs",
 ];
 if (fast) {
@@ -92,6 +93,7 @@ const repositoryTests = [
   "scripts/watch-lost-user.test.mjs",
   "scripts/mongo-contracts.test.mjs",
   "scripts/benchmark.test.mjs",
+  "scripts/compact-progress.test.mjs",
   "scripts/publish.test.mjs",
   "scripts/apply-agent-dependency-patches.test.mjs",
   "scripts/deploy-workbench.test.mjs",

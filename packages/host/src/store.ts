@@ -1,6 +1,7 @@
 import { ValidationError, HttpError, canonical, safeId, evidenceSources, requiredReadCallLimit, mergeRequiredReadRanges, extendRequiredReadRanges, toolBudgetMetadataChars, validationRequiredReads, validateEvidenceBank, validateEvidenceBankSources, type EvidenceBankUpdate, type EvidenceBank } from "@eval/contracts";
 import {
   appendProgressJournal,
+  compactProgressJournal,
   internalPath,
   RunHotStore,
   runJournalIdentity,
@@ -163,7 +164,7 @@ export class RunStore {
     this.services = services;
     this.directMode = !journal;
     this.journal = journal ?? new RunHotStore(":memory:", runJournalIdentity(state));
-    this.lastDeliveredSequence = this.journal.lastDeliveredSequence();
+    this.lastDeliveredSequence = Math.max(state.manifest.journalSequence ?? 0, this.journal.lastDeliveredSequence());
     this.writeResults = services.repository.createResultWriter(run, inputs);
   }
   /** Persist a compact local delta. Ceph projection runs through the outbox. */
@@ -276,6 +277,7 @@ export class RunStore {
     const writeStarted = performance.now();
     await this.writeResults(snapshot);
     await this.services.repository.writeRun(this.run, snapshot);
+    await compactProgressJournal(this.run, snapshot.manifest.journalSequence ?? 0);
     for (const [id, receipt] of Object.entries(snapshot.receipts))
       if (this.state.receipts[id]?.submissionId === receipt.submissionId && receipt.exported)
         this.state.receipts[id].exported = receipt.exported;

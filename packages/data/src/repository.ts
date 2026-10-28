@@ -13,7 +13,7 @@ import { atomicWrite, exists, readJson, readJsonlText } from "./files.js";
 import { createResultFileWriter } from "./result-file.js";
 import { locateRun } from "./run-layout.js";
 import { writeRunOverview } from "./run-overview.js";
-import { applyRunJournalDelta, readProgressJournal } from "./run-journal.js";
+import { applyRunJournalDelta, CheckpointAdvancedError, readProgressJournal } from "./run-journal.js";
 import { compactCheckpointState } from "./checkpoint-state.js";
 
 /** Codecs are pure business conversions. Only this module accesses run files. */
@@ -40,6 +40,12 @@ export function createRunRepository<Checkpoint>(
   options: { appendOnly?: boolean } = {},
 ): RunRepository {
   async function readState(run: string, taskIds?: ReadonlySet<string>): Promise<RunState> {
+    for (let attempt = 0; ; attempt++) {
+      try { return await readSnapshot(run, taskIds); }
+      catch (error) { if (!(error instanceof CheckpointAdvancedError) || attempt === 2) throw error; }
+    }
+  }
+  async function readSnapshot(run: string, taskIds?: ReadonlySet<string>): Promise<RunState> {
     const layout = locateRun(run);
     const checkpoint = await readJson<Checkpoint>(layout.stateFile);
     const byFile = new Map<string, Set<string>>();

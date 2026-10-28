@@ -11,7 +11,7 @@ import type {
   Usage,
 } from "@eval/contracts";
 import { canonical, safeId } from "@eval/contracts";
-import { appendJsonl } from "./files.js";
+import { appendJsonl, atomicWrite } from "./files.js";
 
 export type ManifestJournalPatch = Partial<Omit<RunManifest, "tasks" | "states" | "inputCatalog">> & {
   inputCatalog?: unknown[];
@@ -20,6 +20,8 @@ export type ManifestJournalPatch = Partial<Omit<RunManifest, "tasks" | "states" 
 /** A compact state delta. Accepted bodies are written once and indexed by task identity. */
 export interface RunJournalDelta {
   at: number;
+  /** Prefix already persisted in state.json; this boundary is never replayed. */
+  checkpoint?: true;
   manifest?: ManifestJournalPatch;
   taskOrder?: string[];
   tasks?: PlannedTask[];
@@ -214,6 +216,19 @@ export function runJournalIdentity(state: RunState): string {
 export function runProgressFile(run: string): string { return path.join(run, "progress.jsonl"); }
 
 const progressSequences = new Map<string, number>();
+const progressWrites = new Map<string, Promise<void>>();
+
+function updateProgress(file: string, update: () => Promise<void>): Promise<void> {
+  const previous = progressWrites.get(file) ?? Promise.resolve();
+  const next = previous.catch(() => {}).then(update);
+  progressWrites.set(file, next);
+  void next.finally(() => { if (progressWrites.get(file) === next) progressWrites.delete(file); }).catch(() => {});
+  return next;
+}
+
+export class CheckpointAdvancedError extends Error {
+  constructor(sequence: number) { super(`检查点已覆盖进度事件 ${sequence}，请重新读取检查点。`); }
+}
 
 /** Checkpoints cover the prefix, so read only the newest journal rows on resume. */
 async function* progressRows(file: string): AsyncGenerator<StoredRunJournalEvent> {
@@ -270,13 +285,32 @@ async function progressSequence(file: string): Promise<number> {
 /** Append ordered deltas to the durable Ceph projection without rewriting prior events. */
 export async function appendProgressJournal(run: string, events: readonly StoredRunJournalEvent[]): Promise<void> {
   if (!events.length) return;
-  const file = runProgressFile(run), current = await progressSequence(file);
-  const rows = events.filter(event => event.seq > current).sort((a, b) => a.seq - b.seq);
-  if (!rows.length) return;
-  if (rows.some((row, index) => row.seq !== current + index + 1))
-    throw new Error("进度事件流缺少连续序号");
-  await appendJsonl(file, rows.map(row => ({ seq: row.seq, event: row.event })));
-  progressSequences.set(file, rows.at(-1)!.seq);
+  const file = runProgressFile(run);
+  await updateProgress(file, async () => {
+    const current = await progressSequence(file);
+    const rows = events.filter(event => event.seq > current).sort((a, b) => a.seq - b.seq);
+    if (!rows.length) return;
+    if (rows.some((row, index) => row.seq !== current + index + 1))
+      throw new Error("进度事件流缺少连续序号");
+    await appendJsonl(file, rows.map(row => ({ seq: row.seq, event: row.event })));
+    progressSequences.set(file, rows.at(-1)!.seq);
+  });
+}
+
+/** Called only after state.json is durable. Preserve all concurrent tail events and a sequence boundary. */
+export async function compactProgressJournal(run: string, sequence: number): Promise<void> {
+  if (!Number.isSafeInteger(sequence) || sequence < 0) throw new Error("Invalid checkpoint sequence");
+  if (!sequence) return;
+  const file = runProgressFile(run);
+  await updateProgress(file, async () => {
+    const tail = await readProgressJournal(run, sequence);
+    async function* lines() {
+      yield Buffer.from(JSON.stringify({ seq: sequence, event: { at: Date.now(), checkpoint: true } }) + "\n");
+      for (const row of tail) yield Buffer.from(JSON.stringify(row) + "\n");
+    }
+    await atomicWrite(file, lines());
+    progressSequences.set(file, tail.at(-1)?.seq ?? sequence);
+  });
 }
 
 export async function readProgressJournal(run: string, after = 0): Promise<StoredRunJournalEvent[]> {
@@ -286,6 +320,7 @@ export async function readProgressJournal(run: string, after = 0): Promise<Store
       const previous = events.at(-1);
       if (previous && row.seq !== previous.seq - 1) throw new Error("进度事件流缺少连续序号");
       if (row.seq <= after) break;
+      if (row.event.checkpoint) throw new CheckpointAdvancedError(row.seq);
       events.push(row);
     }
   } catch (error) {

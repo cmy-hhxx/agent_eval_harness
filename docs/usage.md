@@ -283,7 +283,7 @@ npm run eval -- validate-stability --run-id stability-001 \
 
 独立审阅结果写入实验根目录 `semantic-review.json` 数组：每项包含 `task_id`、`submission_id`、`reviewer: {kind: "agent" | "human", name}`、`result: "passed" | "failed"` 和 `rationale`。只绑定当前已接受的改写收据；重复、过期或未知引用会报错。未记录的改写保持未审，整链中的改写也进入覆盖分母。重建报告保留已记录的语义失败，不改写原判词。
 
-按[三层验收](quality.md#三层验收)填写审阅：保真硬错误为 failed；仅有非决定性措辞缺陷可为 passed，并在 rationale 留下缺陷与不影响原意的依据。Comparison 的 needs_review 表示已停下等待来源或关键口径复核，单列在未裁决数量中，不等于执行失败，也不冒充胜负或平局。
+按[归因执行边界](quality.md#归因执行边界)填写审阅：保真硬错误为 failed；仅有非决定性措辞缺陷可为 passed，并在 rationale 留下缺陷与不影响原意的依据。Comparison 的 needs_review 表示已停下等待来源或关键口径复核，单列在未裁决数量中，不等于执行失败，也不冒充胜负或平局。
 
 停止实验 Host 后，用 `npm run eval -- report --run /mnt/fin_bench/eval_data/0_wencai/eval_output/test_eval/stability-001` 重新生成实验报告，不调用模型。
 
@@ -366,7 +366,7 @@ npm run eval -- rewrite-comparisons --run /mnt/fin_bench/eval_data/0_wencai/eval
 | 文件 | 用途 |
 |---|---|
 | state.json | 周期性派生快照：任务状态、来源索引、收据引用和累计用量；不保存完整修复/复核现场 |
-| progress.jsonl | 已投影的追加式状态事件，按序号配合 state.json 恢复；不复制正式结果正文 |
+| progress.jsonl | 检查点之后的增量状态与收据；检查点成功落盘后压缩已覆盖事件，保留序号边界 |
 | overview.json | 运行目录与预计算统计：正式战绩、比例和结果引用，不保存正文 |
 | results/criteria.jsonl | 共同标准 |
 | results/attribution.jsonl | 单回答归因与证据 |
@@ -384,6 +384,10 @@ npm run eval -- rewrite-comparisons --run /mnt/fin_bench/eval_data/0_wencai/eval
 恢复时，同序号的 progress 投影只允许为热日志 receipt 补充尚未存在的 `exported`；判词、审计、状态或已有结果引用不一致仍拒绝恢复。重放完成后才应用本次配置与评测器标记，已接受 receipt 保留原评测器标记，保证续跑策略记录与实际执行一致。
 
 `state.json` 仅周期写入，并对错误消息、错误数量和 receipt 审计做固定压缩；draft、completion candidate、inspection、evidence bank 与完整 review 上下文不进入检查点。热日志和 outbox 路径由 `EVAL_HOT_STATE_ROOT` 控制，默认位于 `~/.cache/eval-agent-harness/hot`；生产应放在本机 SSD，不放在 Ceph。
+
+Host 每次成功保存检查点后，原子替换 `progress.jsonl`，仅保留检查点之后的事件和一个序号边界。运行结束并保存成功后通常只剩边界；检查点写入失败时保留原事件。追加与压缩共用同一写入队列；读取遇到检查点切换会重新读取快照，不能跳过缺失增量。该文件不承担完整历史审计。
+
+既有停止运行的目录可执行 `node scripts/compact-progress.mjs <run目录>`，使用已有检查点压缩历史进度，并输出压缩前后字节数。命令持有同一把 run 锁，会拒绝正在运行的 Host；不改原始输入、正式结果或检查点。
 
 Worker 健康检查暂时失败时，Host 暂缓使用该槽位并重查，不终止仍存活的进程，也不增加任务尝试次数。托管槽位绑定具体子进程，确认进程退出后才重建，避免端口复用误认其他 Worker。
 

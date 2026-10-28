@@ -3,9 +3,11 @@ import assert from "node:assert/strict";
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+import { writeFileSync } from "node:fs";
 import { emptyUsage, type ResultReference, type RunState } from "@eval/contracts";
 import { createRunRepository, type RunCodec } from "./repository.js";
 import { readRunOverviews } from "./run-overview.js";
+import { runProgressFile } from "./run-journal.js";
 
 const state: RunState = {
   manifest: {
@@ -29,6 +31,27 @@ test("repository checkpoint saves refresh the overview through running, finished
       "frequent checkpoint writes must not duplicate their size with indentation");
     assert.deepEqual(await readRunOverviews(directory), [{ runId: "run", value: { status } }]);
   }
+});
+
+test("a reader racing journal compaction reloads the new checkpoint instead of dropping covered events", async t => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "eval-checkpoint-race-"));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const latest = { ...state, manifest: { ...state.manifest, journalSequence: 10 }, recordedAttempts: 10 };
+  let reads = 0;
+  const codec: RunCodec<RunState> = { encode: value => value, references: () => [], resultId: () => "", decode(value) {
+    if (++reads === 1) {
+      writeFileSync(path.join(root, "state.json"), JSON.stringify(latest));
+      writeFileSync(runProgressFile(root), JSON.stringify({ seq: 10, event: { at: 10, checkpoint: true } }) + "\n" +
+        JSON.stringify({ seq: 11, event: { at: 11, recordedAttempts: 11 } }) + "\n");
+    }
+    return value;
+  } };
+  const repository = createRunRepository(codec, () => null);
+  await repository.writeRun(root, state);
+  const restored = await repository.readRun(root);
+  assert.equal(reads, 2);
+  assert.equal(restored.manifest.journalSequence, 10);
+  assert.equal(restored.recordedAttempts, 11);
 });
 
 async function fixture(t: test.TestContext, references: ResultReference[]) {

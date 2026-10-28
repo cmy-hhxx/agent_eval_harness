@@ -196,7 +196,7 @@ export async function runEvaluation(options: RunOptions): Promise<Record<string,
     }
     for (const event of [...replayed.values()].sort((a, b) => a.seq - b.seq))
       applyRunJournalDelta(saved, event.event);
-    if (replayed.size) hot.setSequenceFloor(Math.max(...replayed.keys()));
+    hot.setSequenceFloor(Math.max(snapshotSequence, ...replayed.keys()));
     const manifest = saved.manifest;
     // Replay historical progress before recording the policy used by this execution.
     manifest.engine = identity;

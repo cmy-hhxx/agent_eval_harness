@@ -1,12 +1,15 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { mkdtemp, readFile, rm } from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
 import {
   DEFAULT_POLICY, emptyUsage, type AgentBinding, type AgentProfile, type AttemptSpec,
   type RunRepository, type RunState, type Submission,
 } from "@eval/contracts";
 import { AgentRegistry } from "./agents.js";
 import { RunStore } from "./store.js";
-import { RunHotStore, runJournalIdentity } from "@eval/data";
+import { appendProgressJournal, createRunRepository, readProgressJournal, runProgressFile, RunHotStore, runJournalIdentity } from "@eval/data";
 
 test("two hundred independent commits do not wait for checkpoint projection", async t => {
   const sourceId = "11111111-1111-4111-8111-111111111111", input = { messages: [{ content: "source" }] };
@@ -60,4 +63,38 @@ test("two hundred independent commits do not wait for checkpoint projection", as
   const p95 = acceptanceLatencies[Math.ceil(acceptanceLatencies.length * 0.95) - 1]!;
   t.diagnostic(`200 accepts: p50=${acceptanceLatencies[99]!.toFixed(1)}ms p95=${p95.toFixed(1)}ms max=${acceptanceLatencies.at(-1)!.toFixed(1)}ms`);
   assert(p95 < 1000, `acceptance p95 must stay below one second, received ${p95.toFixed(1)}ms`);
+});
+
+test("only a durable checkpoint compacts progress and a fresh hot store retains the covered sequence", async t => {
+  const run = await mkdtemp(path.join(os.tmpdir(), "eval-checkpoint-commit-"));
+  t.after(() => rm(run, { recursive: true, force: true }));
+  const state: RunState = { manifest: { format: "evaluation-run", debug: false, runId: "checkpoint", status: "running",
+    engine: { engine: "pi", version: "test", commit: "test", buildId: "test" }, evaluatorVersion: "test",
+    config: {}, tasks: [], inputs: {}, states: {}, preflight: {}, startedAt: 1 },
+    receipts: {}, usage: emptyUsage(), recordedAttempts: 0 };
+  const repository = createRunRepository<RunState>({ encode: value => value, decode: value => value,
+    references: () => [], resultId: () => "" }, () => null);
+  let fail = true;
+  const services = { agents: new AgentRegistry([]), taskSource: { id: "fixture", bind(): never { throw new Error("unused"); } },
+    repository: { ...repository, async writeRun(run: string, state: RunState) {
+      if (fail) throw new Error("fixture checkpoint failure");
+      await repository.writeRun(run, state);
+    } } };
+  const hot = new RunHotStore(":memory:", runJournalIdentity(state));
+  const sequence = hot.append({ at: 1, recordedAttempts: 1 });
+  hot.markDelivered([sequence]);
+  await appendProgressJournal(run, hot.eventsAfter());
+  const store = new RunStore(run, state, {}, services, undefined, hot);
+  const original = await readFile(runProgressFile(run), "utf8");
+  await assert.rejects(store.persistCheckpoint(), /fixture checkpoint failure/);
+  assert.equal(await readFile(runProgressFile(run), "utf8"), original);
+  fail = false;
+  await store.persistCheckpoint();
+  assert.deepEqual(await readProgressJournal(run, sequence), []);
+  await store.close();
+  const restored = await repository.readRun(run);
+  const fresh = new RunStore(run, restored, {}, services);
+  await fresh.persistCheckpoint();
+  assert.equal(restored.manifest.journalSequence, sequence);
+  await fresh.close();
 });
