@@ -4,6 +4,7 @@ import { adapt, normalizeInput } from "@eval/workflows/inputs";
 import { AgentRegistry } from "@eval/host";
 import { attributionAgent } from "@eval/agents/attribution";
 import { parseEvidenceCoordinates } from "@eval/tools";
+import { validateEvidenceBankSources } from "@eval/contracts";
 import { bindAttribution, planAttributionUnit, type AttributionTaskData } from "./index.js";
 import { emptyAudit } from "../../../../tests/fixtures/comparison.js";
 
@@ -29,6 +30,9 @@ test("model review entrypoints use message coordinates and retain public output 
   assert.equal(repeated.request.sources.answer.value, binding.request.sources.answer.value);
   assert.deepEqual(repeated.modelInput, binding.modelInput);
   assert.equal(repeated.preparationTimings!.directoryMs, 0, "shared immutable trace facts are not rebuilt");
+  const navigation = binding.materialNavigation!.answer as { boundaries: { before: object[]; after: object[] }[] };
+  assert(navigation.boundaries.every(boundary => [...boundary.before, ...boundary.after].every(item => !Object.hasOwn(item, "quote"))),
+    "navigation stores source coordinates without duplicating original text per edge");
   const isolated = bindAttribution(task, { [candidate.input_id]: normalizeInput(structuredClone(raw)) }, {});
   assert.notEqual(isolated.request.sources.answer.value, binding.request.sources.answer.value,
     "another loaded source object never inherits this trace's cached facts");
@@ -44,6 +48,25 @@ test("a mixed-media answer retains its image entrypoint after text scope splitti
   const binding = bindAttribution(task, { [candidate.input_id]: normalizeInput(raw) }, {});
   assert.equal((binding.modelInput!.answer as { final_images: { image_count: number } }).final_images.image_count, 1);
   assert.equal((binding.materialNavigation!.answer as { final_message_index: number }).final_message_index, 1);
+});
+
+test("a mixed-media tool return registers text leaves without citing image placeholders", () => {
+  const raw = { batch_id: "batch", case_id: "tool-image", messages: [
+    { type: "user_question", content: "画图并返回数据。" },
+    { type: "tool_call", name: "CodeInterpreter", call_id: "plot", input: { code: "plot()" } },
+    { type: "tool_result", name: "CodeInterpreter", call_id: "plot", output: [
+      { type: "input_text", text: "图表生成成功，数据有三行。" },
+      { type: "input_image", image_url: "data:image/png;base64,AA==" } ] },
+    { type: "final_answer", content: "已绘制图表。" } ] };
+  const candidate = adapt(raw, { id: "answer", name: "Answer", adapter: "b", sources: [] }, "fixture.jsonl", 1);
+  const task = planAttributionUnit(candidate).tasks.find(task => task.stage === "attribution-component" &&
+    (task.data as AttributionTaskData).reviewScope!.message_indices.includes(2))!;
+  const binding = bindAttribution(task, { [candidate.input_id]: normalizeInput(raw) }, {});
+  const prepared = new AgentRegistry([attributionAgent]).prepare(binding);
+  validateEvidenceBankSources(prepared.evidenceBank, new Map([[candidate.input_id, binding.request.sources.answer!.value]]));
+  assert(prepared.evidenceBank.some(id => { const point = parseEvidenceCoordinates(id)!;
+    return point.message_index === 2 && point.kind === "text" && point.path === "/output/0/text"; }));
+  assert(JSON.stringify(binding.modelInput).includes("图表生成成功，数据有三行。"));
 });
 
 test("partial trace aggregation preserves confirmed problems without turning an unreviewed range into a defect", () => {

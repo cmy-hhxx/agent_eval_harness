@@ -270,7 +270,7 @@ test("program material navigation crosses preparation without entering prompts o
   const wired={...original,materialNavigation:navigation},before=structuredClone(wired);
   const baseline=registry.prepare(original),prepared=registry.prepare(wired);
   assert.deepEqual(prepared.evaluation.materialNavigation,navigation);
-  assert.notEqual(prepared.evaluation.materialNavigation,navigation);
+  assert.equal(prepared.evaluation.materialNavigation,navigation, "immutable navigation is shared across prepared tasks");
   assert.equal(prepared.prompt,baseline.prompt);
   assert.equal(prepared.renderAttempt(DEFAULT_POLICY),baseline.renderAttempt(DEFAULT_POLICY));
   assert(!prepared.prompt.includes("program-only-navigation"));

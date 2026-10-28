@@ -31,7 +31,7 @@ export const DEFAULT_POLICY: Policy = {
   maxOutputChars: 16000,
 };
 export interface EvaluationSpec {
-  /** Program-owned navigation for tools; never rendered into the model prompt. */
+  /** Immutable navigation shared by prepared tasks; tools only read it. Never rendered into the model prompt. */
   materialNavigation?: JsonObject;
   id: string;
   profile: string;
@@ -485,7 +485,7 @@ export interface AgentDefinition {
 export interface AgentBinding {
   /** Measured once during this assembly; never exposed as model fields. */
   preparationTimings?: Record<string, number>;
-  /** Workflow-owned navigation passed to tools without entering modelInput or evidence registration. */
+  /** Immutable workflow-owned navigation shared with tools without entering modelInput or evidence registration. */
   materialNavigation?: JsonObject;
   agent: string;
   profile: string;

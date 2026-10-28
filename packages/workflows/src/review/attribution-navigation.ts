@@ -1,4 +1,4 @@
-import { cite, evidenceSources, selectEvidenceSource, displayEvidence, images, parseEvidenceCoordinates, visualCaptureMarkers, type TraceComponentIdentity, type TableCheckResult } from "@eval/tools";
+import { cite, evidenceSources, selectEvidenceSource, displayEvidence, images, overlapsImagePlaceholder, parseEvidenceCoordinates, visualCaptureMarkers, type TraceComponentIdentity, type TableCheckResult } from "@eval/tools";
 import { responsibilityComponentName, responsibilityComponent, transferChanged, type ResponsibilityMaterial, type AttributionExecutionNode, type AttributionTransition, type AttributionNorm } from "@eval/agents/attribution";
 import type { JsonObject } from "@eval/contracts";
 import { tableChecksPresentation } from "./attribution-presentation.js";
@@ -125,7 +125,7 @@ export function initialComponentScene(raw: RawInput, original: RawInput, inputId
       const whole = selectEvidenceSource(locations, `/${key}`);
       const textBlocks = typeof value === "string" || Array.isArray(value) && value.every(part =>
         part && typeof part === "object" && ["text", "output_text"].includes(String(part.type)) && typeof part.text === "string");
-      const leaves = textBlocks || whole?.source.quotable === false ? locations.filter(source => source.kind === "text" && source.quotable !== false &&
+      const leaves = textBlocks || whole?.source.quotable === false || whole && overlapsImagePlaceholder(whole.source.text, whole.start, whole.end) ? locations.filter(source => source.kind === "text" && source.quotable !== false &&
         (source.path === `/${key}` || source.path.startsWith(`/${key}/`) && /\/(?:text|content|arguments|reasoning_content)$/u.test(source.path)))
         : [];
       const selected = leaves.length ? leaves.map(source => ({ source, start: 0, end: source.text.length }))
@@ -136,7 +136,8 @@ export function initialComponentScene(raw: RawInput, original: RawInput, inputId
         const shownEnd = Math.min(item.end, item.start + 6000, item.start + remaining);
         for (let start = item.start; start < shownEnd; start += 400) {
           const end = Math.min(shownEnd, start + 400), evidence = cite(inputId, messageIndex, item.source, start, end);
-          if (!evidence.quote || evidence.quote !== originalSource?.text.slice(start, end) || seen.has(evidence.evidence_id)) continue;
+          if (!evidence.quote || overlapsImagePlaceholder(item.source.text, start, end) ||
+            evidence.quote !== originalSource?.text.slice(start, end) || seen.has(evidence.evidence_id)) continue;
           seen.add(evidence.evidence_id); remaining -= end - start;
           const hasMore = end === shownEnd && end < item.end;
           entries.push({ part: key, ...displayEvidence(evidence), end_offset: item.end, has_more: hasMore,
@@ -160,7 +161,8 @@ export function initialComponentScene(raw: RawInput, original: RawInput, inputId
         if (!source || source.quotable === false || !originalSource) continue;
         const end = Math.min(point.end, point.start + 400);
         const evidence = cite(inputId, point.message_index, source, point.start, end);
-        if (!evidence.quote || evidence.quote !== originalSource.text.slice(point.start, end) || seen.has(evidence.evidence_id)) continue;
+        if (!evidence.quote || overlapsImagePlaceholder(source.text, point.start, end) ||
+          evidence.quote !== originalSource.text.slice(point.start, end) || seen.has(evidence.evidence_id)) continue;
         seen.add(evidence.evidence_id);
         entries.push({ transition_index: choice.transition_index, part, ...displayEvidence(evidence),
           end_offset: point.end, has_more: end < point.end,

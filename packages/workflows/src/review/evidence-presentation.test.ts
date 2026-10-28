@@ -10,6 +10,7 @@ import type { Candidate, RawInput } from "../inputs/types.js";
 import type { TaskData } from "../comparison/types.js";
 import { AgentRegistry } from "@eval/host";
 import { attributionAgent } from "@eval/agents/attribution";
+import { bindAttributionMaterial } from "./attribution.js";
 
 const id = "11111111-1111-4111-8111-111111111111", reference = { evidence_id: evidenceId(id, 0, "text", "/content", 0, 3) };
 test("presented ranges use actual preview length and exclude raw business fields", () => {
@@ -54,7 +55,7 @@ test("Workflow binding preserves coordinate-shaped business fields in actual ori
   const criteria: PlannedTask = { id: "criteria", stage: "criteria", inputIds: { A: id }, dependencies: {},
     data: { stage: "criteria", candidates: { A: candidate }, reference: business } satisfies TaskData };
   const task: PlannedTask = { id: "attribution", stage: "attribution-component", inputIds: { answer: id }, dependencies: { criteria: criteria.id },
-    data: { stage: "attribution-component", candidate, candidates: { A: candidate }, reference: business } satisfies TaskData };
+    data: { stage: "attribution-component", candidate, candidates: { A: candidate }, component: "终稿生成轮", traceIndex: 0, reference: business } };
   const source = { messages: [{ role: "system", content: business }, { role: "user", content: business }, { role: "assistant", content: "回答。" }] };
   const receipt: SubmissionReceipt = { taskId: criteria.id, status: "succeeded", attemptId: "prior", submissionId: "accepted", acceptedAt: 1,
     evaluatorVersion: "fixture", judge: "fixture", evaluation: criteriaResult(), audit: emptyAudit(), usage: emptyUsage() };
@@ -67,7 +68,7 @@ test("Workflow binding preserves coordinate-shaped business fields in actual ori
   assert.deepEqual((input.ground_truth as { value: unknown }).value, business);
   assert(!Object.hasOwn(answer,"initial_material"));
   assert(!Object.hasOwn(answer,"instruction_sources"));
-  assert.deepEqual((binding.request.input.answer as typeof answer).instruction_sources, []);
+  assert.deepEqual(binding.request.input, { component: "终稿生成轮", trace_index: 0 });
   assert.deepEqual((binding.request.sources.answer!.value as typeof source).messages[1], original.messages[1]);
   assert(!JSON.stringify(binding.request.sources.answer!.value).includes('"system"'));
   assert.deepEqual(source, original);
@@ -81,14 +82,12 @@ test("Workflow binding preserves coordinate-shaped business fields in actual ori
 function bindMaterial(source: RawInput, initialContextChars: number) {
   const candidate = { input_id: id, version: "fixture-version", name: "fixture-model", llm: null, question: "查询当月产量。",
     final_index: source.messages.length - 1, answer_timing: { finish_seconds: 1 } } as Candidate;
-  const criteria: PlannedTask = { id: "criteria", stage: "criteria", inputIds: { A: id }, dependencies: {},
-    data: { stage: "criteria", candidates: { A: candidate }, reference: null } satisfies TaskData };
-  const task: PlannedTask = { id: "attribution", stage: "attribution-component", inputIds: { answer: id }, dependencies: { criteria: criteria.id },
-    data: { stage: "attribution-component", candidate, candidates: { A: candidate }, reference: null, initialContextChars } satisfies TaskData };
-  const receipt: SubmissionReceipt = { taskId: criteria.id, status: "succeeded", attemptId: "prior", submissionId: "accepted", acceptedAt: 1,
-    evaluatorVersion: "fixture", judge: "fixture", evaluation: criteriaResult(), audit: emptyAudit(), usage: emptyUsage() };
-  return comparisonWorkflow.bind(task, { [id]: source }, { criteria: receipt }, { tasks: [criteria, task] });
+  return bindAttributionMaterial(candidate, source, criteriaResult(), { reference: null, initialContextChars });
 }
+
+const prepareMaterial = (binding: ReturnType<typeof bindMaterial>) => new AgentRegistry([attributionAgent]).prepare({
+  ...binding, profile: "component", request: { sources: binding.request.sources, input: { component: "终稿生成轮", trace_index: 0 } },
+});
 
 type InitialMaterial = { message_index: number; value: unknown; evidence: { evidence_id: string; quote: string; message_index: number }[] }[];
 
@@ -166,7 +165,7 @@ test("Attribution exposes one complete final answer and leaves source and rule m
   const source:RawInput={messages:[{role:"system",content:rule},{role:"tool",content:
     `<referencable-result>\nID: 8\n${body}\n</referencable-result>`},{role:"assistant",content:final}]};
   const binding=bindMaterial(source,8000),before=structuredClone(binding.request);
-  const prepared=new AgentRegistry([attributionAgent]).prepare(binding),bank=prepared.evidenceBank;
+  const prepared=prepareMaterial(binding),bank=prepared.evidenceBank;
   const shown=binding.projectModelInput!(binding.modelInput!,bank).answer as any;
   assert.equal(shown.final_evidence.length,1);assert.equal(shown.final_evidence[0].quote,final);
   assert.equal(prepared.prompt.split("本期产量增长7%").length-1,1);
@@ -244,11 +243,10 @@ test("large histories stay out of initial context and expose an eight-node page 
     input_messages:[{role:"user",content:"查询当月产量。"}],output:[{role:"assistant",content:`历史${index+1}：${history}`}]});
   messages.push({type:"final_answer",role:"assistant",content:"当月产量为25。"});
   const source:RawInput={messages},before=structuredClone(source),binding=bindMaterial(source,8000);
-  const prepared=new AgentRegistry([attributionAgent]).prepare(binding),shown=binding.projectModelInput!(binding.modelInput!,prepared.evidenceBank).answer as any;
+  const prepared=prepareMaterial(binding),shown=binding.projectModelInput!(binding.modelInput!,prepared.evidenceBank).answer as any;
   const overview=shown.execution_overview,navigation=binding.materialNavigation!.answer as any;
   assert.equal(overview.total,12);assert.equal(overview.entries.length,8);assert.equal(overview.offset,0);assert.equal(overview.has_more,true);
   assert.deepEqual(overview.next_request,{candidate:"answer",view:"nodes",offset:8});
-  assert.deepEqual(overview.read_request,{candidate:"answer",view:"nodes",offset:0});
   assert.deepEqual(overview.entries.map((node:any)=>node.execution_node_index),navigation.nodes.slice(0,8).map((node:any)=>node.execution_node_index));
   assert.equal(navigation.nodes.length,12);assert.equal(navigation.boundaries.length,(binding.request.input.answer as any).transitions.length);
   assert(!prepared.prompt.includes(history));assert(!JSON.stringify(binding.modelInput).includes(history));
