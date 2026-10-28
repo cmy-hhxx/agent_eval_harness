@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { readFile, mkdir } from "node:fs/promises";
+import { mkdir } from "node:fs/promises";
 import path from "node:path";
 import { monitorEventLoopDelay } from "node:perf_hooks";
 import { loadConfig, createModelResolver } from "@eval/host-app/config";
@@ -8,6 +8,7 @@ import { createChannelRequests, runEvaluation } from "@eval/host";
 import { attributionRepository, attributionWorkflow, planAttribution } from "@eval/workflows/attribution";
 import { writeJson } from "@eval/data";
 import { measureAttributionRun } from "./attribution-throughput.mjs";
+import { sampleProcessTree } from "./process-tree-usage.mjs";
 
 // Complete Pi sessions and independent Worker processes, with exactly 20 provider permits.
 // Run alone: this process cannot limit unrelated Hosts sharing the model gateway.
@@ -48,23 +49,6 @@ const stop = () => controller.abort(new Error("Experiment interrupted"));
 process.once("SIGINT", stop); process.once("SIGTERM", stop);
 let sampling, samplePending, samples = 0, sampleFailures = 0, peakRss = 0, peakProcesses = 0, progress;
 const processUsage = new Map();
-async function sampleTree(pid) {
-  try {
-    const root = `/proc/${pid}`;
-    const [status, io, stat, children] = await Promise.all(["status", "io", "stat", `task/${pid}/children`]
-      .map(file => readFile(`${root}/${file}`, "utf8")));
-    const numbers = text => Object.fromEntries([...text.matchAll(/^(\w+):\s+(\d+)/gmu)].map(match => [match[1], Number(match[2])]));
-    const fields = stat.slice(stat.lastIndexOf(")") + 2).split(" "), memory = numbers(status), counters = numbers(io);
-    processUsage.set(`${pid}:${fields[19]}`, { cpu_ticks: Number(fields[11]) + Number(fields[12]),
-      read_bytes: counters.read_bytes, write_bytes: counters.write_bytes, rchar: counters.rchar, wchar: counters.wchar });
-    const descendants = await Promise.all(children.trim().split(/\s+/u).filter(Boolean).map(sampleTree));
-    return { rss: (memory.VmRSS ?? 0) * 1024 + descendants.reduce((sum, child) => sum + child.rss, 0),
-      processes: 1 + descendants.reduce((sum, child) => sum + child.processes, 0) };
-  } catch (error) {
-    if (!['ENOENT', 'ESRCH'].includes(error.code)) sampleFailures++;
-    return { rss: 0, processes: 0 };
-  }
-}
 const before = process.resourceUsage(), startedAt = Date.now();
 const report = result => ({ kind: "pi-live-sessions", git_revision: revision,
   evaluator_version: host.evaluatorVersion, run_id: runId, elapsed_seconds: (Date.now() - startedAt) / 1000,
@@ -76,12 +60,14 @@ const report = result => ({ kind: "pi-live-sessions", git_revision: revision,
     for (const [key, value] of Object.entries(counters)) total[key] = (total[key] ?? 0) + value; return total;
   }, {}), event_loop_max_ms: loop.max / 1e6, event_loop_p95_ms: loop.percentile(95) / 1e6,
   progress, result, limits: "Linux process-tree RSS sums shared pages and samples every second; short-lived processes may be missed. Queued/active model requests prove SDK sessions exist, but omit sessions between requests. No semantic effect review." });
-let result, error;
+let result, error, failed;
 try {
   loop.enable();
   sampling = setInterval(() => {
     if (samplePending) return;
-    samplePending = sampleTree(process.pid).then(async sample => {
+    samplePending = sampleProcessTree(process.pid).then(async sample => {
+      sampleFailures += sample.failures;
+      for (const { id, ...counters } of sample.counters) processUsage.set(id, counters);
       samples++; peakRss = Math.max(peakRss, sample.rss); peakProcesses = Math.max(peakProcesses, sample.processes);
       if (samples % 30 === 0) await writeJson(path.join(run, "infrastructure-observation.json"), report());
     }).catch(() => { sampleFailures++; }).finally(() => { samplePending = undefined; });
@@ -97,10 +83,11 @@ try {
 finally {
   clearInterval(sampling); await samplePending; loop.disable();
   process.off("SIGINT", stop); process.off("SIGTERM", stop);
-  await writeJson(path.join(run, "infrastructure-observation.json"), { ...report(result), failed: Boolean(error) });
+  failed = Boolean(error) || !samples || !peakRss || sampleFailures > 0 || peakRequests > 20 || peakRequestSessions < count ||
+    controller.signal.aborted || !result || Object.entries(result.execution_task_statuses).some(([status, amount]) => status !== "succeeded" && amount);
+  await writeJson(path.join(run, "infrastructure-observation.json"), { ...report(result), failed: Boolean(failed) });
 }
 if (error) throw error;
 await writeJson(path.join(run, "throughput-observation.json"), await measureAttributionRun(run));
 console.log(JSON.stringify(report(result)));
-if (peakRequests > 20 || peakRequestSessions < count || controller.signal.aborted ||
-    Object.entries(result.execution_task_statuses).some(([status, amount]) => status !== "succeeded" && amount)) process.exitCode = 1;
+if (failed) process.exitCode = 1;

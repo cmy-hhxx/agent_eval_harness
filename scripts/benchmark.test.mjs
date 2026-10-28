@@ -6,6 +6,19 @@ import os from "node:os";
 import path from "node:path";
 import { pairSamples, compareSamples, summarizeSamples, goldTemplate, calibrateSamples } from "./benchmark-analysis.mjs";
 import { rejectedEvaluationDrafts } from "./benchmark-fixtures.mjs";
+import { processTreePids, sampleProcessTree } from "./process-tree-usage.mjs";
+
+test("resource sampling selects the complete process tree without task/PID/children", () => {
+  assert.deepEqual(processTreePids(10, " 1 0\n 10 1\n 30 20\n 20 10\n 40 10\n 50 1\n"), [10, 20, 40, 30]);
+});
+
+test("Linux resource sampling reports nonzero root memory and IO counters", { skip: process.platform !== "linux" }, async () => {
+  const sample = await sampleProcessTree(process.pid);
+  assert(sample.rss > 0);
+  assert(sample.processes >= 1);
+  assert(sample.counters.some(row => row.id.startsWith(process.pid + ":") && row.rchar > 0));
+  assert.equal(sample.failures, 0);
+});
 
 test("draft collection uses loaded JSON for either current submission mode and skips non-evaluation calls", async () => {
   const direct = { summary: "direct" }, file = { summary: "loaded before the path was overwritten" };
