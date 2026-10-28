@@ -8,13 +8,15 @@ AIME 的 `4_daily_eval_slim` JSONL 可以直接作为输入。每个 trace 的 `
 
 ```text
 session input
-→ attribution-component（每个 trace 的每个 tool/skill 组件）
+→ attribution-component（每次真实调用 / 终稿原文章节）
 → attribution-trace（合并该 trace 的组件问题并判定正确性）
 → attribution-session（跨 QA 汇总）
 → results/attribution.jsonl（仅 session 任务导出一行）
 ```
 
-组件统一从 `traceComponentIdentities` 的真实消息执行目录派生：明确命名的 planner/tool 保留名称；`llm-call-*`、span、UUID 等执行 locator 不原样进入组件，而是归一为“中间推理处理”或“流程处理”；只有 `final_answer` 明确表示终稿交付，不能因匿名模型调用与其内容相同就推定该调用是“终稿生成轮”。每个 trace 都保证一个独立的“终稿生成轮”任务，同名语义组件按名称去重。同名工具在多个 trace 中分别审查。内部任务只保留在 `state.json` 与收据中，不写独立结果文件。
+组件统一从 `traceComponentIdentities` 的真实消息执行目录派生：明确命名的 planner/tool 保留名称；`llm-call-*`、span、UUID 等执行 locator 不原样进入组件，而是归一为“中间推理处理”或“流程处理”；只有 `final_answer` 明确表示终稿交付，不能因匿名模型调用与其内容相同就推定该调用是“终稿生成轮”。同名工具的每次真实调用分别审查，可靠关联的请求与返回属于同一任务，未关联的记录仍保留独立审查。每个中间模型调用独立审查。终稿按原文完整章节拆分，短章节在 1,600 字预算内合并；不切断单个完整章节或表格，所以这不是硬截断上限。每个 trace 至少保留一项终稿审查。内部任务只保留在 `state.json` 与收据中，不写独立结果文件。
+
+每项 `review_scope` 保存原始消息坐标与终稿文本范围；任务身份包括这个范围，同 run 续跑复用其 UUID。模型只提交该范围直接解释的问题，必要时仍可读取完整上下文；跨章节问题归属于原文最早的相关章节。trace 汇总等待全部原子任务，将问题 ID 按 trace 顺序统一编号，保留各问题的组件、正文和证据。正式 attribution 输出字段不变。
 
 调度按输入 `input_id` 分成 session 前台窗口，`execution.sessionWindow` 默认同时准入 16 个未结束 session。窗口内的 component、trace、session 任务继续推进；窗口外 session 的 component 不进入执行槽位。session 完成、失败或 blocked 后释放窗口，后续 session 才获准进入。ready 的 trace 和 session 任务优先于其他 session 的 component backlog。准入状态完全从任务的持久化状态推导，执行、进度和续跑共用同一配置值，续跑不依赖内存游标，也不允许 component backlog 占满全部任务槽位而饿死下游汇总。
 
@@ -26,7 +28,7 @@ session input
 
 ## 小现场
 
-首屏的 `component_entrypoints` 提供当前固定组件前八个已知调用的 `read_responsibility_chain` 入口，省去重复枚举全局执行目录；`component_entrypoints_total` 显示总数，剩余调用继续从完整导航读取。它只提供导航，不是结论或完整调用清单；入口为空仍须核查原文。完整执行导航、跨组件因果材料和原始证据继续可读，证据校验不因入口提示而放宽。
+首屏的 `component_entrypoints` 只提供当前原子任务的 `read_responsibility_chain` 入口，省去重复枚举全局执行目录。调用任务优先展示当前调用的实际参数与返回；终稿任务直接展示所属章节的短原文引用，以及本章节引用标记对应的来源片段和续读坐标。其他调用不在该任务的必审范围，但完整执行导航、跨组件因果材料和原始证据继续可读，证据校验不放宽。
 
 归因导航允许模型在同一轮请求多个独立证据片段，提示词要求每轮最多四个，并将提交与读取分开。Pi 仍逐个执行工具，按实际调用登记证据、扣除读取预算；预算耗尽后不再允许批量工具请求。合并读取不减少材料范围，也不放宽原文引用和提交校验。
 

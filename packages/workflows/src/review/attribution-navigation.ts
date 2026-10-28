@@ -1,8 +1,8 @@
-import { cite, evidenceSources, displayEvidence, images, parseEvidenceCoordinates, visualCaptureMarkers, type TraceComponentIdentity, type TableCheckResult } from "@eval/tools";
+import { cite, evidenceSources, selectEvidenceSource, displayEvidence, images, parseEvidenceCoordinates, visualCaptureMarkers, type TraceComponentIdentity, type TableCheckResult } from "@eval/tools";
 import { responsibilityComponentName, responsibilityComponent, transferChanged, type ResponsibilityMaterial, type AttributionExecutionNode, type AttributionTransition, type AttributionNorm } from "@eval/agents/attribution";
 import type { JsonObject } from "@eval/contracts";
 import { tableChecksPresentation } from "./attribution-presentation.js";
-import type { RawInput } from "../inputs/types.js";
+import type { RawInput, ComponentReviewScope } from "../inputs/types.js";
 
 /** The graph travels to the tool runtime, never through the initial model prompt. */
 export function attributionNavigation(answer: JsonObject, raw: RawInput, inputId: string) {
@@ -34,7 +34,7 @@ export function attributionNavigation(answer: JsonObject, raw: RawInput, inputId
 }
 
 /** Explicit allowlist: new canonical fields cannot silently inflate the model context. */
-export function initialAttributionMaterial(answer: JsonObject, raw: RawInput, navigation: ReturnType<typeof attributionNavigation>) {
+export function initialAttributionMaterial(answer: JsonObject, raw: RawInput, navigation: ReturnType<typeof attributionNavigation>, inputId: string, scope?: ComponentReviewScope) {
   const candidate = "answer";
   const finalIndex = answer.final_message_index as number;
   const nodes = navigation.nodes.slice(0, 8);
@@ -46,10 +46,25 @@ export function initialAttributionMaterial(answer: JsonObject, raw: RawInput, na
   };
   const imageCount = images(raw.messages[finalIndex]).length;
   const gaps = visualCaptureMarkers(raw.messages[finalIndex]);
+  const finalEvidence = scope?.final_ranges ? scope.final_ranges.flatMap(range => {
+    const source = evidenceSources(raw.messages[finalIndex]).find(source => source.kind === "text" && source.path === range.path);
+    if (!source || range.start < 0 || range.end > source.text.length || range.end <= range.start)
+      throw new Error("归因原子任务的终稿范围与原文不一致");
+    const entries = [];
+    for (let start = range.start; start < range.end; start += 400)
+      entries.push(cite(inputId, finalIndex, source, start, Math.min(range.end, start + 400)));
+    return entries;
+  }) : answer.final_evidence as { evidence_id: string; message_index: number; quote: string }[];
   return {
     question: answer.question, final_message_index: finalIndex,
     // Original final text occurs once and only these displayed ranges count as read.
-    final_evidence: (answer.final_evidence as { evidence_id: string; message_index: number; quote: string }[]).map(displayEvidence),
+    final_evidence: finalEvidence.map(displayEvidence),
+    ...(scope?.final_ranges ? { final_context: {
+      partial: true,
+      sources: evidenceSources(raw.messages[finalIndex]).filter(source => source.kind === "text" && source.path.startsWith("/content"))
+        .map(source => ({ path: source.path, total_chars: source.text.length,
+          read_request: { candidate, message_index: finalIndex, path: source.path, offset: 0, max_chars: 16000 } })),
+    } } : {}),
     deferred_final_material: (answer.deferred_final_material as { message_index: number; path: string; total_chars: number }[])
       .map(source => ({ ...source, read_request: { candidate, message_index: source.message_index, path: source.path, offset: 0, max_chars: 16000 } })),
     ...(imageCount ? { final_images: { image_count: imageCount, view_request: { candidate, message_index: finalIndex } } } : {}),
@@ -80,12 +95,34 @@ export function initialAttributionMaterial(answer: JsonObject, raw: RawInput, na
 
 /** Preload a bounded part of the selected component, with exact original coordinates. */
 export function initialComponentScene(raw: RawInput, original: RawInput, inputId: string,
-  navigation: ReturnType<typeof attributionNavigation>, component: string) {
-  const choices = navigation.responsibility_choices.filter(choice => choice.component === component);
+  navigation: ReturnType<typeof attributionNavigation>, component: string, scope?: ComponentReviewScope) {
+  const choices = navigation.responsibility_choices.filter(choice => choice.component === component &&
+    (!scope || choice.message_index !== null && scope.message_indices.includes(choice.message_index)));
+  if (scope?.final_ranges) return { component, partial: true, entries: [], responsibility_choices_total: choices.length };
   const sources = new Map<number, ReturnType<typeof evidenceSources>>();
   const originals = new Map<number, ReturnType<typeof evidenceSources>>();
   const entries = [];
   const seen = new Set<string>();
+  // An invocation's actual arguments and result precede duplicated model input history.
+  // Register only exact bytes that survive the public projection at the same coordinates.
+  for (const messageIndex of scope?.final_ranges ? [] : scope?.message_indices ?? []) {
+    const message = raw.messages[messageIndex];
+    if (!message) throw new Error("归因原子任务的消息坐标不存在");
+    const locations = evidenceSources(message), originals = evidenceSources(original.messages[messageIndex]);
+    for (const key of ["input", "arguments", "output", "result", "content"]) {
+      if (!Object.hasOwn(message, key) || entries.length >= 8) continue;
+      const selected = selectEvidenceSource(locations, `/${key}`);
+      if (!selected || selected.source.quotable === false) continue;
+      const end = Math.min(selected.end, selected.start + 400);
+      const evidence = cite(inputId, messageIndex, selected.source, selected.start, end);
+      const originalSource = originals.find(source => source.kind === selected.source.kind && source.path === selected.source.path);
+      if (!evidence.quote || evidence.quote !== originalSource?.text.slice(selected.start, end) || seen.has(evidence.evidence_id)) continue;
+      seen.add(evidence.evidence_id);
+      entries.push({ part: key, ...displayEvidence(evidence), end_offset: selected.end, has_more: end < selected.end,
+        ...(end < selected.end ? { next_request: { candidate: "answer", message_index: messageIndex,
+          kind: selected.source.kind, path: selected.source.path, offset: end, max_chars: Math.min(16000, selected.end - end) } } : {}) });
+    }
+  }
   for (const choice of choices.slice(0, 2)) {
     const boundary = navigation.boundaries.find(boundary => boundary.transition_index === choice.transition_index)!;
     for (const [part, items] of [["before", boundary.before], ["after", boundary.after]] as const) {

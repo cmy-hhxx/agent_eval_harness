@@ -6,7 +6,7 @@ import { canonical, type AgentBinding, type TaskAnalysis } from "@eval/contracts
 import { traceComponentIdentities, cite, images, answerTurnContexts, displayEvidence, evidenceSources, messageContentSources, parseEvidenceCoordinates, sourceTextBlocks, visualCaptureMarkers, type InstructionSource, type TableCheckResult, type TraceComponentIdentity } from "@eval/tools";
 import { presentedMaterialReads, projectComparisonEvidence } from "./evidence-presentation.js";
 import { contentText } from "../inputs/records.js";
-import type { RawInput, Candidate } from "../inputs/types.js";
+import type { RawInput, Candidate, ComponentReviewScope } from "../inputs/types.js";
 import { attributionTrace } from "./public-trace.js";
 import { attributionNormDirectory, attributionTableChecks, buildAttributionTransitions, buildAttributionExecutionNodes, responsibilityComponentName,
   type AttributionTransition, type AttributionExecutionNode } from "@eval/agents/attribution";
@@ -220,7 +220,7 @@ export function modelMaterial(material: Record<string, unknown>, candidate: stri
 
 /** Both workflows adapt their public task and trace into this single Attribution contract. */
 export function bindAttributionMaterial(candidate: Candidate, original: RawInput, analysis?: TaskAnalysis,
-  options: { reference?: unknown; initialContextChars?: number; component?: string } = {}): AgentBinding {
+  options: { reference?: unknown; initialContextChars?: number; component?: string; scope?: ComponentReviewScope } = {}): AgentBinding {
   const started = performance.now();
   const raw = attributionTrace(original, candidate.input_id, candidate.final_index);
   const task_analysis: TaskAnalysis = analysis ?? { task_type: "回答评审", goal: candidate.question,
@@ -298,11 +298,29 @@ export function bindAttributionMaterial(candidate: Candidate, original: RawInput
   const input = { candidate_id: candidate.input_id, task_analysis, material_availability: { public_task: true, final_delivery: true, process_records: raw.messages.some((message,index)=>index!==candidate.final_index && !["user","system","developer"].includes(message.role??"") && message.type!=="private_instruction_omitted"), actual_model_inputs: answerTurnContexts(raw,candidate.final_index).length>0, call_links: catalog.some(row=>row.call_message_index!==undefined) }, ground_truth: { available: reference !== null, value: reference }, answer };
   Object.assign(answer, { norm_directory: attributionNormDirectory({ input, sources }) });
   const navigation = attributionNavigation(answer, raw, candidate.input_id);
+  const scopedCitations = options.scope?.final_ranges ? { references: citations.references.filter(reference =>
+    reference.occurrences.some(occurrence => {
+      const point = parseEvidenceCoordinates(occurrence.evidence_id);
+      return point?.kind === "text" && options.scope!.final_ranges!.some(range => range.path === point.path &&
+        range.start < point.end && point.start < range.end);
+    })).map(reference => ({ reference: reference.reference, format: reference.format, status: reference.status,
+      sources: reference.sources.flatMap(source => citationSourceParts(raw, candidate.input_id, source)).map(source => {
+        const point = parseEvidenceCoordinates(source.evidence_id)!;
+        if (point.kind === "image") throw new Error("引用来源必须是原始文本");
+        const leaf = evidenceSources(raw.messages[point.message_index]).find(leaf => leaf.kind === point.kind && leaf.path === point.path)!;
+        const end = Math.min(point.end, point.start + 400);
+        return { ...displayEvidence(cite(candidate.input_id, point.message_index, leaf, point.start, end)),
+          ...(source.document_url ? { document_url: source.document_url } : {}),
+          has_more: end < point.end, end_offset: point.end,
+          read_request: { candidate: "answer", message_index: point.message_index, kind: point.kind, path: point.path,
+            offset: end < point.end ? end : point.start, max_chars: Math.min(16000, point.end - point.start) } };
+      }) })) } : undefined;
   const modelInput = { candidate_id: input.candidate_id, material_availability: input.material_availability,
     ground_truth: input.ground_truth,
     task_analysis: taskAnalysisPresentation(task_analysis, { answer: candidate.input_id }, answer.criterion_instruction_sources),
-    answer: { ...initialAttributionMaterial(answer, raw, navigation),
-      ...(options.component ? { component_scene: initialComponentScene(raw, original, candidate.input_id, navigation, options.component) } : {}) } };
+    answer: { ...initialAttributionMaterial(answer, raw, navigation, candidate.input_id, options.scope),
+      ...(scopedCitations ? { citation_inventory: scopedCitations } : {}),
+      ...(options.component ? { component_scene: initialComponentScene(raw, original, candidate.input_id, navigation, options.component, options.scope) } : {}) } };
   return { agent: "attribution", profile: "default", request: { input, sources }, modelInput,
     preparationTimings: { materialMs: performance.now() - started, directoryMs },
     materialNavigation: { answer: navigation },

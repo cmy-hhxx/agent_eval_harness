@@ -287,8 +287,9 @@ test("component entrypoints stay bounded while preserving every source call and 
   const directed = bindAttribution(task, plan.inputs, {});
   const entries = directed.modelInput!.component_entrypoints as { component: string; message_index: number;
     read_request: { tool: string; arguments: { candidate: string; transition_index: number } } }[];
-  assert.equal(entries.length, 8, "large sessions must not copy the whole component directory into the prompt");
-  assert.equal(directed.modelInput!.component_entrypoints_total, 10);
+  assert.equal(plan.tasks.filter(task => (task.data as AttributionTaskData).component === "finquery 取数服务").length, 10);
+  assert.equal(entries.length, 1, "each task navigates directly to its own invocation");
+  assert.equal(directed.modelInput!.component_entrypoints_total, 1);
   const navigation = directed.materialNavigation!.answer as { responsibility_choices: { component: string; transition_index: number }[] };
   assert.equal(navigation.responsibility_choices.filter(choice => choice.component === "finquery 取数服务").length, 10);
   assert(navigation.responsibility_choices.some(choice => choice.component !== "finquery 取数服务"),
@@ -305,7 +306,8 @@ test("component entrypoints stay bounded while preserving every source call and 
 
 test("planning filters execution locators and always creates one final-generation task per trace", () => {
   const candidate = { input_id: "11111111-1111-4111-8111-111111111111", case_id: "case", turns: [{
-    trace_index: 0, trace_id: "trace", question: "问题", final_index: 1, component_names: ["llm-call-7", "span-4f26f1fabe23fc3c", "planner-search"],
+    trace_index: 0, trace_id: "trace", question: "问题", final_index: 1,
+    component_scopes: ["llm-call-7", "span-4f26f1fabe23fc3c", "planner-search"].map(component => ({ component, message_indices: [0] })),
   }] };
   const tasks = planAttributionUnit(candidate as never).tasks;
   const components = tasks.filter(task => task.stage === "attribution-component")

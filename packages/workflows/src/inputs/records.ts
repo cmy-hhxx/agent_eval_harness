@@ -1,10 +1,10 @@
 import { fileSourceReader } from "@eval/data";
 import { randomUUID } from "node:crypto";
 import { canonical, errorText, object, ValidationError, type ValidationIssue } from "@eval/contracts";
-import { isComponentLocator, traceComponentIdentities } from "@eval/tools";
+import { traceComponentScopes } from "./component-scopes.js";
 import { inputAdapters, resolveAdapter } from "./adapters.js";
 import { normalizeInput } from "./normalize.js";
-import type { Candidate, CandidateTurn, Message, RawInput, SessionTurn, Timing, VersionConfig } from "./types.js";
+import type { Candidate, CandidateTurn, RawInput, SessionTurn, Timing, VersionConfig } from "./types.js";
 
 export function contentText(value: unknown): string {
   if (typeof value === "string") return value;
@@ -23,12 +23,6 @@ export function strings(value: unknown, prefix = ""): [string, string][] {
   return Object.entries(value).flatMap(([key, child]) =>
     strings(child, `${prefix}/${key.replaceAll("~", "~0").replaceAll("/", "~1")}`),
   );
-}
-
-/** Component names are the role-first identity directory; locators never become actors. */
-export function traceComponentNames(messages: Message[], finalIndex: number, inputId: string): string[] {
-  return [...new Set(traceComponentIdentities({ messages }, inputId, finalIndex)
-    .map(actor => actor.component).filter(name => !isComponentLocator(name)))];
 }
 
 export function inputSources(candidates: Candidate[]): Map<string, Candidate[]> {
@@ -120,7 +114,7 @@ export function adapt(
       trace_id: typeof traceMeta.trace_id === "string" ? traceMeta.trace_id : null,
       question,
       final_index: final,
-      component_names: traceComponentNames(messages, final, inputId),
+      component_scopes: traceComponentScopes(messages, final, inputId),
     };
     return { trace, traceMeta, messages, adapter, final, question, traceCandidate };
   });

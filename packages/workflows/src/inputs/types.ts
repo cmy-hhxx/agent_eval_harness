@@ -75,7 +75,14 @@ export interface CandidateTurn {
   trace_id: string | null;
   question: string;
   final_index: number | null;
-  component_names: string[];
+  component_scopes: ComponentReviewScope[];
+}
+
+/** One actual invocation or a contiguous final-answer section, in original trace coordinates. */
+export interface ComponentReviewScope {
+  component: string;
+  message_indices: number[];
+  final_ranges?: { path: string; start: number; end: number }[];
 }
 
 export interface EvaluationInputs {

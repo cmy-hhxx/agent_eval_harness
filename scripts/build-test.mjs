@@ -1,7 +1,9 @@
 import { cp, mkdir, mkdtemp, readdir, rm } from "node:fs/promises";
 import path from "node:path";
 import { publishTree, root, run } from "./lib.mjs";
+import { buildRuntime } from "./build-runtime.mjs";
 
+await mkdir(path.join(root, ".runtime"), { recursive: true });
 const staging = await mkdtemp(path.join(root, ".runtime", "build-test-"));
 try {
   await run("node", ["node_modules/typescript/bin/tsc", "-p", "tsconfig.json", "--outDir", staging]);
@@ -16,6 +18,7 @@ try {
     }
   }
   for (const directory of ["packages/agents/src", "packages/prompts/resources", "schemas"]) await resources(directory);
+  await buildRuntime(staging);
   for (const name of ["apps", "packages", "tests", "schemas"]) await publishTree(path.join(staging, name), path.join(root, "dist", name));
 } finally {
   await rm(staging, { recursive: true, force: true });

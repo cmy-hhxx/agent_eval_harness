@@ -34,8 +34,8 @@ test("Comparison consumes the whole session and maps its accepted problems witho
     trace_id: "session-1", source: "fixture", line: 1, question: "Q1", final_index: 1,
     answer_timing: { first_token_seconds: null, first_answer_seconds: null, finish_seconds: null,
       source_unit: "ms", source_values: {}, source_fields: {} }, reference: null, llm: null,
-    turns: [{ trace_index: 0, trace_id: "t1", question: "Q1", final_index: 1, component_names: [] },
-      { trace_index: 1, trace_id: "t2", question: "Q2", final_index: 1, component_names: [] }] };
+    turns: [{ trace_index: 0, trace_id: "t1", question: "Q1", final_index: 1, component_scopes: [] },
+      { trace_index: 1, trace_id: "t2", question: "Q2", final_index: 1, component_scopes: [] }] };
   const material = sessionComparisonInput(raw, candidate);
   assert.match(String(material.messages[0]!.content), /Q1: Q1[\s\S]*Q2: Q2/u);
   assert.match(String(material.messages[1]!.content), /A1: A1[\s\S]*A2: A2/u);

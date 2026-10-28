@@ -12,7 +12,7 @@ export interface SessionQa {
 
 export function sessionQas(raw: RawInput, candidate: Candidate): SessionQa[] {
   return (candidate.turns ?? [{ trace_index: 0, trace_id: candidate.trace_id, question: candidate.question,
-    final_index: candidate.final_index, component_names: [] }]).map((trace, index) => {
+    final_index: candidate.final_index, component_scopes: [] }]).map((trace, index) => {
     const projected = normalizeTraceInput(raw, trace.trace_index);
     return { trace_index: trace.trace_index, trace_id: trace.trace_id, question: trace.question,
       answer: contentText(projected.messages[trace.final_index ?? index]?.content) };
