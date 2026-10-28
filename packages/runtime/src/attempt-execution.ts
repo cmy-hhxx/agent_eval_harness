@@ -25,7 +25,7 @@ import {
   type JsonObject,
   type ValidationIssue,
 } from "@eval/contracts";
-import { ArtifactStore, exists, writeJson } from "@eval/data";
+import { ArtifactStore, exists, writeJson, type MaterialPool } from "@eval/data";
 import { HttpError, ValidationError, canonical, errorText, evidenceSources, redact, safeId, validateEvidenceBank, type EvidenceBank } from "@eval/contracts";
 import { request } from "./http.js";
 import { textResult, ToolRuntime, traceReadCoverage, type ToolRegistry, type ExecutableTool } from "@eval/tools";
@@ -48,11 +48,18 @@ export interface AttemptExecutionDeps {
   backend: AgentBackend;
   registry: ToolRegistry;
   execution?: { python: string };
+  materials: MaterialPool;
   stop(attempt: AttemptExecution, state: "cancelled" | "timed_out", reason: string): Promise<void>;
   onSettled(attemptId: string): void;
 }
 
 export async function executeAttempt(attempt: AttemptExecution, deps: AttemptExecutionDeps): Promise<void> {
+  const materials: { release(): Promise<void> }[] = [];
+  try { await runAttempt(attempt, deps, materials); }
+  finally { await Promise.all(materials.map(material => material.release())); }
+}
+
+async function runAttempt(attempt: AttemptExecution, deps: AttemptExecutionDeps, materials: { release(): Promise<void> }[]): Promise<void> {
   const { backend, registry, execution, stop } = deps;
     const { spec, controller } = attempt,
       audit: ToolAudit = {
@@ -99,16 +106,18 @@ export async function executeAttempt(attempt: AttemptExecution, deps: AttemptExe
       const inputs = new Map<string, unknown>();
       const inputStarted = performance.now();
       for (const ref of spec.inputs) {
-        const value = await request<unknown>(
-          `${spec.hostUrl}/api/inputs/${safeId(ref.id)}?attempt=${safeId(spec.attemptId)}`,
-          "GET",
-          undefined,
-          controller.signal,
-        );
-        inputs.set(ref.name, value);
         const presentation = spec.evaluation.sourcePresentations?.[ref.name];
-        await writeJson(path.join(attempt.directory, "workspace/inputs", `${safeId(ref.name)}.json`),
-          presentation ? presentSource(value, presentation) : value);
+        const key = canonical([spec.hostUrl, ref.materialId ?? randomUUID(), presentation ?? null]);
+        const material = await deps.materials.acquire(key, async signal => {
+          const route = ref.materialId ? `/api/materials/${safeId(ref.materialId)}`
+            : `/api/inputs/${safeId(ref.id)}?attempt=${safeId(spec.attemptId)}`;
+          const value = await request<unknown>(
+            spec.hostUrl + route, "GET", undefined, signal);
+          return { value, display: presentation ? presentSource(value, presentation) : value };
+        }, controller.signal);
+        materials.push(material);
+        inputs.set(ref.name, material.value);
+        await material.copyTo(path.join(attempt.directory, "workspace/inputs", `${safeId(ref.name)}.json`));
       }
       timings.inputIoMs = performance.now() - inputStarted;
       activity();

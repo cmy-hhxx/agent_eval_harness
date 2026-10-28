@@ -42,6 +42,8 @@ outbox 先写正式 JSONL，再写 `progress.jsonl`，最后标记事件已投�
 
 Worker 容量包含暂时无法观测的槽位，短时健康检查失败不会突破配置上限增开进程。确认进程退出后，按原进程槽位数只启动一个替代进程；所有关联槽位在健康验证后一起切换，并发的恢复观察共用该次替换。
 
+同一个不可变来源对象由 Host 分配临时材料 UUID，与证据坐标、来源身份及原始 meta 分开；正文相同的不同对象不合并。Worker 池内相同 UUID 与展示规则的活跃会话共用下载、解析、展示转换和序列化，最后一个使用者结束即释放，不建立跨 run 缓存。每个会话的材料文件使用独立副本，文件系统支持时采用写时复制；盲评展示规则不同的会话不共享展示文件。一个会话取消不会撤销其他会话仍需的下载，所有使用者取消则中止下载。Host 材料路由按活跃 attempt 引用保留来源，不依赖最先请求材料的 attempt 存活。
+
 outbox 自身积压不阻塞在途提交；最早事件超过 5 分钟或待投影数据超过 10 GB 时暂停新 attempt，已运行任务仍可完成和提交。短时 Ceph 故障由 outbox 退避重试，不回滚已确认收据，也不静默丢弃事件。
 
 可选的运行级 `maxAttempts / stopStartingAt` 由通用 Host 执行，不了解业务实验。最终 admission 检查与单调累计计数递增之间没有异步间隙，先持久化再发起 Worker；Workflow 撤下任务不退还已消耗次数。截止只阻止新派发，不丢弃在途结果。
@@ -61,6 +63,7 @@ Worker 与 Host 内部路由统一 `/api`，无协议版本。启动核对底座
 | Host | `/api/inputs/:id` 读取所属活跃材料 |
 | Host | `/api/evidence-bank`、`/api/inspections`、`/api/submissions` 保存目录、首查与提交 |
 | Host | `GET /api/submissions/:id` 查收据；`/api/tasks/:id/checkpoint` 保存草稿与计数 |
+| Host | `GET /api/materials/:id` 读取仍被活跃 attempt 引用的不可变材料 |
 | Host | `/api/control/concurrency`、`/api/control/stop` 以锁 token 控制；`/api/progress` 只读进度 |
 
 使用外部模型额度控制时，Host 派发每轮读取当前分配额，其他批次结束后能够扩大任务并发；不会固定在启动时的分配值。显式 `taskConcurrency` 仍独立指定会话槽位，运行控制 API 的手动并发覆盖持续生效。降低额度不取消在途任务，实际模型调用仍经过共用额度控制器。

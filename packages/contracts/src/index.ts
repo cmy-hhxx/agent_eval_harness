@@ -65,6 +65,8 @@ export interface EvaluationSpec {
 export interface InputRef {
   id: string;
   name: string;
+  /** Host-owned immutable material identity, independent of the evidence/source identity. */
+  materialId?: string;
 }
 export function submissionToolNames(fileSubmission: boolean): string[] {
   return fileSubmission ? ["submit_evaluation_file"] : ["submit_evaluation"];

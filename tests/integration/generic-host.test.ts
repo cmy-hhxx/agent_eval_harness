@@ -582,11 +582,13 @@ for (const scenario of ["resume", "missing-tool", "invalid-input"]) {
     };
     try {
       if (scenario !== "resume") {
-        await assert.rejects(
-          runEvaluation(options),
-          scenario === "missing-tool" ? /Required tools not available/ : /value/,
-        );
+        await runEvaluation(options);
         const saved = await repository.readRun(path.join(directory, options.runId));
+        assert.equal(saved.manifest.status, "finished");
+        const failed = saved.manifest.states[plan.tasks[1].id];
+        assert.equal(failed.status, "failed");
+        assert.equal(failed.attempts, 0);
+        assert.match(failed.reason!, scenario === "missing-tool" ? /Required tools not available/ : /value/);
         assert.deepEqual(saved.receipts[plan.tasks[0].id].evaluation, { score: 11 });
         assert.equal(saved.receipts[plan.tasks[1].id], undefined);
         assert.deepEqual(entered, [plan.tasks[0].id]);

@@ -111,6 +111,7 @@ export async function runEvaluation(options: RunOptions): Promise<Record<string,
   const owned: Awaited<ReturnType<typeof spawnWorker>>[] = [];
   const exitedWorkers = new WeakSet<(typeof owned)[number]>();
   const workerExitLogs: Promise<void>[] = [];
+  const materialIds = new WeakMap<object, string>();
   async function launchWorker(engine: Engine, directory: string, workerSlots = options.runtime.workerSlots ?? 1) {
     const worker = await spawnWorker(engine, directory, { ...options.runtime, workerSlots });
     workerExitLogs.push(worker.exited.then(async (exit) => {
@@ -286,6 +287,7 @@ export async function runEvaluation(options: RunOptions): Promise<Record<string,
       checkpoint: { ...current.checkpointMetrics }, outbox: current.outboxStatus() });
     // A task may expose a stage-specific view of its source without persisting a second input.
     const attemptSources = new Map<string, Map<string, unknown>>();
+    const materialSources = new Map<string, { value: unknown; users: number }>();
     const lock = await readJson<{ pid: number; token: string }>(layout.lockFile);
     http = await listen(async (req, res, url) => {
       const parts = url.pathname.split("/").filter(Boolean);
@@ -338,6 +340,11 @@ export async function runEvaluation(options: RunOptions): Promise<Record<string,
         const value = attempt && attemptSources.get(safeId(attempt))?.get(safeId(parts[2]));
         if (value === undefined || value === null) throw new HttpError(404, "Unknown attempt input");
         return json(res, value);
+      }
+      if (req.method === "GET" && parts[0] === "api" && parts[1] === "materials" && parts[2]) {
+        const material = materialSources.get(safeId(parts[2]));
+        if (!material) throw new HttpError(404, "Unknown active material");
+        return json(res, material.value);
       }
       if (req.method === "POST" && parts[0] === "api" && parts[1] === "tasks" && parts[3] === "checkpoint") {
         await current.checkpoint(safeId(parts[2]), (await body(req)) as unknown as FailureContext);
@@ -510,10 +517,20 @@ export async function runEvaluation(options: RunOptions): Promise<Record<string,
       for (const ref of spec.inputs) {
         const source = sources[ref.name];
         if (!source || source.id !== ref.id) throw new Error(`Task source mismatch: ${ref.name}`);
+        if (source.value && typeof source.value === "object") {
+          let materialId = materialIds.get(source.value);
+          if (!materialId) materialIds.set(source.value, materialId = randomUUID());
+          ref.materialId = materialId;
+        }
         bound.set(ref.id, source.value);
       }
       attemptSources.set(spec.attemptId, bound);
       modelRequests.register(spec, task);
+      for (const ref of spec.inputs) if (ref.materialId) {
+        const material = materialSources.get(ref.materialId);
+        if (material) material.users++;
+        else materialSources.set(ref.materialId, { value: bound.get(ref.id), users: 1 });
+      }
       try {
       let lastSeq = -1;
       const activateStarted = performance.now();
@@ -903,6 +920,10 @@ export async function runEvaluation(options: RunOptions): Promise<Record<string,
       } finally {
         modelRequests.remove(spec.attemptId);
         attemptSources.delete(spec.attemptId);
+        for (const ref of spec.inputs) if (ref.materialId) {
+          const material = materialSources.get(ref.materialId)!;
+          if (--material.users === 0) materialSources.delete(ref.materialId);
+        }
       }
     }
     const runningChannels = new Map<string, string>();
