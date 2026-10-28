@@ -306,9 +306,10 @@ test("component entrypoints stay bounded while preserving every source call and 
   assert.deepEqual(plan.summary.issues, []);
   const task = plan.tasks.find(task => (task.data as AttributionTaskData).component === "finquery 取数服务")!;
   const directed = bindAttribution(task, plan.inputs, {});
-  assert.equal(plan.tasks.filter(task => (task.data as AttributionTaskData).component === "finquery 取数服务").length, 10);
+  assert.equal(plan.tasks.filter(task => (task.data as AttributionTaskData).component === "finquery 取数服务").length, 1);
   const scene = (directed.modelInput!.answer as { component_scene: { entries: { reference: { evidence_id: string } }[] } }).component_scene;
   const scope = (task.data as AttributionTaskData).reviewScope!;
+  assert.deepEqual(scope.message_indices, Array.from({ length: 20 }, (_, index) => index + 1));
   assert(scene.entries.length > 0);
   assert(scene.entries.every(entry => scope.message_indices.includes(parseEvidenceCoordinates(entry.reference.evidence_id)!.message_index)));
   assert.deepEqual((directed.request.sources.answer!.value as RawInput).messages, messages,

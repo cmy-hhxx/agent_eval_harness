@@ -176,7 +176,7 @@ test("partial trace aggregation preserves confirmed problems without turning an 
   registry.validate(binding, result, emptyAudit());
 });
 
-test("repeated tool invocations and independent final sections do not share an unbounded review task", () => {
+test("one trace goal keeps repeated component work and the complete final answer in focused reviews", () => {
   const messages = [{ type: "user_question", content: "核查两家公司收入及风险。" },
     { type: "tool_call", name: "finquery", call_id: "one", input: { query: "公司一收入" } },
     { type: "tool_result", name: "finquery", call_id: "one", output: { rows: [{ revenue: 10 }] } },
@@ -189,10 +189,11 @@ test("repeated tool invocations and independent final sections do not share an u
     { id: "b_fast", name: "B Fast", adapter: "b", sources: [] }, "fixture.jsonl", 1);
   const tasks = planAttributionUnit(candidate).tasks;
   const components = tasks.filter(task => task.stage === "attribution-component");
-  assert.equal(components.filter(task => (task.data as AttributionTaskData).component === "finquery 取数服务").length, 2,
-    "each actual invocation needs a separate bounded task, including empty returns");
-  assert(components.filter(task => (task.data as AttributionTaskData).component === "终稿生成轮").length >= 2,
-    "long final answers must not serialize every section in one model investigation");
+  const queryTasks = components.filter(task => (task.data as AttributionTaskData).component === "finquery 取数服务");
+  assert.equal(queryTasks.length, 1, "related queries supporting the same comparison belong to one review");
+  assert.deepEqual((queryTasks[0]!.data as AttributionTaskData).reviewScope!.message_indices, [1, 2, 3, 4]);
+  assert.equal(components.filter(task => (task.data as AttributionTaskData).component === "终稿生成轮").length, 1,
+    "headings and character counts alone do not establish independent review goals");
   assert.equal(Object.keys(tasks.find(task => task.stage === "attribution-trace")!.dependencies).length, components.length,
     "trace aggregation must wait for every atomic review");
   const resumed = planAttributionUnit(candidate, { previousTasks: tasks });
@@ -200,8 +201,8 @@ test("repeated tool invocations and independent final sections do not share an u
   const finalTasks = components.filter(task => (task.data as AttributionTaskData).component === "终稿生成轮");
   const finalText = messages.at(-1)!.content!;
   const ranges = finalTasks.flatMap(task => (task.data as AttributionTaskData).reviewScope!.final_ranges!);
-  assert.equal(ranges.map(range => finalText.slice(range.start, range.end)).join("").replace(/\s/gu, ""),
-    finalText.replace(/\s/gu, ""), "every substantive final-answer byte belongs to a review");
+  assert.equal(ranges.map(range => finalText.slice(range.start, range.end)).join(""),
+    finalText, "every final-answer byte belongs to the review, including separators");
   for (let index = 1; index < ranges.length; index++) assert(ranges[index]!.start >= ranges[index - 1]!.end);
   const registry = new AgentRegistry([attributionAgent]);
   for (const task of finalTasks) {
@@ -210,7 +211,7 @@ test("repeated tool invocations and independent final sections do not share an u
     assert(binding.modelInput!.task_analysis);
     validateReadRequests(binding.modelInput!.answer);
     assert.equal((binding.modelInput!.answer as { component_scene?: unknown }).component_scene, undefined);
-    assert.equal((binding.modelInput!.answer as { final_context: { partial: boolean } }).final_context.partial, false);
+    assert.equal((binding.modelInput!.answer as { final_context: { partial: boolean } }).final_context.partial, true);
     const prepared = registry.prepare(binding), scope = (task.data as AttributionTaskData).reviewScope!;
     const evidence = (binding.modelInput!.answer as { final_evidence: { quote: string; reference: { evidence_id: string } }[] }).final_evidence;
     for (const entry of evidence) {
@@ -224,7 +225,30 @@ test("repeated tool invocations and independent final sections do not share an u
   }
 });
 
-test("nested answer headings split independently and large chart resources have explicit unread continuations", () => {
+test("repeated reasoning and skill aliases merge only within the existing component ownership", () => {
+  const raw = { batch_id: "batch", case_id: "component-goal", messages: [
+    { type: "user_question", content: "核对同一份计算结果。" },
+    { type: "llm_turn", name: "llm-call-0", output: [{ role: "assistant", content: "先读取说明。" }] },
+    { type: "tool_call", name: "view_skill", input: { name: "analysis" } },
+    { type: "tool_result", name: "view_skill", output: "读取分析文件。" },
+    { type: "tool_call", name: "read_file", input: { path: "analysis.md" } },
+    { type: "tool_result", name: "read_file", output: "计算说明。" },
+    { type: "llm_turn", name: "llm-call-1", output: [{ role: "assistant", content: "按说明计算。" }] },
+    { type: "tool_call", name: "shell", input: { command: "calculate" } },
+    { type: "tool_result", name: "shell", output: "2" },
+    { type: "final_answer", content: "2" },
+  ] };
+  const candidate = adapt(raw, { id: "b_fast", name: "B Fast", adapter: "b", sources: [] }, "fixture.jsonl", 1);
+  const scopes = planAttributionUnit(candidate).tasks.filter(task => task.stage === "attribution-component")
+    .map(task => (task.data as AttributionTaskData).reviewScope!);
+  assert.deepEqual(scopes.map(scope => [scope.component, scope.message_indices]), [
+    ["中间推理处理", [1, 6]], ["view_skill / read_file 技能加载", [2, 3, 4, 5]],
+    ["shell 代码解释器", [7, 8]], ["终稿生成轮", [9]],
+  ]);
+  assert.deepEqual(scopes.flatMap(scope => scope.message_indices).sort((a, b) => a - b), [1, 2, 3, 4, 5, 6, 7, 8, 9]);
+});
+
+test("nested headings and chart resources share the final review and retain exact unread continuations", () => {
   const prose = "## 总结\n结论。\n\n### 公司一\n" + "收入需核查。".repeat(200) +
     "\n\n### 公司二\n" + "利润需核查。".repeat(200);
   const chart = JSON.stringify({ data: [{ name: "收入", x: Array.from({ length: 2000 }, (_, i) => i) }], layout: {} });
@@ -234,14 +258,13 @@ test("nested answer headings split independently and large chart resources have 
   ] };
   const candidate = adapt(raw, { id: "b_fast", name: "B Fast", adapter: "b", sources: [] }, "fixture.jsonl", 1);
   const tasks = planAttributionUnit(candidate).tasks.filter(task => task.stage === "attribution-component");
-  assert(tasks.filter(task => (task.data as AttributionTaskData).reviewScope!.final_ranges!
-    .some(range => range.path === "/content/0/text")).length >= 2);
+  assert.equal(tasks.length, 1);
   const chartTask = tasks.find(task => (task.data as AttributionTaskData).reviewScope!.final_ranges!
     .some(range => range.path === "/content/1/text"))!;
   const binding = bindAttribution(chartTask, { [candidate.input_id]: normalizeInput(raw) }, {});
   const answer = binding.modelInput!.answer as { final_evidence: { quote: string }[];
     final_context: { continuations: { end_offset: number; read_request: { offset: number } }[] } };
-  assert.equal(answer.final_evidence.map(entry => entry.quote).join(""), chart.slice(0, 1600));
-  assert.equal(answer.final_context.continuations[0]!.read_request.offset, 1600);
-  assert.equal(answer.final_context.continuations[0]!.end_offset, chart.length);
+  assert.equal(answer.final_evidence.map(entry => entry.quote).join(""), prose.slice(0, 1600) + chart.slice(0, 1600));
+  assert.deepEqual(answer.final_context.continuations.map(item => [item.read_request.offset, item.end_offset]),
+    [[1600, prose.length], [1600, chart.length]]);
 });

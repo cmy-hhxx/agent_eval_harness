@@ -78,7 +78,7 @@ export interface CandidateTurn {
   component_scopes: ComponentReviewScope[];
 }
 
-/** One actual invocation or a contiguous final-answer section, in original trace coordinates. */
+/** One component's review scope for a trace goal, in original evidence coordinates. */
 export interface ComponentReviewScope {
   component: string;
   message_indices: number[];

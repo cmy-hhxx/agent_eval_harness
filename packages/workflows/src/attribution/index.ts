@@ -63,7 +63,14 @@ export function planAttributionUnit(candidate: Candidate, options: AttributionUn
   const base = { ...options.data, ...(options.identity ? { attributionIdentity: options.identity } : {}) },
     upstream = options.dependencies ?? {}, tasks: PlannedTask[] = [], traceTasks: PlannedTask[] = [];
   for (const trace of traceList) {
-    const scopes = trace.component_scopes.map(scope => ({ ...scope, component: attributionComponentLabel(scope.component) }));
+    const byComponent = new Map<string, ComponentReviewScope>();
+    for (const scope of trace.component_scopes) {
+      const component = attributionComponentLabel(scope.component), previous = byComponent.get(component);
+      if (previous) previous.message_indices.push(...scope.message_indices);
+      else byComponent.set(component, { ...scope, component, message_indices: [...scope.message_indices] });
+    }
+    const scopes = [...byComponent.values()].map(scope => ({ ...scope,
+      message_indices: [...new Set(scope.message_indices)].sort((a, b) => a - b) }));
     if (!scopes.some(scope => scope.component === "终稿生成轮")) scopes.push({ component: "终稿生成轮",
       message_indices: [trace.final_index ?? candidate.final_index] });
     const componentTasks = scopes.map(scope => ({ id: id("attribution-component", trace.trace_index, scope),
