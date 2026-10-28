@@ -43,7 +43,7 @@ export function initialAttributionMaterial(answer: JsonObject, raw: RawInput, na
   const readRequest = (item: { evidence_id: string; message_index: number }) => {
     const point = parseEvidenceCoordinates(item.evidence_id)!;
     return point.kind === "image" ? { view_request: { candidate, message_index: point.message_index } }
-      : { read_request: { candidate, message_index: point.message_index, kind: point.kind, path: point.path,
+      : { read_request: { candidate, message_index: point.message_index, path: point.path,
         offset: point.start, max_chars: Math.min(16000, point.end - point.start) }, end_offset: point.end };
   };
   const imageCount = finalReview ? images(raw.messages[finalIndex]).length : 0;
@@ -64,14 +64,11 @@ export function initialAttributionMaterial(answer: JsonObject, raw: RawInput, na
     // Original final text occurs once and only these displayed ranges count as read.
     final_evidence: finalEvidence.map(displayEvidence),
     ...(scope?.final_ranges ? { final_context: {
-      partial: true,
+      partial: scope.final_ranges.some(range => range.end - range.start > 1600),
       continuations: scope.final_ranges.filter(range => range.end - range.start > 1600).map(range => ({
         end_offset: range.end, read_request: { candidate, message_index: finalIndex, path: range.path,
           offset: range.start + 1600, max_chars: Math.min(16000, range.end - range.start - 1600) },
       })),
-      sources: evidenceSources(raw.messages[finalIndex]).filter(source => source.kind === "text" && source.path.startsWith("/content"))
-        .map(source => ({ path: source.path, total_chars: source.text.length,
-          read_request: { candidate, message_index: finalIndex, path: source.path, offset: 0, max_chars: 16000 } })),
     } } : {}),
     deferred_final_material: (finalReview && !scope?.final_ranges ? answer.deferred_final_material as { message_index: number; path: string; total_chars: number }[] : [])
       .map(source => ({ ...source, read_request: { candidate, message_index: source.message_index, path: source.path, offset: 0, max_chars: 16000 } })),
@@ -91,13 +88,13 @@ export function initialAttributionMaterial(answer: JsonObject, raw: RawInput, na
       (!scope || c.message_index !== null && scope.message_indices.includes(c.message_index))),
     table_check_count: finalReview ? navigation.table_checks.length : 0,
     ...(navigation.table_checks.length && finalReview ? { table_check_request: { candidate, view: "table_checks", offset: 0 } } : {}),
-    norm_directory: (answer.norm_directory as AttributionNorm[]).map(norm => ({ ...norm,
+    ...(finalReview ? { norm_directory: (answer.norm_directory as AttributionNorm[]).map(norm => ({ ...norm,
       evidence: norm.evidence.map(({ quote, ...item }) => ({ ...displayEvidence(quote.length <= 200 ? { ...item, quote }
         : { ...item, quote_preview: quote.slice(0, 200), has_more: true }), ...readRequest(item) })),
     })),
     criterion_instruction_sources: Object.fromEntries(Object.entries(answer.criterion_instruction_sources as Record<string,
       { evidence_id: string; message_index: number; quote: string }[]>).map(([key, entries]) => [key, entries.map(({ quote, ...item }) =>
-      ({ ...displayEvidence(quote.length <= 200 ? { ...item, quote } : { ...item, quote_preview: quote.slice(0, 200), has_more: true }), ...readRequest(item) }))])),
+      ({ ...displayEvidence(quote.length <= 200 ? { ...item, quote } : { ...item, quote_preview: quote.slice(0, 200), has_more: true }), ...readRequest(item) }))])) } : {}),
   };
 }
 
@@ -107,33 +104,35 @@ export function initialComponentScene(raw: RawInput, original: RawInput, inputId
   const choices = navigation.responsibility_choices.filter(choice => scope
     ? choice.message_index !== null && scope.message_indices.includes(choice.message_index)
     : choice.component === component);
-  if (scope?.final_ranges) return { component, partial: true, entries: [], responsibility_choices_total: choices.length };
   const sources = new Map<number, ReturnType<typeof evidenceSources>>();
   const originals = new Map<number, ReturnType<typeof evidenceSources>>();
   const entries = [];
+  const unread = [];
   const seen = new Set<string>();
   let remaining = 12000;
   // An invocation's actual arguments and result precede duplicated model input history.
   // Register only exact bytes that survive the public projection at the same coordinates.
-  for (const messageIndex of scope?.final_ranges ? [] : scope?.message_indices ?? []) {
+  for (const messageIndex of scope?.message_indices ?? []) {
     const message = raw.messages[messageIndex];
     if (!message) throw new Error("归因原子任务的消息坐标不存在");
     const locations = evidenceSources(message), originals = evidenceSources(original.messages[messageIndex]);
     for (const key of ["input", "arguments", "output", "result", "content"]) {
-      if (!Object.hasOwn(message, key) || remaining <= 0) continue;
+      if (!Object.hasOwn(message, key)) continue;
       const value = message[key];
       const whole = selectEvidenceSource(locations, `/${key}`);
       const textBlocks = typeof value === "string" || Array.isArray(value) && value.every(part =>
-        part && typeof part === "object" && ["text", "output_text"].includes(String(part.type)) && typeof part.text === "string");
+        part && typeof part === "object" && ["text", "input_text", "output_text"].includes(String(part.type)) && typeof part.text === "string");
       const leaves = textBlocks || whole?.source.quotable === false || whole && overlapsImagePlaceholder(whole.source.text, whole.start, whole.end) ? locations.filter(source => source.kind === "text" && source.quotable !== false &&
         (source.path === `/${key}` || source.path.startsWith(`/${key}/`) && /\/(?:text|content|arguments|reasoning_content)$/u.test(source.path)))
         : [];
       const selected = leaves.length ? leaves.map(source => ({ source, start: 0, end: source.text.length }))
         : [whole].filter(item => item !== undefined);
       for (const item of selected) {
-        if (item.source.quotable === false || remaining <= 0) continue;
+        if (item.source.quotable === false) continue;
         const originalSource = originals.find(source => source.kind === item.source.kind && source.path === item.source.path);
         const shownEnd = Math.min(item.end, item.start + 6000, item.start + remaining);
+        if (shownEnd < item.end) unread.push({ end_offset: item.end, read_request: { candidate: "answer",
+          message_index: messageIndex, path: item.source.path, offset: shownEnd, max_chars: Math.min(16000, item.end - shownEnd) } });
         for (let start = item.start; start < shownEnd; start += 400) {
           const end = Math.min(shownEnd, start + 400), evidence = cite(inputId, messageIndex, item.source, start, end);
           if (!evidence.quote || overlapsImagePlaceholder(item.source.text, start, end) ||
@@ -142,12 +141,12 @@ export function initialComponentScene(raw: RawInput, original: RawInput, inputId
           const hasMore = end === shownEnd && end < item.end;
           entries.push({ part: key, ...displayEvidence(evidence), end_offset: item.end, has_more: hasMore,
             ...(hasMore ? { next_request: { candidate: "answer", message_index: messageIndex,
-              kind: item.source.kind, path: item.source.path, offset: end, max_chars: Math.min(16000, item.end - end) } } : {}) });
+              path: item.source.path, offset: end, max_chars: Math.min(16000, item.end - end) } } : {}) });
         }
       }
     }
   }
-  for (const choice of choices.slice(0, 2)) {
+  for (const choice of choices.filter(choice => choice.kind !== "execution" || !entries.length).slice(0, 2)) {
     const boundary = navigation.boundaries.find(boundary => boundary.transition_index === choice.transition_index)!;
     for (const [part, items] of [["before", boundary.before], ["after", boundary.after]] as const) {
       for (const item of items) {
@@ -167,9 +166,13 @@ export function initialComponentScene(raw: RawInput, original: RawInput, inputId
         entries.push({ transition_index: choice.transition_index, part, ...displayEvidence(evidence),
           end_offset: point.end, has_more: end < point.end,
           ...(end < point.end ? { next_request: { candidate: "answer", message_index: point.message_index,
-            kind: point.kind, path: point.path, offset: end, max_chars: Math.min(16000, point.end - end) } } : {}) });
+            path: point.path, offset: end, max_chars: Math.min(16000, point.end - end) } } : {}) });
       }
     }
   }
-  return { component, partial: true, entries, responsibility_choices_total: choices.length };
+  return { component, partial: unread.length > 0 || entries.some(entry => entry.has_more), entries, unread,
+    images: (scope?.message_indices ?? []).flatMap(message_index => {
+      const count = images(raw.messages[message_index]).length;
+      return count ? [{ message_index, image_count: count, view_request: { candidate: "answer", message_index } }] : [];
+    }), responsibility_choices_total: choices.length };
 }

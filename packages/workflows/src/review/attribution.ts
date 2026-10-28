@@ -143,7 +143,7 @@ export function modelMaterial(material: Record<string, unknown>, candidate: stri
         if (point.kind === "image") return { message_index: evidence.message_index, reference: { evidence_id: evidence.evidence_id },
           view_request: { candidate, message_index: evidence.message_index } };
         return { message_index: evidence.message_index, reference: { evidence_id: evidence.evidence_id },
-          read_request: { candidate, message_index: evidence.message_index, kind: point.kind, path: point.path,
+          read_request: { candidate, message_index: evidence.message_index, path: point.path,
             offset: point.start, max_chars: Math.min(16000, point.end - point.start) }, end_offset: point.end };
       }),
     } : {}),
@@ -324,6 +324,9 @@ export function bindAttributionMaterial(candidate: Candidate, original: RawInput
   const { input, sources, raw, navigation, citations } = cached!.value;
   const { answer, task_analysis } = input;
   const directoryMs = reused ? 0 : cached!.value.directoryMs;
+  const finalReview = !options.scope || options.scope.message_indices.includes(candidate.final_index);
+  const reviewKind = finalReview ? "final_section" : navigation.nodes.some(node => node.kind === "tool" &&
+    options.scope!.message_indices.includes(node.message_index)) ? "tool_call" : "model_turn";
   const scopedCitations = options.scope?.final_ranges ? { references: citations.references.filter(reference =>
     reference.occurrences.some(occurrence => {
       const point = parseEvidenceCoordinates(occurrence.evidence_id);
@@ -338,15 +341,15 @@ export function bindAttributionMaterial(candidate: Candidate, original: RawInput
         return { ...displayEvidence(cite(candidate.input_id, point.message_index, leaf, point.start, end)),
           ...(source.document_url ? { document_url: source.document_url } : {}),
           has_more: end < point.end, end_offset: point.end,
-          read_request: { candidate: "answer", message_index: point.message_index, kind: point.kind, path: point.path,
+          read_request: { candidate: "answer", message_index: point.message_index, path: point.path,
             offset: end < point.end ? end : point.start, max_chars: Math.min(16000, point.end - point.start) } };
       }) })) } : undefined;
-  const modelInput = { candidate_id: input.candidate_id, material_availability: input.material_availability,
-    ground_truth: input.ground_truth,
-    task_analysis: taskAnalysisPresentation(task_analysis, { answer: candidate.input_id }, answer.criterion_instruction_sources),
+  const modelInput = { candidate_id: input.candidate_id, review_kind: reviewKind, material_availability: input.material_availability,
+    ...(finalReview ? { ground_truth: input.ground_truth,
+      task_analysis: taskAnalysisPresentation(task_analysis, { answer: candidate.input_id }, answer.criterion_instruction_sources) } : {}),
     answer: { ...initialAttributionMaterial(answer, raw, navigation, candidate.input_id, options.scope),
       ...(scopedCitations ? { citation_inventory: scopedCitations } : {}),
-      ...(options.component ? { component_scene: initialComponentScene(raw, original, candidate.input_id, navigation, options.component, options.scope) } : {}) } };
+      ...(options.component && !options.scope?.final_ranges ? { component_scene: initialComponentScene(raw, original, candidate.input_id, navigation, options.component, options.scope) } : {}) } };
   return { agent: "attribution", profile: "default", request: { input, sources }, modelInput,
     preparationTimings: { materialMs: performance.now() - started, directoryMs },
     materialNavigation: { answer: { ...navigation, ...(options.scope ? { review_scope: options.scope } : {}) } },

@@ -5,8 +5,20 @@ import { AgentRegistry } from "@eval/host";
 import { attributionAgent } from "@eval/agents/attribution";
 import { parseEvidenceCoordinates } from "@eval/tools";
 import { validateEvidenceBankSources } from "@eval/contracts";
+import { Ajv2020 } from "ajv/dist/2020.js";
+import { createRegistry } from "@eval/tools";
 import { bindAttribution, planAttributionUnit, type AttributionTaskData } from "./index.js";
 import { emptyAudit } from "../../../../tests/fixtures/comparison.js";
+
+const readRequestSchema = new Ajv2020({ strict: false }).compile(createRegistry().select(["read_trace"])[0]!.inputSchema);
+function validateReadRequests(value: unknown): void {
+  if (!value || typeof value !== "object") return;
+  for (const [key, item] of Object.entries(value)) {
+    if (["read_request", "next_request"].includes(key) && item && typeof item === "object" && "message_index" in item)
+      assert(readRequestSchema(item), `generated read request must be callable verbatim: ${JSON.stringify(readRequestSchema.errors)}`);
+    else validateReadRequests(item);
+  }
+}
 
 test("model review entrypoints use message coordinates and retain public output beside private inputs", () => {
   const raw = { batch_id: "batch", case_id: "model-scene", messages: [
@@ -18,6 +30,9 @@ test("model review entrypoints use message coordinates and retain public output 
   const task = planAttributionUnit(candidate).tasks.find(task => task.stage === "attribution-component" &&
     (task.data as AttributionTaskData).reviewScope!.message_indices.includes(1))!;
   const binding = bindAttribution(task, { [candidate.input_id]: normalizeInput(raw) }, {});
+  validateReadRequests(binding.modelInput!.answer);
+  assert.equal(binding.modelInput!.review_kind, "model_turn");
+  assert.equal(binding.modelInput!.task_analysis, undefined, "a local model transformation does not inherit the final-delivery checklist");
   assert(Number(binding.modelInput!.component_entrypoints_total) > 0);
   const material = JSON.stringify(binding.modelInput!.answer);
   assert(material.includes("收入为10亿元。"));
@@ -67,6 +82,35 @@ test("a mixed-media tool return registers text leaves without citing image place
   assert(prepared.evidenceBank.some(id => { const point = parseEvidenceCoordinates(id)!;
     return point.message_index === 2 && point.kind === "text" && point.path === "/output/0/text"; }));
   assert(JSON.stringify(binding.modelInput).includes("图表生成成功，数据有三行。"));
+  assert.equal(binding.modelInput!.review_kind, "tool_call");
+  const scene = (binding.modelInput!.answer as { component_scene: { images: unknown[]; partial: boolean } }).component_scene;
+  assert.equal(scene.images.length, 1);
+  assert.equal(scene.partial, false);
+});
+
+test("a call exposes decoded text once and precise continuations for all material beyond the first view", () => {
+  const raw = { batch_id: "batch", case_id: "long-call", messages: [
+    { type: "user_question", content: "核对结果。" },
+    { type: "tool_call", name: "search", call_id: "q", input: { query: "结果" } },
+    { type: "tool_result", name: "search", call_id: "q", output: [
+      { type: "input_text", text: "第一份原文。".repeat(1200) },
+      { type: "input_text", text: "第二份原文。".repeat(1200) },
+      { type: "input_text", text: "第三份原文。" } ] },
+    { type: "final_answer", content: "结果已返回。" } ] };
+  const candidate = adapt(raw, { id: "answer", name: "Answer", adapter: "b", sources: [] }, "fixture.jsonl", 1);
+  const task = planAttributionUnit(candidate).tasks.find(task => task.stage === "attribution-component" &&
+    (task.data as AttributionTaskData).reviewScope!.message_indices.includes(2))!;
+  const binding = bindAttribution(task, { [candidate.input_id]: normalizeInput(raw) }, {});
+  const scene = (binding.modelInput!.answer as { component_scene: { partial: boolean; entries: { quote: string }[];
+    unread: { read_request: { path: string; offset: number }; end_offset: number }[] } }).component_scene;
+  validateReadRequests(binding.modelInput!.answer);
+  assert(scene.partial);
+  assert(scene.entries.reduce((chars, item) => chars + item.quote.length, 0) <= 12000);
+  assert.deepEqual(scene.unread.map(item => item.read_request.path), ["/output/0/text", "/output/1/text", "/output/2/text"]);
+  assert.equal(scene.unread[2]!.read_request.offset, 0);
+  assert(!JSON.stringify(scene.entries).includes('"type":"input_text"'));
+  const prepared = new AgentRegistry([attributionAgent]).prepare(binding);
+  validateEvidenceBankSources(prepared.evidenceBank, new Map([[candidate.input_id, binding.request.sources.answer!.value]]));
 });
 
 test("partial trace aggregation preserves confirmed problems without turning an unreviewed range into a defect", () => {
@@ -114,6 +158,11 @@ test("repeated tool invocations and independent final sections do not share an u
   const registry = new AgentRegistry([attributionAgent]);
   for (const task of finalTasks) {
     const binding = bindAttribution(task, { [candidate.input_id]: normalizeInput(raw) }, {});
+    assert.equal(binding.modelInput!.review_kind, "final_section");
+    assert(binding.modelInput!.task_analysis);
+    validateReadRequests(binding.modelInput!.answer);
+    assert.equal((binding.modelInput!.answer as { component_scene?: unknown }).component_scene, undefined);
+    assert.equal((binding.modelInput!.answer as { final_context: { partial: boolean } }).final_context.partial, false);
     const prepared = registry.prepare(binding), scope = (task.data as AttributionTaskData).reviewScope!;
     const evidence = (binding.modelInput!.answer as { final_evidence: { quote: string; reference: { evidence_id: string } }[] }).final_evidence;
     for (const entry of evidence) {

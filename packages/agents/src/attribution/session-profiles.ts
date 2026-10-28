@@ -138,16 +138,16 @@ export const componentAttributionProfile: AgentProfile = {
   maxEvidenceQuoteChars: 400,
   ...componentPrompt,
   renderPrompt(input, policy, failure) {
-    const analysis = input.task_analysis as { requirements: Record<string, unknown>[]; scoring_points: Record<string, unknown>[]; red_flags: Record<string, unknown>[] };
-    const answer = input.answer as Record<string, unknown>, truth = input.ground_truth as { available: boolean; value: unknown };
-    const requirements = analysis.requirements.map((item, index) => ({ ...item, requirement_index: Number(item.requirement_index ?? index) + 1 }));
-    const numeric = truth.available ? numericReferenceDirectory(truth.value) : [];
+    const analysis = input.task_analysis as { requirements: Record<string, unknown>[] } | undefined;
+    const answer = input.answer as Record<string, unknown>, truth = input.ground_truth as { available: boolean; value: unknown } | undefined;
+    const requirements = analysis?.requirements.map((item, index) => ({ ...item, requirement_index: Number(item.requirement_index ?? index) + 1 }));
+    const numeric = truth?.available ? numericReferenceDirectory(truth.value) : [];
     const tables = answer.table_check_results as { rows: unknown[] }[] | undefined;
     const images = answer.final_images as { image_count: number } | undefined;
-    const rules = attributionConditionalRules({ standardAnswer: truth.available, numeric: numeric.length > 0,
+    const rules = attributionConditionalRules({ standardAnswer: truth?.available ?? false, numeric: numeric.length > 0,
       tableDoubts: Number(answer.table_check_count ?? 0) > 0 || (tables?.some(table => table.rows.length > 0) ?? false),
       images: (images?.image_count ?? 0) > 0, captureGaps: Array.isArray(answer.capture_gaps) && answer.capture_gaps.length > 0 });
-    const shown = { ...input, component: input.component, trace_index: input.trace_index, task_analysis: { ...analysis, requirements } };
+    const shown = { ...input, ...(analysis ? { task_analysis: { ...analysis, requirements } } : {}) };
     return (rules ? rules + "\n\n" : "") + componentPrompt.renderPrompt(investigationMaterial({ ...shown,
       numeric_references: numeric.map(item => ({ ...item, reference_index: item.reference_index + 1 })) }), policy, failure);
   },

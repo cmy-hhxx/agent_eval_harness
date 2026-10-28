@@ -75,6 +75,27 @@ test('reading a captured call presents its responsibility choice without a secon
  } finally { await f.close(); }
 });
 
+test("a final-section read defaults to its assigned source range and explicit coordinates can inspect context", async () => {
+  const f = await setup();
+  try {
+    Object.assign(f.ctx.materialNavigation!.answer as object, { final_message_index: 3,
+      review_scope: { message_indices: [3], final_ranges: [{ path: "/content", start: 2, end: 4 }] } });
+    const read = async (extra: object = {}) => {
+      const result = await f.runtime.execute("read_trace", { candidate: "answer", message_index: 3, ...extra }, new AbortController().signal);
+      assert(!result.isError, result.content[0].text);
+      return JSON.parse(result.content[0].text!);
+    };
+    const local = await read();
+    assert.deepEqual(local.review_range, { path: "/content", start: 2, end: 4 });
+    assert.equal(local.evidence[0].quote, "正文");
+    assert.equal(local.has_more, false);
+    assert.deepEqual(f.ctx.audit.traceReads, [{ candidate: "answer", message_index: 3, kind: "text", path: "/content", start: 2, end: 4 }]);
+    const context = await read({ path: "/content", offset: 0, max_chars: 6 });
+    assert.equal(context.evidence[0].quote, "证据正文六字");
+    assert.equal(context.review_range, undefined);
+  } finally { await f.close(); }
+});
+
 test("execution navigation pages complete nodes, searches only short metadata, and enforces page limits", async () => {
   const f = await setup();
   try {
