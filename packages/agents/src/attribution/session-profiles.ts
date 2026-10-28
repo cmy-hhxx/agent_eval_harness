@@ -185,27 +185,34 @@ export const traceAttributionProfile: AgentProfile = {
 
 export const sessionAttributionProfile: AgentProfile = {
   id: "session",
-  requestSchema: { type: "object", required: ["session_meta", "qa", "turns"], additionalProperties: true },
+  requestSchema: { type: "object", required: ["session_meta", "qa", "qa_positions", "turns"], additionalProperties: true },
   submissionSchema: sessionSubmissionSchema,
   resultSchema: sessionAttributionResultSchema,
+  evidenceSelections: true,
+  maxEvidenceQuoteChars: 400,
   ...sessionPrompt,
   toolNames: [],
-  resolve(request, draft) {
+  resolve(request, draft, audit) {
     const value = draft as { session_summary: string; session_problem: { label: string; definition: string;
-      problem_phenomena: string; reason: string; evidence: { trace_index: number; problem_index: number; reason: string }[];
+      problem_phenomena: string; reason: string; evidence: { index: number; reason: string }[];
       calculations?: { text: string }[] }[] };
     const traces = (request.input.turns ?? []) as TraceAttributionResult[];
     const session_problem: SessionProblem[] = value.session_problem.map((problem, index) => {
-      const evidence = problem.evidence.flatMap((reference, evidenceIndex) => {
-        const trace = traces[reference.trace_index], source = trace?.problem[reference.problem_index];
-        const path = `/session_problem/${index}/evidence/${evidenceIndex}`;
-        if (!trace || !source) throw new ValidationError([{ category: "evidence", code: "session_problem_reference",
-          path, message: "session_problem 必须引用已有 trace Problem。" }]);
-        return source.evidence.map(item => ({ ...item, reason: reference.reason }));
+      const evidence = problem.evidence.map((selection, evidenceIndex) => {
+        const path = `/session_problem/${index}/evidence/${evidenceIndex}/index`;
+        const reference = resolveEvidenceSelection(audit.evidenceBank ?? [], { evidence_index: selection.index }, path);
+        const source = resolveAttributionEvidence(request, reference, audit, path);
+        const point = parseEvidenceCoordinates(source.evidence_id)!;
+        const position = (request.input.qa_positions as { trace_index: number; message_index: number }[])[source.message_index];
+        if (!position || point.kind !== "text" || source.quote.length > 800)
+          throw new ValidationError([{ category: "evidence", code: "session_qa_reference", path,
+            message: "Session 证据必须引用已提供的 QA 原文片段。" }]);
+        const raw = request.sources.answer.value as { messages: Record<string, unknown>[] };
+        return { position: evidencePosition(position.trace_index, position.message_index, point.path),
+          component: evidenceComponent(raw.messages[source.message_index]!, point.path, "终稿生成轮"),
+          quote: source.quote, reason: selection.reason };
       });
-      const components = [...new Set(problem.evidence.flatMap(reference =>
-        traces[reference.trace_index]?.problem[reference.problem_index]?.component ? [traces[reference.trace_index]!.problem[reference.problem_index]!.component] : []))];
-      return { problem_id: `s-p${index + 1}`, component: components.join(" / "),
+      return { problem_id: `s-p${index + 1}`, component: "终稿生成轮",
         label: problem.label, definition: problem.definition, problem_phenomena: problem.problem_phenomena,
         reason: problem.reason, evidence, ...(problem.calculations?.length ? { calculations: problem.calculations } : {}) };
     });

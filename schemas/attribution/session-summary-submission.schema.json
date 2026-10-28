@@ -22,10 +22,9 @@
             "items": {
               "type": "object",
               "additionalProperties": false,
-              "required": ["trace_index", "problem_index", "reason"],
+              "required": ["index", "reason"],
               "properties": {
-                "trace_index": { "type": "integer", "minimum": 0 },
-                "problem_index": { "type": "integer", "minimum": 0 },
+                "index": { "type": "integer", "minimum": 1 },
                 "reason": { "type": "string", "minLength": 1 }
               }
             }

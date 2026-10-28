@@ -1,7 +1,8 @@
 import path from "node:path";
 import { randomUUID } from "node:crypto";
 import { Ajv2020 } from "ajv/dist/2020.js";
-import { canonical, resolveEvidenceSelection, type AgentBinding, type JsonObject, type PlannedTask, type RunManifest, type RunState, type SubmissionReceipt, type TaskAnalysis, type WorkflowDefinition, type WorkflowScheduling } from "@eval/contracts";
+import { canonical, projectEvidenceReferences, resolveEvidenceSelection, type AgentBinding, type JsonObject, type PlannedTask, type RunManifest, type RunState, type SubmissionReceipt, type TaskAnalysis, type WorkflowDefinition, type WorkflowScheduling } from "@eval/contracts";
+import { cite, messageContentSources, parseEvidenceCoordinates } from "@eval/tools";
 import { createRunRepository, readJson, type RunCodec } from "@eval/data";
 import { attributionComponentLabel, type ComponentReviewResult, type TraceAttributionResult } from "@eval/agents/attribution";
 import { collectInputs, contentText, loadRunInputs, normalizeInput, normalizeTraceInput, type Candidate, type ComponentReviewScope, type EvaluationConfig } from "@eval/workflows/inputs";
@@ -48,6 +49,7 @@ export function planAttributionUnit(candidate: Candidate, options: AttributionUn
   const retainedSession = retained.find(task => task.stage === "attribution-session");
   if (retainedSession) {
     const tasks = retained.map(task => ({ ...task,
+      ...(task.stage === "attribution-session" ? { inputIds: { answer: candidate.input_id } } : {}),
       ...(task.stage === "attribution-trace" ? { settledDependencies: Object.keys(task.dependencies).filter(label => label.startsWith("component")) } : {}),
       data: { ...(task.data as AttributionTaskData), candidate } }));
     return { tasks, session: tasks.find(task => task.id === retainedSession.id)! };
@@ -87,7 +89,7 @@ export function planAttributionUnit(candidate: Candidate, options: AttributionUn
     tasks.push(traceTask); traceTasks.push(traceTask);
   }
   const session: PlannedTask = { id: id("attribution-session"), stage: "attribution-session",
-    inputIds: {}, dependencies: { ...upstream,
+    inputIds: { answer: candidate.input_id }, dependencies: { ...upstream,
       ...Object.fromEntries(traceTasks.map((task, index) => [`trace${index}`, task.id])) },
     data: { ...base, stage: "attribution-session", candidate, traceCount: traceList.length } satisfies AttributionTaskData };
   tasks.push(session);
@@ -143,16 +145,40 @@ export function bindAttribution(task: PlannedTask, inputs: Record<string, unknow
     return { agent: "attribution", profile: "trace", request: { sources: {}, input }, modelInput };
   }
   if (task.stage === "attribution-session") {
+    const messages: typeof traceRaw.messages = [], qa_positions: { trace_index: number; message_index: number }[] = [];
+    const qa = turns(data.candidate).map((trace, trace_index) => {
+      const raw = normalizeTraceInput(session, trace_index), final = trace.final_index ?? data.candidate.final_index;
+      const question = raw.messages.findLastIndex((message, index) => index < final &&
+        (message.role === "user" || message.role === undefined && message.type === "user_question"));
+      const evidence = [question, final].flatMap(message_index => {
+        const message = raw.messages[message_index]!, sourceIndex = messages.length;
+        messages.push(message);
+        qa_positions.push({ trace_index, message_index });
+        return messageContentSources(message).flatMap(source => {
+          const excerpts = [];
+          for (let start = 0; start < source.text.length; start += 400) {
+            const { evidence_id, quote } = cite(data.candidate.input_id, sourceIndex, source, start, Math.min(start + 400, source.text.length));
+            excerpts.push({ quote, reference: { evidence_id } });
+          }
+          return excerpts;
+        });
+      });
+      return { trace_index, question: contentText(raw.messages[question]!.content), answer: contentText(raw.messages[final]!.content), evidence };
+    });
     const input = {
-      ...(analysis ? { task_analysis: analysis } : {}),
       session_meta: session.session_meta ?? session.meta ?? {},
-      qa: turns(data.candidate).map((trace, index) => ({ trace_index: index, question: trace.question,
-        answer: contentText(normalizeTraceInput(session, index).messages[trace.final_index ?? 0]?.content) })),
+      qa, qa_positions,
       turns: Object.entries(dependencies).filter(([label]) => label.startsWith("trace"))
         .map(([, receipt]) => receipt!.evaluation as TraceAttributionResult) };
-    const { session_meta: _meta, turns: traces, ...material } = input;
-    return { agent: "attribution", profile: "session", request: { sources: {}, input },
-      modelInput: { ...material, turns: traces.map(({ meta: _traceMeta, ...trace }) => trace) } };
+    return { agent: "attribution", profile: "session", request: {
+      sources: { answer: { id: data.candidate.input_id, value: { messages } } }, input }, modelInput: { qa },
+      projectModelInput: (material, bank) => ({ ...material, qa: (material.qa as typeof qa).map(row => ({ ...row,
+        evidence: projectEvidenceReferences(row.evidence, bank, 400) })) }),
+      presentedReads: qa.flatMap(row => row.evidence.map(item => {
+        const point = parseEvidenceCoordinates(item.reference.evidence_id)!;
+        if (point.kind === "image") throw new Error("Session QA evidence must be text");
+        return { candidate: "answer", message_index: point.message_index, kind: point.kind, path: point.path, start: point.start, end: point.end };
+      })) };
   }
   throw new Error("未知 Attribution 任务阶段：" + task.stage);
 }
@@ -200,6 +226,7 @@ export const attributionWorkflow: WorkflowDefinition = {
     for (const task of manifest.tasks) {
       (task.data as AttributionTaskData).candidate = catalog.find(candidate => candidate.input_id === (task.data as AttributionTaskData).candidate.input_id)!;
       if (task.stage === "attribution-trace") task.settledDependencies = Object.keys(task.dependencies).filter(label => label.startsWith("component"));
+      if (task.stage === "attribution-session") task.inputIds = { answer: (task.data as AttributionTaskData).candidate.input_id };
     }
     manifest.inputCatalog = catalog;
     return { tasks: manifest.tasks, inputs, catalog, summary: manifest.preflight };

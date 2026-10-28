@@ -26,7 +26,7 @@ session input
 
 独立 Attribution workflow 当前仍使用 `session_id`（缺少时使用 `case_id`）和有序的 `turns[].meta.trace_id` 作为结果身份。进度中的 session 数是输入记录数，按 trace 抓取时不代表去重后的完整会话数。
 
-独立 Attribution 和 Comparison 内的归因在新建、续跑时共用同一原始输入与 trace 投影；组件提交仍按对应 trace 的原文核验证据。trace、session 汇总不向 Worker 暴露原始来源，但恢复时仍保留其所属输入身份。
+独立 Attribution 和 Comparison 内的归因在新建、续跑时共用同一原始输入与 trace 投影；组件提交仍按对应 trace 的原文核验证据。Trace 汇总不向 Worker 暴露原始来源；Session 只登记原始 QA 的消息内容作为证据来源，保留到原始 trace、消息与文本路径的坐标映射。
 
 ## 小现场
 
@@ -93,7 +93,7 @@ Component 提交只校验 Schema、字段范围、证据身份、原文坐标及
 
 ## Trace 与 Session 汇总
 
-Trace 汇总读取完整 Q/A、显式 ground_truth 和组件 Problem，不改写组件问题。有标准答案时模型提交 `summary`、`is_correct`、`correct_reason`；无标准答案时模型仅提交 `summary`，程序固定输出 `is_correct=null`，理由为“未提供标准答案，无法判断回答与标准答案是否一致；已确认的问题独立保留。”，不采用模型自行生成的正确性值或理由。Session 汇总只读取 QAQAQA 与各 trace 评测输出，不读取完整原始轨迹；它输出 `session_summary` 与同 Problem 结构的 `session_problem`，证据引用已有 trace Problem。
+Trace 汇总读取完整 Q/A、显式 ground_truth 和组件 Problem，不改写组件问题。有标准答案时模型提交 `summary`、`is_correct`、`correct_reason`；无标准答案时模型仅提交 `summary`，程序固定输出 `is_correct=null`，理由为“未提供标准答案，无法判断回答与标准答案是否一致；已确认的问题独立保留。”，不采用模型自行生成的正确性值或理由。Session 模型只读取完整、有序的原始 QA，不读取 Trace summary、Problem、正确性结论或其他评测意见；局部结果由程序原样回填到 `turns[]`。Session 仅总结整体表现、登记跨 QA 问题，内部 evidence 提交 `{index, reason}`，index 选择原始 QA 的证据编号，经既有原文校验与坐标解析后生成正式证据。跨 QA 矛盾必须由不同 QA 原文支持，合理的条件更新不算矛盾；外部正式结果 Schema 不变。
 
 ## Comparison
 

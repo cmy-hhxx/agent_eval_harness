@@ -55,7 +55,7 @@ test("session and trace metadata pass through unchanged without entering model m
     trace0: { evaluation: turn } as never, trace1: { evaluation: turn } as never,
   });
   assert(!Object.hasOwn(sessionBinding.modelInput!, "session_meta"));
-  assert((sessionBinding.modelInput!.turns as object[]).every(trace => !Object.hasOwn(trace, "meta")));
+  assert(!Object.hasOwn(sessionBinding.modelInput!, "turns"));
   const result = registry.resolve(sessionBinding, { session_summary: "整场已完成。", session_problem: [] }, emptyAudit()) as { session_meta: unknown; turns: { meta: unknown }[] };
   assert.deepEqual(result.session_meta, sessionBinding.request.input.session_meta);
   assert.deepEqual(result.turns.map(trace => trace.meta), [turn.meta, turn.meta]);
@@ -404,15 +404,22 @@ test("only the session task exports one attribution row while component and trac
   assert.equal(plan.tasks.filter(task => task.stage !== "attribution-session").every(task => !state.receipts[task.id]!.exported), true);
 });
 
-test("trace and session tasks declare no worker sources and therefore pass source binding", async t => {
+test("trace has no worker source and session binds only original QA messages", async t => {
   const f = await fixture(t);
   const config = { ...f.config, workflow: "attribution", inputs: { ...f.config.inputs,
     versions: f.config.inputs.versions.slice(0, 1) } } as AttributionConfig;
   const plan = await planAttribution(config);
   for (const task of plan.tasks.filter(task => task.stage === "attribution-trace" || task.stage === "attribution-session")) {
-    assert.deepEqual(task.inputIds, {});
     const binding = bindAttribution(task, plan.inputs, {});
-    assert.deepEqual(binding.request.sources, {});
+    if (task.stage === "attribution-trace") {
+      assert.deepEqual(task.inputIds, {});
+      assert.deepEqual(binding.request.sources, {});
+    } else {
+      const candidate = (task.data as AttributionTaskData).candidate;
+      assert.deepEqual(task.inputIds, { answer: candidate.input_id });
+      const messages = (binding.request.sources.answer.value as { messages: { content: string }[] }).messages;
+      assert.deepEqual(messages.map(message => message.content), ["第一问", "第一答", "第二问", "第二答"]);
+    }
     assert.equal(Object.entries(task.inputIds).every(([name, id]) => binding.request.sources[name]?.id === id), true);
   }
 });
