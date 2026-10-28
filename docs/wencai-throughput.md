@@ -173,3 +173,11 @@ r429 的 AIME 固定四样本实际耗时 959.280 秒：23/24 个组件接受、
 该容器没有 `/proc/PID/task/PID/children`；旧采样器把缺失当作进程退出，错误记录了 0 RSS、0 进程和 0 采样错误。修为通过 `ps` 的父子关系定位进程，再读取 `/proc` 内存、IO、CPU；根进程采样失败必须计错，缺资源数据不能通过验收。独立快照在 06:12:38 UTC 观测到 26 个进程合计 8,087,027,712 字节 RSS，仅为一个时刻，不能冒充峰值。
 
 因资源观测无效且已出现 2 个传输失败，向实验 Host 单独发送 SIGINT，保留现场。最终总耗时 796.255 秒，29 个组件接受、2 个失败、236 个取消，0 个完整 session；取消来自本次中断，不算原始执行失败。中断到保存结束 75.89 秒。`infrastructure-observation.json`、`throughput-observation.json`、`interruption-observation.json` 保存在该 run 下；不能把达到 200 个活跃会话等同于完整会话压测通过。
+
+### 派发前的重复调试写入
+
+同一真实 200 会话实验的 224 次派发计时显示：binding p95 7.981 毫秒，profile p95 1.838 毫秒，activate p50/p95 为 4,629.165/16,058.112 毫秒。激活阶段等待远程 `_internal/.../attempt.json` 写入，Worker 开始时与最终归档又保存同一份 spec。删除 Host 激活中的这次重复写入，保留本地热状态持久化、Worker 原始记录及最终完整归档；不增加异步队列。
+
+先将现有 200 任务独立提交回归扩展为 debug 开关两种状态，并模拟调试目录不可写。旧代码 debug=true 在 activate 中报 ENOTDIR，debug=false 通过；删除后两种都通过。另两项身份端到端回归开启 debug，检查最终 attempt.json 的 taskId 和 succeeded 状态，连续恢复仍通过。
+
+验证：typecheck 通过；快速回归 282 通过、1 项 Linux 专用采样测试在 macOS 跳过，另 30 项 Worker 测试通过；全量核心 1,193 通过、1 跳过、0 失败，Host 312/420，既有 108 项失败。本地缺陷回归证明派发不再依赖调试目录，但远程激活 p95 的下降及整体吞吐仍需下一轮真实实验确认。

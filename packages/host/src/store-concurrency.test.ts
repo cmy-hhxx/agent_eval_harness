@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import {
@@ -11,7 +11,10 @@ import { AgentRegistry } from "./agents.js";
 import { RunStore } from "./store.js";
 import { appendProgressJournal, createRunRepository, readProgressJournal, runProgressFile, RunHotStore, runJournalIdentity } from "@eval/data";
 
-test("two hundred independent commits do not wait for checkpoint projection", async t => {
+for (const debug of [false, true]) test(`two hundred independent activations and commits do not wait for diagnostics or checkpoint projection (debug: ${debug})`, async t => {
+  const run = await mkdtemp(path.join(os.tmpdir(), "eval-activation-"));
+  t.after(() => rm(run, { recursive: true, force: true }));
+  await writeFile(path.join(run, "_internal"), "diagnostics storage is unavailable");
   const sourceId = "11111111-1111-4111-8111-111111111111", input = { messages: [{ content: "source" }] };
   const binding: AgentBinding = { agent: "fixture", profile: "default", request: {
     input: {}, sources: { answer: { id: sourceId, value: input } },
@@ -25,7 +28,7 @@ test("two hundred independent commits do not wait for checkpoint projection", as
   const tasks = Array.from({ length: 200 }, (_, index) => ({ id: `task-${index}`, stage: "attribution",
     inputIds: { answer: sourceId }, dependencies: {}, data: { index } }));
   const state: RunState = {
-    manifest: { format: "evaluation-run", debug: false, runId: "concurrent", status: "running",
+    manifest: { format: "evaluation-run", debug, runId: "concurrent", status: "running",
       engine: { engine: "pi", version: "test", commit: "test", buildId: "test" }, evaluatorVersion: "test",
       config: {}, tasks, inputs: { [sourceId]: { id: sourceId, name: "answer" } },
       states: Object.fromEntries(tasks.map(task => [task.id, { status: "pending", attempts: 0, revision: 1 }])),
@@ -37,7 +40,7 @@ test("two hundred independent commits do not wait for checkpoint projection", as
     async readRun() { return structuredClone(state); }, async readTasks() { return structuredClone(state); },
     async writeRun() { checkpoints++; }, createResultWriter() { return async () => {}; },
   };
-  const store = new RunStore("/unused-concurrency", state, { [sourceId]: input }, {
+  const store = new RunStore(run, state, { [sourceId]: input }, {
     agents, repository, taskSource: { id: "fixture", bind: () => binding },
   }, undefined, new RunHotStore(":memory:", runJournalIdentity(state)));
   t.after(() => store.close());

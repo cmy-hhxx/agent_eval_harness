@@ -2,11 +2,9 @@ import { ValidationError, HttpError, canonical, safeId, evidenceSources, require
 import {
   appendProgressJournal,
   compactProgressJournal,
-  internalPath,
   RunHotStore,
   runJournalIdentity,
   type RunJournalDelta,
-  writeJson,
 } from "@eval/data";
 import type {
   AttemptSpec,
@@ -375,17 +373,6 @@ export class RunStore {
     this.evidenceSources.set(spec.attemptId, sources);
     this.attempts.set(spec.attemptId, spec);
     this.bindings.set(spec.attemptId, binding);
-    if (this.manifest.debug)
-      await writeJson(
-        internalPath(
-          this.run,
-          "tasks",
-          spec.taskId,
-          `attempt-${state.attempts.toString().padStart(3, "0")}`,
-          "attempt.json",
-        ),
-        { spec },
-      );
     await this.save(spec.taskId);
     return true;
   }

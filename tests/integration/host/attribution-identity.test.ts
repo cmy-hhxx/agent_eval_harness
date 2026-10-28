@@ -34,7 +34,7 @@ async function verifyIdentity(t: test.TestContext, sources: RawInput[][], distin
   assert.equal(plan.tasks.filter(task => task.stage === "attribution-session").length, records.length);
   const options = { ...services, runId, output: config.output, engine: "pi" as const, identity: fakeIdentity,
     evaluatorVersion: fakeEvaluatorVersion, config, plan, policy: config.execution, modelForStage,
-    concurrency: 2, retries: 0, retryDelaySeconds: 0, workerUrls: [worker.url] };
+    concurrency: 2, retries: 0, retryDelaySeconds: 0, workerUrls: [worker.url], debug: true };
   await runEvaluation(options);
   const file = path.join(run, "results/attribution.jsonl"), original = await readFile(file, "utf8");
   const rows = original.trim().split("\n").map(line => JSON.parse(line));
@@ -58,6 +58,9 @@ async function verifyIdentity(t: test.TestContext, sources: RawInput[][], distin
     if (distinctSummaries) assert.equal(exported.row.session_summary, "独立来源归因：" + task.id);
     const selected = await comparisonRepository.readTasks(run, [task.id]);
     assert.deepEqual(selected.receipts[task.id], before.receipts[task.id]);
+    const archived = JSON.parse(await readFile(path.join(run, "_internal/tasks", task.id, "attempt-001/attempt.json"), "utf8"));
+    assert.equal(archived.spec.taskId, task.id, "the final Worker record still retains the complete debug attempt");
+    assert.equal(archived.status.state, "succeeded");
   }
   assert.equal(identities.size, records.length);
   const validation = await validateRun(run);
