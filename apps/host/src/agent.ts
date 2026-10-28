@@ -33,15 +33,11 @@ try {
     for (const session of await sessions?.list(userId) ?? []) await sessions?.cancel(session);
   });
   const { model, gateways } = assistantModelConfiguration(settings);
-  const data = new CatalogAnalysisData(config.dataRoot, {
-    stateFile: path.join(config.runtimeRoot, "state/automations/remote-evaluation/state.json"),
-    logFile: path.join(config.runtimeRoot, "log/comparison-statistics-log.jsonl"),
-    deliveryFile: path.join(config.runtimeRoot, "state/automations/statistics-delivery.json"),
-  });
+  const data = new CatalogAnalysisData(config.collections);
   const server = await serveAssistant({ ...config.listen, access, userId: "cmy", webDirectory: path.join(ROOT, "dist/agent/web"), endpoints(url) {
     sessions = new AssistantSessions({ directory, url, model, internalAuthorization: access.internalAuthorization,
       models: new GatewayAssistantModels(directory, model, gateways),
-      ...createEris({ data, assets: new EvaluationAssets(config.dataRoot), search: createSerperSearch({ apiKey: process.env.SEARCH_API_KEY }), web: createWebReader() }),
+      ...createEris({ data, assets: new EvaluationAssets(config.collections), search: createSerperSearch({ apiKey: process.env.SEARCH_API_KEY }), web: createWebReader() }),
       onError: error => { void logger.error(error, { component: "assistant", event: "error" }); },
     });
     return assistantEndpoints(sessions);

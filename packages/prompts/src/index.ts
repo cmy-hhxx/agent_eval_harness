@@ -21,12 +21,9 @@ const taskFocus = resource("shared/task-focus.md");
 const budget = resource("shared/budget.md");
 const recovery = resource("shared/recovery.md");
 const nudge = resource("shared/nudge.md");
-export const standardConflictReviewInstructions = resource("attribution/standard-review.md");
-export const standardConflictInstructions = resource("attribution/standard-challenge.md");
 export function workflowText(name: "attribution-material" | "core-rewrite" | "criteria-review" | "prediction-evaluation" | "material-omitted"): string {
   return resource(`workflow/${name}.md`);
 }
-export const attributionNotApplicableText = resource("attribution/not_applicable.md");
 export const attributionNoStandardReason = resource("attribution/trace/no-standard-reason.md");
 const attributionRules = Object.fromEntries(["standard-answer", "numeric", "table-doubts", "images", "capture-gaps"]
   .map(name => [name, resource(`attribution/conditional/${name}.md`)]));
@@ -57,15 +54,6 @@ export const attributionTaxonomy = JSON.parse(resource("attribution/taxonomy.jso
 const descriptions = new Map<string, string>(
   builtinToolNames.map((name) => [name, resource(`tools/${name}.md`)]),
 );
-
-/** Read-only dashboard projection of the same shared text used by prompt assembly. */
-export function sharedPromptResources() {
-  return Object.entries({ material, commentary, evidence, taskFocus, budget, recovery, nudge }).map(([name, text]) => ({
-    name,
-    source: `packages/prompts/resources/shared/${name === "taskFocus" ? "task-focus" : name}.md`,
-    text,
-  }));
-}
 
 /** The only source of model-facing text for the built-in evaluation profiles. */
 function scoreRules(profile:string):string {

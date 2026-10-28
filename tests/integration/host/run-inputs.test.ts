@@ -26,7 +26,7 @@ test("single-trace inputs retain evidence coordinates across lazy reads and sour
     assert.equal(resolveEvidence(input, evidence, "answer", emptyAudit(), "/evidence", candidate.input_id).quote, "2+2=4");
   };
   check(plan.inputs[candidate.input_id] as RawInput);
-  const manifest = { config, inputCatalog: plan.catalog } as unknown as RunManifest;
+  const manifest = { config, inputCatalog: plan.catalog, tasks: plan.tasks } as unknown as RunManifest;
   check((await loadRunInputs(manifest))[candidate.input_id] as RawInput);
   check((await locateRecordStream(file, candidate, version, "b1")).raw);
   assert.equal(await readFile(file, "utf8"), before, "all reads preserve the source bytes");
@@ -45,7 +45,7 @@ test("validation streams registered records and still resolves reordered and mis
   try {
     const plan = await buildPlan(config);
     const expected = Object.fromEntries(Object.entries(plan.inputs));
-    const manifest = { config, inputCatalog: plan.catalog } as unknown as RunManifest;
+    const manifest = { config, inputCatalog: plan.catalog, tasks: plan.tasks } as unknown as RunManifest;
     const streamed = t.mock.method(fileSourceReader, "lines");
     assert.deepEqual(await loadRunInputs(manifest), expected);
     assert(streamed.mock.calls.length > 0, "validation reads registered sources through the streaming interface");
@@ -75,7 +75,7 @@ test("validation discards selected records if the source changes while reading",
       }
     });
     const issues: ValidationIssue[] = [];
-    const available = await loadRunInputs({ config, inputCatalog: plan.catalog } as unknown as RunManifest, issues);
+    const available = await loadRunInputs({ config, inputCatalog: plan.catalog, tasks: plan.tasks } as unknown as RunManifest, issues);
     assert.equal(issues.length, 1);
     assert.match(issues[0]!.message, /读取期间输入文件发生变化/);
     assert.equal(Object.keys(available).length, Object.keys(plan.inputs).length - 1);
@@ -86,7 +86,7 @@ test("validation keeps source coordinates and rejects edits after indexing", asy
   const { directory, config } = await fixtureConfig();
   try {
     const plan = await buildPlan(config);
-    const inputs = await loadRunInputs({ config, inputCatalog: plan.catalog } as unknown as RunManifest);
+    const inputs = await loadRunInputs({ config, inputCatalog: plan.catalog, tasks: plan.tasks } as unknown as RunManifest);
     const candidate = (plan.catalog as { input_id: string; source: string }[])[0]!;
     assert.equal(typeof Object.getOwnPropertyDescriptor(inputs, candidate.input_id)?.get, "function",
       "validation must not retain every raw input body");

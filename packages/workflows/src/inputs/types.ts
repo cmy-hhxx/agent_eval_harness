@@ -90,13 +90,6 @@ export interface EvaluationInputs {
   records?: {model:string;batch_id:string;case_id:string;trace_id?:string;input_file:string;input_index:number}[];
   /** Explicit dataset selection persisted for run reconciliation. */
   dataset_id?: string;
-  /** Frozen cleaning coordinates; no input bodies are copied into run configuration. */
-  workbench?: {
-    task: { id: string; name: string; source: string; category: string };
-    batch_ids: string[];
-    records: { model: string; batch_id: string; case_id: string; date?: string; input_file: string; input_index: number;
-      package_id: string; package_name: string; original_file: string; original_line: number; original_item?: number }[];
-  };
   versions: VersionConfig[];
   batches?: string[];
   case_ids?: string[];

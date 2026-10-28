@@ -11,7 +11,6 @@ export interface AnalysisReference extends RunReference { collectionId: string; 
 export interface AnalysisCaseLookup { collectionId: string; runId: string; query: string; comparisonTier?: string }
 export interface AnalysisQuery {
   collectionId?: string; includeTests?: boolean; runId?: string; view?: "inputs" | "comparisons" | "statistics"; query?: string; offset?: number; limit?: number;
-  breakdown?: "date" | "task" | "difficulty";
   sample?: boolean; excludeCases?: { batchId: string; caseId: string }[];
   comparisonTier?: string; outcome?: "win" | "both_good" | "both_bad" | "all"; includeAnalysis?: boolean;
 }
@@ -26,6 +25,8 @@ export interface AnalysisDataSource {
   image(reference: AnalysisReference): Promise<ToolResult>;
 }
 export interface AnalysisAssetReference { collectionId: string; assetId: string }
+/** A business coordinate bound to one configured output directory. */
+export interface EvaluationCollection { id: string; path: string; test: boolean }
 export interface AnalysisAssetQuery { collectionId?: string; query?: string; includeTests?: boolean; offset?: number; limit?: number }
 export interface AnalysisAssetSource {
   list(query: AnalysisAssetQuery): Promise<JsonObject>;

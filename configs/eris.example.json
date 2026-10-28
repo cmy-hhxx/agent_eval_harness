@@ -1,0 +1,7 @@
+{
+  "runtimeRoot": "/srv/evaluation/runtime",
+  "collectionsFile": "./collections.example.json",
+  "evalConfigFile": "./eris.ini",
+  "publicOrigin": "https://eris.example.com",
+  "listen": { "host": "127.0.0.1", "port": 5004 }
+}

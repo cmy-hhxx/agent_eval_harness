@@ -14,6 +14,8 @@
 
 可选的标准冲突与 Comparison verification 入口须显式使用，不是默认归因后的效果复核。它们不能静默改写已接受归因。人工给出的 reviewQuestions 只是待查问题，不预置结论。
 
+独立核验当前有[session 归因证据映射限制](usage.md#当前限制)。通过结构、预算或空问题材料回归不代表包含非空归因证据的端到端核验可用；验收时应单独核对这一路径。
+
 ## 评语标准
 
 读者应能从短评中看懂“实际交付 → 依据 → 差异 → 对使用的影响”。用日常语言，不展示内部字段、状态码和判据编号；必要业务代码与原文保留。
@@ -44,7 +46,7 @@
 
 记录完整与部分结果覆盖、首次接受、内容修复、失败、超时、完整产出吞吐、耗时分位数和用量。已取消或未开始的任务留在覆盖分母，不当作原始执行失败；已完成任务的耗时分位数不能代替全体任务耗时。实验保留失败记录，不提高重试来隐藏故障，不用问题条数或个人判词评价作为性能验收指标。
 
-基础设施实验须标明真实 Pi 会话、模拟 Worker 或材料准备测试。200 会话验收包含 SDK、模型请求队列和完整流水线，模型总请求并发保持 20；同时观察进程树内存、IO、事件循环及故障恢复。模拟材料测试不能充当完整会话压测。当前实验记录见 [吞吐实验](wencai-throughput.md)。
+基础设施实验须标明真实 Pi 会话、模拟 Worker 或材料准备测试。200 会话验收包含 SDK、模型请求队列和完整流水线，模型总请求并发保持 20；同时观察进程树内存、IO、事件循环及故障恢复。模拟材料测试不能充当完整会话压测。历史测量见[实验记录](../evaluation-report/wencai-throughput.md)。
 
 以下为显式使用的离线分析与改写工具，不属于默认归因验收链。
 
@@ -70,37 +72,14 @@
 
 工程机制、样本质量和覆盖分别验收。结构合法、提示词更短、文本更顺、重复一致都不能单独成为公平通过的理由；实验不会用多数票覆盖主线判词。
 
-## 离线回归与小样本入口
+## 语义回归
 
 Criteria 交付边界、Attribution 等价核验与 Comparison 主理由的固定正反例见[语义审阅案例](quality-cases.md)。这些案例由人工或代理对照实际输出审阅，结构测试不保证语义反例被自动拒绝。
 
-先 build:app。collect 从 debug 的 content_loaded 事件收集被拒草稿，保存真实内容和来源引用；不转换过期格式、不覆盖既有回归集。
-
-```bash
-npm run benchmark -- collect --run /mnt/fin_bench/eval_data/0_wencai/eval_output/test_eval/pi-debug --output /mnt/fin_bench/eval_data/0_wencai/eval_output/test_eval/regression/fixtures.json --limit 32
-npm run benchmark -- replay --fixtures /mnt/fin_bench/eval_data/0_wencai/eval_output/test_eval/regression/fixtures.json --output /mnt/fin_bench/eval_data/0_wencai/eval_output/test_eval/regression/replay.json
-npm run benchmark -- run --fixtures /mnt/fin_bench/eval_data/0_wencai/eval_output/test_eval/regression/fixtures.json --run-id sample-pi --limit 4
-```
-
-run 默认预览，--execute 才调用模型；支持 --swap，须用新 ID。collect 的 limit 是草稿数，run 的 limit 是对比组数。失败草稿集不能估计生产首次通过率。
-
-```bash
-npm run benchmark -- compare --run /mnt/fin_bench/eval_data/0_wencai/eval_output/test_eval/sample-pi \
-  --run /mnt/fin_bench/eval_data/0_wencai/eval_output/test_eval/sample-pi-swapped --output /mnt/fin_bench/eval_data/0_wencai/eval_output/test_eval/regression/stability.json
-```
-
-compare 按业务题目与稳定模型对比结果、核心状态和依据，文本变化单列供人工核查。
+使用显式输入和新 run ID 开展小样本验证，真实产物写入同来源 `test_eval/`。记录完整覆盖与失败原因，不覆盖既有正式结果，不将失败草稿集当作生产首次通过率的样本。
 
 ## 矩阵、区间与人工金标
 
-```bash
-npm run benchmark -- summarize --run /mnt/fin_bench/eval_data/0_wencai/eval_output/test_eval/RUN --bootstrap-rounds 2000
-npm run benchmark -- gold-template --run /mnt/fin_bench/eval_data/0_wencai/eval_output/test_eval/RUN --output /mnt/fin_bench/eval_data/0_wencai/eval_output/test_eval/expert.json
-npm run benchmark -- calibrate --run /mnt/fin_bench/eval_data/0_wencai/eval_output/test_eval/RUN --gold /mnt/fin_bench/eval_data/0_wencai/eval_output/test_eval/expert.json
-```
+胜、负、都好、都差按对局统计；核心完成与标准一致性按回答去重。缺失、冲突与待核单列，不能算作平局。模型、评测器和来源不同的条件分开解释。
 
-胜、负、都好、都差按对局统计；核心完成与标准一致性按 batch/case/version 去重。缺失与冲突保持未知，待核不算平局。重复 run 选择明确拒绝；模型、评测器和来源差异保留 cohort。
-
-区间按业务 case 成簇 bootstrap；样本不足或无变异时不生成伪确定区间。区间只反映样本变动，不覆盖裁判系统性误判。胜1、负0、并列0.5只是汇总口径，不等于人类偏好或 Arena 排名。
-
-金标模板不是金标。专家须填写 reviewer、rationale 与判定并明确 reviewed=true，校准才统计；一致率仍不能代替来源审查。
+区间以业务题目为独立单位；样本不足或无变异时不输出伪确定区间。抽样区间不覆盖裁判的系统性误判。人工金标须明确审阅者、依据与完成状态，未审模板不进入校准统计，一致率也不能代替来源审查。

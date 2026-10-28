@@ -120,7 +120,7 @@ export async function fixtureConfig(
   config.comparisons = [["a_fast", "b_fast"]];
   config.rewrite = { comparison: rewrite, attribution: rewrite, clustering: rewrite };
   config.clustering = { ...config.clustering, enabled: clustering, minSupport: 1 };
-  config.output = { kind: "directory", path: path.join(directory, "runs") };
+  config.output = { kind: "directory", path: path.join(directory, "runs"), testPath: path.join(directory, "experiments") };
   config.problemLibrary = { kind: "directory", path: path.join(directory, "problems") };
   config.execution.retries = 0;
   config.execution.retryDelaySeconds = 0;
@@ -167,9 +167,9 @@ export function taskResult(spec: Pick<AttemptSpec, "evaluation" | "prompt" | "in
       evidence: problem.evidence.map(() => ({ index: 1, reason: "fixture evidence" })),
       ...(problem.calculations ? { calculations: problem.calculations } : {}) })) };
   }
-  if ("is_correct" in properties) {
+  if (spec.evaluation.id === "attribution" && "summary" in properties) {
     const result = attributionResult(false), turn = result.turns[0]!;
-    return { summary: turn.summary, is_correct: turn.is_correct, correct_reason: turn.correct_reason };
+    return { summary: turn.summary, ...("is_correct" in properties ? { is_correct: turn.is_correct, correct_reason: turn.correct_reason } : {}) };
   }
   if ("session_summary" in properties) {
     const result = attributionResult(false);

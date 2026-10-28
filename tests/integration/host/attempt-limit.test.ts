@@ -3,11 +3,9 @@ import assert from "node:assert/strict";
 import path from "node:path";
 import { rm } from "node:fs/promises";
 import type { AgentBackend } from "@eval/contracts";
-import { readJson } from "@eval/data";
 import { runEvaluation } from "@eval/host";
 import { startWorker } from "@eval/runtime/worker";
-import { buildPlan, readRunState, type Checkpoint } from "@eval/workflows/comparison";
-import { checkpointRecovery, evaluationOutcome, summarize } from "../../../apps/host/src/automation-evaluation.js";
+import { buildPlan, readRunState } from "@eval/workflows/comparison";
 import { services } from "../../fixtures/services.js";
 import { draftFor, fakeEvaluatorVersion, fakeIdentity, fixtureConfig, raw, submitFor, taskResult } from "../../fixtures/comparison.js";
 
@@ -40,12 +38,5 @@ test("task attempt cap preserves successes and fresh work across automatic retri
       assert.equal(after.receipts[id!]?.submissionId, submissionId);
       assert.equal(calls.get(id!), 1, "accepted tasks do not run again");
     }
-    const checkpoint = await readJson<Checkpoint>(path.join(run, "state.json"));
-    const outcome = evaluationOutcome([checkpoint], summarize([checkpoint]), config.execution, Infinity);
-    assert.equal(outcome.status, "blocked");
-    assert.equal(outcome.transient, false);
-    assert.equal(checkpointRecovery([checkpoint], config.execution), undefined, "no empty date retry loop");
-    checkpoint.tasks[failing]!.attempts = 1;
-    assert.equal(evaluationOutcome([checkpoint], summarize([checkpoint]), config.execution, Infinity).status, "retry", "a task below the cap still gets ordinary recovery");
   } finally { await worker.close(); await rm(directory, { recursive: true, force: true }); }
 });

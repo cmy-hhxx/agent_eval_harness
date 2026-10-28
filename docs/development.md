@@ -20,11 +20,9 @@
 | 提交前、契约或跨模块收尾 | `npm run test:full`，追加 Eris 单元与 Host 集成 |
 | Worker / SDK | `npm run test:integration` |
 | 安装、构建、依赖 | `node scripts/test-clean.mjs`；本机环境用 `npm run doctor` |
-| Eris 上游、浏览器、性能 | [Eris 验证](../agent/README.md#验证) |
-| 离线汇报 | [汇报验证](../evaluation-report/README.md#维护与构建) |
-| 远程工作台 / 数据服务 | [部署](deployment.md)、[服务验证](../data_service/README.md#本地验证)，已接入 `npm test` 与 `test:full` |
+| Eris 上游与浏览器 | [Eris 验证](../agent/README.md#验证) |
 
-测试分组以 [scripts/test.mjs](../scripts/test.mjs) 和 [package.json](../package.json) 为准。`npm test`、`test:full`、`test:integration` 先构建，同时最多运行两个测试文件，避免 Worker 子进程挤占时限。失败应定位原因，不自动重跑或延长时限。
+测试分组以 [scripts/test.mjs](../scripts/test.mjs) 和 [package.json](../package.json) 为准。`npm test`、`test:full`、`test:integration` 先构建；快速测试、完整核心与 Host 集成各组最多并行两个文件，Worker 预算回归单独运行。完整核心与 Host 集成可同时运行，因此不是全局只开两个测试文件。失败应定位原因，不自动重跑或延长时限。
 
 测试只覆盖当前可观察行为：
 
@@ -34,7 +32,7 @@
 - SDK 测试验证实际发出的提交格式；内部 canonical 判断和正式导出分别测试。独立核验显式构造首查与最终选择，不从待核判词反推。
 - 临时资源注册清理，等待有界；不删除真实输入、结果或缓存。
 
-类型检查包含未使用局部变量与参数；删除导出前还须检查公开入口、动态调用和测试引用。`test-clean` 只清理自身临时 checkout，`--debug` 可保留诊断。
+类型检查包含未使用局部变量与参数；删除导出前还须检查公开入口、动态调用和测试引用。`test-clean` 在临时 checkout 独立安装与构建，不复用已安装依赖、构建或虚拟环境；npm 缓存独立，仅共享 Python 下载缓存。它只清理自身临时 checkout，`--debug` 可保留诊断。
 
 ## 构建与依赖
 
@@ -56,7 +54,7 @@ Eris 普通构建只读本仓库 [Deepseek 源码映射](../vendor/deepseek/sour
 |---|---|
 | 导航与首次安装 | README |
 | 仓库约束 | AGENTS |
-| 操作、恢复、产物 | 使用指南；Eris、自动化和离线汇报各自的指南 |
+| 操作、恢复、产物 | 使用指南与 Eris 指南 |
 | 字段与语义边界 | Schema、数据契约 |
 | 依赖、接口、生命周期 | 架构、模块地图 |
 | 界面与验收 | PRODUCT、评测质量 |

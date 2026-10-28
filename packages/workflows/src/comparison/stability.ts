@@ -82,6 +82,7 @@ function chain(candidates: Record<string, Candidate>, reference: unknown, trial:
     const unit = planAttributionUnit(candidate, { data: { stage: "attribution-component", candidates: { A: candidate }, reference,
       criteriaScope, initialContextChars: config.execution.initialContextChars, standardAnswerReview: false },
       dependencies: { criteria: criteria.id }, identity: criteria.id });
+    for (const task of unit.tasks) task.data = { ...(task.data as object), stability: structuredClone(trial) };
     return { label, tasks: unit.tasks, task: unit.session };
   });
   const comparison = task("comparison", candidates, reference,
@@ -211,8 +212,8 @@ export async function prepareStability(base: EvalConfig, supplied: StabilityCase
       byCase.set(stabilityCaseKey(item), candidates);
       // A shared rubric or an accepted attribution may refer to a third same-case answer.
       for (const dependency of source.manifest.tasks.filter(task => [selected.id, ...Object.values(selected.dependencies)].includes(task.id))) {
-        const context = dependency.data as TaskData;
-        for (const candidate of [...Object.values(context.candidates), ...Object.values(context.referenceCandidates ?? {})]) {
+        const context = dependency.data as TaskData & { candidate?: Candidate };
+        for (const candidate of [...Object.values(context.candidates ?? {}), ...(context.candidate ? [context.candidate] : []), ...Object.values(context.referenceCandidates ?? {})]) {
           if (!catalog.some(entry => entry.input_id === candidate.input_id)) catalog.push(candidate);
           const version = (source.manifest.config as EvalConfig).inputs.versions.find(version => version.id === candidate.version)!;
           if (!version) throw new Error("Source input version is unavailable: " + candidate.version);

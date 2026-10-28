@@ -330,7 +330,7 @@ export async function runEvaluation(options: RunOptions): Promise<Record<string,
       }
       if (url.pathname === "/api/control/stop" && req.method === "POST") {
         if (req.headers["x-run-token"] !== lock.token) throw new HttpError(403, "Invalid run control token");
-        controller.abort(new Error("Stopped from dashboard"));
+        controller.abort(new Error("Stopped by run control"));
         wake();
         return json(res, { stopping: true });
       }
@@ -1149,7 +1149,7 @@ export async function runEvaluation(options: RunOptions): Promise<Record<string,
         else hot?.close();
       }
     } finally {
-      // A failed checkpoint must not keep this date locked for the lifetime of the automation.
+      // A failed checkpoint must release the run lock.
       try { await http?.close(); }
       finally {
         try { await workspace?.close(); }

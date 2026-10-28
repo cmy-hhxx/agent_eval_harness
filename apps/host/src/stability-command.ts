@@ -28,7 +28,7 @@ export async function runStabilityCommand(host: HostConfig, options: {
   if (host.workflow !== "comparison") throw new Error("稳定性实验需要对战工作流配置");
   if (options.apply && !options.runId) throw new Error("validate-stability --execute requires --run-id");
   if (options.runId) safeId(options.runId);
-  const output = { kind: "directory" as const, path: testEvaluationOutput(host.evaluation.output.path, options.output) };
+  const output = { ...host.evaluation.output, path: testEvaluationOutput(host.evaluation.output, options.output) };
   const layout = options.runId ? runLayout(output, options.runId) : undefined;
   const sourceRun = options.sourceRun ? path.resolve(options.sourceRun) : undefined;
   if (sourceRun && sourceRun === layout?.directory) throw new Error("Experiment directory must differ from the source run");

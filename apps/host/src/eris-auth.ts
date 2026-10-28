@@ -2,7 +2,14 @@ import type { IncomingMessage, ServerResponse } from "node:http";
 import { createHmac, timingSafeEqual } from "node:crypto";
 import { AssistantAccounts } from "@eval/data";
 import type { AssistantAccess } from "@eval/runtime/assistant";
-import { cookieValue } from "./workbench-auth.js";
+
+function cookieValue(header: string | undefined, name: string): string | undefined {
+  for (const item of (header ?? "").split(";")) {
+    const separator = item.indexOf("=");
+    if (separator >= 0 && item.slice(0, separator).trim() === name) return item.slice(separator + 1).trim();
+  }
+  return undefined;
+}
 
 const cookie = (id: string, days = 7) => `eris_session=${id}; Path=/; HttpOnly; SameSite=Strict; Max-Age=${days * 86400}`;
 function send(res: ServerResponse, status: number, value: unknown) {

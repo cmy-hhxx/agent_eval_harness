@@ -1,8 +1,9 @@
 import { createReadStream } from "node:fs";
-import { lstat, readdir, stat } from "node:fs/promises";
+import { readdir, stat } from "node:fs/promises";
 import path from "node:path";
 import { createGunzip } from "node:zlib";
-import type { AnalysisAssetQuery, AnalysisAssetReference, AnalysisAssetSource } from "@eval/contracts";
+import type { AnalysisAssetQuery, AnalysisAssetReference, AnalysisAssetSource, EvaluationCollection } from "@eval/contracts";
+import { evaluationCollectionPath, resolveEvaluationCollections } from "./evaluation-collections.js";
 
 const reports = new Set(["report.md", "task_summaries.md"]);
 const summaries = new Set(["stats.json", "publication-statistics.json", "attribution-tree.json", "sample-summaries.json", "problem-publication.json"]);
@@ -13,26 +14,19 @@ function publicAsset(name: string, parent: string) {
     parent === "problems" && /^[\w.-]+\.json$/.test(name);
 }
 
-async function assetPath(root: string, parts: string[]) {
-  let file = root;
-  for (const part of parts) {
-    file = path.join(file, part);
-    if ((await lstat(file)).isSymbolicLink()) throw new Error("公开评测产物路径不能为软链接");
-  }
-  return file;
-}
-
 /** Read-only output catalog: includes archives and standalone trees without inventing run IDs. */
 export class EvaluationAssets implements AnalysisAssetSource {
-  constructor(private root: string) {}
+  private collections: EvaluationCollection[];
+  constructor(collections: readonly EvaluationCollection[]) {
+    this.collections = resolveEvaluationCollections(collections, process.cwd());
+  }
   private async inventory(includeTests = false) {
-    if (!(await stat(this.root)).isDirectory()) throw new Error("评测数据根目录不是目录");
     const items: { reference: AnalysisAssetReference; name: string; format: string; bytes: number; modifiedAt: number; archived: boolean }[] = [];
     const errors: { collectionId: string; assetId: string; message: string }[] = [];
-    for (const source of ["0_wencai", "1_aime", "2_ifind"]) for (const category of ["0_daily_eval", "1_task_eval", ...(includeTests ? ["test_eval"] : [])]) {
-      const collectionId = `${source}/${category}`;
+    for (const collection of this.collections.filter(item => includeTests || !item.test)) {
+      const collectionId = collection.id;
       let directory: string;
-      try { directory = await assetPath(this.root, [source, "eval_output", category]); }
+      try { directory = await evaluationCollectionPath(collection); }
       catch (error) {
         if ((error as NodeJS.ErrnoException).code !== "ENOENT") errors.push({ collectionId, assetId: "", message: String(error) });
         continue;
@@ -75,12 +69,12 @@ export class EvaluationAssets implements AnalysisAssetSource {
       items: filtered.slice(offset, end) };
   }
   async read(reference: AnalysisAssetReference, options: { offset?: number; limit?: number } = {}) {
-    const [origin, category, extra] = reference.collectionId.split("/"), parts = reference.assetId.split("/");
+    const collection = this.collections.find(item => item.id === reference.collectionId), parts = reference.assetId.split("/");
     const invalid = () => new Error("资产不存在或不在公开评测产物范围；沿用 list_assets 返回的引用。");
-    if (extra !== undefined || !["0_wencai", "1_aime", "2_ifind"].includes(origin) || !["0_daily_eval", "1_task_eval", "test_eval"].includes(category) ||
+    if (!collection ||
       parts.some(part => !part || part === ".." || part === "_internal" || part.startsWith(".") && part !== ".archive") ||
-      !publicAsset(parts.at(-1)!, parts.at(-2) ?? category)) throw invalid();
-    const file = await assetPath(this.root, [origin, "eval_output", category, ...parts]);
+      !publicAsset(parts.at(-1)!, parts.at(-2) ?? "")) throw invalid();
+    const file = await evaluationCollectionPath(collection, parts);
     const before = await stat(file);
     if (!before.isFile()) throw invalid();
     const source = createReadStream(file), stream = file.endsWith(".gz") ? source.pipe(createGunzip()) : source;

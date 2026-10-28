@@ -71,47 +71,42 @@ test("data query summaries use full-run counts and distinguish historical runs f
     "找到 0 次运行");
 });
 
-test("published statistics render progress instead of an empty directory card", () => {
+test("run statistics display each run's state and progress without summing overlapping results", () => {
   const result = analysisToolModel("list_data", { state: "ok", bodyRaw: '{"view":"statistics"}', output: JSON.stringify({
-    kind: "statistics", history: { status: "published", snapshotAt: "2026-10-12 12:16:54.950",
-      requestDates: ["2026-10-11", "2026-09-22"], caseCount: 12114, totalCaseCount: 20554,
-      progress: { completedBattleCount: 22293, expectedBattleCount: 35838, completedCaseCount: 11753,
-        battleCompletionRate: 62.2, caseCompletionRate: 57.18 } }, currentRuns: [], additive: false,
+    kind: "statistics", runs: [
+      { collectionId: "0_wencai/0_daily_eval", runId: "run", status: "finished", summary: {
+        inputCount: 20, caseCount: 10, evaluatedInputCount: 20, attributionCompletionRate: 100,
+        formalComparisonsAccepted: 10, battleCompletionRate: 100, tasks: { total: 30, states: { succeeded: 30 } } } },
+      { collectionId: "1_aime/0_daily_eval", runId: "run", status: "interrupted", summary: {
+        inputCount: 20, caseCount: 10, evaluatedInputCount: 8, attributionCompletionRate: 40,
+        formalComparisonsAccepted: 3, battleCompletionRate: 30, tasks: { total: 30, states: { succeeded: 11 } } } },
+    ], total: 4, offset: 0, limit: 2, hasMore: true, nextOffset: 2, additive: false,
   }) });
-  assert.match(result.summary, /累计评测.*22293/);
-  assert.equal(result.details.items[0].title, "历史累计");
-  const values = result.details.items[0].fields.map((field: { value: string }) => field.value).join(" ");
-  for (const value of ["20554", "12114", "11753", "22293", "35838", "62.20%", "57.18%", "2026-10-12", "2026-09-22 至 2026-10-11"])
-    assert(values.includes(value), `statistics details are missing ${value}`);
-  assert.deepEqual(result.details.items[1], { title: "运行中批次", fields: [{ label: "批次数", value: "0" }] });
+  assert.equal(result.summary, "运行统计 · 本页 2 / 4 次运行");
+  assert.deepEqual(result.details.items.map((item: { title: string }) => item.title), ["0_wencai/0_daily_eval · run", "1_aime/0_daily_eval · run"]);
+  const first = Object.fromEntries(result.details.items[0].fields.map((field: { label: string; value: string }) => [field.label, field.value]));
+  assert.deepEqual(first, { "状态": "已结束", "回答数": "20", "题目数": "10", "已归因回答": "20", "归因完成率": "100.00%", "正式对战": "10", "对战完成率": "100.00%", "任务完成": "30 / 30" });
+  assert.equal(result.details.items[1].fields[0].value, "已中断");
+  assert(!JSON.stringify(result).includes("累计"));
 });
 
-test("statistics cards keep unavailable history, live runs and unknown rates distinct", () => {
-  const currentRuns = [{ runId: "live-run", summary: { inputCount: 30, caseCount: 10, formalComparisonsAccepted: 4 } }];
-  const unavailable = analysisToolModel("list_data", { state: "ok", output: JSON.stringify({ kind: "statistics",
-    history: { status: "unavailable", error: "没有完整发布成功的累计统计。" }, currentRuns, additive: false }) });
-  assert.match(unavailable.summary, /累计统计不可用/);
-  assert.equal(unavailable.details.items[0].description, "没有完整发布成功的累计统计。");
-  assert.equal(unavailable.details.items[1].groups[0].items[0].title, "live-run");
-  assert.equal(unavailable.details.items[1].groups[0].items[0].fields.at(-1).value, "4");
-  const empty = analysisToolModel("list_data", { state: "ok", output: JSON.stringify({ kind: "statistics",
-    history: { status: "published", caseCount: 0, totalCaseCount: 0,
-      progress: { completedBattleCount: 0, expectedBattleCount: 0, completedCaseCount: 0,
-        battleCompletionRate: null, caseCompletionRate: null } }, currentRuns: [] }) });
-  const values = empty.details.items[0].fields.map((field: { value: string }) => field.value).join(" ");
+test("run statistics retain zero counts and unknown rates and tolerate unfinished calls", () => {
+  const result = analysisToolModel("list_data", { state: "ok", output: JSON.stringify({ kind: "statistics", total: 1,
+    runs: [{ runId: "empty-run", status: "running", summary: { inputCount: 0, caseCount: 0,
+      evaluatedInputCount: 0, attributionCompletionRate: null, formalComparisonsAccepted: 0, battleCompletionRate: null } }] }) });
+  const values = result.details.items[0].fields.map((field: { value: string }) => field.value).join(" ");
+  assert.match(values, /进行中/);
   assert.match(values, /未知/);
   assert(!/0\.00%|NaN|undefined/.test(values));
   assert.equal(analysisToolModel("list_data", { state: "running", bodyRaw: '{"view":"statistics"}' }).details, undefined);
+  assert.equal(analysisToolModel("list_data", { state: "error", bodyRaw: '{"view":"statistics"}', output: "读取失败" }).summary, "运行统计 · 未完成");
 });
 
-test("partial run directories keep published statistics visible without claiming zero live runs", () => {
+test("partial run directories display their read errors without claiming there are no runs", () => {
   const runDirectory = { complete: false, errors: [{ runId: "broken", message: "索引读取失败" }] };
-  const statistics = analysisToolModel("list_data", { state: "ok", output: JSON.stringify({ kind: "statistics",
-    history: { status: "published", caseCount: 1, totalCaseCount: 1,
-      progress: { completedBattleCount: 1, expectedBattleCount: 1, completedCaseCount: 1 } }, currentRuns: [], runDirectory }) });
-  assert.match(statistics.summary, /累计评测.*1 场对战/);
-  assert.equal(statistics.details.items[1].title, "已读取的运行中批次");
-  assert.equal(statistics.details.items[2].description, "索引读取失败");
+  const statistics = analysisToolModel("list_data", { state: "ok", output: JSON.stringify({ kind: "statistics", runs: [], total: 0, runDirectory }) });
+  assert.match(statistics.summary, /运行目录不完整/);
+  assert.equal(statistics.details.items[0].description, "索引读取失败");
   const directory = analysisToolModel("list_data", { state: "ok", output: JSON.stringify({ kind: "runs", total: 0, items: [], runDirectory }) });
   assert.match(directory.summary, /运行目录不完整/);
   assert.equal(directory.details.items[0].description, "索引读取失败");

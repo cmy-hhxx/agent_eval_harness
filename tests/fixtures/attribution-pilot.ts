@@ -9,7 +9,8 @@ import { attributionResult, criteriaResultForTask, emptyAudit, fakeEvaluatorVers
 
 export async function attributionPilotFixture() {
   const fixture = await fixtureConfig(undefined, true);
-  fixture.config.output = { kind: "directory", path: path.join(fixture.directory, "source/eval_output/test_eval/attribution") };
+  const testPath = path.join(fixture.directory, "experiments");
+  fixture.config.output = { kind: "directory", path: path.join(testPath, "attribution"), testPath };
   const run = path.join(fixture.config.output.path, "pilot");
   const records = Array.from({ length: 6 }, (_, index) => ({ ...raw(`case-${index}`, index % 2 ? null : "4"),
     batch_id: `2026-10-${String(1 + Math.floor(index / 2)).padStart(2, "0")}` }));

@@ -4,7 +4,6 @@ import { canonical, errorText, safeId, type AnalysisDataSource, type RunReferenc
 import { hasLiveRunOwner, readJson, readRunOverview, readRunOverviews } from "@eval/data";
 import { analysisComparisonScope, analysisProgress, analysisTaskPurpose, assertComparableGroups, locateAnalysisInput, readAnalysisAnswer, readAnalysisComparisonRecords, readAnalysisInput, readRunTasks, type AnalysisRunOverview, type Checkpoint, type EvalConfig } from "@eval/workflows/comparison";
 import { cite, evidenceSources, images } from "@eval/tools";
-import { readPublishedStatistics } from "./assistant-statistics.js";
 
 function page(total: number, offset: number, limit: number, unit: "items" | "messages" | "characters") {
   const end = Math.min(total, offset + limit);
@@ -29,7 +28,7 @@ function messagePage({ sources, full, format }: ReturnType<typeof messageMateria
 }
 
 export class LocalAnalysisData implements AnalysisDataSource {
-  constructor(readonly directory: string, readonly publication?: { stateFile: string; logFile: string; deliveryFile: string }) {}
+  constructor(readonly directory: string) {}
   run(id: string) { return path.join(this.directory, safeId(id)); }
   private async statistics(runId: string, summary: ReturnType<typeof analysisProgress>) {
     try {
@@ -61,7 +60,7 @@ export class LocalAnalysisData implements AnalysisDataSource {
       try { overviews = await readRunOverviews<AnalysisRunOverview>(this.directory); }
       catch (error) { unavailable(null, errorText(error)); }
       const items = [];
-      const running: AnalysisRunOverview[] = [];
+      const statistics: AnalysisRunOverview[] = [];
       const runCounts = { scope: "all_registered_runs", total: 0, states: { running: 0, finished: 0, interrupted: 0 } };
       let selected: AnalysisRunOverview & { status: Checkpoint["status"] } | undefined;
       for (const { runId, value, error } of overviews) {
@@ -75,7 +74,7 @@ export class LocalAnalysisData implements AnalysisDataSource {
         const item = { runId, evaluatorVersion, status: state.status, startedAt: summary.startedAt,
           ...(summary.finishedAt !== undefined ? { finishedAt: summary.finishedAt } : {}), inputCount: summary.inputCount, caseCount: summary.caseCount };
         items.push(item);
-        if (state.status === "running" && summary.inputCount > 0) running.push(value);
+        statistics.push(value);
         const preferred = summary.inputCount > 0 && (!selected ||
           (state.status === "running" && selected.status !== "running") ||
           ((state.status === "running") === (selected.status === "running") && summary.startedAt > selected.summary.startedAt));
@@ -83,14 +82,9 @@ export class LocalAnalysisData implements AnalysisDataSource {
       }
       items.sort((a, b) => b.startedAt - a.startedAt || a.runId.localeCompare(b.runId));
       if (query.view === "statistics") {
-        let history;
-        try {
-          if (!this.publication) throw new Error("累计统计发布来源未配置。");
-          history = await readPublishedStatistics(this.publication, query);
-        } catch (error) { history = { status: "unavailable" as const, error: errorText(error), retryable: false }; }
-        const currentRuns = running;
-        return { kind: "statistics" as const, history, currentRuns, runDirectory, additive: false,
-          scope: "历史为最近一次完整发布的累计快照；运行中批次单列，两者可能重叠，不能直接相加。" };
+        statistics.sort((a, b) => b.summary.startedAt - a.summary.startedAt || a.runId.localeCompare(b.runId));
+        return { kind: "statistics" as const, runs: statistics.slice(offset, offset + limit).map(run => ({ ...run, status: run.summary.status })),
+          ...page(statistics.length, offset, limit, "items"), runDirectory, additive: false };
       }
       if (query.view === "inputs" || query.view === "comparisons") {
         if (!selected) throw new Error(runDirectory.complete ? "没有含输入的已登记运行，无法查询输入或对战目录。"

@@ -16,24 +16,24 @@ const dateBasis=value=>({search_metadata:'搜索日期',page_metadata:'页面声
 const caption=value=>searchFields(value).map(({label,value})=>`${label}：${value}`).join(' · ');
 const runErrors=output=>rows(output?.runDirectory?.errors).map(error=>({title:error.runId?`运行读取失败 · ${error.runId}`:'运行目录读取失败',description:string(error.message),fields:[]}));
 function statisticsModel(model,output,status){
- const summary=`累计评测 · ${status}`;
+ const summary=`运行统计 · ${status}`;
  if(model.state==='error'||output?.kind!=='statistics')return {summary};
- const history=output.history,progress=history?.progress,runs=rows(output.currentRuns);
- const published=history?.status==='published';
+ const runs=rows(output.runs),incomplete=output.runDirectory?.complete===false;
  const rate=value=>typeof value==='number'?`${value.toFixed(2)}%`:'未知';
- const dates=Array.isArray(history?.requestDates)?[...history.requestDates].sort():[];
- const items=[published?{title:'历史累计',fields:searchFields({
-  '纳入题目':history.totalCaseCount,'已评题目':history.caseCount,
-  '完成全部对战':`${progress.completedCaseCount} 道 · ${rate(progress.caseCompletionRate)}`,
-  '完成对战':`${progress.completedBattleCount} / ${progress.expectedBattleCount} 场 · ${rate(progress.battleCompletionRate)}`,
-  '快照时间':history.snapshotAt,'数据日期':dates.length?`${dates[0]} 至 ${dates.at(-1)}`:undefined,
- })}:{title:'累计统计不可用',description:string(history?.error),fields:[]}];
- const incomplete=output.runDirectory?.complete===false;
- items.push({title:incomplete?'已读取的运行中批次':'运行中批次',fields:searchFields({'批次数':runs.length}),...(runs.length?{groups:[{label:'各批次进度',items:runs.map(run=>({
-  title:run.runId,fields:searchFields({'回答数':run.summary?.inputCount,'题目数':run.summary?.caseCount,'正式对战':run.summary?.formalComparisonsAccepted}),
- }))}]}:{})});
+ const items=runs.map(run=>{
+  const progress=run.summary??{},tasks=progress.tasks;
+  return {title:referenceText(run),fields:searchFields({
+   '状态':{running:'进行中',finished:'已结束',interrupted:'已中断'}[run.status]??run.status,
+   '回答数':progress.inputCount,'题目数':progress.caseCount,
+   '已归因回答':progress.evaluatedInputCount,
+   ...(Object.hasOwn(progress,'attributionCompletionRate')?{'归因完成率':rate(progress.attributionCompletionRate)}:{}),
+   '正式对战':progress.formalComparisonsAccepted,
+   ...(Object.hasOwn(progress,'battleCompletionRate')?{'对战完成率':rate(progress.battleCompletionRate)}:{}),
+   ...(tasks?{'任务完成':`${tasks.states?.succeeded??0} / ${tasks.total}`}:{}),
+  })};
+ });
  items.push(...runErrors(output));
- return {summary:published?`累计评测 · ${progress.completedBattleCount} 场对战 · ${status}`:`累计统计不可用 · ${incomplete?'已读取 ':''}${runs.length} 个运行中批次`,details:{items}};
+ return {summary:`运行统计 · 本页 ${runs.length} / ${output.total} 次运行${incomplete?' · 运行目录不完整':''}`,details:{items,empty:'没有可读取的运行'}};
 }
 function caseDetails(output){
  const scope=output.formal?.comparisonScope;

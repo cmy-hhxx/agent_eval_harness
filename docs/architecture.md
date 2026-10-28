@@ -8,10 +8,7 @@
 
 ```mermaid
 flowchart LR
-  CLI[CLI / 工作台] --> Host[通用 Host]
-  Automation[自动化] --> Host
-Workbench[工作台 supervisor / 网关] --> Automation
-Workbench --> DataService[Python 数据服务]
+  CLI[CLI] --> Host[通用 Host]
   Eris[Eris 只读分析] --> Data
   Definitions[Agent / Workflow] --> Host
   Validation[稳定性 Workflow] --> Host
@@ -24,7 +21,7 @@ Workbench --> DataService[Python 数据服务]
 
 依赖及公开入口见模块地图。Agent 互不导入；Workflow 连接业务阶段；Data 管文件、锁与日志；Runtime 管进程、传输和 SDK；Contracts 保持纯类型与规则。
 
-Comparison 与 Answer-review 分别拥有配置、任务规划和续跑；共用输入编目、来源读取与评审材料由 Workflow 的 Inputs、Review 模块提供。共享模块不导入具体工作流，独立评测不调用对战规划器。
+Comparison 与 Attribution 分别拥有配置、任务规划和续跑；共用输入编目、来源读取与评审材料由 Workflow 的 Inputs、Review 模块提供。共享模块不导入具体工作流，独立评测不调用对战规划器。
 
 ## 生命周期
 
@@ -74,10 +71,6 @@ Adapter 展开本地静态 Schema 引用，拒绝外部、循环和动态引用�
 
 显式提示词缓存仅在渠道声明 `supports_explicit_prompt_caching=true` 时启用，适用于支持的 GPT Responses 评测请求；其他请求保留 SDK 策略。它不复用判词或跨任务会话，实际收益以服务返回用量核对。实现与测试见 [sdk-utils.ts](../packages/runtime/src/sdk-utils.ts)。
 
-工作台网关监听内部 `5001`，为 `0.0.0.0` 上唯一对外服务；数据服务 `8081`、自动化 API `4174` 和运行实例 API `4173` 只监听回环地址。生产只提供 `/` 单页，页面片段和静态资源通过 `/workbench-assets/` 加载；网关按[路由白名单](../apps/host/src/workbench-routes.ts)转发 `/data/` 数据接口与 `/runtime/api/` 接口。
-
-工作台在网关层完成单管理员登录、会话 Cookie 与 relay Bearer token 校验；页面和 API 不自建账号体系。运行实例 API 的 `/runtime/api/dashboard` 复用 CLI 预检与独立运行子进程，控制转发到持锁 Host，页面不调度或写结果。只读监控投影不替代权威文件。
-
 ## 接口和底座路由
 
 | 接口 | 职责 |
@@ -94,7 +87,7 @@ Adapter 展开本地静态 Schema 引用，拒绝外部、循环和动态引用�
 
 前置任务材料直接展示原问、参考事实与回答，不重复展示 Criteria 生成的目标和要求摘要。完整 `task_analysis` 及规范原文仍保留在正式请求中，避免出现另一份被改强或改弱的交付要求。独立视觉采集占位块在材料投影中标为 `capture_gaps`；它描述采集状态，不推断用户界面的实际渲染，也不改写原始来源或证据坐标。
 
-稳定性实验复用 Agent 与 Backend，单独规划基准、原位、换位、改写和整链试次。实验 codec 只把来源坐标、依赖和收据引用保存到恢复状态；Data 仍负责文件与锁，统计使用确定性 TypeScript 函数。来源 run 只读，实验结果使用独立 JSONL，不经过生产胜负导出和上传。该边界借鉴[独立评估器](https://deepeval.com/docs/metrics-custom)和[可替换模型接口](https://github.com/langchain-ai/openevals/blob/main/README.md)，没有引入新的评测框架。
+稳定性实验复用 Agent 与 Backend，单独规划基准、原位、换位、改写和整链试次。实验 codec 只把来源坐标、依赖和收据引用保存到恢复状态；Data 仍负责文件与锁，统计使用确定性 TypeScript 函数。来源 run 只读，实验结果使用独立 JSONL，不进入生产胜负导出。该边界借鉴[独立评估器](https://deepeval.com/docs/metrics-custom)和[可替换模型接口](https://github.com/langchain-ai/openevals/blob/main/README.md)，没有引入新的评测框架。
 
 ## 新工具
 
@@ -112,6 +105,6 @@ Pi vendor 使用独立依赖树，只注册应用网关模型。构建记录保�
 
 ## 独立分析助手
 
-[Eris](../agent/README.md) 通过 Contracts 的只读数据源与 Session 接口访问能力，应用 Host 注入 Comparison / Answer-review 读取和账户认证，不创建评测。
+[Eris](../agent/README.md) 通过 Contracts 的只读数据源与 Session 接口访问能力，应用 Host 注入 Comparison 运行读取、公开资产读取和账户认证，不创建评测。独立 Attribution 和历史快照通过公开资产读取。
 
 Runtime 转换 Pi 与 Deepseek 会话事件，Data 维护权威追加记录及单个持锁执行者，其他服务器进程通过认证转发。原始材料按引用重读，不复制进会话。

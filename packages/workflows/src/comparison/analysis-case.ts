@@ -1,5 +1,5 @@
 import { analysisTraceMap } from "../review/analysis.js";
-import { locateAnalysisInput } from "./dashboard-view.js";
+import { locateAnalysisInput } from "./analysis-input.js";
 import { contentText, locateRecordStream } from "../inputs/records.js";
 
 /** Resolve the current source record once, including its current final-answer coordinate. */

@@ -5,7 +5,7 @@ import path from "node:path";
 import { object, type AgentProfile, type RunState, type ValidationIssue } from "@eval/contracts";
 import { createRunRepository } from "@eval/data";
 import { AgentRegistry, runEvaluation } from "@eval/host";
-import { createAutomationModels } from "../../apps/host/src/automation-models.js";
+import { createBalancedModels } from "../../apps/host/src/balanced-models.js";
 import { body, json, listen } from "@eval/runtime/http";
 import { fixtureConfig } from "../fixtures/comparison.js";
 import { services } from "../fixtures/services.js";
@@ -104,7 +104,7 @@ import { attributionWorkflow, attributionRepository, planAttribution } from "@ev
         models.channels.openai = { ...models.models.judge, provider: "openai", baseUrl: gateway.url + "/preferred",
           apiKeyEnv: "SDK_QUOTA_TEST_KEY" };
         const runId = "submission-pi";
-        const routing = createAutomationModels(models, ["openai", "evaluation-gateway"]);
+        const routing = createBalancedModels(models, ["openai", "evaluation-gateway"]);
         await runEvaluation({
           runId, output: config.output, config, plan: { tasks: [{ id: "structured-task", stage: "structured", inputIds: {}, dependencies: {}, data: {} }], inputs: {}, summary: {} },
           engine: "pi", evaluatorVersion: "fixture", modelForStage: () => routing.modelForStage("attribution"),

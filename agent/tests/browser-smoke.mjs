@@ -21,7 +21,7 @@ const server=await serveAssistant({port:0,userId:'local',webDirectory:process.cw
    await event({type:'message_start',message:{role:'assistant'}});
    await event({type:'message_end',message:{role:'assistant',provider:'test',model:'test',content:[{type:'toolCall',id:callId,name:'list_data',arguments:args}],stopReason:'toolUse'}});
    await event({type:'tool_execution_start',toolCallId:callId,toolName:'list_data',args});
-   await event({type:'message_end',message:{role:'toolResult',toolCallId:callId,content:[{type:'text',text:JSON.stringify({kind:'statistics',history:{status:'published',snapshotAt:'2026-10-12 12:16:54.950',requestDates:['2026-09-22','2026-10-11'],caseCount:12114,totalCaseCount:20554,progress:{completedBattleCount:22293,expectedBattleCount:35838,completedCaseCount:11753,battleCompletionRate:62.2,caseCompletionRate:57.18}},currentRuns:[],additive:false})}],isError:false}});
+   await event({type:'message_end',message:{role:'toolResult',toolCallId:callId,content:[{type:'text',text:JSON.stringify({kind:'statistics',runs:[{collectionId:'0_wencai/0_daily_eval',runId:'daily-2026-10-12',status:'running',summary:{inputCount:41108,caseCount:20554,evaluatedInputCount:24228,attributionCompletionRate:58.94,formalComparisonsAccepted:22293,battleCompletionRate:62.2,tasks:{total:35838,states:{succeeded:22293}}}}],total:1,offset:0,limit:20,hasMore:false,nextOffset:null,runDirectory:{complete:true,errors:[]},additive:false})}],isError:false}});
    await event({type:'turn_end'});await event({type:'turn_start'});
   }
   await event({type:'message_start',message:{role:'assistant'}});
@@ -31,7 +31,7 @@ const server=await serveAssistant({port:0,userId:'local',webDirectory:process.cw
   await event({type:'turn_end'});await event({type:'agent_end'});
  },async steer(){},async abort(){stopped=true;},async dispose(){}};
 }}))});
-let browser,referenceServer;
+let browser;
 try{
  browser=await chromium.launch({executablePath:process.env.CHROME_PATH||'/Applications/Google Chrome.app/Contents/MacOS/Google Chrome',headless:true});
  const page=await browser.newPage({viewport:{width:1440,height:960},colorScheme:'dark',locale:'zh-CN'}),errors=[],assetRequests=[];
@@ -81,28 +81,11 @@ try{
  assert.equal(await strong.innerText(),quoted,'history preserves quoted Chinese strong emphasis');
  assert.equal(await page.getByRole('table').getByRole('cell',{name:'62.20%',exact:true}).count(),1,'history preserves the statistics table');
  await page.screenshot({path:shots+'/assistant-light.png',fullPage:true,animations:'disabled',caret:'hide'});
- // Compare the unmodified upstream baseline with identical Session events.
- // Composer copy and unavailable controls are explicit product differences.
- if(process.env.AGENT_VISUAL_REFERENCE==='1'){
-  referenceServer=await serveAssistant({port:0,userId:'local',webDirectory:process.cwd()+'/dist/agent/reference-web',endpoints:url=>assistantEndpoints(new AssistantSessions({...sessions.options,url}))});
-  const reference=await browser.newPage({viewport:{width:1440,height:960},colorScheme:'light',locale:'zh-CN'});
-  const now=Date.now()+120000;await page.clock.setFixedTime(now);await reference.clock.setFixedTime(now);
-  await page.emulateMedia({colorScheme:'light'});await reference.goto(referenceServer.url);
-  await reference.getByRole('treeitem').filter({hasText:'请分析本地评测结果'}).last().click();
-  await reference.getByRole('heading',{name:'分析结果',exact:true}).waitFor();
-  await page.evaluate(()=>document.fonts.ready);await reference.evaluate(()=>document.fonts.ready);
-  await page.mouse.move(1400,950);await reference.mouse.move(1400,950);await delay(500);
-  const options={clip:{x:0,y:0,width:1440,height:720},animations:'disabled',caret:'hide'};
-  const actual=await page.screenshot({...options,path:shots+'/product.png'});
-  const original=await reference.screenshot({...options,path:shots+'/upstream.png'});
-  assert(actual.equals(original),'sidebar, header, conversation, Markdown and code-block pixels must match the upstream light UI');
-  await reference.close();
- }
  await page.locator('[data-turn-process]').click();
  await page.locator('[data-process-activity][aria-expanded=false]').first().click();
  const statistics=page.locator('[data-tool=list_data]');
  await statistics.getByRole('button').first().click();
- await statistics.getByText('历史累计',{exact:true}).waitFor();
+ await statistics.getByText('0_wencai/0_daily_eval · daily-2026-10-12',{exact:true}).waitFor();
  for(const width of [1440,375]){
   await page.setViewportSize({width,height:960});
   await statistics.hover();
@@ -116,11 +99,11 @@ try{
   assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth>innerWidth),false,'statistics do not overflow the page');
   await statistics.screenshot({path:shots+`/statistics-${width}.png`,animations:'disabled',caret:'hide'});
  }
- assert.equal(executions,before,'opening historical statistics never invokes the model');
+ assert.equal(executions,before,'opening saved run statistics never invokes the model');
  await page.setViewportSize({width:1440,height:960});
  await page.locator('[data-turn-process]').click();
  await input.fill('停止测试');await input.press('Enter');await page.getByRole('button',{name:'停止生成',exact:true}).waitFor({timeout:5000}).catch(async error=>{console.log(await page.locator('body').innerText(),await sessions.list('local'),executions,errors);throw error;});await delay(150);await page.getByRole('button',{name:'停止生成',exact:true}).click();await page.getByRole('button',{name:'停止生成',exact:true}).waitFor({state:'hidden'});
  const bob=await browser.newPage();await bob.goto(server.url+'/u/bob/');await bob.locator('[contenteditable=true]').waitFor();assert(! (await bob.locator('body').innerText()).includes('请分析本地评测结果'));await bob.close();
- assert.deepEqual(errors,[]);await writeFile(shots+'/result.json',JSON.stringify({light:true,erisBrand:true,noDeepseekLogo:true,stream:true,markdown:true,refresh:true,stop:true,userIsolation:true,visualReference:process.env.AGENT_VISUAL_REFERENCE==='1'},null,2));
+ assert.deepEqual(errors,[]);await writeFile(shots+'/result.json',JSON.stringify({light:true,erisBrand:true,noDeepseekLogo:true,stream:true,markdown:true,refresh:true,stop:true,userIsolation:true,},null,2));
  console.log('Browser checks passed; artifacts: '+shots);
-}finally{releaseQuote();await browser?.close();await referenceServer?.close();await server.close();await rm(directory,{recursive:true,force:true});}
+}finally{releaseQuote();await browser?.close();await server.close();await rm(directory,{recursive:true,force:true});}

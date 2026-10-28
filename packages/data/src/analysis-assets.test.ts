@@ -17,7 +17,11 @@ test("asset discovery includes archived evaluations and standalone trees without
   await write("1_aime/eval_output/0_daily_eval/run/state.json", '{"private":"配置"}');
   await write("1_aime/eval_output/0_daily_eval/run/_internal/report.md", "排查材料");
   await symlink(path.join(root, "1_aime/eval_output/0_daily_eval/run/state.json"), path.join(root, "1_aime/eval_output/0_daily_eval/run/report.md"));
-  const assets = new EvaluationAssets(root), directory = await assets.list({});
+  const assets = new EvaluationAssets([
+    { id: "0_wencai/1_task_eval", path: path.join(root, "0_wencai/eval_output/1_task_eval"), test: false },
+    { id: "1_aime/0_daily_eval", path: path.join(root, "1_aime/eval_output/0_daily_eval"), test: false },
+    { id: "1_aime/test_eval", path: path.join(root, "1_aime/eval_output/test_eval"), test: true },
+  ]), directory = await assets.list({});
   assert.equal(directory.complete, true);
   assert.equal(directory.total, 3);
   assert.equal(directory.summary.archivedCount, 2);
@@ -44,7 +48,9 @@ test("asset paths reject linked collection directories outside the configured ro
   await mkdir(outside, { recursive: true }); await mkdir(output, { recursive: true });
   await writeFile(path.join(outside, "report.md"), "outside");
   await symlink(outside, path.join(output, "0_daily_eval"));
-  const assets = new EvaluationAssets(path.join(root, "data")), list = await assets.list({});
+  const assets = new EvaluationAssets([
+    { id: "0_wencai/0_daily_eval", path: path.join(output, "0_daily_eval"), test: false },
+  ]), list = await assets.list({});
   assert.equal(list.complete, false); assert.equal(list.total, 0);
   assert.match(list.errors[0].message, /软链接/);
   assert.equal((await assets.list({ collectionId: "1_aime/0_daily_eval" })).complete, true);
@@ -54,11 +60,13 @@ test("asset paths reject linked collection directories outside the configured ro
 test("compressed formal assets retain Unicode coordinates and never use compressed bytes as text length", async t => {
   const root = await mkdtemp(path.join(tmpdir(), "analysis-assets-gzip-"));
   t.after(() => rm(root, { recursive: true, force: true }));
-  const folder = path.join(root, "1_aime/eval_output/0_daily_eval/run/results");
+  const collection = { id: "custom/research", path: path.join(root, "arbitrary/renamed-results"), test: false };
+  const folder = path.join(collection.path, "run/results");
   await mkdir(folder, { recursive: true });
   const text = JSON.stringify({ text: "甲😀乙" }) + "\n";
   await writeFile(path.join(folder, "attribution.jsonl.gz"), gzipSync(text));
-  const assets = new EvaluationAssets(root), reference = (await assets.list({})).items[0].reference;
+  const assets = new EvaluationAssets([collection]), reference = (await assets.list({})).items[0].reference;
+  assert.equal(reference.collectionId, collection.id);
   const offset = [...text].indexOf("😀"), page = await assets.read(reference, { offset, limit: 1 });
   assert.equal(page.text, "😀");
   assert.equal(page.unit, "unicode_code_points");

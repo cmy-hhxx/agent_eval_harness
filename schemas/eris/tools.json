@@ -51,7 +51,7 @@
           "comparisons",
           "statistics"
         ],
-        "description": "statistics 不传 runId：一次读取最近完整发布的历史累计和运行中批次，各自单列。inputs 列输入；comparisons 列正式对战，二者省略 runId 时使用默认运行。"
+        "description": "statistics 不传 runId：分页读取各次运行的正式统计，包含已完成和运行中的任务，各次运行不能直接相加。inputs 列输入；comparisons 列正式对战，二者省略 runId 时使用默认运行。"
       },
       "sample": {
         "type": "boolean",
@@ -89,15 +89,6 @@
       "includeTests": {
         "type": "boolean",
         "description": "显式为 true 时纳入 test_eval；默认仅正式运行。"
-      },
-      "breakdown": {
-        "type": "string",
-        "enum": [
-          "date",
-          "task",
-          "difficulty"
-        ],
-        "description": "statistics 按日期、任务类型或难度读取已发布快照的预计算统计，使用 offset/limit 分页，不加载案例正文。"
       }
     },
     "required": [],
@@ -156,30 +147,7 @@
                 ]
               }
             ]
-          },
-          "allOf": [
-            {
-              "if": {
-                "anyOf": [
-                  {
-                    "required": [
-                      "offset"
-                    ]
-                  },
-                  {
-                    "required": [
-                      "limit"
-                    ]
-                  }
-                ]
-              },
-              "then": {
-                "required": [
-                  "breakdown"
-                ]
-              }
-            }
-          ]
+          }
         }
       },
       {
@@ -252,23 +220,6 @@
           "required": [
             "collectionId"
           ]
-        }
-      },
-      {
-        "if": {
-          "required": [
-            "breakdown"
-          ]
-        },
-        "then": {
-          "required": [
-            "view"
-          ],
-          "properties": {
-            "view": {
-              "const": "statistics"
-            }
-          }
         }
       }
     ]

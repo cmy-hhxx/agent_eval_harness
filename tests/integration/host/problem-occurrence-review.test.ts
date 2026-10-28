@@ -15,30 +15,23 @@ import {
 } from "@eval/data";
 import { applyClustering, type ClusteringResult, type ProblemOccurrenceReviewDecision } from "@eval/agents/clustering";
 import { sessionProblems } from "@eval/agents/attribution";
-import { buildPlan, createResultWriter, listConfiguredProblemLibrary, readConfiguredProblemClass, readRunState, reviewProblemOccurrences, syncProblemLibrary, taskObservations, writeRunState, type TaskData } from "@eval/workflows/comparison";
+import { buildPlan, createResultWriter, readRunState, reviewProblemOccurrences, syncProblemLibrary, taskObservations, writeRunState, type TaskData } from "@eval/workflows/comparison";
 import { type Candidate } from "@eval/workflows/inputs";
 import { ROOT } from "../../fixtures/services.js";
 import {
   attributionResult, emptyAudit, fakeEvaluatorVersion, fakeIdentity, fixtureConfig, raw,
 } from "../../fixtures/comparison.js";
 
-async function fixture(peer = false) {
+async function fixture() {
   const source = (caseId: string) => ({
     ...raw(caseId, "4", "2+2=5"),
     messages: [...raw(caseId, "4", "2+2=5").messages, { type: "message", role: "tool", name: "Search", content: "来源全文：数值为4。" }],
   });
   const peerRows = [raw("q1"), raw("q2")];
-  if (peer) for (const value of peerRows) value.messages[0]!.timestamp = "2026-09-28T07:00:00+08:00";
   const { directory, config } = await fixtureConfig([[source("q1"), source("q2")], [], peerRows, []], false, true);
   const plan = await buildPlan(config), runId = "original", run = path.join(config.output.path, runId);
-  const ownerTasks = plan.tasks.filter(task => task.stage === "attribution" && (task.data as TaskData).candidates.A.version === "a_fast");
+  const ownerTasks = plan.tasks.filter(task => task.stage === "attribution-session" && (task.data as TaskData).candidate!.version === "a_fast");
   const cluster = plan.tasks.find(task => task.stage === "clustering" && (task.data as TaskData).scope!.version === "a_fast")!;
-  if (peer) for (const task of ownerTasks) {
-    const owner = (task.data as TaskData).candidates.A;
-    const other = (plan.catalog as Candidate[]).find(candidate => candidate.version === "b_fast" && candidate.case_id === owner.case_id)!;
-    task.inputIds.peer_B = other.input_id;
-    (task.data as TaskData).referenceCandidates = { peer_B: other };
-  }
   const receipt = (taskId: string, evaluation: unknown): SubmissionReceipt => ({
     taskId, attemptId: randomUUID(), submissionId: randomUUID(), evaluation,
     audit: emptyAudit(), usage: emptyUsage(), evaluatorVersion: fakeEvaluatorVersion,
@@ -46,10 +39,9 @@ async function fixture(peer = false) {
   });
   const receipts: Record<string, SubmissionReceipt> = {};
   for (const task of ownerTasks) {
-    const evaluation = attributionResult(false, "2+2=5");
-
+    const owner = (task.data as TaskData).candidate!;
+    const evaluation = attributionResult(false, "2+2=5", true, owner.input_id);
     receipts[task.id] = receipt(task.id, evaluation);
-
   }
   const observations = taskObservations(cluster, id => receipts[id]);
   const result: ClusteringResult = {
@@ -147,45 +139,6 @@ test("proof UUIDs route only to the original attribution source scope; image and
   } finally { await rm(f.directory, { recursive: true, force: true }); }
 });
 
-test("owner proof may include a registered peer without borrowing its clock", async () => {
-  const f = await fixture(true);
-  try {
-    const occurrence = f.library.occurrences[0]!;
-    const peer = (f.state.manifest.inputCatalog as Candidate[]).find(candidate => candidate.version === "b_fast" && candidate.case_id === occurrence.case_id)!;
-    const decision = structuredClone(f.decision);
-    decision.items[0]!.evidence.push({ evidence_id: evidenceId(peer.input_id, 1, "text", "/content", 0, "2+2=4".length) });
-    const before = await snapshots(f.protectedFiles);
-    assert.equal((await reviewProblemOccurrences(f.config, decision, { apply: true, evaluatorVersion: "review" })).after, 1);
-    assert.deepEqual(await snapshots(f.protectedFiles), before);
-  } finally { await rm(f.directory, { recursive: true, force: true }); }
-});
-
-test("effective directory, topics, pagination and recall all use the same filtered finding set", async () => {
-  const f = await fixture();
-  try {
-    for (let index = 0; index < 50; index++) f.library.occurrences.push({
-      ...f.library.occurrences[0]!, id: randomUUID(), input_id: randomUUID(), finding_id: "f" + index,
-      at: "2026-01-01T00:00:" + String(index).padStart(2, "0") + "Z",
-    });
-    await writeJson(f.file, f.library);
-    await reviewProblemOccurrences(f.config, f.decision, { apply: true, evaluatorVersion: "review" });
-    const model = (await listConfiguredProblemLibrary(f.config)).find(item => item.model === "a_fast")!;
-    assert.equal(model.totals.occurrences, 51);
-    assert(model.categories.every(item => item.occurrences === 51));
-    assert.equal(model.components[0]!.classes[0]!.occurrences, 51);
-    const classId = f.library.occurrences[0]!.class_id;
-    const first = (await readConfiguredProblemClass(f.config, "a_fast", classId, 1))!;
-    const second = (await readConfiguredProblemClass(f.config, "a_fast", classId, 2))!;
-    assert.equal(first.total, 51);
-    assert.equal(first.occurrences.length, 50);
-    assert.equal(second.total, 51);
-    assert.equal(second.occurrences.length, 1);
-    assert(![...first.occurrences, ...second.occurrences].some(item => item.id === f.decision.items[0]!.occurrence_id));
-    assert(first.occurrences.some(item => item.recall.available), "another intact original sample remains callable");
-    assert.equal((await readJson<ProblemLibrary>(f.file)).occurrences.length, 52);
-  } finally { await rm(f.directory, { recursive: true, force: true }); }
-});
-
 test("source edits while waiting for the model lock reject the review without a partial event", async (t) => {
   const f = await fixture();
   let release!: () => void, read!: () => void, entered!: () => void;
@@ -194,8 +147,11 @@ test("source edits while waiting for the model lock reject the review without a 
   const readSource = new Promise<void>(resolve => { read = resolve; });
   const held = withProblemLibraryLock(f.config.problemLibrary, "a_fast", async () => { entered(); await released; });
   await ready;
-  const record = fileSourceReader.record;
-  t.mock.method(fileSourceReader, "record", (...args: Parameters<typeof record>) => { const value = record(...args); read(); return value; });
+  const lines = fileSourceReader.lines;
+  t.mock.method(fileSourceReader, "lines", async function* (...args: Parameters<typeof lines>) {
+    try { yield* lines(...args); }
+    finally { if (args[0] === f.library.occurrences[0]!.source.file) read(); }
+  });
   try {
     const before = await readFile(f.file, "utf8");
     const operation = reviewProblemOccurrences(f.config, f.decision, { apply: true, evaluatorVersion: "review" });
@@ -215,8 +171,11 @@ test("a same-component merge during the review is retained and cannot make a wit
   const readSource = new Promise<void>(resolve => { read = resolve; });
   const held = withProblemLibraryLock(f.config.problemLibrary, "a_fast", async () => { entered(); await released; });
   await ready;
-  const record = fileSourceReader.record;
-  t.mock.method(fileSourceReader, "record", (...args: Parameters<typeof record>) => { const value = record(...args); read(); return value; });
+  const lines = fileSourceReader.lines;
+  t.mock.method(fileSourceReader, "lines", async function* (...args: Parameters<typeof lines>) {
+    try { yield* lines(...args); }
+    finally { if (args[0] === f.library.occurrences[0]!.source.file) read(); }
+  });
   try {
     const operation = reviewProblemOccurrences(f.config, f.decision, { apply: true, evaluatorVersion: "review" });
     await readSource;
@@ -235,7 +194,6 @@ test("a same-component merge during the review is retained and cannot make a wit
     assert.equal(current.classes[original]!.merged_into, target);
     assert.equal(current.occurrences[0]!.previous_class_id, original);
     assert.equal(current.occurrences[0]!.class_id, target);
-    assert.equal((await readConfiguredProblemClass(f.config, "a_fast", target, 1))!.total, 1);
   } finally { release(); await held; await rm(f.directory, { recursive: true, force: true }); }
 });
 
@@ -247,8 +205,11 @@ test("a responsibility component change while awaiting the lock cannot silently 
   const readSource = new Promise<void>(resolve => { read = resolve; });
   const held = withProblemLibraryLock(f.config.problemLibrary, "a_fast", async () => { entered(); await released; });
   await ready;
-  const record = fileSourceReader.record;
-  t.mock.method(fileSourceReader, "record", (...args: Parameters<typeof record>) => { const value = record(...args); read(); return value; });
+  const lines = fileSourceReader.lines;
+  t.mock.method(fileSourceReader, "lines", async function* (...args: Parameters<typeof lines>) {
+    try { yield* lines(...args); }
+    finally { if (args[0] === f.library.occurrences[0]!.source.file) read(); }
+  });
   try {
     const operation = reviewProblemOccurrences(f.config, f.decision, { apply: true, evaluatorVersion: "review" });
     const rejection = assert.rejects(operation, /原来源或责任组件变化/);
@@ -270,7 +231,7 @@ test("a missing original finding or a forged clustering submission has no mainte
     const attrId = f.cluster.dependencies[f.library.occurrences[0]!.input_id]!;
     const saved = f.state.receipts[attrId]!.exported!;
     const row = structuredClone(saved.row);
-    (row.evaluation as { Problem: { problem_id: string }[] }).Problem[0].problem_id = "different";
+    sessionProblems(row as unknown as ReturnType<typeof attributionResult>)[0]!.problem_id = "different";
     const rows = Object.values(f.state.receipts).filter(receipt => receipt.exported?.file === "attribution.jsonl")
       .map(receipt => receipt.taskId === attrId ? row : receipt.exported!.row);
     await writeJsonl(path.join(f.run, "results", "attribution.jsonl"), rows);
@@ -286,8 +247,8 @@ test("a missing original finding or a forged clustering submission has no mainte
   } finally { await rm(f.directory, { recursive: true, force: true }); }
 });
 
-test("review rejects peer-only proof even inside the original attribution scope", async () => {
-  const f = await fixture(true);
+test("review rejects peer proof from another answer", async () => {
+  const f = await fixture();
   try {
     const occurrence = f.library.occurrences[0]!;
     const peer = (f.state.manifest.inputCatalog as Candidate[]).find(candidate => candidate.version === "b_fast" && candidate.case_id === occurrence.case_id)!;
@@ -306,7 +267,7 @@ test("review rejects a same-label finding that has no original accepted observat
     const attrId = f.cluster.dependencies[occurrence.input_id]!;
     const original = f.state.receipts[attrId]!.exported!.row;
     const row = structuredClone(original);
-    const evaluation = (row.session_meta ? row : row.evaluation) as ReturnType<typeof attributionResult>;
+    const evaluation = row as unknown as ReturnType<typeof attributionResult>;
     const added = structuredClone(sessionProblems(evaluation)[0]!);
     added.problem_id = "never-clustered";
     added.reason = "\uffffAnother independent problem definition absent from the original clustering request.";
@@ -366,8 +327,11 @@ test("source catalog changes while waiting for the model lock cannot commit a st
   const readSource = new Promise<void>(resolve => { read = resolve; });
   const held = withProblemLibraryLock(f.config.problemLibrary, "a_fast", async () => { entered(); await released; });
   await ready;
-  const record = fileSourceReader.record;
-  t.mock.method(fileSourceReader, "record", (...args: Parameters<typeof record>) => { const value = record(...args); read(); return value; });
+  const lines = fileSourceReader.lines;
+  t.mock.method(fileSourceReader, "lines", async function* (...args: Parameters<typeof lines>) {
+    try { yield* lines(...args); }
+    finally { if (args[0] === f.library.occurrences[0]!.source.file) read(); }
+  });
   try {
     const before = await readFile(f.file, "utf8");
     const operation = reviewProblemOccurrences(f.config, f.decision, { apply: true, evaluatorVersion: "review" });
@@ -389,8 +353,11 @@ test("an unrelated same-component class move while awaiting the lock is not a me
   const readSource = new Promise<void>(resolve => { read = resolve; });
   const held = withProblemLibraryLock(f.config.problemLibrary, "a_fast", async () => { entered(); await released; });
   await ready;
-  const record = fileSourceReader.record;
-  t.mock.method(fileSourceReader, "record", (...args: Parameters<typeof record>) => { const value = record(...args); read(); return value; });
+  const lines = fileSourceReader.lines;
+  t.mock.method(fileSourceReader, "lines", async function* (...args: Parameters<typeof lines>) {
+    try { yield* lines(...args); }
+    finally { if (args[0] === f.library.occurrences[0]!.source.file) read(); }
+  });
   try {
     const operation = reviewProblemOccurrences(f.config, f.decision, { apply: true, evaluatorVersion: "review" });
     const rejection = assert.rejects(operation, /原归类.*变化/);

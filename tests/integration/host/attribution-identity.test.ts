@@ -12,10 +12,9 @@ import { draftFor, fakeEvaluatorVersion, fakeIdentity, fixtureConfig, inspectFor
 
 async function verifyIdentity(t: test.TestContext, sources: RawInput[][], distinctSummaries = false) {
   const records = sources.flat(), { directory, config, modelForStage } = await fixtureConfig(sources);
-  config.inputs.workbench = { task: { id: "identity", name: "identity", source: "wencai", category: "task" },
-    batch_ids: ["pkg"], records: sources.flatMap((rows, source) => rows.map((record, index) => ({ model: config.inputs.versions[source]!.id,
+  config.inputs.records = sources.flatMap((rows, source) => rows.map((record, index) => ({ model: config.inputs.versions[source]!.id,
       batch_id: String(record.batch_id), case_id: String(record.case_id), input_file: config.inputs.versions[source]!.sources[0]!.path,
-      input_index: index, package_id: "pkg", package_name: "input.7z", original_file: "input.7z/data.jsonl", original_line: index + 1 }))) };
+      input_index: index })));
   t.after(() => rm(directory, { recursive: true, force: true }));
   const executions = new Map<string, number>();
   const backend: AgentBackend = { identity: fakeIdentity, async createSession(options) {

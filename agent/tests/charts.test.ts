@@ -17,7 +17,7 @@ const base = { title: "FAST 同档对战", scope: "已完成的 2 场 FAST 对�
 
 test("statistics queries do not insert a fixed table into the response", () => {
   const root = { kind: "tool-result", callId: "statistics", call: { name: "list_data" }, isError: false,
-    content: [{ type: "text", text: JSON.stringify({ kind: "statistics", history: { status: "published", caseCount: 10 }, currentRuns: [] }) }] };
+    content: [{ type: "text", text: JSON.stringify({ kind: "statistics", runs: [{ runId: "run", status: "finished", summary: { caseCount: 10 } }], total: 1, additive: false }) }] };
   assert.deepEqual(chartsFromToolData([{ root }]), []);
 });
 function render(chart: Record<string, unknown>) {

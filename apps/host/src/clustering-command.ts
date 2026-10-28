@@ -18,7 +18,7 @@ export async function runClusteringCommand(host: HostConfig, options: {
   if (host.workflow !== "comparison") throw new Error("聚类作业需要对战工作流配置");
   if (options.apply && !options.runId) throw new Error("cluster --apply 需要 --run-id 保存独立进度");
   if (options.runId) safeId(options.runId);
-  const output = { kind: "directory" as const,
+  const output = { ...host.evaluation.output,
     path: options.output ? path.resolve(options.output) : path.resolve(host.evaluation.output.path, "clustering") };
   const layout = options.runId ? runLayout(output, options.runId) : undefined;
   const saved = layout && await exists(layout.stateFile) ? await clusteringJobRepository.readRun(layout.directory) : undefined;

@@ -62,7 +62,6 @@ Attribution 每条输入记录导出一行，包含 `session_meta`、`turns[]`�
 
 标准读取 `meta.ground_truth / meta.std_answer`；同题有效候选的非空标准须一致，可共享其中一方提供的标准。`ok=false`、无法解析或没有完整最终回答的记录不参评。重复身份、题目冲突或标准冲突只使受影响对局失效，不任取一份。
 
-工作台清洗入口会补齐 `meta.info` 中的业务标签、按 RUED 计算完整精度 `meta.difficulty_score` 并补缺失的 `meta.difficulty`，同时规整毫秒耗时与 `usage`。既有难度冲突、非法可选指标写入清洗报告，不因此排除有效回答；`ask_time` 不作为请求时间。字段优先级与未知值规则见[标签与效率清洗](../data_service/docs/metadata.md)。
 
 适配器 `a` 读取 OpenAI 风格消息及 GPT 采集的 `span`（`reasoning` 元数据，以及带 `output` 的 `thinking` 或 `tool-*` 记录）；工具 span 的输出参与证据导航，`reasoning` 元数据和思考 span 不作为工具返回，不改写原消息或证据坐标。`b` 读取显式轮次，两者与模型厂商无关。统一入口接受 `{meta,traces:[{meta,messages}]}` 并规范化为 `turns[]`；每轮都必须有完整最终回答，任意一轮缺失时整条 session 过滤。不重排消息、不拼造最终回答；事件元信息按各自 turn 保留。
 
@@ -96,7 +95,7 @@ Attribution 正式结果顶层只有 meta、summary、Problem、has_standard_ans
 
 `is_correct` 只表示与给定标准答案的一致性，不代表整体质量。1 表示一致，0 表示不一致，null 表示没有标准或给定标准无法支持判断。`correct_reason` 说明对象、依据和具体原因；没有标准时不编造正确性。
 
-预测重评复用这套核对，正式 Comparison 增加成对出现的 `evaluation_purpose: "prediction"` 与 `prediction` 元数据，记录原任务、run、比较 ID、题目 ID、提问时刻和适用目标窗口。完整事后标答和来源保存在 `ground_truth`，只核验适用的明确预测结论，不以单次事件证明概率准确；多目标逐项说明，全部命中才判整体正确。判据仍来自原题，原回答和证据坐标不改写。自动入队、原位上传与统计替换见[预测类自动评测](automations.md#预测类自动评测)。
+预测重评复用这套核对，正式 Comparison 增加成对出现的 `evaluation_purpose: "prediction"` 与 `prediction` 元数据，记录原任务、run、比较 ID、题目 ID、提问时刻和适用目标窗口。完整事后标答和来源保存在 `ground_truth`，只核验适用的明确预测结论，不以单次事件证明概率准确；多目标逐项说明，全部命中才判整体正确。判据仍来自原题，原回答和证据坐标不改写。
 
 组件目录统一读取 `traceComponentIdentities`：明确命名的 planner/tool 保留名称，执行 locator 归一为可证实的通用语义角色，相同内容不证明匿名模型调用生成了终稿；每个 trace 另保证独立的“终稿生成轮”任务。每个组件独立审查工具调用和相邻小现场；工具报错、零行、空返回、截断、缺返回和调用无结果都按技术问题审查。超大返回不能整体塞入上下文，后续最多三次续读，先做字面 grep，再读取精确字段和短原文。
 
@@ -114,7 +113,7 @@ Comparison 按 comparison_slots 显式选择 slot_index 与 kind，提交 import
 
 普通 Comparison 对尚未统一、且可能改变核心可用性、正式胜负或使主胜因失效的共同口径冲突，提交可选 `scope_conflicts: [{slot_index, reason}]`。reason 说明双方口径及受影响的结论。索引沿用已有零起始 comparison_slots，只允许共同 criterion 槽；程序派生双方现有来源复核请求，结果为 needs_review、空排名，不改源 Attribution。非空冲突时不得同时给出正式或相对偏好；重复、越界、资源与私规槽均拒绝，importance=low 不能绕过已提报的关键冲突。普通质量差距、等价表达或不影响独立充分胜因的局部瑕疵不进入该入口；不可靠的次要理由不作为优势，保留限制后可继续裁决。识别及影响判断由同一次 Comparison 调用负责，程序只约束来源与状态转换。执行边界见[归因执行边界](quality.md#归因执行边界)。
 
-横向优势须来自共同适用、双方 established 的同方面事实；普通项不能选择已确认 status 更差的一方，资源项方向由双方同种有效原始指标的支配关系重算并校验。没有同名 finding 不等于另一方没做到；私规不参与共同优势。核心未知、基准不一致或已知材料冲突保留 needs_review，不进入正式胜负、都好、都差或上传。双方核心均已确认失败时，额外未关联问题不阻塞都差。
+横向优势须来自共同适用、双方 established 的同方面事实；普通项不能选择已确认 status 更差的一方，资源项方向由双方同种有效原始指标的支配关系重算并校验。没有同名 finding 不等于另一方没做到；私规不参与共同优势。核心未知、基准不一致或已知材料冲突保留 needs_review，不进入正式胜负、都好、都差。双方核心均已确认失败时，额外未关联问题不阻塞都差。
 
 ### 提交方式与反馈
 
@@ -205,7 +204,7 @@ Rewrite 只接收选定文本槽位，不接触原题、原始消息或证据。
 
 程序展开完整 evidence_id、message_index 与 quote。文本/JSON 坐标包含输入 UUID、消息、路径与范围；图片须有真实查看记录。坐标可解析而非内容哈希；规范上下文 context_evidence 与直接行为 evidence 分开保存。
 
-本方最终交付、数值 actual、指令和责任证据不能被 peer 代替。登记的同题 peer 原始事实可辅助核查，但对方最终回答不是独立事实依据。已接受 canonical 收据按原坐标恢复，不重新解释模型旧稿。
+归因与问题样本复核只读取本回答的原始记录，不引入其他回答作为证据。已接受 canonical 收据按原坐标恢复，不重新解释模型旧稿。
 
 ### 材料投影与来源目录
 

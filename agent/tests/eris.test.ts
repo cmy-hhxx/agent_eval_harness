@@ -8,22 +8,19 @@ test("statistics preserve the full data and leave conclusions to the continuing 
   const metric = { p50: null };
   const row = { id: "a_expert", name: "A Expert", evaluated: 10, wins: 6, losses: 3, both_good: 1, both_bad: 0, winRate: 60,
     accuracy: { correct: 1, count: 2, rate: 50 }, first: { p50: 710 }, total: metric };
-  const history = { status: "published", snapshotAt: "2026-10-12 12:16:54.950", requestDates: ["2026-10-11"],
-    caseCount: 10, totalCaseCount: 20, stats: [row, { ...row, id: "b_expert", name: "B Expert", wins: 3, losses: 6, winRate: 30 }],
-    progress: { completedCaseCount: 8, completedBattleCount: 10, expectedBattleCount: 20, battleCompletionRate: 50, caseCompletionRate: 40 } };
-  let published = true;
+  const runs = [{ runId: "run", status: "finished", summary: { caseCount: 10, inputCount: 20,
+    formalComparisonStats: { tiers: [{ models: [row, { ...row, id: "b_expert", name: "B Expert", wins: 3, losses: 6, winRate: 30 }] }] },
+    battleCompletionRate: 50 } }];
   const queries: unknown[] = [];
   const tool = createEris({
-    data: { list: async query => { queries.push(query); return { kind: "statistics", history: published ? history : { status: "unavailable", error: "未发布" }, currentRuns: [], additive: false }; }, read: unexpected, search: unexpected, image: unexpected }, search: { search: unexpected }, web: { read: unexpected } }).tools.find(tool => tool.name === "list_data")!;
+    data: { list: async query => { queries.push(query); return { kind: "statistics", runs, additive: false }; }, read: unexpected, search: unexpected, image: unexpected }, search: { search: unexpected }, web: { read: unexpected } }).tools.find(tool => tool.name === "list_data")!;
   const context = { scope: { userId: "test", sessionId: "test" }, callId: "statistics", signal: new AbortController().signal, progress() {}, complete: unexpected };
   const result = await tool.execute({ view: "statistics" }, context);
   assert.equal(result.terminate, undefined);
   const receipt = JSON.parse(result.content[0].text!);
-  assert.deepEqual(receipt, { kind: "statistics", history, currentRuns: [], additive: false },
-    "the model receives full statistics without a predetermined conclusion or table");
+  assert.deepEqual(receipt, { kind: "statistics", runs, additive: false },
+    "the model receives formal run statistics without a predetermined conclusion or table");
   assert.deepEqual(queries, [{ view: "statistics" }]);
-  published = false;
-  assert.equal((await tool.execute({ view: "statistics" }, context)).terminate, undefined, "missing history must leave room to explain the gap");
 });
 
 test("batch evidence uses one source read and preserves partial errors, pages and replay coordinates", async () => {
@@ -206,8 +203,8 @@ test("raw arguments fail with field paths and allowed values before SDK coercion
   const unexpected = async (): Promise<never> => { throw new Error("Unexpected dependency call"); };
   const eris = createEris({ data: { list: unexpected, read: unexpected, search: unexpected, image: unexpected }, search: { search: unexpected }, web: { read: unexpected } });
   const list = eris.tools.find(tool => tool.name === "list_data")!;
-  list.validate!({ view: "statistics", breakdown: "date", offset: 20, limit: 20 });
-  for (const invalid of [{ view: "statistics", offset: 1 }, { view: "inputs", breakdown: "date" },
+  list.validate!({ view: "statistics", offset: 20, limit: 20 });
+  for (const invalid of [{ view: "statistics", runId: "run", collectionId: "source" }, { view: "inputs", breakdown: "date" },
     { breakdown: "date" }, { view: "statistics", breakdown: "model" }]) assert.throws(() => list.validate!(invalid));
   for (const runId of [".", "..", "../run", "a..b", "a..", "a.b..c", "/tmp/run", "a/b", "a\\b", "_run", "-run", "a b", "运行"])
     assert.throws(() => list.validate!({ collectionId: "0_wencai/0_daily_eval", runId }), /\/runId.*schema_pattern/);

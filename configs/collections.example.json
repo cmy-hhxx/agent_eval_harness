@@ -1,0 +1,41 @@
+[
+  {
+    "id": "0_wencai/0_daily_eval",
+    "path": "/mnt/fin_bench/eval_data/0_wencai/3_eval_output/0_daily_eval"
+  },
+  {
+    "id": "0_wencai/1_task_eval",
+    "path": "/mnt/fin_bench/eval_data/0_wencai/3_eval_output/1_task_eval"
+  },
+  {
+    "id": "0_wencai/test_eval",
+    "path": "/mnt/fin_bench/eval_data/0_wencai/3_eval_output/test_eval",
+    "test": true
+  },
+  {
+    "id": "1_aime/0_daily_eval",
+    "path": "/mnt/fin_bench/eval_data/1_aime/3_eval_output/0_daily_eval"
+  },
+  {
+    "id": "1_aime/1_task_eval",
+    "path": "/mnt/fin_bench/eval_data/1_aime/3_eval_output/1_task_eval"
+  },
+  {
+    "id": "1_aime/test_eval",
+    "path": "/mnt/fin_bench/eval_data/1_aime/3_eval_output/test_eval",
+    "test": true
+  },
+  {
+    "id": "2_ifind/0_daily_eval",
+    "path": "/mnt/fin_bench/eval_data/2_ifind/3_eval_output/0_daily_eval"
+  },
+  {
+    "id": "2_ifind/1_task_eval",
+    "path": "/mnt/fin_bench/eval_data/2_ifind/3_eval_output/1_task_eval"
+  },
+  {
+    "id": "2_ifind/test_eval",
+    "path": "/mnt/fin_bench/eval_data/2_ifind/3_eval_output/test_eval",
+    "test": true
+  }
+]

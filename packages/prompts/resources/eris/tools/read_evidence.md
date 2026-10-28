@@ -5,4 +5,4 @@ format 默认 text 提取字符串，json 保留原生数值、布尔值和结�
 
 所有运行和材料引用必须携带目录返回的 collectionId 与 runId；同名 runId 不能跨来源或任务混用。
 
-Answer-review 使用 {reference:{collectionId,runId,taskId,sourceId},offset,limit} 读取已保存来源，分页单位为 Unicode 码点；Q/R 不一定有消息坐标，不推造 messageIndex。
+独立 Attribution 和历史结果用 read_asset 读取；没有已返回的 Comparison 节点坐标时，不推造 messageIndex 或来源引用。

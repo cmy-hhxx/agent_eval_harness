@@ -7,7 +7,7 @@ export * from "./run-data.js";
 export * from "./attribution-rewrite-planning.js";
 export * from "./repair.js";
 export * from "./delivery.js";
-export * from "./dashboard-view.js";
+export * from "./analysis-input.js";
 export * from "./codec.js";
 export type { Checkpoint } from "./checkpoint.js";
 export * from "./report.js";
@@ -23,7 +23,6 @@ export { prepareFrozenClusteringJob, prepareClusteringJob, clusteringJobWorkflow
   createClusteringJobWorkflow, createClusteringJobRepository,
   validateClusteringJob,
   type ClusteringJobConfig, type ClusteringJobSource, type ClusteringRunReader } from "./clustering-job.js";
-export * from "./publication.js";
 export * from "./prediction.js";
 export * from "./problem-occurrence-review.js";
 export * from "./analysis-progress.js";
@@ -38,5 +37,3 @@ export { prepareComparisonVerification } from "./verification-preparation.js";
 export * from "./stability.js";
 export * from "./stability-statistics.js";
 export * from "./stability-report.js";
-export * from "./run-errors.js";
-export * from "./analysis-scope.js";

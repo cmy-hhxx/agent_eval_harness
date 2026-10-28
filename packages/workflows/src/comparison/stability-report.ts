@@ -54,7 +54,7 @@ export function stabilityReport(state: RunState, source?: RunState, reviewRecord
   }
   const materialChanges = [...materialConditions].filter(([, revisions]) => revisions.size > 1)
     .map(([source, revisions]) => ({ source, revisions: [...revisions] }));
-  const mixed = materialChanges.length > 0 || ["criteria", "attribution", "comparison", "rewrite"].some(stage => [...conditions.values()].filter(item => item.stage === stage).length > 1);
+  const mixed = materialChanges.length > 0 || ["criteria", "attribution-component", "attribution-trace", "attribution-session", "comparison", "rewrite"].some(stage => [...conditions.values()].filter(item => item.stage === stage).length > 1);
   const caseRates: number[] = [], directionDifferences: number[] = [];
   const distribution = (tasks: PlannedTask[]) => {
     const unresolved: Record<string, number> = {};

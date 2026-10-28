@@ -19,7 +19,7 @@ try {
   }
   for (const directory of ["packages/agents/src", "packages/prompts/resources", "schemas"]) await resources(directory);
   await buildRuntime(staging);
-  for (const name of ["apps", "packages", "tests", "schemas"]) await publishTree(path.join(staging, name), path.join(root, "dist", name));
+  for (const name of ["apps", "packages", "tests", "schemas", "agent/src", "agent/tests"]) await publishTree(path.join(staging, name), path.join(root, "dist", name));
 } finally {
   await rm(staging, { recursive: true, force: true });
 }

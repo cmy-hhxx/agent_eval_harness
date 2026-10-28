@@ -16,8 +16,8 @@ export async function runAttributionCommand(host: HostConfig, options: {
   if (options.apply && !options.runId) throw new Error("reattribute --apply 需要 --run-id 保存独立进度");
   if (options.runId) safeId(options.runId);
   const pilot = options.pilotAnswers !== undefined || options.pilotPerModel !== undefined;
-  const output = { kind: "directory" as const, path: pilot
-    ? testEvaluationOutput(host.evaluation.output.path, options.output ?? path.join(testEvaluationOutput(host.evaluation.output.path), "attribution"))
+  const output = { ...host.evaluation.output, path: pilot
+    ? testEvaluationOutput(host.evaluation.output, options.output ?? path.join(testEvaluationOutput(host.evaluation.output), "attribution"))
     : options.output ? path.resolve(options.output) : path.resolve(host.evaluation.output.path, "attribution") };
   const layout = options.runId ? runLayout(output, options.runId) : undefined;
   if (layout && options.runs?.some(run => path.resolve(run) === layout.directory))

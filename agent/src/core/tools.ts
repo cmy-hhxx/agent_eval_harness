@@ -132,7 +132,7 @@ export function erisTools(options: ErisDependencies, descriptions: Record<string
       return { ...textResult({ ...result,
         ...(result.summary ? { summary: directorySummary(result.summary as JsonObject) } : {}),
         ...(current?.summary ? { currentRun: { ...current, summary: directorySummary(current.summary as JsonObject) } } : {}),
-        ...(result.currentRuns ? { currentRuns: (result.currentRuns as JsonObject[]).map(run => ({ ...run, summary: directorySummary(run.summary as JsonObject) })) } : {}),
+        ...(result.runs ? { runs: (result.runs as JsonObject[]).map(run => ({ ...run, summary: directorySummary(run.summary as JsonObject) })) } : {}),
       }) };
     },
     read_case: async (value, context) => {

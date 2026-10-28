@@ -165,7 +165,7 @@ export async function reconcileRun(_run: string, state: RunState, current: unkno
     for (const [sourceId, rewrites] of bySource) {
       const source = state.receipts[sourceId];
       if (!source) continue;
-      // Incremental automation keeps the exact presentation already accepted for a finished result.
+      // Incremental runs keep the exact presentation already accepted for a finished result.
       if (options?.preserveCompletedResults && rewrites.every(task => state.receipts[task.id])) continue;
       const stored = source.exported && stageResult("comparison", source.exported.row).rewritten as
         { rewrites: { id: string; text: string }[] } | undefined;

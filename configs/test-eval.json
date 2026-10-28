@@ -1,6 +1,7 @@
 {
   "output": {
     "kind": "directory",
-    "path": "/mnt/fin_bench/eval_data/0_wencai/eval_output/test_eval"
+    "path": "/mnt/fin_bench/eval_data/0_wencai/3_eval_output/test_eval",
+    "testPath": "/mnt/fin_bench/eval_data/0_wencai/3_eval_output/test_eval"
   }
 }

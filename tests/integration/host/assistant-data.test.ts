@@ -9,6 +9,7 @@ import { emptyUsage, object, type JsonObject, type RunState, type SubmissionRece
 import { readJson, runLock, writeJson, writeJsonl, writeRunOverview } from "@eval/data";
 import { analysisRunOverview, readAnalysisComparisonRecords, buildPlan, comparisonRepository, createResultWriter, type Checkpoint, type EvalConfig, type TaskData } from "@eval/workflows/comparison";
 import { LocalAnalysisData } from "../../../apps/host/src/assistant-data.js";
+import { CatalogAnalysisData } from "../../../apps/host/src/assistant-catalog.js";
 import { createEris } from "@eval/assistant";
 import { attributionResult, comparisonResult, criteriaResult, emptyAudit, fakeEvaluatorVersion, fakeIdentity, fakeJudge, fixtureConfig, raw } from "../../fixtures/comparison.js";
 
@@ -33,7 +34,7 @@ async function register(config: EvalConfig, accepted?: (state: RunState, plan: T
   return source;
 }
 
-test("cumulative overview never opens individual run checkpoints", async (t) => {
+test("statistics include finished runs without opening individual run checkpoints", async (t) => {
   const fixture = await fixtureConfig();
   try {
     const source = await register(fixture.config, async state => { state.manifest.status = "finished"; });
@@ -46,9 +47,47 @@ test("cumulative overview never opens individual run checkpoints", async (t) => 
     try {
       const overview = await source.list({ view: "statistics" });
       assert.equal(overview.kind, "statistics");
-      assert(overview.kind === "statistics" && overview.currentRuns.length === 0);
+      assert(overview.kind === "statistics" && overview.runs.length === 1);
+      assert.equal(overview.runs[0].summary.status, "finished");
     } finally { probe.mock.restore(); syncBuiltinESMExports(); }
   } finally { await rm(fixture.directory, { recursive: true, force: true }); }
+});
+
+test("catalog statistics page all run states and isolate identical run IDs by collection", async t => {
+  const fixture = await fixtureConfig();
+  t.after(() => rm(fixture.directory, { recursive: true, force: true }));
+  const root = path.join(fixture.directory, "data");
+  const collections = [
+    { id: "desk/current", path: path.join(root, "renamed/output/daily"), test: false },
+    { id: "another/current", path: path.join(root, "separate/results"), test: false },
+    { id: "desk/experiments", path: path.join(root, "scratch"), test: true },
+  ];
+  const collection = (index: number) => ({ ...fixture.config,
+    output: { kind: "directory" as const, path: collections[index].path } });
+  await register(collection(0), async state => {
+    state.manifest.status = "finished";
+    state.manifest.startedAt = 10;
+  });
+  await register(collection(1), async state => { state.manifest.startedAt = 20; });
+  await register(collection(2), async state => { state.manifest.startedAt = 30; });
+  const source = new CatalogAnalysisData(collections);
+  const first = await source.list({ view: "statistics", limit: 1 });
+  assert.equal(first.total, 2);
+  const runs = first.runs as JsonObject[];
+  assert.equal(runs[0].collectionId, "another/current");
+  assert.equal(runs[0].status, "running");
+  assert.equal(first.nextOffset, 1);
+  const second = await source.list({ view: "statistics", offset: 1, limit: 1 });
+  assert.equal((second.runs as JsonObject[])[0].status, "finished");
+  assert.equal(second.hasMore, false);
+  assert.equal(second.additive, false);
+  const scoped = await source.list({ view: "statistics", collectionId: "desk/current" });
+  assert.equal(scoped.total, 1);
+  assert.equal((scoped.runs as JsonObject[])[0].runId, "source");
+  assert.equal((scoped.runs as JsonObject[])[0].collectionId, "desk/current");
+  assert.equal((await source.list({ view: "statistics", includeTests: true })).total, 3);
+  assert.equal((await source.list({ collectionId: "desk/experiments", runId: "source" })).kind, "inputs",
+    "explicit test references do not infer classification from directory or ID names");
 });
 
 test("an unavailable historical index cannot block valid runs or an explicit run query", async () => {
@@ -73,7 +112,7 @@ test("an unavailable historical index cannot block valid runs or an explicit run
     await fs.writeFile(path.join(fixture.config.output.path, "broken/state.json"), "{");
     const partial = await source.list({ view: "statistics" });
     assert(partial.kind === "statistics");
-    assert.deepEqual(partial.currentRuns.map(run => run.runId), ["source"]);
+    assert.deepEqual(partial.runs.map(run => run.runId), ["source"]);
     assert.equal(partial.runDirectory.complete, false);
     await assert.rejects(source.list({ collectionId: "0_wencai/0_daily_eval", runId: "broken" }), /JSON|position|property/i);
   } finally { await rm(fixture.directory, { recursive: true, force: true }); }
@@ -83,7 +122,7 @@ async function registerAccepted(config: EvalConfig, compare = (data: TaskData) =
   let accepted: Record<string, SubmissionReceipt> = {};
   const source = await register(config, async (state, plan) => {
     for (const task of plan.tasks) {
-      const evaluation = task.stage === "criteria" ? criteriaResult() : task.stage === "attribution" ? attributionResult()
+      const evaluation = task.stage === "criteria" ? criteriaResult() : task.stage.startsWith("attribution-") ? attributionResult()
         : compare(task.data as TaskData);
       state.receipts[task.id] = { taskId: task.id, attemptId: task.id, submissionId: randomUUID(), evaluation,
         evaluatorVersion: fakeEvaluatorVersion, judge: fakeJudge, audit: emptyAudit(), usage: emptyUsage(), status: "succeeded", acceptedAt: 0 };
@@ -113,8 +152,8 @@ test("live statistics are saved with results and repeated overviews never reopen
     for (let index = 0; index < 2; index++) {
       const result = await source.list({ view: "statistics" });
       assert(result.kind === "statistics");
-      assert.deepEqual(result.currentRuns[0].summary, stored.value.summary);
-      assert(result.currentRuns[0].summary.formalComparisonStats.tiers.every(tier => tier.models.every(model => model.winRate === 0 && model.meetsCoreRate === 100)));
+      assert.deepEqual(result.runs[0].summary, stored.value.summary);
+      assert(result.runs[0].summary.formalComparisonStats.tiers.every(tier => tier.models.every(model => model.winRate === 0 && model.meetsCoreRate === 100)));
     }
   } finally { probe.mock.restore(); syncBuiltinESMExports(); }
 });
@@ -677,7 +716,7 @@ test("Eris exposes whole-run formal standings and read scopes from recorded resu
     assert.equal(missing.summary.statisticsError?.retryable, false);
     const partial = await source.list({ view: "statistics" });
     assert(partial.kind === "statistics");
-    assert.equal(partial.currentRuns.length, 0);
+    assert.equal(partial.runs.length, 0);
     assert.equal(partial.runDirectory.complete, false);
   } finally { await rm(fixture.directory, { recursive: true, force: true }); }
 });

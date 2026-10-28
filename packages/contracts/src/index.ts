@@ -5,9 +5,7 @@ export type Engine = "pi";
 export { evidenceId, evidenceSources, messageContentSources, evidenceImageAvailable, imagePlaceholder, overlapsImagePlaceholder, parseEvidenceCoordinates, type EvidenceCoordinates } from "./evidence.js";
 export * from "./evidence-selection.js";
 export { mergeRequiredReadRanges, extendRequiredReadRanges, requiredReadCallLimit, toolBudgetMetadataChars, validationRequiredReads } from "./required-reading.js";
-export * from "./automations.js";
 export type * from "./criteria.js";
-export type * from "./publication.js";
 
 export interface Policy {
   timeoutSeconds: number;
@@ -179,6 +177,8 @@ export interface ResultReference {
 export interface OutputTarget {
   kind: "directory";
   path: string;
+  /** Explicit root for test runs; never inferred from production directory names. */
+  testPath?: string;
 }
 /** Where a version's records come from. Resolved by Data. */
 export type InputSource =

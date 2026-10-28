@@ -1,6 +1,6 @@
 import { fileSourceReader } from "@eval/data";
 import { randomUUID } from "node:crypto";
-import { canonical, errorText, object, ValidationError, type ValidationIssue } from "@eval/contracts";
+import { canonical, object, ValidationError, type ValidationIssue } from "@eval/contracts";
 import { traceComponentScopes } from "./component-scopes.js";
 import { inputAdapters, resolveAdapter } from "./adapters.js";
 import { normalizeInput } from "./normalize.js";
@@ -215,7 +215,7 @@ export async function locateRecordStream(
   throw new Error("输入源记录与登记的业务标识不一致：" + candidate.input_id);
 }
 
-export interface ScannedInput {
+interface ScannedInput {
   index: number;
   batchId: string | null;
   caseId: string | null;
@@ -224,10 +224,8 @@ export interface ScannedInput {
   error?: unknown;
 }
 
-export type InputScanner = (source: string, version: VersionConfig, defaultBatch: string | undefined,
-  revision: string) => AsyncIterable<ScannedInput | undefined>;
-
-export const scanInputFile: InputScanner = async function* (source, version, defaultBatch, revision) {
+export async function* scanInputFile(source: string, version: VersionConfig, defaultBatch: string | undefined,
+  revision: string): AsyncGenerator<ScannedInput | undefined> {
   for await (const { line, index } of fileSourceReader.lines(source, revision)) {
     if (!line.trim()) { yield undefined; continue; }
     const entry: ScannedInput = { index, batchId: null, caseId: null };
@@ -241,44 +239,4 @@ export const scanInputFile: InputScanner = async function* (source, version, def
     } catch (error) { entry.error = error; }
     yield entry;
   }
-};
-
-/** One dashboard's compact file projections, shared by inventory and read-only planning. */
-export function createInputScanCache(): InputScanner {
-  const files = new Map<string, { key: string; value: Promise<(ScannedInput | undefined)[]> }>();
-  return async function* (source, version, defaultBatch, revision) {
-    const id = canonical([source, version.id]);
-    const { sources: _sources, ...adapterConfig } = version;
-    const key = canonical([adapterConfig, defaultBatch ?? null, revision]);
-    let entry = files.get(id);
-    if (entry?.key !== key) {
-      const value = (async () => {
-        const rows: (ScannedInput | undefined)[] = [];
-        try {
-          for await (const row of scanInputFile(source, version, defaultBatch, revision)) {
-            if (!row) { rows.push(undefined); continue; }
-            const { raw: _raw, ...projection } = row;
-            rows.push(projection);
-          }
-        } catch (error) {
-          // Do not turn a partial read into an ordinary missing-file diagnostic.
-          if (rows.length) throw new Error(errorText(error), { cause: error });
-          throw error;
-        }
-        return rows;
-      })();
-      entry = { key, value };
-      files.set(id, entry);
-    }
-    try {
-      // A concurrent inventory request may have populated this entry earlier in the request.
-      const rows = await entry.value;
-      if (await fileSourceReader.revision(source) !== revision)
-        throw new Error("读取期间输入文件发生变化，请重试：" + source);
-      for (const row of rows) yield row && { ...row, ...(row.record ? { record: { ...row.record } } : {}) };
-    } catch (error) {
-      if (files.get(id) === entry) files.delete(id);
-      throw error;
-    }
-  };
 }

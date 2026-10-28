@@ -141,7 +141,6 @@ for (const name of [...selected].sort()) {
     try { aliases[name + (key === "." ? "" : key.slice(1))] = path.relative(source, await resolveFile(file)); } catch {}
   }
 }
-for (const name of ["active-stream-reconnect", "long-session-browser", "support"]) await cp(path.join(source, "benchmarks", name), path.join(destination, "benchmarks", name), { recursive: true });
 await mkdir(path.join(destination, "scripts"));
 await cp(path.join(source, "scripts/test-dom-environment.ts"), path.join(destination, "scripts/test-dom-environment.ts"));
 // Remove the upstream hero artwork before patching, so vector data is not

@@ -1,5 +1,5 @@
 {
-  "evaluatorVersion": "r436",
+  "evaluatorVersion": "r438",
   "inputs": {
     "timing_unit": "ms",
     "versions": [
@@ -134,7 +134,8 @@
   },
   "output": {
     "kind": "directory",
-    "path": "/mnt/fin_bench/eval_data/0_wencai/eval_output/0_daily_eval"
+    "path": "/mnt/fin_bench/eval_data/0_wencai/3_eval_output/0_daily_eval",
+    "testPath": "/mnt/fin_bench/eval_data/0_wencai/3_eval_output/test_eval"
   },
   "problemLibrary": {
     "kind": "directory",

@@ -38,8 +38,9 @@ test("stability resume records actual model capabilities and withholds pooled in
       modelForStage, modelForTask: createStabilityModelResolver(modelForStage, "pi", config.execution),
       policy: config.execution, concurrency: 1, retries: 0, retryDelaySeconds: 0, workerUrls: [worker.url] };
     const run = path.join(config.output.path, options.runId);
-    const first = await runEvaluation({ ...options, maxAttempts: 5 });
-    assert.deepEqual(first.execution_task_statuses, { succeeded: 5, pending: 9 });
+    const firstAttempts = plan.tasks.filter(task => (task.data as StabilityTaskData).stability.purpose === "baseline").length + 1;
+    const first = await runEvaluation({ ...options, maxAttempts: firstAttempts });
+    assert.deepEqual(first.execution_task_statuses, { succeeded: firstAttempts, pending: plan.tasks.length - firstAttempts });
     const before = await stabilityRepository.readRun(run);
     assert.equal(stabilityReport(before).statistics.status, "exploratory_pilot");
     for (const task of before.manifest.tasks.filter(task => before.receipts[task.id])) {
@@ -52,7 +53,7 @@ test("stability resume records actual model capabilities and withholds pooled in
 
     models.models.judge.maxOutputTokens = 8192;
     const resumed = await runEvaluation({ ...options, maxAttempts: config.stability.maxAttempts });
-    assert.deepEqual(resumed.execution_task_statuses, { succeeded: 14 });
+    assert.deepEqual(resumed.execution_task_statuses, { succeeded: plan.tasks.length });
     const after = await stabilityRepository.readRun(run), report = stabilityReport(after);
     for (const [id, receipt] of Object.entries(before.receipts)) {
       assert.equal(after.receipts[id].submissionId, receipt.submissionId);

@@ -18,7 +18,6 @@ import { readAttributionWorkflowCommand, runAttributionWorkflowCommand } from ".
 import { runStabilityCommand } from "./stability-command.js";
 import { runModelProbe } from "./model-probe.js";
 import { createBalancedModels } from "./balanced-models.js";
-import { startDashboard } from "./dashboard.js";
 import { pilotTaskIds, comparisonRewriteReview, readRunState } from "@eval/workflows/comparison";
 
 let logRunId: string | undefined;
@@ -70,8 +69,6 @@ async function main(): Promise<void> {
       "from-date": { type: "string" },
       "balance-channels": { type: "boolean" },
       selected: { type: "boolean" },
-      port: { type: "string", default: "4173" },
-      "dashboard-settings": { type: "string" },
     },
   });
   const command = positionals[0];
@@ -80,7 +77,7 @@ async function main(): Promise<void> {
   logRunId = values["run-id"] || (selectedRun ? path.basename(path.resolve(selectedRun)) : undefined);
   if (values.help || !command) {
     console.log(
-      `eval index|preflight|run|reattribute|status|validate|report|cluster|verify-comparisons|validate-stability|model-probe|retry-failed|recluster|review-problem-occurrences|rewrite-comparisons|rewrite-review|concurrency|progress|dashboard [--config FILE ...]
+      `eval index|preflight|run|reattribute|status|validate|report|cluster|verify-comparisons|validate-stability|model-probe|retry-failed|recluster|review-problem-occurrences|rewrite-comparisons|rewrite-review|concurrency|progress [--config FILE ...]
 run: --run-id ID [--debug] [--worker URL ...]
 配置文件按顺序深度合并；具体模型放在不入库的 --config 中
 相同 run-id 自动续跑，已完成结果保留；--debug 额外保存 _internal/
@@ -90,7 +87,7 @@ recovery: run --resume-stage STAGE 解除已修复阶段的熔断，可重复
 inputs/output: --input ID=PATH --output DIR
 index: --dataset ID --dataset-name NAME --input VERSION=PATH ... [--catalog DIR]
 preflight/run: --dataset ID [--catalog DIR] 选择已索引的评测集
-status/validate/report: --run /mnt/fin_bench/eval_data/0_wencai/eval_output/0_daily_eval/ID
+status/validate/report: --run RUN_DIRECTORY
 validate: [--require-rewrite items|verdicts ...] [--require-batch ID ...] [--selected]
 report: [--details] 为 debug 运行导出逐题 JSON 与任务状态
 retry-failed: --run PATH [--task ID ...|--result ID ...] [--apply]
@@ -111,24 +108,8 @@ rewrite-comparisons: --run PATH [--scope items|verdicts] [--mode missing|refresh
 聚类命令默认仅预览，--apply 执行；复核和修复 --apply 保存范围，随后同 run-id 续跑
 rewrite-review: --run PATH [--result ID ...] [--limit-cases N] 输出原文和改写供语义验收
 concurrency: --run PATH --value N
-progress: --run PATH
-dashboard: --port 4173 在本机启动控制看板`,
+progress: --run PATH`,
     );
-    return;
-  }
-  if (command === "dashboard") {
-    const port = Number(values.port);
-    if (!Number.isInteger(port) || port < 1 || port > 65535) throw new Error("--port must be 1-65535");
-    const dashboard = await startDashboard({ configPaths: values.config, port });
-    console.log(`Dashboard listening at ${dashboard.url}`);
-    await new Promise<void>((resolve) => {
-      const shutdown = async () => {
-        await dashboard.close();
-        resolve();
-      };
-      process.once("SIGINT", shutdown);
-      process.once("SIGTERM", shutdown);
-    });
     return;
   }
   if (values.details && command !== "report") throw new Error("--details 仅用于 report");
@@ -161,7 +142,6 @@ dashboard: --port 4173 在本机启动控制看板`,
   for (const flag of ["mode", "slot"] as const)
     if (values[flag] && command !== "rewrite-comparisons") throw new Error(`--${flag} 仅用于 rewrite-comparisons`);
   if (values["skip-failed"] && command !== "run") throw new Error("--skip-failed 仅用于 run");
-  if (values["dashboard-settings"] && command !== "run") throw new Error("--dashboard-settings 仅用于 run");
   if (command === "concurrency" || command === "progress") {
     if (!selectedRun) throw new Error("--run required");
     const lock = await readJson<{ url: string; token: string }>(
@@ -264,11 +244,7 @@ dashboard: --port 4173 在本机启动控制看板`,
     }
     return;
   }
-  const host = await loadConfig(
-    values.config,
-    undefined,
-    values["dashboard-settings"] ? JSON.parse(values["dashboard-settings"]) : undefined,
-  );
+  const host = await loadConfig(values.config);
   logger.addSecrets(...configurationSecrets());
   if (values.stage && host.workflow !== "attribution" && command !== "model-probe") throw new Error("--stage 只用于Attribution或model-probe");
   if (command === "model-probe") {
@@ -324,8 +300,8 @@ dashboard: --port 4173 在本机启动控制看板`,
   }
   let config = host.evaluation;
   if (values["test-eval"] || values["pilot-cases"]) {
-    config.output = { kind: "directory", path: testEvaluationOutput(config.output.path, values.output) };
-  } else if (values.output) config.output = { kind: "directory", path: path.resolve(values.output) };
+    config.output = { ...config.output, path: testEvaluationOutput(config.output, values.output) };
+  } else if (values.output) config.output = { ...config.output, path: path.resolve(values.output) };
   const resuming = command === "run" && !!values["run-id"] &&
     await exists(runLayout(config.output, values["run-id"]).stateFile);
   if (values["pilot-cases"] && (resuming || values["discover-inputs"]))

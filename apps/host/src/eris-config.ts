@@ -1,5 +1,5 @@
 import path from "node:path";
-import { readJson } from "@eval/data";
+import { readJson, resolveEvaluationCollections } from "@eval/data";
 import { object } from "@eval/contracts";
 import { Ajv2020 } from "ajv/dist/2020.js";
 import schema from "../../../schemas/eris/server.schema.json" with { type: "json" };
@@ -16,5 +16,7 @@ export async function readErisConfig(file: string) {
   const publicOrigin = new URL(String(source.publicOrigin));
   if (!["http:", "https:"].includes(publicOrigin.protocol) || publicOrigin.origin !== source.publicOrigin || publicOrigin.username || publicOrigin.password) throw new Error("publicOrigin 须为完整外部来源，不含路径");
   const listen = object(source.listen);
-  return { runtimeRoot: location("runtimeRoot"), dataRoot: location("dataRoot"), evalConfigFile: location("evalConfigFile"), publicOrigin: publicOrigin.origin, listen: { host: listen.host as string, port: listen.port as number } };
+  const collectionsFile = location("collectionsFile");
+  const collections = resolveEvaluationCollections(await readJson(collectionsFile), path.dirname(collectionsFile));
+  return { runtimeRoot: location("runtimeRoot"), collections, evalConfigFile: location("evalConfigFile"), publicOrigin: publicOrigin.origin, listen: { host: listen.host as string, port: listen.port as number } };
 }

@@ -1,20 +1,21 @@
 import { readdir, stat } from "node:fs/promises";
 import path from "node:path";
+import type { EvaluationCollection } from "@eval/contracts";
 import { readJson } from "./files.js";
+import { evaluationCollectionPath } from "./evaluation-collections.js";
 
 export interface AssistantRunLocation { collectionId: string; runId: string; directory: string; workflow: "comparison" | "attribution" }
-/** Only inspect known output categories and their task/run directories, never input or result trees. */
-export async function assistantRunLocations(root: string, includeTests = false) {
-  if (!(await stat(root)).isDirectory()) throw new Error("评测数据根目录不是目录");
+/** Only inspect configured output roots and their task/run directories. */
+export async function assistantRunLocations(collections: readonly EvaluationCollection[], includeTests = false) {
   const runs: AssistantRunLocation[] = [], errors: { collectionId: string; runId: string | null; message: string }[] = [];
-  const categories = ["0_daily_eval", "1_task_eval", ...(includeTests ? ["test_eval"] : [])];
   const exists = async (file: string) => { try { await stat(file); return true; } catch (error) { if ((error as NodeJS.ErrnoException).code === "ENOENT") return false; throw error; } };
-  for (const source of ["0_wencai", "1_aime", "2_ifind"]) for (const category of categories) {
-    const categoryRoot = path.join(root, source, "eval_output", category);
+  for (const collection of collections.filter(item => includeTests || !item.test)) {
+    const categoryRoot = collection.path;
     const visit = async (directory: string, depth: number): Promise<void> => {
       const relative = path.relative(categoryRoot, path.dirname(directory));
-      const collectionId = [source, category, relative === "." ? "" : relative].filter(Boolean).join("/");
+      const collectionId = [collection.id, relative === "." || depth === 0 ? "" : relative].filter(Boolean).join("/");
       try {
+        if (depth === 0) await evaluationCollectionPath(collection);
         if (await exists(path.join(directory, "state.json"))) {
           const runId = path.basename(directory);
           if (await exists(path.join(directory, "overview.json"))) runs.push({ collectionId, runId, directory, workflow: "comparison" });

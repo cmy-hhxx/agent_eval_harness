@@ -7,7 +7,7 @@ Attribution workflow 使用三个独立 profile，共用 `attribution/taxonomy.j
 `attribution/component` 只审查一个 trace 中固定的工具或 skill 组件。材料包含完整 Q/A、执行导航和该 trace 的原始证据；提示要求按小现场查看调用前推理、参数、返回、下一轮实际输入和后续输出。
 
 - 工具报错、空结果、零行、截断、缺返回和调用无结果必须作为问题候选。
-- 首屏只展示有界材料；后续最多三次续读，先 grep 原文，再按精确字段读取。
+- 首屏只展示有界材料；后续通过搜索原文和精确字段读取补齐必要证据，不以固定续读次数截断取证。
 - 输出 `label`、`definition`、`problem_phenomena`、`reason`、证据引用和可选计算文字。
 - 不填写 `problem_id`、`component`、`position`、`quote`；这些由程序从任务和证据解析。
 

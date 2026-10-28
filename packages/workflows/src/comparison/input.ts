@@ -1,6 +1,6 @@
 import { collectInputs } from "../inputs/scan.js";
 import { attributionDimension } from "../review/dimensions.js";
-import { candidateKey, type InputScanner } from "../inputs/records.js";
+import { candidateKey } from "../inputs/records.js";
 import { problemLibraryFile, readProblemLibrary } from "@eval/data";
 import { randomInt, randomUUID } from "node:crypto";
 import { isDeepStrictEqual } from "node:util";
@@ -95,8 +95,6 @@ export interface PlanOptions {
   acceptedTaskIds?: ReadonlySet<string>;
   /** Skip raw input materialization when only task counts or summaries are needed. */
   materializeInputs?: boolean;
-  /** Compact projections are for new read-only previews, never execution or reconciliation. */
-  scanFile?: InputScanner;
 }
 export async function buildPlan(
   config: EvalConfig,
@@ -117,12 +115,10 @@ export async function buildPlan(
       return group.flatMap((first, index) => group.slice(index + 1).map((second) =>
         canonical([identity.batch_id, identity.case_id, [first, second].sort()])));
     }));
-  if (options.scanFile && (options.materializeInputs !== false || previous))
-    throw new Error("输入扫描索引仅用于新运行的只读预检");
   const oldTasks = new Map(previous?.tasks.map((task) => [taskKey(task), task]));
   const collected = await collectInputs(config, previous && { inputs: previous.inputs,
     catalog: previous.catalog as Candidate[] | undefined ?? previous.tasks.flatMap(task => Object.values((task.data as TaskData).candidates)) }, {
-    materializeInputs: options.materializeInputs, scanFile: options.scanFile,
+    materializeInputs: options.materializeInputs,
     ...(config.prediction ? {
       selectRecord: (batchId: string | null, caseId: string | null, version: string) =>
         predictionSelections.some(selection => selection.batchId === batchId && selection.caseId === caseId && selection.versions.includes(version)),
@@ -388,12 +384,12 @@ export async function buildPlan(
       stats.comparison_tasks++;
     }
   }
-  // Cleaned answers without a complete configured pair still receive independent attribution.
+  // Explicitly selected answers without a complete configured pair still receive independent attribution.
   const selectedKeys = new Set(selected.map(entry => canonical(entry)));
   const attributed = new Set([...checks.values()].map(unit => (unit.session.data as AttributionTaskData).candidate.input_id));
   for (const task of previous?.tasks ?? [])
     if (task.stage === "attribution-session" && accepted.has(task.id)) attributed.add((task.data as AttributionTaskData).candidate.input_id);
-  if (config.inputs.workbench) for (const record of records.values()) {
+  if (config.inputs.records) for (const record of records.values()) {
     if (!selectedKeys.has(canonical([record.batch_id, record.case_id])) || attributed.has(record.input_id)) continue;
     const criteriaScope = canonical([record.batch_id, record.case_id, [record.version]]);
     const previousCriteria = oldTasks.get(canonical(["criteria", criteriaScope]));
@@ -543,7 +539,7 @@ export async function buildPlan(
     }
   }
   for (const issue of issues) if (issue.batch_id) batchStats(issue.batch_id).input_issues++;
-  if ((config.comparisons.length || config.inputs.workbench) && options.materializeInputs !== false)
+  if ((config.comparisons.length || config.inputs.records) && options.materializeInputs !== false)
     await collected.materialize();
   for (const review of comparisonPairs.length ? config.reviewQuestions ?? [] : []) if (![...checks.values()].some(unit => {
     const candidate = (unit.session.data as AttributionTaskData).candidate;

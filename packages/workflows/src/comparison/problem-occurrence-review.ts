@@ -9,11 +9,11 @@ import {
   type ClusteringAssignment, type ClusteringResult, type ProblemOccurrenceReviewDecision, type ProblemOccurrenceReviewTarget,
 } from "@eval/agents/clustering";
 import { parseEvidenceCoordinates, resolveEvidence } from "@eval/tools";
-import { loadRunInputs } from "../inputs/load.js";
+import { locateRecordStream } from "../inputs/records.js";
 import { readRunState, readRunTasks } from "./run-data.js";
 import { taskObservations } from "./observations.js";
 import type { EvalConfig, TaskData } from "./types.js";
-import type { Candidate, RawInput } from "../inputs/types.js";
+import type { Candidate } from "../inputs/types.js";
 import { clusteringJobStorage, loadClusteringJobInputs, readClusteringJobSources } from "./clustering-job.js";
 import { allClusteringJobSources, clusteringJobItems, jobObservations, type ClusteringJobConfig, type ClusteringJobTask } from "./clustering-job-types.js";
 
@@ -75,12 +75,12 @@ function originBinding(state: RunState, taskId: string) {
     const id = task.dependencies[inputId]!;
     const dependency = state.manifest.tasks.find(item => item.id === id);
     const accepted = state.receipts[id];
-    if (!dependency || dependency.stage !== "attribution" || !accepted) fail("原聚类依赖缺少已接受 Attribution");
-    return { input_id: inputId, task_id: id, input_ids: dependency.inputIds,
-      owner: (dependency.data as TaskData).candidates.A,
+    if (!dependency || dependency.stage !== "attribution-session" || !accepted) fail("原聚类依赖缺少已接受 Attribution");
+    return { input_id: inputId, task_id: id,
+      owner: (dependency.data as TaskData).candidate,
       submission_id: accepted.submissionId, evaluation: accepted.evaluation };
   });
-  const used = new Set(attributions.flatMap(item => Object.values(item.input_ids)));
+  const used = new Set(attributions.map(item => item.input_id));
   const catalog = (state.manifest.inputCatalog as Candidate[]).filter(item => used.has(item.input_id))
     .sort((a, b) => a.input_id.localeCompare(b.input_id));
   const exported = receipt.exported?.row;
@@ -192,31 +192,23 @@ export async function reviewProblemOccurrences(
           assignmentSupportsClass(initial, result, assignment, association.component_id, occurrence.class_id))))
       fail("问题样本在原接受聚类中没有该组件和原观察的实际归类：" + occurrence.id);
 
-    const allowed = new Set(Object.values(attributionTask.inputIds));
-    if (!allowed.has(occurrence.input_id)) fail("问题样本原来源范围缺少 owner");
     const catalog = sourceState!.manifest.inputCatalog as Candidate[];
-    const candidates = new Map(catalog.filter(candidate => allowed.has(candidate.input_id)).map(candidate => [candidate.input_id, candidate]));
-    if (candidates.size !== allowed.size) fail("原归因来源范围含未登记输入");
-    for (const candidate of candidates.values()) {
-      if (!revisions.has(candidate.source)) revisions.set(candidate.source, await fileSourceReader.revision(candidate.source));
-      if (candidate.batch_id !== owner.batch_id || candidate.case_id !== owner.case_id || candidate.question !== owner.question)
-        fail("原归因 source scope 不是同一案例或原问题");
-    }
-    const inputs = await loadRunInputs(sourceState!.manifest, undefined, new Set([attributionTaskId!]));
-    let hasOwnerProof = false;
+    const candidate = catalog.find(candidate => candidate.input_id === owner.input_id);
+    if (!candidate || canonical(candidate) !== canonical(owner)) fail("原归因 owner 未登记或与原记录不一致");
+    if (!revisions.has(candidate.source)) revisions.set(candidate.source, await fileSourceReader.revision(candidate.source));
+    const sourceConfig = sourceState!.manifest.config as EvalConfig;
+    const version = sourceConfig.inputs.versions.find(version => version.id === candidate.version);
+    if (!version) fail("原归因 owner 输入版本未登记");
+    const { raw } = await locateRecordStream(candidate.source, candidate, version, sourceConfig.inputs.default_batch_id);
     for (const [proofIndex, reference] of item.evidence.entries()) {
       const coordinates = parseEvidenceCoordinates(reference.evidence_id);
       if (!coordinates) fail("问题样本复核需要完整当前 evidence_id");
       if (coordinates.kind === "image") fail("问题样本复核不接受图片证明；不能构造 viewedImages 审计");
       const sourceId = coordinates.input_id;
-      hasOwnerProof ||= sourceId === occurrence.input_id;
-      if (!allowed.has(sourceId)) fail("复核证明来源不属于原 Attribution source scope：" + sourceId);
-      const raw = inputs[sourceId] as RawInput | undefined;
-      if (!raw || !Array.isArray(raw.messages)) fail("复核证明原输入不可读取：" + sourceId);
+      if (sourceId !== owner.input_id) fail("复核证明来源不属于原 Attribution owner：" + sourceId);
       resolveEvidence(raw, reference, sourceId, { viewedImages: [], traceReads: [] },
         "/items/" + index + "/evidence/" + proofIndex, sourceId);
     }
-    if (!hasOwnerProof) fail("问题样本复核证明至少包含本方 owner 原材料：" + occurrence.input_id);
     targets.push({
       occurrence_id: occurrence.id, association, class_id_at_review: occurrence.class_id,
       origin: { run_id: occurrence.run_id, task_id: occurrence.task_id, submission_id: occurrence.submission_id },

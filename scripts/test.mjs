@@ -27,16 +27,17 @@ const workerPattern = [
   "unsubmitted idle recovery",
 ].join("|");
 const fastFiles = [
+  "dist/agent/tests/eris.test.js",
+  "dist/agent/tests/assets.test.js",
   "dist/packages/host/src/channel-requests.test.js",
-  "scripts/night-eval.test.mjs",
   "dist/packages/agents/src/attribution/responsibility.test.js",
   "dist/packages/agents/src/comparison/current-contract.test.js",
   "dist/packages/agents/src/clustering/profile.test.js",
   "dist/packages/contracts/src/evidence-selection.test.js",
   "dist/packages/data/src/repository.test.js",
   "dist/packages/data/src/material-pool.test.js",
+  "dist/packages/data/src/evaluation-collections.test.js",
   "dist/packages/data/src/run-journal.test.js",
-  "dist/packages/data/src/statistics-log.test.js",
   "dist/packages/host/src/scheduling.test.js",
   "dist/packages/host/src/failure-guard.test.js",
   "dist/packages/host/src/store-concurrency.test.js",
@@ -55,14 +56,7 @@ const fastFiles = [
   "dist/packages/workflows/src/review/public-trace.test.js",
   "dist/tests/architecture/dependencies.test.js",
   "scripts/attribution-review-view.test.mjs",
-  "scripts/aime-slim.test.mjs",
-  "scripts/auto-renew.test.mjs",
-  "scripts/archive-processed-packages.test.mjs",
-  "scripts/extract-lost-user.test.mjs",
-  "scripts/watch-lost-user.test.mjs",
-  "scripts/benchmark.test.mjs",
   "scripts/compact-progress.test.mjs",
-  "data_service/dashboard.test.mjs",
 ];
 if (fast) {
   await Promise.all([
@@ -84,27 +78,13 @@ const hostFiles = full ? await testFiles(["dist/tests/integration/host"]) : [];
 // their existing deadlines without extending timeouts or retrying failed tests.
 const concurrency = Math.min(2, availableParallelism());
 const repositoryTests = [
-  "scripts/night-eval.test.mjs",
-  "scripts/aime-slim.test.mjs",
-  "scripts/auto-renew.test.mjs",
-  "scripts/archive-processed-packages.test.mjs",
-  "scripts/attribution-review-tree.test.mjs",
-  "scripts/extract-lost-user.test.mjs",
   "scripts/attribution-review-view.test.mjs",
-  "scripts/watch-lost-user.test.mjs",
-  "scripts/mongo-contracts.test.mjs",
-  "scripts/benchmark.test.mjs",
   "scripts/compact-progress.test.mjs",
   "scripts/publish.test.mjs",
   "scripts/apply-agent-dependency-patches.test.mjs",
-  "scripts/deploy-workbench.test.mjs",
-  "scripts/workbench.test.mjs",
-  "scripts/configure-daily-workbench.test.mjs",
   "scripts/deploy-eris.test.mjs",
-  "data_service/dashboard.test.mjs",
 ];
 await Promise.all([
-  run("python3", ["-m", "unittest", "discover", "-s", "data_service", "-p", "test_*.py"]),
   run("node", ["--test", `--test-concurrency=${concurrency}`, ...coreFiles, ...repositoryTests]),
   ...(hostFiles.length ? [run("node", ["--test", `--test-concurrency=${concurrency}`, ...hostFiles])] : []),
 ]);

@@ -5,12 +5,10 @@ import { DEFAULT_POLICY, type OutputTarget, type ProblemLibraryTarget } from "@e
 import { readJson } from "@eval/data";
 import { DEFAULT_FAILURE_GUARD, validateFailureGuard } from "@eval/host";
 import type { EvalConfig } from "@eval/workflows/comparison";
-import { assertComparableGroups, selectComparisonGroups } from "@eval/workflows/comparison";
+import { assertComparableGroups } from "@eval/workflows/comparison";
 import { inputAdapterIds } from "@eval/workflows/inputs";
-import { attributionDimensions } from "@eval/workflows/review";
 import {
   THINKING_LEVELS,
-  DEFAULT_THINKING,
   assertDeclaredModel,
   type ModelCatalog,
   type ModelProfile,
@@ -48,7 +46,6 @@ interface HostConfiguration {
   evaluatorVersion: string;
   /** Model profiles and per-stage bindings, resolved against config.ini channels. */
   models: ModelCatalog;
-  automation: ApplicationSettings["automation"];
 }
 
 export type HostConfig = HostConfiguration & (
@@ -104,8 +101,12 @@ function readEvaluatorVersion(source: ConfigObject): string {
 async function readLocated(file: string): Promise<ConfigObject> {
   const source = await readJson<ConfigObject>(file);
   const directory = path.dirname(file);
-  if (isObject(source.output) && typeof source.output.path === "string")
-    source.output = { ...source.output, path: path.resolve(directory, source.output.path) };
+  if (isObject(source.output))
+    for (const key of ["path", "testPath"] as const)
+      if (typeof source.output[key] === "string") {
+        if (!source.output[key].trim()) throw new Error(`Invalid output.${key}`);
+        source.output[key] = path.resolve(directory, source.output[key]);
+      }
   if (isObject(source.problemLibrary) && typeof source.problemLibrary.path === "string")
     source.problemLibrary = {
       ...source.problemLibrary,
@@ -141,20 +142,8 @@ function buildEvaluationBase(source: ConfigObject): EvaluationConfig {
     execution: { ...EXECUTION_DEFAULTS, ...(source.execution as Partial<EvaluationConfig["execution"]>) },
     output: source.output as OutputTarget,
   };
-  const scope = config.inputs?.workbench;
-  if (scope !== undefined) {
-    if (!isObject(scope) || !isObject(scope.task) || typeof scope.task.id !== "string" || !scope.task.id ||
-        !Array.isArray(scope.batch_ids) || !scope.batch_ids.length || scope.batch_ids.some(id => typeof id !== "string" || !id) ||
-        !Array.isArray(scope.records) || !scope.records.length || scope.records.some(row => !isObject(row) ||
-          (["model", "batch_id", "case_id", "input_file", "package_id", "package_name", "original_file"] as const).some(key => typeof row[key] !== "string" || !row[key]) ||
-          !Number.isSafeInteger(row.input_index) || Number(row.input_index) < 0 || !path.isAbsolute(String(row.input_file)) ||
-          !Number.isSafeInteger(row.original_line) || Number(row.original_line) < 1 || !scope.batch_ids.includes(String(row.package_id))))
-      throw new Error("Invalid cleaning scope");
-    const coordinates = scope.records.map(row => JSON.stringify([row.model,row.input_file,row.input_index]));
-    if (new Set(coordinates).size !== coordinates.length) throw new Error("Duplicate cleaning coordinates");
-  }
   const versions = config.inputs?.versions;
-  const minimumVersions = source.workflow === "attribution" || config.inputs.workbench ? 1 : 2;
+  const minimumVersions = source.workflow === "attribution" || config.inputs?.records ? 1 : 2;
   if (!Array.isArray(versions) || versions.length < minimumVersions)
     throw new Error(minimumVersions === 1 ? "至少配置一个输入版本" : "至少配置两个输入版本");
   for (const item of versions) {
@@ -202,6 +191,7 @@ function buildEvaluationBase(source: ConfigObject): EvaluationConfig {
   const output = config.output;
   if (!isObject(output) || output.kind !== "directory" || typeof output.path !== "string" || !output.path)
     throw new Error("Missing output target");
+  optionalString(output.testPath, "output.testPath");
   return config;
 }
 
@@ -279,7 +269,7 @@ function buildEvaluation(source: ConfigObject): WorkflowEvaluation {
   }
   const versions = config.inputs.versions;
   const rawGroups = source.comparisons;
-  if (!Array.isArray(rawGroups) || (!rawGroups.length && !config.inputs.workbench)) throw new Error("Missing comparisons");
+  if (!Array.isArray(rawGroups) || (!rawGroups.length && !config.inputs.records)) throw new Error("Missing comparisons");
   const seenGroups = new Set<string>();
   for (const group of rawGroups) {
     if (
@@ -359,145 +349,16 @@ function buildModels(source: ConfigObject, configuration: ApplicationSettings): 
   return { models, bindings, channels: configuration.channels };
 }
 
-const DASHBOARD_STAGES = ["criteria", "score", "attribution", ...Object.keys(attributionDimensions), "comparison", "rewrite", "clustering"];
-const DASHBOARD_EXECUTION = ["concurrency", "sessionWindow", "timeoutSeconds", "maxToolCalls", "retries", "repairAttempts", "maxTaskAttempts", "retryDelaySeconds"] as const;
-const DASHBOARD_BINDING = ["channel", "model", "thinking"] as const;
-
-export function editableDashboardSettings(source: Record<string, unknown>) {
-  const execution = isObject(source.execution) ? source.execution : {};
-  const rewrite = isObject(source.rewrite) ? source.rewrite : {};
-  const clustering = isObject(source.clustering) ? source.clustering : {};
-  const models = isObject(source.models) ? source.models : {};
-  const bindings = isObject(source.bindings) ? { ...source.bindings } : {};
-  const inputs = isObject(source.inputs) ? source.inputs : {};
-  return {
-    execution: {
-      concurrency: execution.concurrency ?? EXECUTION_DEFAULTS.concurrency,
-      sessionWindow: execution.sessionWindow ?? EXECUTION_DEFAULTS.sessionWindow,
-      timeoutSeconds: execution.timeoutSeconds ?? EXECUTION_DEFAULTS.timeoutSeconds,
-      maxToolCalls: execution.maxToolCalls ?? EXECUTION_DEFAULTS.maxToolCalls,
-      retries: execution.retries ?? EXECUTION_DEFAULTS.retries,
-      repairAttempts: execution.repairAttempts ?? EXECUTION_DEFAULTS.repairAttempts,
-      maxTaskAttempts: execution.maxTaskAttempts,
-      retryDelaySeconds: execution.retryDelaySeconds ?? EXECUTION_DEFAULTS.retryDelaySeconds,
-    },
-    rewrite: { attribution: rewrite.attribution !== false, comparison: rewrite.comparison !== false, clustering: rewrite.clustering !== false },
-    clustering: { enabled: clustering.enabled === true },
-    comparisons: Array.isArray(source.comparisons) ? source.comparisons : [],
-    models: (Array.isArray(inputs.versions) ? inputs.versions : []).flatMap((version) =>
-      isObject(version) && typeof version.id === "string"
-        ? [{ id: version.id, name: String(version.display_name || version.name || version.id) }]
-        : [],
-    ),
-    // Only stages the launch seam accepts are editable; other bindings stay config-owned.
-    bindings: Object.fromEntries(Object.entries(bindings)
-      .filter(([stage]) => DASHBOARD_STAGES.includes(stage as typeof DASHBOARD_STAGES[number]))
-      .map(([stage, raw]) => {
-        const binding = isObject(raw) ? raw : {};
-        const profile = models[String(binding.profile)];
-        const defaults = isObject(profile) ? profile : {};
-        return [stage, {
-          channel: binding.channel ?? defaults.channel ?? "",
-          model: binding.model ?? defaults.model ?? "",
-          thinking: binding.thinking ?? defaults.thinking ?? DEFAULT_THINKING,
-        }];
-      })),
-  };
-}
-
-/** Only these non-secret, run-scoped settings may cross the dashboard launch seam. */
-export function dashboardSettings(value: unknown, previous: ConfigObject = {}): ConfigObject {
-  if (!isObject(value)) throw new Error("运行设置必须是对象");
-  if (Object.keys(value).some((key) => !["execution", "bindings", "rewrite", "clustering", "versions"].includes(key)))
-    throw new Error("运行设置包含不允许修改的字段");
-  const patch: ConfigObject = {};
-  if (value.versions !== undefined) {
-    if (!Array.isArray(value.versions) || value.versions.some((id) => typeof id !== "string" || !id))
-      throw new Error("模型选择无效");
-    patch.versions = [...new Set(value.versions)];
-  }
-  if (value.execution !== undefined) {
-    if (!isObject(value.execution) ||
-        Object.keys(value.execution).some((key) => !DASHBOARD_EXECUTION.includes(key as typeof DASHBOARD_EXECUTION[number])))
-      throw new Error("运行预算包含不允许修改的字段");
-    patch.execution = { ...value.execution };
-  }
-  if (value.bindings !== undefined) {
-    if (!isObject(value.bindings) ||
-        Object.keys(value.bindings).some((stage) => !DASHBOARD_STAGES.includes(stage as typeof DASHBOARD_STAGES[number])))
-      throw new Error("模型绑定包含未知阶段");
-    for (const binding of Object.values(value.bindings))
-      if (!isObject(binding) ||
-          Object.keys(binding).some((key) => !DASHBOARD_BINDING.includes(key as typeof DASHBOARD_BINDING[number])))
-        throw new Error("模型绑定包含不允许修改的字段");
-    patch.bindings = value.bindings;
-  }
-  if (value.rewrite !== undefined) {
-    if (!isObject(value.rewrite) ||
-        Object.keys(value.rewrite).some((key) => !["comparison", "attribution", "clustering"].includes(key)))
-      throw new Error("改写设置包含不允许修改的字段");
-    patch.rewrite = value.rewrite;
-  }
-  if (value.clustering !== undefined) {
-    if (!isObject(value.clustering) ||
-        Object.keys(value.clustering).some((key) => key !== "enabled") ||
-        typeof value.clustering.enabled !== "boolean")
-      throw new Error("聚类设置包含不允许修改的字段");
-    patch.clustering = value.clustering;
-  }
-  const result = mergeConfig(previous, patch);
-  if (isObject(value.execution) && value.execution.maxTaskAttempts === null && isObject(result.execution))
-    delete result.execution.maxTaskAttempts;
-  return result;
-}
-
-async function mergedSource(
-  sources: string | string[],
-  settings?: unknown,
-): Promise<{ source: ConfigObject; versions?: string[] }> {
-  const original = await readConfigSources(sources);
-  if (settings === undefined) return { source: original };
-  const patch = dashboardSettings(settings);
-  const versions = patch.versions as string[] | undefined;
-  delete patch.versions;
-  return { source: mergeConfig(original, patch), versions };
-}
-
-/** Narrows an evaluation to the selected models; configured groups keep their remaining members. */
-function selectVersions(evaluation: WorkflowEvaluation, ids: string[]): WorkflowEvaluation {
-  const independent = isAttributionEvaluation(evaluation);
-  if (ids.length < (independent ? 1 : 2))
-    throw new Error(independent ? "至少选择一个模型" : "至少选择两个模型");
-  const versions = evaluation.inputs.versions.filter((version) => ids.includes(version.id));
-  if (versions.length !== ids.length) throw new Error("运行设置包含未登记的模型");
-  if (independent) return { ...evaluation, inputs: { ...evaluation.inputs, versions } };
-  const comparisons = selectComparisonGroups(evaluation.comparisons, ids);
-  if (!comparisons.length) throw new Error("所选模型没有可比较的组合");
-  return { ...evaluation, inputs: { ...evaluation.inputs, versions }, comparisons };
-}
-
-/** Evaluation-only load, without model endpoints; the dashboard uses it for input discovery. */
-export async function loadComparisonEvaluation(sources: string | string[], settings?: unknown): Promise<EvalConfig> {
-  const { source, versions } = await mergedSource(sources, settings);
-  readEvaluatorVersion(source);
-  const evaluation = buildEvaluation(source);
-  const selected = versions ? selectVersions(evaluation, versions) : evaluation;
-  if (isAttributionEvaluation(selected)) throw new Error("此入口需要对战工作流配置");
-  return selected;
-}
-
 export async function loadConfig(
   sources: string | string[],
   configuration?: ApplicationSettings,
-  settings?: unknown,
 ): Promise<HostConfig> {
-  const { source, versions } = await mergedSource(sources, settings);
+  const source = await readConfigSources(sources);
   const evaluatorVersion = readEvaluatorVersion(source);
   configuration ??= await readSettings();
   applySettings(configuration);
-  const base = buildEvaluation(source), models = buildModels(source, configuration);
-  const evaluation = versions ? selectVersions(base, versions) : base;
-  const common = { evaluatorVersion, models, automation: configuration.automation };
+  const evaluation = buildEvaluation(source), models = buildModels(source, configuration);
+  const common = { evaluatorVersion, models };
   if (isAttributionEvaluation(evaluation)) return { ...common, workflow: "attribution", evaluation };
   if ([evaluation.rewrite.comparison, evaluation.rewrite.attribution, evaluation.rewrite.clustering].some(Boolean) && !models.bindings.rewrite)
     throw new Error("rewrite 已启用但缺少 bindings.rewrite");
@@ -507,9 +368,8 @@ export async function loadConfig(
 }
 
 /** Comparison-only callers never receive independent-review configuration. */
-export async function loadComparisonConfig(sources: string | string[], configuration?: ApplicationSettings,
-  settings?: unknown): Promise<ComparisonHostConfig> {
-  const host = await loadConfig(sources, configuration, settings);
+export async function loadComparisonConfig(sources: string | string[], configuration?: ApplicationSettings): Promise<ComparisonHostConfig> {
+  const host = await loadConfig(sources, configuration);
   if (host.workflow !== "comparison") throw new Error("此入口需要对战工作流配置");
   return host;
 }

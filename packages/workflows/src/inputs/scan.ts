@@ -1,13 +1,12 @@
 import { fileSourceReader } from "@eval/data";
 import { isDeepStrictEqual } from "node:util";
 import { canonical, errorText, object, ValidationError } from "@eval/contracts";
-import { adapt, candidateKey, scanInputFile, type InputScanner } from "./records.js";
+import { adapt, candidateKey, scanInputFile } from "./records.js";
 import { normalizeInput } from "./normalize.js";
 import type { Candidate, EvaluationConfig, RawInput } from "./types.js";
 
 export interface InputScanOptions {
   materializeInputs?: boolean;
-  scanFile?: InputScanner;
   selectRecord?(batch: string | null, caseId: string | null, version: string): boolean;
   prepareRecord?(record: Candidate): void;
 }
@@ -15,8 +14,6 @@ export interface InputScanOptions {
 /** Collect source identities without constructing any workflow tasks. */
 export async function collectInputs(config: Pick<EvaluationConfig, "inputs">,
   previous?: { catalog?: Candidate[]; inputs: Record<string, unknown> }, options: InputScanOptions = {}) {
-  if (options.scanFile && (options.materializeInputs !== false || previous))
-    throw new Error("输入扫描索引仅用于新运行的只读预检");
   const oldRecords = new Map((previous?.catalog ?? []).map(record => [candidateKey(record), record]));
   const records = new Map<string, Candidate>(),
     freshRecords = new Set<Candidate>(),
@@ -28,8 +25,7 @@ export async function collectInputs(config: Pick<EvaluationConfig, "inputs">,
   const issues: { batch_id?: string | null; [key: string]: unknown }[] = [],
     seen = new Set<string>(),
     invalid = new Set<string>();
-  if(config.inputs.records && config.inputs.workbench)throw new Error('不能同时设置独立记录范围和工作台范围');
-  const scope = config.inputs.records ?? config.inputs.workbench?.records;
+  const scope = config.inputs.records;
   if(scope && new Set(scope.map(row=>canonical([row.model,row.input_file,row.input_index]))).size!==scope.length)throw new Error('输入范围包含重复坐标');
   const scopeRows = scope && new Map(scope.map(row => [canonical([row.model, row.input_file, row.input_index + 1]), row]));
   const foundScope = new Set<string>();
@@ -71,7 +67,7 @@ export async function collectInputs(config: Pick<EvaluationConfig, "inputs">,
       try {
         const revision = sourceRevisions.get(source) ?? await fileSourceReader.revision(source);
         sourceRevisions.set(source, revision);
-        for await (const row of (options.scanFile ?? scanInputFile)(source, version, config.inputs.default_batch_id, revision)) {
+        for await (const row of scanInputFile(source, version, config.inputs.default_batch_id, revision)) {
           scanned = true;
           if (!row) continue;
           const { index, batchId, caseId, raw } = row;
@@ -79,7 +75,7 @@ export async function collectInputs(config: Pick<EvaluationConfig, "inputs">,
             const coordinate = canonical([version.id, source, index]), selectedRow = scopeRows.get(coordinate);
             if (!selectedRow) continue;
             if (selectedRow.batch_id !== batchId || selectedRow.case_id !== caseId)
-              throw new Error("清洗范围与输入身份不一致：" + source + ":" + index);
+              throw new Error("输入范围与记录身份不一致：" + source + ":" + index);
             foundScope.add(coordinate);
           }
           let key: string | undefined;
@@ -112,7 +108,7 @@ export async function collectInputs(config: Pick<EvaluationConfig, "inputs">,
             if (row.error) throw row.error;
             const record = row.record!;
             const selectedRecord=scopeRows?.get(canonical([version.id,source,index]));
-            if(selectedRecord&&'trace_id' in selectedRecord&&selectedRecord.trace_id!==record.trace_id)throw new Error('清洗范围与实际trace_id不一致');
+            if(selectedRecord&&'trace_id' in selectedRecord&&selectedRecord.trace_id!==record.trace_id)throw new Error('输入范围与实际trace_id不一致');
             options.prepareRecord?.(record);
             const old = oldRecords.get(candidateKey(record));
             let unchanged = old?.source === record.source && old?.line === record.line;
@@ -182,7 +178,7 @@ export async function collectInputs(config: Pick<EvaluationConfig, "inputs">,
   }
   // Keep registered work on invalid scans; the caller must not run it without its original material.
   if (scopeRows && foundScope.size !== scopeRows.size)
-    throw new Error("清洗范围存在缺失或已变动的记录，请检查输入发布状态");
+    throw new Error("输入范围存在缺失或已变动的记录，请检查输入文件");
   for (const [key, record] of oldRecords)
     if (!records.has(key)) {
       records.set(key, record);

@@ -22,13 +22,10 @@ import { buildPlan, createResultWriter, readRunState, writeRunState } from "@eva
 import { RunStore } from "@eval/host";
 import { prepare, services } from "../../fixtures/services.js";
 import {
-  attributionResult,
-  criteriaResultForTask,
   draftFor,
   emptyAudit,
   fakeEvaluatorVersion,
   fakeIdentity,
-  fakeJudge,
   fixtureConfig,
   raw,
   taskResult,
@@ -36,7 +33,7 @@ import {
 
 async function fixture(rows = [raw("q", null)]) {
   const { directory, config } = await fixtureConfig([rows, [], rows, []]);
-  const plan = await buildPlan(config), task = plan.tasks.find(item => item.stage === "attribution")!;
+  const plan = await buildPlan(config), task = plan.tasks.find(item => item.stage === "criteria")!;
   const run = path.join(directory, "run");
   const manifest: RunManifest = {
     format: "evaluation-run", debug: false, runId: "test", status: "running", engine: fakeIdentity,
@@ -44,16 +41,10 @@ async function fixture(rows = [raw("q", null)]) {
     states: Object.fromEntries(plan.tasks.map(item => [item.id, { status: "pending", attempts: 0 }])),
     preflight: plan.summary, startedAt: Date.now(),
   };
-  const criteriaReceipts = Object.fromEntries(plan.tasks.filter(item => item.stage === "criteria").map(criteria => {
-    manifest.states[criteria.id].status = "succeeded";
-    return [criteria.id, { taskId: criteria.id, attemptId: "criteria", submissionId: randomUUID(),
-      evaluation: criteriaResultForTask(criteria, plan.inputs), evaluatorVersion: fakeEvaluatorVersion, judge: fakeJudge,
-      audit: emptyAudit(), usage: emptyUsage(), status: "succeeded" as const, acceptedAt: 0 }];
-  }));
-  const initial: RunState = { manifest, receipts: criteriaReceipts, usage: emptyUsage(), recordedAttempts: 0 };
+  const initial: RunState = { manifest, receipts: {}, usage: emptyUsage(), recordedAttempts: 0 };
   await createResultWriter(run, plan.inputs)(initial);
   await writeRunState(run, initial);
-  const prepared = prepare(task, plan.inputs, { criteria: criteriaReceipts[task.dependencies.criteria] });
+  const prepared = prepare(task, plan.inputs, {});
   const spec: AttemptSpec = {
     inputRevision: 1, runId: "test", taskId: task.id, attemptId: "first", engine: fakeIdentity,
     evidenceBank: [...prepared.evidenceBank], evaluation: prepared.evaluation,
@@ -63,9 +54,7 @@ async function fixture(rows = [raw("q", null)]) {
     inputs: Object.entries(task.inputIds).map(([name, id]) => ({ name, id })),
     hostUrl: "http://127.0.0.1", deadline: Date.now() + 60000,
   };
-  const draft = draftFor(spec, attributionResult(true, "2+2=4", false, task.inputIds.answer)) as Record<string, unknown>;
-  delete draft.is_correct;
-  delete draft.correct_reason;
+  const draft = draftFor(spec, taskResult(spec));
   const value: Submission = { taskId: task.id, attemptId: spec.attemptId, submissionId: randomUUID(), evaluation: draft,
     audit: { ...emptyAudit(), evidenceBank: [...spec.evidenceBank] }, usage: emptyUsage() };
   return { directory, run, initial, plan, spec, value };
@@ -91,7 +80,7 @@ test("accepted receipts survive hot-journal replay without waiting for checkpoin
     const { store, file } = await productionStore(f);
     await store.activate(f.spec);
     assert.equal((await store.accept(f.value)).submissionId, f.value.submissionId);
-    assert.equal(await exists(path.join(f.run, "results/attribution.jsonl")), false);
+    assert.equal(await exists(path.join(f.run, "results/criteria.jsonl")), false);
     const replay = new RunHotStore(file, runJournalIdentity(f.initial));
     const baseline = await readRunState(f.run);
     for (const event of replay.eventsAfter(baseline.manifest.journalSequence ?? 0)) applyRunJournalDelta(baseline, event.event);
@@ -108,14 +97,14 @@ test("outbox exports immutable rows once and repeats idempotently", async () => 
     await store.activate(f.spec);
     await store.accept(f.value);
     await store.flushOutbox(true);
-    const result = path.join(f.run, "results/attribution.jsonl"), first = await readFile(result, "utf8");
+    const result = path.join(f.run, "results/criteria.jsonl"), first = await readFile(result, "utf8");
     assert.equal(first.trim().split("\n").length, 1);
     assert((await readProgressJournal(f.run)).some(event => Object.hasOwn(event.event.receipts ?? {}, f.spec.taskId)));
     await store.flushOutbox(true);
     assert.equal(await readFile(result, "utf8"), first);
     const restored = await readRunState(f.run);
     assert.equal(restored.receipts[f.spec.taskId]!.submissionId, f.value.submissionId);
-    assert.equal(restored.receipts[f.spec.taskId]!.exported?.file, "attribution.jsonl");
+    assert.equal(restored.receipts[f.spec.taskId]!.exported?.file, "criteria.jsonl");
   } finally { await rm(f.directory, { recursive: true, force: true }); }
 });
 
@@ -127,7 +116,7 @@ test("duplicate submissions are idempotent and one submission id cannot span tas
     const results = await Promise.all([store.accept(f.value), store.accept(f.value), store.accept(f.value)]);
     assert.deepEqual(results[0], results[1]);
     assert.deepEqual(results[0], results[2]);
-    const other = store.manifest.tasks.find(task => task.stage === "attribution" && task.id !== f.spec.taskId)!;
+    const other = store.manifest.tasks.find(task => task.stage === "criteria" && task.id !== f.spec.taskId)!;
     const attempt = specForTask(store, f.spec, other.id, "other-attempt");
     await store.activate(attempt);
     await assert.rejects(store.accept({ ...f.value, taskId: other.id, attemptId: attempt.attemptId,

@@ -5,10 +5,14 @@ import path from "node:path";
 
 const { values } = parseArgs({ options: {
   config: { type: "string", default: ".servers.conf" }, branch: { type: "string", default: "main" },
-  "code-path": { type: "string", default: "/mnt/aigc_team/user_workspace/chenmingyang/eval_harness/eris-code" },
-  "runtime-root": { type: "string", default: "/mnt/aigc_team/user_workspace/chenmingyang/eval_harness/runtime" },
+  "code-path": { type: "string" },
+  "runtime-root": { type: "string" },
+  "collections-file": { type: "string" },
+  "source-ini": { type: "string" },
   start: { type: "boolean", default: false },
 } });
+for (const key of ["code-path", "runtime-root", "collections-file", "source-ini"])
+  if (!values[key] || !path.isAbsolute(values[key])) throw new Error(`Provide an absolute --${key} on the server`);
 const configFile = path.resolve(values.config), entries = new Map(); let section = "";
 for (const raw of (await readFile(configFile, "utf8")).split(/\r?\n/)) {
   const line = raw.trim(), header = /^\[([^\]]+)\]$/.exec(line), pair = /^([^=]+)=(.*)$/.exec(line);
@@ -22,6 +26,8 @@ const script = `set -euo pipefail
 CODE=${quote(values["code-path"])}
 RUNTIME=${quote(values["runtime-root"])}
 BRANCH=${quote(values.branch)}
+COLLECTIONS=${quote(values["collections-file"])}
+SOURCE_INI=${quote(values["source-ini"])}
 ORIGIN=http://interactive-n01laf763gwn:8080/chenmingyang2/agent_eval_harness.git
 export GIT_TERMINAL_PROMPT=0
 export NO_PROXY="\${NO_PROXY:-},interactive-n01laf763gwn,interactive-s4lvy0mmvu32,localhost,127.0.0.1"
@@ -48,7 +54,7 @@ node scripts/eris-toolchain.mjs
 npm run bootstrap
 npm run build
 # ERIS_PASSWORD_INPUT
-node scripts/eris-init.mjs --runtime-root "$RUNTIME" --source-ini "$RUNTIME/config/post-training.ini"
+node scripts/eris-init.mjs --runtime-root "$RUNTIME" --source-ini "$SOURCE_INI" --collections-file "$COLLECTIONS"
 unset ERIS_ADMIN_PASSWORD
 ${values.start ? `if tmux has-session -t '=eris' 2>/dev/null; then echo 'eris tmux already exists; stop it explicitly before restarting' >&2; exit 1; fi
 tmux new-session -d -s eris -c "$CODE" "bash agent/run.sh --config '$RUNTIME/config/eris.json'"

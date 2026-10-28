@@ -1,7 +1,0 @@
-.packages/
-state/
-extract-*/
-*.log
-service.pid
-*.7z
-2_daily_eval_input/

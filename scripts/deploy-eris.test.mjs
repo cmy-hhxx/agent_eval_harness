@@ -10,10 +10,11 @@ import { assistantModelConfiguration } from "../dist/apps/host/src/assistant-mod
 
 test("Eris initializes only its own configuration with the DeepSeek V4.1 supported reasoning levels", async t => {
   const directory = await mkdtemp(path.join(tmpdir(), "eris-init-")); t.after(() => rm(directory, { recursive: true, force: true }));
-  const sourceFile = path.join(directory, "source.ini"), runtime = path.join(directory, "runtime");
+  const sourceFile = path.join(directory, "source.ini"), runtime = path.join(directory, "runtime"), collectionsFile = path.join(directory, "collections.json");
   const source = "[channel.evaluation-gateway]\nbase_url=http://fixture/v1\napi_key=fixture-secret\napi=openai-responses\nmodels=previous-model\nthinking=medium\nefforts=low,medium,high\ncontext_window=524288\nmax_output_tokens=32768\n[environment]\nSEARCH_API_KEY=search-fixture\n";
   await writeFile(sourceFile, source);
-  const child = spawn(process.execPath, [path.join(root, "scripts/eris-init.mjs"), "--runtime-root", runtime, "--source-ini", sourceFile], {
+  await writeFile(collectionsFile, JSON.stringify([{ id: "custom/research", path: "./outputs" }]));
+  const child = spawn(process.execPath, [path.join(root, "scripts/eris-init.mjs"), "--runtime-root", runtime, "--source-ini", sourceFile, "--collections-file", collectionsFile], {
     env: { ...process.env, ERIS_ADMIN_PASSWORD: "fixture-password" }, stdio: ["ignore", "pipe", "pipe"],
   });
   let output = ""; for (const stream of [child.stdout, child.stderr]) stream.on("data", chunk => { output += chunk; });
@@ -21,6 +22,7 @@ test("Eris initializes only its own configuration with the DeepSeek V4.1 support
   assert.equal(code, 0, output);
   assert(!/fixture-password|fixture-secret|search-fixture/.test(output));
   assert.equal(await readFile(sourceFile, "utf8"), source);
+  assert.equal(JSON.parse(await readFile(path.join(runtime, "config/eris.json"), "utf8")).collectionsFile, collectionsFile);
   const { model, gateways } = assistantModelConfiguration(parseSettings(await readFile(path.join(runtime, "config/eris.ini"), "utf8")));
   assert.equal(model.model, "deepseek-v4.1-flash"); assert.equal(model.thinking, "high");
   assert.deepEqual(gateways[0].efforts, ["low", "high", "xhigh", "max"]);
@@ -34,7 +36,8 @@ test("Eris deployment sends secrets only through stdin and distributes isolated 
   await writeFile(path.join(bin, "ssh"), `#!/usr/bin/env node\nconst fs=require('fs');fs.writeFileSync(process.env.ERIS_ARGUMENTS,JSON.stringify(process.argv.slice(2)));let input='';process.stdin.on('data',chunk=>input+=chunk);process.stdin.on('end',()=>fs.writeFileSync(process.env.ERIS_CAPTURE,input,{mode:0o600}));\n`, { mode: 0o755 });
   const config = path.join(directory, "servers.conf");
   await writeFile(config, "[eval_agent_server]\nhost=fixture\nport=3929\nuser=root\nauth=key\nkey=/fixture/key\n");
-  const child = spawn(process.execPath, [path.join(root, "scripts/deploy-eris.mjs"), "--config", config, "--branch", "codex/test", "--start"], {
+  const child = spawn(process.execPath, [path.join(root, "scripts/deploy-eris.mjs"), "--config", config, "--branch", "codex/test", "--start",
+    "--code-path", "/custom/eris-code", "--runtime-root", "/custom/runtime", "--source-ini", "/custom/models.ini", "--collections-file", "/custom/collections.json"], {
     env: { ...process.env, PATH: bin + ":" + process.env.PATH, ERIS_ADMIN_PASSWORD: "fixture-secret", ERIS_CAPTURE: captured, ERIS_ARGUMENTS: argumentsFile }, stdio: ["ignore", "pipe", "pipe"],
   });
   let output = ""; for (const stream of [child.stdout, child.stderr]) stream.on("data", chunk => { output += chunk; });
@@ -45,6 +48,8 @@ test("Eris deployment sends secrets only through stdin and distributes isolated 
   assert(script.includes("export ERIS_ADMIN_PASSWORD='fixture-secret'"));
   assert(script.indexOf("npm run build") < script.indexOf("export ERIS_ADMIN_PASSWORD="));
   assert(script.includes("eris-code")); assert(script.includes("BRANCH='codex/test'"));
+  assert(script.includes("COLLECTIONS='/custom/collections.json'"));
+  assert(script.includes('--source-ini "$SOURCE_INI" --collections-file "$COLLECTIONS"'));
   assert(script.includes("git -c credential.helper=")); assert(script.includes("tmux new-session -d -s eris"));
   assert(!/rsync|scp |git bundle|kill |aime-auto/.test(script));
 });

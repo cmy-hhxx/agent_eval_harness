@@ -3,22 +3,17 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { readFile, rm } from "node:fs/promises";
 import path from "node:path";
-import { emptyUsage, type JsonObject, type PlannedTask, type SubmissionReceipt, type TaskPlan } from "@eval/contracts";
+import { emptyUsage, type PlannedTask, type SubmissionReceipt } from "@eval/contracts";
 import {
   buildPlan,
-  comparisonRow,
   createResultWriter,
   reportRun,
   writeRunState,
 } from "@eval/workflows/comparison";
 import type { ComparisonResult, TaskData } from "@eval/workflows/comparison";
-import { validateEvaluation } from "../../fixtures/services.js";
 import { attributionResult, emptyAudit, fakeEvaluatorVersion, fakeIdentity, fakeJudge, fixtureConfig, criteriaResult, raw } from "../../fixtures/comparison.js";
 import { LocalAnalysisData } from "../../../apps/host/src/assistant-data.js";
 
-function comparisonTask(plan: TaskPlan): PlannedTask {
-  return plan.tasks.find((task) => task.stage === "comparison")!;
-}
 function attributionReceipts(task: PlannedTask, correct: boolean | Record<string, boolean> = true): Map<string, SubmissionReceipt> {
   const receipts = new Map<string, SubmissionReceipt>();
   for (const [label, id] of Object.entries(task.dependencies))
@@ -56,93 +51,6 @@ function group(labels: string[], meets: Record<string, boolean> = {}): Compariso
     },
   };
 }
-
-test("group comparison validation enforces a partition over the candidates", async () => {
-  const { directory, config } = await fixtureConfig([[raw()], [], [raw()], []]);
-  try {
-    const plan = await buildPlan(config),
-      task = comparisonTask(plan),
-      labels = Object.keys((task.data as TaskData).candidates);
-    assert.equal(labels.length, 2);
-    const receipts = attributionReceipts(task);
-    const dependencies = Object.fromEntries(
-      Object.entries(task.dependencies).map(([label, id]) => [label, receipts.get(id)]),
-    );
-    const check = (result: ComparisonResult) =>
-      validateEvaluation(task, plan.inputs, result, emptyAudit(), dependencies);
-    check(group(labels));
-
-    const duplicate = group(labels);
-    duplicate.ranking = [[labels[0]!, labels[0]!]];
-    assert.throws(() => check(duplicate), /重复/);
-
-    const incomplete = group(labels);
-    incomplete.ranking = [[labels[0]!]];
-    assert.throws(() => check(incomplete), /恰好包含本组全部候选/);
-
-    const missingAssessment = group(labels);
-    delete missingAssessment.assessments[labels[1]!];
-    assert.throws(() => check(missingAssessment), /每个候选/);
-
-    const forged = group(labels);
-    forged.decision_basis.decisive_findings = [{ candidate: labels[0]!, finding_index: 9 }];
-    assert.throws(() => check(forged), /既有 finding/);
-  } finally {
-    await rm(directory, { recursive: true, force: true });
-  }
-});
-
-test("two-way verdicts are derived from ranking and core classification", async () => {
-  const { directory, config } = await fixtureConfig([[raw()], [], [raw()], []]);
-  try {
-    const plan = await buildPlan(config),
-      task = comparisonTask(plan),
-      candidates = (task.data as TaskData).candidates,
-      labels = Object.keys(candidates),
-      receipts = attributionReceipts(task),
-      names = Object.fromEntries(config.inputs.versions.map((v) => [v.id, v.display_name || v.name])),
-      pairKey = "a_fast__vs__b_fast";
-
-    const oneSided = group(labels, { [labels[0]!]: true, [labels[1]!]: false });
-    const oneSidedReceipts = attributionReceipts(task, { [labels[0]!]: true, [labels[1]!]: false });
-    validateEvaluation(task, plan.inputs, oneSided, emptyAudit(), Object.fromEntries(Object.entries(task.dependencies).map(([label, id]) => [label, oneSidedReceipts.get(id)])));
-    const win = comparisonRow(plan.inputs, task, oneSided, oneSidedReceipts, names, fakeEvaluatorVersion);
-    const winVerdict = (win.verdicts as Record<string, { result: string; winner_version: string }>)[
-      pairKey
-    ]!;
-    assert.equal(winVerdict.result, "win");
-    assert.equal(winVerdict.winner_version, candidates[labels[0]!].version);
-
-    const nearMiss = group(labels);
-    nearMiss.ranking = [[labels[0]!], [labels[1]!]];
-    const tiered = comparisonRow(plan.inputs, task, nearMiss, receipts, names, fakeEvaluatorVersion);
-    const tieredVerdict = (tiered.verdicts as Record<string, { result: string; winner_version: string }>)[pairKey]!;
-    assert.equal(tieredVerdict.result, "win");
-    assert.equal(tieredVerdict.winner_version, candidates[labels[0]!].version);
-
-    const failed = group(labels, Object.fromEntries(labels.map((label) => [label, false])));
-    failed.decision_basis.tradeoff = `双方都没答对，但候选${labels[0]}保留了正确操作数，比另一方替换操作数相对更好。`;
-    const allBad = comparisonRow(
-      plan.inputs,
-      task,
-      failed,
-      attributionReceipts(task, false),
-      names,
-      fakeEvaluatorVersion,
-    );
-    assert.equal((allBad.verdicts as Record<string, { result: string }>)[pairKey]!.result, "both_bad");
-    const badVerdict = (allBad.verdicts as Record<string, JsonObject>)[pairKey]!;
-    assert.equal(badVerdict.winner_version, null);
-    assert.equal(badVerdict.winner_name, null);
-    assert.deepEqual(allBad.ranking, [labels.map((label) => candidates[label].version)]);
-    assert.match((allBad.decision_basis as JsonObject).tradeoff as string, /相对更好/);
-
-    const even = comparisonRow(plan.inputs, task, group(labels), receipts, names, fakeEvaluatorVersion);
-    assert.equal((even.verdicts as Record<string, { result: string }>)[pairKey]!.result, "both_good");
-  } finally {
-    await rm(directory, { recursive: true, force: true });
-  }
-});
 
 test("report preserves aligned comparison reasoning without reloading inputs", async () => {
   const first = raw(), second = raw();

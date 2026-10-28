@@ -7,8 +7,8 @@ import assert from "node:assert/strict";
 import crypto from "node:crypto";
 import { syncBuiltinESMExports } from "node:module";
 import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
-import { loadComparisonConfig, loadComparisonEvaluation, createModelResolver } from "@eval/host-app/config";
-import { adapt, createInputScanCache, inputAdapterIds, inputAdapters } from "@eval/workflows/inputs";
+import { loadComparisonConfig, createModelResolver } from "@eval/host-app/config";
+import { adapt, inputAdapterIds, inputAdapters } from "@eval/workflows/inputs";
 import { buildPlan, expandComparisonPairs, reconcileRun } from "@eval/workflows/comparison";
 import { prepare, validateEvaluation } from "../../fixtures/services.js";
 import { annotateFindings } from "@eval/workflows/comparison";
@@ -18,7 +18,7 @@ import type { RawInput } from "@eval/workflows/inputs";
 import { emptyAudit, fakeEvaluatorVersion, fakeIdentity, fakeJudge, fixtureConfig, attributionResult, comparisonResult, criteriaResultForTask, raw } from "../../fixtures/comparison.js";
 import path from "node:path";
 import { emptyUsage, type RunState, type SubmissionReceipt } from "@eval/contracts";
-import { compressFile, fileSourceReader, readJsonl, writeJsonl } from "@eval/data";
+import { compressFile, readJsonl, writeJsonl } from "@eval/data";
 import { ROOT } from "../../fixtures/services.js";
 import { blindMaterials } from "../../../packages/workflows/src/comparison/blind.js";
 
@@ -162,7 +162,6 @@ test("configuration composes layered files and resolves bound models", async () 
   assert.equal(host.models.models.judge?.thinking, "low");
   assert.equal(host.evaluation.execution.concurrency, 8);
   assert.deepEqual(host.evaluation.rewrite, { attribution: true, comparison: true, comparisonItems: true, clustering: true });
-  assert.equal(host.evaluation.output.path, "/mnt/fin_bench/eval_data/0_wencai/eval_output/0_daily_eval");
   for (const version of host.evaluation.inputs.versions)
     assert.equal(version.sources[0].path, path.join(ROOT, "data/sources/model-answers", version.id));
   assert.throws(() => createModelResolver(host.models)("attribution"), /Missing model id/);
@@ -187,7 +186,7 @@ test("configuration composes layered files and resolves bound models", async () 
   assert.equal(overridden("attribution").thinking, "low", "stage reasoning overrides the profile default");
   assert.equal(overridden("comparison").thinking, "low", "stage reasoning overrides the profile default");
   assert.equal(overridden("rewrite").thinking, "low", "polish stays low even when the judge profile is high");
-  await assert.rejects(loadComparisonConfig(file, { channels: {}, agent: {}, automation: { channels: [] }, environment: {} }), /Unknown.*channel/);
+  await assert.rejects(loadComparisonConfig(file, { channels: {}, agent: {}, environment: {} }), /Unknown.*channel/);
   assert.throws(() => testSettings("file:///tmp/model"), /base_url/);
 });
 
@@ -278,9 +277,6 @@ test("comparison tiers reject Fast/Expert mixing, but allow a third model in eac
     await assert.rejects(loadComparisonConfig([path.join(ROOT, "configs/host.json"), file], testSettings("https://gateway.example/v1")), /Fast.*Expert|fast.*expert/i);
     config.comparisons = [["a_fast", "a_expert"]];
     await assert.rejects(buildPlan(config), /Fast.*Expert|fast.*expert/i);
-    await assert.rejects(loadComparisonConfig(path.join(ROOT, "configs/host.json"),
-      testSettings("https://gateway.example/v1"), { versions: ["a_fast", "a_expert"] }),
-    /没有可比较的组合/);
     for (const [id, name, tier] of [["deepseek", "DeepSeek", "Fast"], ["kimi", "Kimi", "Expert"]] as const) {
       const source = path.join(directory, `${id}.jsonl`);
       await writeJsonl(source, [raw("q1")]);
@@ -383,7 +379,7 @@ test("reversed pair declarations preserve task identities and blind assignment o
   } finally { await rm(directory, { recursive: true, force: true }); }
 });
 
-test("model selection and resume collapse equivalent narrowed comparison groups", async () => {
+test("layered input selection and resume collapse equivalent narrowed comparison groups", async () => {
   const { directory, config } = await fixtureConfig();
   try {
     config.inputs.versions[1].comparison_tier = "Fast";
@@ -396,10 +392,13 @@ test("model selection and resume collapse equivalent narrowed comparison groups"
     }));
     const sources = [path.join(ROOT, "configs/host.json"), file];
     const env = testSettings("https://gateway.example/v1");
-    const settings = { versions: ["a_fast", "b_fast"] };
-    const selected = (await loadComparisonConfig(sources, env, settings)).evaluation;
+    const selectionFile = path.join(directory, "selection.json");
+    await writeFile(selectionFile, JSON.stringify({
+      inputs: { versions: config.inputs.versions.filter(version => ["a_fast", "b_fast"].includes(version.id)) },
+      comparisons: [["a_fast", "b_fast"]],
+    }));
+    const selected = (await loadComparisonConfig([...sources, selectionFile], env)).evaluation;
     assert.deepEqual(selected.comparisons, [["a_fast", "b_fast"]], "keep the first group's declared order");
-    assert.deepEqual((await loadComparisonEvaluation(sources, settings)).comparisons, selected.comparisons);
     const plan = await buildPlan(selected);
     assert.equal(plan.summary.comparison_tasks, 1);
     const state: RunState = {
@@ -560,78 +559,6 @@ test("duplicate input invalidates only affected group; conflicting question inva
     await rm(second.directory, { recursive: true, force: true });
   }
 });
-test("indexed previews preserve validation and selections without retaining answer bodies", async () => {
-  const conflict = raw("conflict");
-  conflict.messages[0]!.content = "计算3+3";
-  const invalid = { ...raw("invalid"), messages: [] };
-  const fixture = await fixtureConfig([
-    [raw("ok"), raw("duplicate"), raw("duplicate"), raw("conflict"), invalid], [],
-    [raw("ok"), raw("duplicate"), conflict, raw("invalid")], [],
-  ]);
-  const { config, directory } = fixture;
-  const scanFile = createInputScanCache();
-  try {
-    const source = config.inputs.versions[0]!.sources[0]!.path;
-    await writeFile(source, (await readFile(source, "utf8")) + "{broken json\n");
-    for (const selection of [{}, { limit: 1 }, { case_ids: ["ok"] }, { batches: ["absent"] }]) {
-      const selected = { ...config, inputs: { ...config.inputs, ...selection } };
-      const regular = await buildPlan(selected, undefined, { materializeInputs: false });
-      const indexed = await buildPlan(selected, undefined, { materializeInputs: false, scanFile });
-      assert.deepEqual(indexed.summary, regular.summary);
-      assert.deepEqual(indexed.inputs, {});
-      const catalog = (plan: typeof indexed) => (plan.catalog as Record<string, unknown>[])
-        .map(({ input_id: _id, ...record }) => record);
-      assert.deepEqual(catalog(indexed), catalog(regular));
-    }
-    const rows = [];
-    for await (const row of scanFile(source, config.inputs.versions[0]!, undefined, await fileSourceReader.revision(source)))
-      if (row) rows.push(row);
-    assert(rows.length > 0);
-    assert(rows.every((row) => !Object.hasOwn(row, "raw")), "cached rows contain projections, not raw traces");
-    await assert.rejects(buildPlan(config, undefined, { scanFile }), /只读预检/);
-  } finally {
-    await rm(directory, { recursive: true, force: true });
-  }
-});
-
-test("input scan cache shares in-flight reads, rechecks revisions and retries failed reads", async () => {
-  const { directory, config } = await fixtureConfig();
-  const scanFile = createInputScanCache();
-  const version = config.inputs.versions[0]!, source = version.sources[0]!.path;
-  const original = fileSourceReader.lines;
-  let scans = 0, fail = false;
-  fileSourceReader.lines = async function* (...args) {
-    scans++;
-    yield* original(...args);
-    if (fail) throw new Error("test read interrupted");
-  };
-  const collect = async (revision: string, adapter = version) => {
-    const rows = [];
-    for await (const row of scanFile(source, adapter, undefined, revision)) rows.push(row);
-    return rows;
-  };
-  try {
-    const revision = await fileSourceReader.revision(source);
-    await Promise.all([collect(revision), collect(revision)]);
-    assert.equal(scans, 1);
-    await writeJsonl(source, [raw("changed")]);
-    await assert.rejects(collect(revision), /发生变化/);
-    const current = await fileSourceReader.revision(source);
-    fail = true;
-    await assert.rejects(collect(current), /interrupted/);
-    fail = false;
-    const rows = await collect(current);
-    assert.equal(rows[0]!.record!.case_id, "changed");
-    assert.equal(scans, 3, "a failed read is evicted and retried");
-    const reinterpreted = await collect(current, { ...version, adapter: "b" });
-    assert(reinterpreted[0]!.error, "adapter changes must revalidate the same source");
-    assert.equal(scans, 4);
-  } finally {
-    fileSourceReader.lines = original;
-    await rm(directory, { recursive: true, force: true });
-  }
-});
-
 test("public prompt definitions reach prepared tasks and the run snapshot", async () => {
   const { directory, config } = await fixtureConfig();
   try {

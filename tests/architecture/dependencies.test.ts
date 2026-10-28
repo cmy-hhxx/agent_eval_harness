@@ -21,7 +21,6 @@ const owner = (file: string) => file.startsWith("agent/") ? "agent/assistant" : 
 const allowed: Record<string, string[]> = {
   assistant: ["contracts", "prompts", "tools", "runtime"],
   contracts: [],
-  automations: ["contracts"],
   prompts: ["contracts"],
   data: ["contracts"],
   tools: ["contracts", "data"],
@@ -112,7 +111,7 @@ test("public package boundaries, independent Agents and acyclic implementation a
     walk(`packages/workflows/src/${entry}/index.ts`);
     for (const file of reachable) {
       assert(!file.startsWith("packages/workflows/src/comparison/"), `${entry} must not depend on comparison: ${file}`);
-      assert(!file.startsWith("packages/workflows/src/answer-review/"), `Shared ${entry} must not depend on a concrete workflow: ${file}`);
+      assert(!file.startsWith("packages/workflows/src/attribution/"), `Shared ${entry} must not depend on a concrete workflow: ${file}`);
     }
   }
 });

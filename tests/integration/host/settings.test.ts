@@ -29,13 +29,23 @@ traffic_weight = 4
 channel = openai
 model = shared-model
 thinking = high
-[automation]
-channels = openai, evaluation-gateway
 [environment]
 SEARCH_API_KEY = "search=key#;"
 `;
 
-test("standalone attribution accepts one input model while comparison still requires two", async t => {
+test("output and test directories are resolved from the selected configuration file", async t => {
+  const directory = await mkdtemp(path.join(tmpdir(), "output-config-"));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  const file = path.join(directory, "paths.json"), base = path.join(ROOT, "configs/host.json");
+  await writeFile(file, JSON.stringify({ output: { path: "production/runs", testPath: "separate/experiments" } }));
+  const host = await loadConfig([base, file], parseSettings(ini));
+  assert.equal(host.evaluation.output.path, path.join(directory, "production/runs"));
+  assert.equal(host.evaluation.output.testPath, path.join(directory, "separate/experiments"));
+  await writeFile(file, JSON.stringify({ output: { testPath: " " } }));
+  await assert.rejects(loadConfig([base, file], parseSettings(ini)), /output.testPath/);
+});
+
+test("single-model runs require standalone attribution or an explicit record selection", async t => {
   const directory = await mkdtemp(path.join(tmpdir(), "attribution-config-"));
   t.after(() => rm(directory, { recursive: true, force: true }));
   const file = path.join(directory, "single.json"), base = path.join(ROOT, "configs/host.json");
@@ -44,13 +54,20 @@ test("standalone attribution accepts one input model while comparison still requ
   assert.equal((await loadConfig([base, file], parseSettings(ini))).workflow, "attribution");
   await writeFile(file, JSON.stringify({ workflow: "comparison", inputs: input }));
   await assert.rejects(loadConfig([base, file], parseSettings(ini)), /至少配置两个输入版本/);
+  await writeFile(file, JSON.stringify({ workflow: "comparison", comparisons: [], inputs: {
+    ...input, records: [{ model: "only", batch_id: "b1", case_id: "q1", input_file: "/data/one.jsonl", input_index: 0 }],
+  } }));
+  const selected = await loadConfig([base, file], parseSettings(ini));
+  assert.equal(selected.workflow, "comparison");
+  assert.equal(selected.evaluation.inputs.versions.length, 1);
+  assert(selected.workflow === "comparison");
+  assert.deepEqual(selected.evaluation.comparisons, []);
 });
 
 test("INI channels preserve literal secrets, reject ambiguous input and never quote secret-bearing lines in errors", () => {
   const config = parseSettings("\uFEFF" + ini.replaceAll("\n", "\r\n"));
   assert.equal(config.environment[config.channels.openai.apiKeyEnv], "second=key#;");
   assert.equal(config.environment.SEARCH_API_KEY, "search=key#;");
-  assert.deepEqual(config.automation.channels, ["openai", "evaluation-gateway"]);
   assert.equal(config.channels["evaluation-gateway"].trafficWeight, 6);
   assert.equal(config.channels.openai.trafficWeight, 4);
   const identities = parseSettings(ini + "\n[channel.evaluation_gateway]\nbase_url=https://third.example\napi_key=third\n");
@@ -69,9 +86,6 @@ test("INI channels preserve literal secrets, reject ambiguous input and never qu
     ini.replace("supports_developer_role = false", "supports_developer_role = 0"),
     ini.replace("supports_explicit_prompt_caching = true", "supports_explicit_prompt_caching = 1"),
     ...["0", "-1", "1.5", "six"].map(value => ini.replace("traffic_weight = 6", `traffic_weight = ${value}`)),
-    ini.replace("channels = openai, evaluation-gateway", "channels = openai, absent"),
-    ini.replace("channels = openai, evaluation-gateway", "channels = openai, openai"),
-    ini.replace("channels = openai, evaluation-gateway", "channels ="),
   ]) assert.throws(() => parseSettings(text), error => error instanceof Error && !/key#|unterminated-secret|user:secret/.test(error.message));
 });
 
@@ -121,18 +135,22 @@ NO_PROXY=legacy.example
     for (const [name, value] of Object.entries(previous)) {
       if (value === undefined) delete process.env[name]; else process.env[name] = value;
     }
-    applySettings({ channels: {}, agent: {}, automation: { channels: [] }, environment: {} });
+    applySettings({ channels: {}, agent: {}, environment: {} });
     for (const socket of sockets) socket.destroy();
     await new Promise<void>(resolve => proxy.close(() => resolve()));
     await gateway.close(); await local.close();
   }
 });
 
-test("each evaluation stage can route an identical model ID to a different channel without exposing keys", async () => {
+test("each evaluation stage can route an identical model ID to a different channel without exposing keys", async t => {
+  const directory = await mkdtemp(path.join(tmpdir(), "model-routing-"));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  const file = path.join(directory, "routing.json"), base = path.join(ROOT, "configs/host.json");
   const settings = parseSettings(ini.replace("api = openai-completions", "api = openai-responses\ncontext_window = 8192\nmax_output_tokens = 2048"));
-  const config = await loadConfig(path.join(ROOT, "configs/host.json"), settings, {
+  await writeFile(file, JSON.stringify({
     bindings: { comparison: { channel: "openai", model: "shared-model" } },
-  });
+  }));
+  const config = await loadConfig([base, file], settings);
   const resolve = createModelResolver(config.models);
   assert.equal(resolve("attribution").baseUrl, "https://first.example/v1");
   assert.equal(resolve("comparison").baseUrl, "https://second.example/v1");
@@ -145,9 +163,10 @@ test("each evaluation stage can route an identical model ID to a different chann
   assert.equal(process.env[resolve("comparison").apiKeyEnv], "second=key#;");
   assert(boundProfiles(config.models).some(profile => profile.provider === "openai"));
   assert(!JSON.stringify(config).includes("key#"));
-  await assert.rejects(loadConfig(path.join(ROOT, "configs/host.json"), settings, {
+  await writeFile(file, JSON.stringify({
     bindings: { comparison: { channel: "missing" } },
-  }), /Unknown bindings.comparison.channel/);
+  }));
+  await assert.rejects(loadConfig([base, file], settings), /Unknown bindings.comparison.channel/);
 });
 
 test("evaluation profiles cannot override channel protocol or capabilities", async () => {
@@ -161,7 +180,8 @@ test("evaluation profiles cannot override channel protocol or capabilities", asy
     }
     await writeFile(file, JSON.stringify({ bindings: { comparison: { maxOutputTokens: 100 } } }));
     await assert.rejects(loadConfig([base, file], parseSettings(ini)), /Invalid bindings.comparison.maxOutputTokens/);
-    await assert.rejects(loadConfig(base, parseSettings(ini), { bindings: { comparison: { channel: "openai" } } }), /requires openai-responses/);
+    await writeFile(file, JSON.stringify({ bindings: { comparison: { channel: "openai" } } }));
+    await assert.rejects(loadConfig([base, file], parseSettings(ini)), /requires openai-responses/);
     const host = await loadConfig(base, parseSettings(ini));
     host.models.models.judge.api = "openai-completions";
     assert.throws(() => createModelResolver(host.models)("comparison"), /requires openai-responses/);

@@ -1,7 +1,7 @@
 import path from "node:path";
-import { assistantRunLocations, readRunOverview, type AssistantRunLocation } from "@eval/data";
+import { assistantRunLocations, readRunOverview, resolveEvaluationCollections, type AssistantRunLocation } from "@eval/data";
 import type { AnalysisRunOverview } from "@eval/workflows/comparison";
-import type { AnalysisDataSource, AnalysisQuery, AnalysisReference, AnalysisCaseLookup, AnalysisReadOptions, JsonObject } from "@eval/contracts";
+import type { AnalysisDataSource, AnalysisQuery, AnalysisReference, AnalysisCaseLookup, AnalysisReadOptions, JsonObject, EvaluationCollection } from "@eval/contracts";
 import { LocalAnalysisData } from "./assistant-data.js";
 
 /** Namespace only navigation projections; formal result and original source fields remain untouched. */
@@ -13,13 +13,16 @@ function navigation(value: unknown, collectionId: string): unknown {
     key === "result" || key === "evidence" ? child : navigation(child, collectionId)]).concat(typeof row.runId === "string" ? [["collectionId", collectionId]] : []));
 }
 export class CatalogAnalysisData implements AnalysisDataSource {
-  constructor(private root: string, private publication?: { stateFile: string; logFile: string; deliveryFile: string }) {}
+  private collections: EvaluationCollection[];
+  constructor(collections: readonly EvaluationCollection[]) {
+    this.collections = resolveEvaluationCollections(collections, process.cwd());
+  }
   private data(location: AssistantRunLocation) {
-    return new LocalAnalysisData(path.dirname(location.directory), this.publication);
+    return new LocalAnalysisData(path.dirname(location.directory));
   }
   private async locate(reference: { collectionId?: string; runId: string }) {
     if (!reference.collectionId) throw new Error("缺少 collectionId；请沿用运行目录的完整引用");
-    const { runs } = await assistantRunLocations(this.root, reference.collectionId.split("/")[1] === "test_eval");
+    const { runs } = await assistantRunLocations(this.collections, true);
     const found = runs.filter(run => run.collectionId === reference.collectionId && run.runId === reference.runId);
     if (found.length !== 1) throw new Error("运行引用不存在或不唯一");
     return found[0];
@@ -29,7 +32,7 @@ export class CatalogAnalysisData implements AnalysisDataSource {
       const location = await this.locate({ collectionId: query.collectionId, runId: query.runId });
       return navigation(await this.data(location).list(query), location.collectionId) as JsonObject;
     }
-    const inventory = await assistantRunLocations(this.root, query.includeTests), items: {collectionId: string; runId: string; workflow: string; evaluatorVersion: string; status: string; startedAt: number; inputCount: number; caseCount: number; finishedAt?: unknown}[] = [];
+    const inventory = await assistantRunLocations(this.collections, query.includeTests), items: {collectionId: string; runId: string; workflow: string; evaluatorVersion: string; status: string; startedAt: number; inputCount: number; caseCount: number; finishedAt?: unknown}[] = [];
     const summaries = new Map<string, JsonObject>();
     for (const location of inventory.runs) {
       if (query.collectionId && query.collectionId !== location.collectionId) continue;
@@ -53,17 +56,11 @@ export class CatalogAnalysisData implements AnalysisDataSource {
     const errors = inventory.errors.filter(error => !query.collectionId || error.collectionId === query.collectionId);
     const runDirectory = { complete: errors.length === 0, errors };
     if (query.view === "statistics") {
-      const { readPublishedStatistics } = await import("./assistant-statistics.js");
-      let history: unknown;
-      try {
-        if (query.collectionId) throw new Error("发布累计统计没有可验证的目录范围，不能用于指定 collectionId；请读取该目录内运行或公开统计资产。");
-        if (!this.publication) throw new Error("累计统计发布来源未配置");
-        history = await readPublishedStatistics(this.publication, query);
-      }
-      catch (error) { history = { status: "unavailable", error: error instanceof Error ? error.message : "统计读取失败", retryable: false }; }
-      const currentRuns = items.filter(item => item.status === "running").map(item => ({ ...item,
+      const offset = query.offset ?? 0, limit = Math.min(query.limit ?? 30, 100), end = Math.min(items.length, offset + limit);
+      const runs = items.slice(offset, end).map(item => ({ ...item,
         summary: summaries.get(JSON.stringify([item.collectionId, item.runId])) }));
-      return { kind: "statistics", history, currentRuns, runDirectory, additive: false };
+      return { kind: "statistics", runs, total: items.length, offset, limit, hasMore: end < items.length,
+        nextOffset: end < items.length ? end : null, runDirectory, additive: false };
     }
     if (query.view === "inputs" || query.view === "comparisons") {
       if (!selected) throw new Error("没有含输入的可读运行");

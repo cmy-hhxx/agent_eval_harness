@@ -13,7 +13,6 @@ export interface Channel extends ModelProfile {
 }
 export interface ApplicationSettings {
   channels: Record<string, Channel>;
-  automation: { channels: string[] };
   agent: { channel?: string; model?: string; thinking?: ModelConfig["thinking"]; contextWindow?: number; maxOutputTokens?: number };
   environment: Record<string, string>;
 }
@@ -46,7 +45,6 @@ export function parseSettings(text: string): ApplicationSettings {
   const channels: Record<string, Channel> = Object.create(null);
   const environment: Record<string, string> = Object.create(null);
   let agent: ApplicationSettings["agent"] = {};
-  let automation: ApplicationSettings["automation"] = { channels: [] };
   for (const [name, values] of sections) {
     const error = (key: string): never => { throw new Error(`Invalid config.ini [${name}].${key}`); };
     const optional = (key: string) => values.get(key)?.trim() || undefined;
@@ -66,13 +64,6 @@ export function parseSettings(text: string): ApplicationSettings {
         if (key.startsWith("EVAL_CHANNEL_KEY_") || key === "EVAL_CONFIG_FILE") error(key);
         environment[key] = value;
       }
-      continue;
-    }
-    if (name === "automation") {
-      for (const key of values.keys()) if (key !== "channels") error(key);
-      const order = list("channels");
-      if (!order) error("channels");
-      automation = { channels: order! };
       continue;
     }
     const thinking = optional("thinking") as ModelConfig["thinking"] | undefined;
@@ -108,8 +99,7 @@ export function parseSettings(text: string): ApplicationSettings {
   }
   if (!Object.keys(channels).length) throw new Error("config.ini requires at least one [channel.<id>]");
   if (agent.channel && !channels[agent.channel]) throw new Error("Unknown config.ini [agent].channel");
-  if (automation.channels.some(id => !channels[id])) throw new Error("Unknown config.ini [automation].channels");
-  return { channels, agent, automation, environment };
+  return { channels, agent, environment };
 }
 
 export async function readSettings(file = process.env.EVAL_CONFIG_FILE || path.join(ROOT, "config.ini")): Promise<ApplicationSettings> {

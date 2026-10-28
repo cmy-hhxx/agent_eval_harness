@@ -62,8 +62,10 @@ try {
   }
   await writeFile(path.join(checkout, "config.ini"), "[channel.evaluation-gateway]\nbase_url=http://127.0.0.1:1/v1\napi_key=\n");
   await recordStage("copied");
-  // Share only download caches; never reuse installed packages, builds or virtualenvs.
-  await symlink(path.join(root, ".cache"), path.join(checkout, ".cache"));
+  // Isolate npm's mutable extraction cache; reuse only Python downloads.
+  await mkdir(path.join(checkout, ".cache"));
+  await mkdir(path.join(root, ".cache/uv"), { recursive: true });
+  await symlink(path.join(root, ".cache/uv"), path.join(checkout, ".cache/uv"));
   for (const [name, target] of [
     ["node", process.execPath],
     ["uv", (await exec("which", ["uv"])).stdout.trim()],

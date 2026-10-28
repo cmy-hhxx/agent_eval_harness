@@ -124,8 +124,8 @@ for (const clusterRun of clusterRuns) {
 }
 const attributionTree = projectProblemLibraryTree(rows, libraries, classTexts, unfinished);
 const [baseCss, problemCss] = await Promise.all([
-  readFile(new URL("../apps/host/dashboard/dashboard.css", import.meta.url), "utf8"),
-  readFile(new URL("../apps/host/dashboard/problems.css", import.meta.url), "utf8"),
+  readFile(new URL("./attribution-review/base.css", import.meta.url), "utf8"),
+  readFile(new URL("./attribution-review/tree.css", import.meta.url), "utf8"),
 ]);
 const html = renderAttributionReview({ attributionTree }, baseCss, problemCss);
 new Script(html.match(/<script>([\s\S]*?)<\/script>/u)[1]);

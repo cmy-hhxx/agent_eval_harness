@@ -4,8 +4,8 @@ import { readFile } from "node:fs/promises";
 import { JSDOM, VirtualConsole } from "jsdom";
 import { renderAttributionReview } from "./attribution-review-view.mjs";
 
-const baseCss = await readFile(new URL("../apps/host/dashboard/dashboard.css", import.meta.url), "utf8");
-const problemCss = await readFile(new URL("../apps/host/dashboard/problems.css", import.meta.url), "utf8");
+const baseCss = await readFile(new URL("./attribution-review/base.css", import.meta.url), "utf8");
+const problemCss = await readFile(new URL("./attribution-review/tree.css", import.meta.url), "utf8");
 const modelIds = ["a_fast", "a_expert", "b_fast", "b_expert"];
 const groupId = (model, index = 1) => (modelIds.indexOf(model) + 1) + "0000000-0000-4000-8000-00000000000" + index;
 function fixture() {

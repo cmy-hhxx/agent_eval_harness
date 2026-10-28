@@ -1,14 +1,13 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { Ajv2020 } from "ajv/dist/2020.js";
-import type { JsonObject, PlannedTask, RunState, SubmissionReceipt } from "@eval/contracts";
+import type { PlannedTask, RunState, SubmissionReceipt } from "@eval/contracts";
 import { emptyUsage } from "@eval/contracts";
 import { sessionAttributionResultSchema, sessionProblems } from "@eval/agents/attribution";
 import { attributionResult, emptyAudit, fakeEvaluatorVersion, fakeJudge } from "../../../../tests/fixtures/comparison.js";
 import { comparisonAttribution } from "./comparison-attribution.js";
 import { attributionRow, stageResult, encodeResult } from "./results.js";
 import { comparisonCodec } from "./codec.js";
-import { caseResultView } from "./dashboard-view.js";
 import { attributionSlots, polishAttribution } from "./commentary.js";
 import { groupObservations } from "./observations.js";
 
@@ -33,7 +32,7 @@ test("canonical session attribution is the only exported attribution contract", 
   assert.equal(encodeResult(task, state, {})!.id, task.id);
 });
 
-test("rewrite slots and dashboard views address canonical turn and session problems", () => {
+test("rewrite slots address canonical turn and session problems", () => {
   const { value } = fixture(), problems = sessionProblems(value);
   assert.equal(problems.length, 1);
   const slots = attributionSlots(value);
@@ -42,9 +41,6 @@ test("rewrite slots and dashboard views address canonical turn and session probl
   const polished = polishAttribution(value, { "turns.0.problem.0.reason": "有效改写。" });
   assert.equal(sessionProblems(polished)[0]!.reason, "有效改写。");
   assert.deepEqual(sessionProblems(polished)[0]!.evidence, problems[0]!.evidence);
-  const shown = caseResultView("attribution-session", value as unknown as JsonObject)!;
-  assert.deepEqual(Object.keys(shown).filter(key => ["session_meta", "turns", "session_summary", "session_problem"].includes(key)).sort(),
-    ["session_meta", "session_problem", "session_summary", "turns"]);
 });
 
 test("comparison projection maps canonical session problems without private responsibility fields", () => {
