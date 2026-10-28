@@ -134,7 +134,7 @@ export function installNightSourceControl(configFile, config, dispatcher, record
 export function resolveNightConfig(value, configFile) {
   const config = structuredClone(value);
   config.activeSources ??= [...priority];
-  if (!Array.isArray(config.activeSources) || !config.activeSources.length ||
+  if (!Array.isArray(config.activeSources) ||
       new Set(config.activeSources).size !== config.activeSources.length ||
       config.activeSources.some(source => !priority.includes(source))) throw new Error("Invalid activeSources");
   for (const key of ["runtimeRoot", "dataRoot", "settingsFile"])
