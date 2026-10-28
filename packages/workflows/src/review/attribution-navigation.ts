@@ -43,13 +43,14 @@ export function initialComponentScene(raw: RawInput, original: RawInput, inputId
   const unread: { end_offset: number; read_request: { candidate: string; message_index: number; path: string; offset: number; max_chars: number } }[] = [];
   const seen = new Set<string>();
   let remaining = 12000;
-  // An invocation's actual arguments and result precede duplicated model input history.
+  // Show every selected step's actual arguments and result before expanding input history.
   // Register only exact bytes that survive the public projection at the same coordinates.
+  for (const keys of [["input", "arguments", "output", "result", "content"], ["input_messages"]])
   for (const messageIndex of scope?.message_indices ?? []) {
     const message = raw.messages[messageIndex];
     if (!message) throw new Error("归因原子任务的消息坐标不存在");
     const locations = evidenceSources(message), originals = evidenceSources(original.messages[messageIndex]);
-    for (const key of ["input", "arguments", "output", "result", "content", "input_messages"]) {
+    for (const key of keys) {
       if (!Object.hasOwn(message, key)) continue;
       const value = message[key];
       const whole = selectEvidenceSource(locations, `/${key}`);

@@ -22,13 +22,14 @@ test("submission latency counts failures and late acceptance without treating ea
     { startedAt: 1000, observedUntil: 101000, status: "cancelled" },
     { startedAt: 1000, observedUntil: 701000, status: "cancelled" },
     { observedUntil: 901000, status: "pending" },
+    { observedUntil: 901000, status: "failed" }, // Preparation failed before a Worker attempt existed.
   ]);
   assert.equal(report.valid_within_ten_minutes, 1);
-  assert.equal(report.ten_minute_observed_tasks, 6);
-  assert.equal(report.valid_within_ten_minutes_rate, 1 / 6);
+  assert.equal(report.ten_minute_observed_tasks, 7);
+  assert.equal(report.valid_within_ten_minutes_rate, 1 / 7);
   assert.equal(report.interrupted_or_running_under_ten_minutes, 1);
   assert.equal(report.valid_submission_p95_seconds, 900);
-  assert.equal(report.fault_rate, 2 / 5);
+  assert.equal(report.fault_rate, 3 / 6);
 });
 
 test("attribution cost includes failed and retry attempts and refuses an incomplete success denominator", () => {

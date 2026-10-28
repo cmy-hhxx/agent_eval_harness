@@ -92,6 +92,36 @@ test("a mixed-media answer retains its image entrypoint after text scope splitti
   assert.equal((binding.materialNavigation!.answer as { final_message_index: number }).final_message_index, 1);
 });
 
+test("merged model review shows each local output before expanding earlier input history", () => {
+  const history = "同一段历史输入。".repeat(2500);
+  const raw = { batch_id: "batch", case_id: "merged-scene", messages: [
+    { type: "user_question", content: "核对两步处理。" },
+    { type: "llm_turn", name: "planner", input_messages: [{ role: "user", content: history }],
+      output: [{ role: "assistant", content: "第一步请求收入。" }] },
+    { type: "llm_turn", name: "planner", input_messages: [{ role: "user", content: history }, { role: "tool", content: "收入为10亿元。" }],
+      output: [{ role: "assistant", content: "第二步将10亿元误写成100亿元。" }] },
+    { type: "final_answer", content: "收入为100亿元。" },
+  ] };
+  const candidate = adapt(raw, { id: "answer", name: "Answer", adapter: "b", sources: [] }, "fixture.jsonl", 1);
+  const task = planAttributionUnit(candidate).tasks.find(task => task.stage === "attribution-component" &&
+    (task.data as AttributionTaskData).reviewScope!.message_indices.includes(1))!;
+  assert.deepEqual((task.data as AttributionTaskData).reviewScope!.message_indices, [1, 2]);
+  const binding = bindAttribution(task, { [candidate.input_id]: normalizeInput(raw) }, {});
+  const scene = (binding.modelInput!.answer as { component_scene: { entries: { part: string; message_index: number; quote: string }[];
+    unread: { read_request: { message_index: number; path: string; offset: number }; end_offset: number }[] } }).component_scene;
+  const outputs = scene.entries.filter(entry => entry.part === "output");
+  assert.deepEqual([...new Set(outputs.map(entry => entry.message_index))], [1, 2],
+    "an earlier turn's history must not consume the space for a later turn's review object");
+  assert(outputs.some(entry => entry.quote.includes("第二步将10亿元误写成100亿元。")));
+  const firstHistory = scene.entries.findIndex(entry => entry.part === "input_messages");
+  assert(scene.entries.slice(firstHistory).every(entry => entry.part === "input_messages"));
+  assert.equal(scene.entries.reduce((sum, entry) => sum + entry.quote.length, 0), 12000);
+  assert(scene.unread.some(entry => entry.read_request.message_index === 2 && entry.read_request.path === "/input_messages/0/content" && entry.read_request.offset === 0));
+  validateReadRequests(binding.modelInput!.answer);
+  const prepared = new AgentRegistry([attributionAgent]).prepare(binding);
+  validateEvidenceBankSources(prepared.evidenceBank, new Map([[candidate.input_id, normalizeInput(raw)]]));
+});
+
 test("local calls retain proven argument links without inventing links to nearby model turns", () => {
   const raw = { batch_id: "batch", case_id: "arguments", messages: [
     { type: "user_question", content: "查询收入。" },

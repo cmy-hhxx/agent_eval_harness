@@ -13,15 +13,17 @@ const percentile = (values, fraction) => {
 /** Interrupted tasks observed for less than ten minutes have no SLA verdict yet. */
 export function summarizeSubmissionLatency(tasks) {
   const started = tasks.filter(task => Number.isFinite(task.startedAt));
+  const failed = task => ["failed", "timed_out"].includes(task.status);
   const accepted = started.filter(task => task.acceptedAt !== undefined && !task.partial);
   const seconds = accepted.map(task => (task.acceptedAt - task.startedAt) / 1000);
-  const resolved = started.filter(task => task.acceptedAt !== undefined || ["failed", "timed_out"].includes(task.status) ||
+  const resolved = tasks.filter(task => task.acceptedAt !== undefined || failed(task) ||
     task.observedUntil - task.startedAt >= 600000);
   const within = seconds.filter(seconds => seconds <= 600).length;
-  const faults = started.filter(task => ["failed", "timed_out"].includes(task.status)).length;
-  const settled = started.filter(task => task.acceptedAt !== undefined || ["failed", "timed_out"].includes(task.status)).length;
+  const faults = tasks.filter(failed).length;
+  const settled = tasks.filter(task => task.acceptedAt !== undefined || failed(task)).length;
   return { started_tasks: started.length, valid_within_ten_minutes: within, ten_minute_observed_tasks: resolved.length,
-    interrupted_or_running_under_ten_minutes: started.length - resolved.length,
+    interrupted_or_running_under_ten_minutes: started.filter(task => task.acceptedAt === undefined && !failed(task) &&
+      task.observedUntil - task.startedAt < 600000).length,
     valid_within_ten_minutes_rate: resolved.length ? within / resolved.length : null,
     valid_submission_p50_seconds: percentile(seconds, .5), valid_submission_p95_seconds: percentile(seconds, .95),
     fault_tasks: faults, settled_tasks: settled, fault_rate: settled ? faults / settled : null };
