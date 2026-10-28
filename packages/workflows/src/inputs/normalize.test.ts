@@ -132,13 +132,18 @@ test("session inputs preserve every valid trace and reject ambiguous or incomple
 test("trace captures preserve the original session count and evaluate only the captured traces", () => {
   const source = sessionRaw();
   source.meta.n_traces = 7;
+  source.meta.n_messages = 14;
   const before = structuredClone(source), material = normalizeInput(source);
   assert.equal(material.meta!.n_traces, 7);
   assert.equal(material.session_meta!.n_traces, 7);
+  assert.equal(material.session_meta!.n_messages, 14);
   assert.equal(material.turns!.length, 1);
   assert.equal(adapt(source, version, "fixture", 1, "batch").turns!.length, 1);
   assert.strictEqual(material.turns![0]!.messages, source.traces[0]!.messages);
   assert.deepEqual(source, before);
+  assert.throws(() => normalizeInput({ ...source, meta: { ...source.meta, n_messages: 1 } }), /n_messages/);
+  assert.throws(() => normalizeInput({ ...source, traces: [{ ...source.traces[0],
+    meta: { ...source.traces[0]!.meta, n_messages: 3 } }] }), /n_messages/);
 });
 
 test("type-only question and final markers preserve governing context, timestamps and exact evidence", () => {

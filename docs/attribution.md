@@ -4,6 +4,8 @@ Attribution 是独立 workflow，入口为 `workflow: "attribution"`。输入扫
 
 AIME 的 `4_daily_eval_slim` JSONL 可以直接作为输入。每个 trace 的 `message_pool` 和 `tool_sets` 在输入边界按索引恢复：保持消息顺序、对象字段顺序和原始证据路径，不改写正文，不另存展开后的输入文件。重复消息共享内存中的对象，内部规范投影也复用共享结构；缺失、越界或非整数引用报错，不把坏引用当成空材料。未使用共享池的 trace 保持原样。
 
+采集 trace 子集时，外层 `meta.n_messages` 同样保留原会话总数，允许大于当前记录的消息总数；完整会话的外层计数和每个 trace 的消息计数继续精确校验。评测材料仅使用实际采集的消息，不按外层计数补造内容。
+
 ## 任务结构
 
 ```text
