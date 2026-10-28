@@ -609,13 +609,14 @@ export class RunStore {
         this.manifest.states[next.id] = { status: "pending", attempts: 0, revision: 1 };
         if (this.manifest.executionScope?.includes(task.id)) this.manifest.executionScope.push(next.id);
       }
-      const { tasks: _tasks, states: _states, inputCatalog, ...manifest } = this.manifest;
+      const { tasks: _tasks, states: _states, inputCatalog: _inputCatalog, ...manifest } = this.manifest;
       const states: Record<string, TaskState> = { [task.id]: structuredClone(state) };
       for (const id of addedIds) states[id] = structuredClone(this.manifest.states[id]);
       try {
         this.journal.append({
-          at: Date.now(), manifest: { ...manifest, ...(inputCatalog === undefined ? {} : { inputCatalog }) },
-          taskOrder: this.manifest.tasks.map(item => item.id), ...(changedTasks.length ? { tasks: changedTasks } : {}),
+          at: Date.now(), manifest,
+          ...(addedIds.length ? { taskOrder: this.manifest.tasks.map(item => item.id) } : {}),
+          ...(changedTasks.length ? { tasks: changedTasks } : {}),
           states, receipts: { [task.id]: structuredClone(receipt) },
         });
         if (this.directMode) await this.persistCheckpoint();

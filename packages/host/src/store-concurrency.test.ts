@@ -24,7 +24,7 @@ test("two hundred independent commits do not wait for checkpoint projection", as
   const state: RunState = {
     manifest: { format: "evaluation-run", debug: false, runId: "concurrent", status: "running",
       engine: { engine: "pi", version: "test", commit: "test", buildId: "test" }, evaluatorVersion: "test",
-      config: {}, tasks, inputs: { [sourceId]: { id: sourceId, name: "answer" } },
+      config: {}, tasks, inputs: { [sourceId]: { id: sourceId, name: "answer" } }, inputCatalog: [{ input_id: sourceId }],
       states: Object.fromEntries(tasks.map(task => [task.id, { status: "pending", attempts: 0, revision: 1 }])),
       preflight: {}, startedAt: 1 },
     receipts: {}, usage: emptyUsage(), recordedAttempts: 0,
@@ -34,9 +34,10 @@ test("two hundred independent commits do not wait for checkpoint projection", as
     async readRun() { return structuredClone(state); }, async readTasks() { return structuredClone(state); },
     async writeRun() { checkpoints++; }, createResultWriter() { return async () => {}; },
   };
+  const journal = new RunHotStore(":memory:", runJournalIdentity(state));
   const store = new RunStore("/unused-concurrency", state, { [sourceId]: input }, {
     agents, repository, taskSource: { id: "fixture", bind: () => binding },
-  }, undefined, new RunHotStore(":memory:", runJournalIdentity(state)));
+  }, undefined, journal);
   t.after(() => store.close());
   const prepared = agents.prepare(binding), engine = state.manifest.engine;
   const specs = tasks.map((task): AttemptSpec => ({ runId: "concurrent", taskId: task.id, attemptId: `attempt-${task.id}`,
@@ -56,6 +57,10 @@ test("two hundred independent commits do not wait for checkpoint projection", as
   assert.equal(Object.keys(state.receipts).length, 200);
   assert.equal(Object.values(state.manifest.states).every(value => value.status === "succeeded"), true);
   assert.equal(checkpoints, 0, "acceptance never waits for or triggers full checkpoint projection");
+  const receipts = journal.pending(1000).filter(row => row.event.receipts);
+  assert.equal(receipts.length, 200);
+  assert.ok(receipts.every(row => row.event.manifest?.inputCatalog === undefined && row.event.taskOrder === undefined),
+    "ordinary commits retain the existing catalog and task order without copying them into every receipt event");
   acceptanceLatencies.sort((a, b) => a - b);
   const p95 = acceptanceLatencies[Math.ceil(acceptanceLatencies.length * 0.95) - 1]!;
   t.diagnostic(`200 accepts: p50=${acceptanceLatencies[99]!.toFixed(1)}ms p95=${p95.toFixed(1)}ms max=${acceptanceLatencies.at(-1)!.toFixed(1)}ms`);
