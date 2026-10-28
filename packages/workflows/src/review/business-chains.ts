@@ -23,7 +23,7 @@ export function businessChains(raw: RawInput, inputId: string, finalIndex: numbe
     if (!sourcesByIndex.has(index)) sourcesByIndex.set(index, evidenceSources(raw.messages[index]));
     return sourcesByIndex.get(index)!;
   };
-  const at = (index: number, path: string): Evidence[] => {
+  const boundary = (index: number, path: string): Evidence[] => {
     const sources = sourcesAt(index);
     let range = selectEvidenceSource(sources, path, selectionCache);
     if (range && range.start === range.end) range = selectEvidenceSource(sources.filter(source => source.kind === "json"), path, selectionCache);
@@ -41,9 +41,21 @@ export function businessChains(raw: RawInput, inputId: string, finalIndex: numbe
     // the body separately; later rows remain part of the same captured return.
     return [cite(inputId, index, range.source, range.start, range.end)];
   };
-  const outputs = (index: number): Evidence[] => sourcesAt(index)
-    .filter(source => source.kind === "text" && /^\/output\/\d+\/content(?:\/|$)/u.test(source.path))
-    .flatMap(source => at(index, source.path));
+  const boundaries = new Map<number, Map<string, Evidence[]>>();
+  const at = (index: number, path: string): Evidence[] => {
+    let paths = boundaries.get(index);
+    if (!paths) { paths = new Map(); boundaries.set(index, paths); }
+    if (!paths.has(path)) paths.set(path, boundary(index, path));
+    // Callers extend their own list; repeated boundaries retain the same coordinates.
+    return [...paths.get(path)!];
+  };
+  const outputBoundaries = new Map<number, Evidence[]>();
+  const outputs = (index: number): Evidence[] => {
+    if (!outputBoundaries.has(index)) outputBoundaries.set(index, sourcesAt(index)
+      .filter(source => source.kind === "text" && /^\/output\/\d+\/content(?:\/|$)/u.test(source.path))
+      .flatMap(source => at(index, source.path)));
+    return [...outputBoundaries.get(index)!];
+  };
   const goalIndex = raw.messages.findIndex(message => message.type === "user_question" || message.role === "user");
   const goals = goalIndex < 0 ? [] : messageContentSources(raw.messages[goalIndex]).flatMap(source => at(goalIndex, source.path));
   const exchanges = traceExchanges(raw.messages);
@@ -61,7 +73,25 @@ export function businessChains(raw: RawInput, inputId: string, finalIndex: numbe
       /^\/(?:output|result|content)(?:\/|$)/u.test(source.path) && source.text.trim()).map(source => source.text)]
       .filter(value => value !== undefined).map(value => canonical(decoded(value)));
   }));
-  const assistantKey = (value: Record<string, unknown>) => canonical({ content: value.content ?? null, tool_calls: value.tool_calls ?? [] });
+  const assistantKeys = new WeakMap<object, string>();
+  const assistantKey = (value: Record<string, unknown>) => {
+    let key = assistantKeys.get(value);
+    if (key === undefined) {
+      key = canonical({ content: value.content ?? null, tool_calls: value.tool_calls ?? [] });
+      assistantKeys.set(value, key);
+    }
+    return key;
+  };
+  const toolInputs = new WeakMap<object, { body: unknown; key: string }>();
+  const toolInput = (value: Record<string, unknown>) => {
+    let input = toolInputs.get(value);
+    if (!input) {
+      const body = decoded(value.content);
+      input = { body, key: canonical(body) };
+      toolInputs.set(value, input);
+    }
+    return input;
+  };
   const returnOwners = new Map<string, number[]>(), outputOwners = new Map<string, number[]>();
   returnBodies.forEach((bodies, index) => {
     for (const body of new Set(bodies)) returnOwners.set(body, [...returnOwners.get(body) ?? [], index]);
@@ -96,7 +126,7 @@ export function businessChains(raw: RawInput, inputId: string, finalIndex: numbe
       if (!exchange.return_indices.some(index => index < context.message_index)) continue;
       for (const { value, path } of context.entries) {
         if (value.role === "tool") {
-          const body = decoded(value.content), key = canonical(body);
+          const { body, key } = toolInput(value);
           const exact = returnOwners.get(key) ?? [];
           if (!(typeof value.tool_call_id === "string" && callIds.includes(value.tool_call_id)) && !actionIds.has(object(body).action_id as string) &&
             !(exact.length === 1 && exact[0] === index)) continue;
