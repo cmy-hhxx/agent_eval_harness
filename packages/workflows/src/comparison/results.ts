@@ -250,8 +250,7 @@ export function encodeResult(task: PlannedTask, state: RunState, inputs: Record<
     const row = attributionRow(task, receipt);
     if (!validateAttribution(row))
       throw new Error("归因结果 schema 无效：" + ajv.errorsText(validateAttribution.errors));
-    const session = row.session_meta as JsonObject;
-    return { id: String(session.session_id ?? session.case_id), file: "attribution.jsonl", row };
+    return { id: task.id, file: "attribution.jsonl", row };
   }
   if (task.stage === "rewrite") {
     const source = (task.data as TaskData).rewriteOf!;

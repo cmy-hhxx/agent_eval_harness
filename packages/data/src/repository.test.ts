@@ -54,7 +54,7 @@ test("a reader racing journal compaction reloads the new checkpoint instead of d
   assert.equal(restored.recordedAttempts, 11);
 });
 
-async function fixture(t: test.TestContext, references: ResultReference[]) {
+async function fixture(t: test.TestContext, references: ResultReference[], indexedFiles?: string[]) {
   const directory = await mkdtemp(path.join(os.tmpdir(), "eval-repository-"));
   t.after(() => rm(directory, { recursive: true, force: true }));
   const codec: RunCodec<ResultReference[]> = {
@@ -65,11 +65,25 @@ async function fixture(t: test.TestContext, references: ResultReference[]) {
       ...state, manifest: { ...state.manifest, config: saved.filter((ref) => !ids || ids.has(ref.id)).map(row) },
     }),
   };
-  const repository = createRunRepository(codec, () => { throw new Error("Read-only test"); });
+  const repository = createRunRepository(codec, () => { throw new Error("Read-only test"); }, { indexedFiles });
   await repository.writeRun(directory, state);
   await mkdir(path.join(directory, "results"));
   return { directory, repository };
 }
+
+test("checkpoint row references select identical public rows by identity and reject missing or conflicting coordinates", async t => {
+  const refs = [{ file: "attribution.jsonl", id: "first", line: 1 }, { file: "attribution.jsonl", id: "second", line: 2 }];
+  const { directory, repository } = await fixture(t, refs, ["attribution.jsonl"]);
+  const row = { session_meta: {}, turns: [], session_summary: "same", session_problem: [] };
+  await writeFile(path.join(directory, "results/attribution.jsonl"), (JSON.stringify(row) + "\n").repeat(2));
+  assert.deepEqual((await repository.readRun(directory)).manifest.config, [row, row]);
+  assert.deepEqual((await repository.readTasks(directory, ["second"])).manifest.config, [row]);
+  for (const [line, error] of [[0, /结果行引用无效/], [1, /被多个身份引用/], [3, /结果文件缺失/]] as const) {
+    refs[1]!.line = line;
+    await repository.writeRun(directory, state);
+    await assert.rejects(repository.readRun(directory), error);
+  }
+});
 
 test("full and selected result reads share file-scoped identities, duplicate checks and interrupted-tail recovery", async (t) => {
   const { directory, repository } = await fixture(t, [

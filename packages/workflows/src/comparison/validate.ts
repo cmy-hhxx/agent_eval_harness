@@ -165,12 +165,10 @@ export async function validateRun(
         }
         if (task.stage === "attribution-session") {
           const row = receipt.exported?.row || attributionRow(task, receipt);
-          const session = row.session_meta as Record<string, unknown>;
-          const id = String(session.session_id ?? session.case_id);
           if (
             (!receipt.exported && !attributionValidator(row)) ||
             canonical(originalResultRow(task.stage, row)) !== canonical(attributionRow(task, receipt)) ||
-            (receipt.exported && receipt.exported.id !== id)
+            (receipt.exported && receipt.exported.id !== task.id)
           )
             throw new Error("归因结果结构或收据不一致");
           const name = "attribution.jsonl";

@@ -119,6 +119,7 @@ function encodeState(state: RunState): Checkpoint {
         const reference = exported && {
           ...(task.stage === "comparison" && !(task.data as TaskData).verificationAudit && exported.file !== "comparison-review.jsonl" ? { comparisonId: exported.id } : { taskId: exported.id }),
           ...(exported.file ? { file: exported.file } : {}),
+          ...(exported.line !== undefined ? { line: exported.line } : {}),
         };
         const evaluationPatch = exported
           ? evaluationDifference(task.data as TaskData, exported.row, evaluation, rewriteIds)
@@ -290,13 +291,14 @@ function decodeState(
     }
     const data = task.data as TaskData;
     if (data.stage === "attribution-session") {
-      if ((receipt.exported.file ?? "attribution.jsonl") !== "attribution.jsonl")
+      if (receipt.exported.taskId !== task.id || receipt.exported.file !== "attribution.jsonl")
         throw new Error("归因 session 结果引用与任务不一致：" + task.id);
-      const row = resultRow(receipt, { id: receipt.exported.taskId!, file: "attribution.jsonl" });
+      const reference = { id: task.id, file: "attribution.jsonl", line: receipt.exported.line };
+      const row = resultRow(receipt, reference);
       const evaluation = restore(row, evaluationPatch || []);
       state.receipts[task.id] = { ...value, evaluation,
         ...(submittedPatch ? { submitted: restore(evaluation, submittedPatch) } : {}),
-        exported: { id: receipt.exported.taskId!, file: "attribution.jsonl", row } };
+        exported: { ...reference, row } };
       continue;
     }
     const dimension = attributionDimension(data.stage);
@@ -414,8 +416,11 @@ export const comparisonCodec: RunCodec<Checkpoint> = {
   encode: encodeState,
   overview: analysisRunOverview,
   decode: decodeState,
-  resultId: (row) => String(row.session_meta ? (row.session_meta as JsonObject).session_id ?? (row.session_meta as JsonObject).case_id
-    : row.task_id ?? row.comparison_id),
+  resultId: (row) => {
+    const id = row.task_id ?? row.comparison_id;
+    if (typeof id !== "string" || !id) throw new Error("结果缺少内部身份；归因结果必须通过检查点行引用读取");
+    return id;
+  },
   references(checkpoint, taskIds) {
     if (checkpoint.format !== "evaluation-run") throw new Error("不支持此运行格式；只支持 evaluation-run。");
     return Object.entries(checkpoint.tasks).flatMap(([id, task]) => {
@@ -426,6 +431,7 @@ export const comparisonCodec: RunCodec<Checkpoint> = {
             {
               id: ref.taskId ?? ref.comparisonId!,
               file: ref.file || resultFile(task.stage),
+              ...(ref.line !== undefined ? { line: ref.line } : {}),
             },
           ]
         : [];

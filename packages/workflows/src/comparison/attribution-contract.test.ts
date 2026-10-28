@@ -26,10 +26,11 @@ test("canonical session attribution is the only exported attribution contract", 
   const { task, receipt, value } = fixture(), row = attributionRow(task, receipt);
   assert.deepEqual(row, value);
   assert(new Ajv2020({ strict: false }).compile(sessionAttributionResultSchema)(row));
-  assert.equal(comparisonCodec.resultId(row), value.session_meta.session_id);
+  assert.throws(() => comparisonCodec.resultId(row), /检查点行引用/);
   assert.deepEqual(stageResult("attribution-session", row), row);
   const state = { manifest: { runId: "run-1", tasks: [task] }, receipts: { [task.id]: receipt } } as unknown as RunState;
   assert.deepEqual(encodeResult(task, state, {})!.row, row);
+  assert.equal(encodeResult(task, state, {})!.id, task.id);
 });
 
 test("rewrite slots and dashboard views address canonical turn and session problems", () => {

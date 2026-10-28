@@ -22,7 +22,9 @@ session input
 
 运行进度同时保留 component、trace、session 任务计数，并单独报告 `total_sessions`、`active_sessions`、`completed_sessions`、`waiting_sessions`、`failed_sessions`、`blocked_sessions`。业务完成度以 `completed_sessions` 为准，不能用内部 component 的 accepted 数代替。
 
-每个 `attribution-session` 收据接受后立即追加到 `results/attribution.jsonl`，不等待同一 run 的其他记录。正式行保留原始 `session_meta` 和各 turn 的 `meta`，结果身份由 `session_id`（缺少时使用 `case_id`）和有序的 `turns[].meta.trace_id` 共同确定。允许相同会话的不同 trace 分别落盘；同一组 trace 的冲突结果仍拒绝。续跑使用同一身份读取和去重，不按 `session_id` 单独去重。进度中的 session 数是输入记录数，按 trace 抓取时不代表去重后的完整会话数。
+每个 `attribution-session` 收据接受后立即追加到 `results/attribution.jsonl`，不等待同一 run 的其他记录。正式行保留原始 `session_meta` 和各 turn 的 `meta`。Comparison 内的归因使用持久化任务 UUID 关联收据，检查点保存文件与一基行号；恢复不从元数据或正文推导身份。首次打开结果写入器时按已接受收据重建索引文件，处理未写入检查点的中断尾部，后续增量追加。不同来源、模型、批次即使正文和元数据完全一致也分别保留。
+
+独立 Attribution workflow 当前仍使用 `session_id`（缺少时使用 `case_id`）和有序的 `turns[].meta.trace_id` 作为结果身份。进度中的 session 数是输入记录数，按 trace 抓取时不代表去重后的完整会话数。
 
 独立 Attribution 和 Comparison 内的归因在新建、续跑时共用同一原始输入与 trace 投影；组件提交仍按对应 trace 的原文核验证据。trace、session 汇总不向 Worker 暴露原始来源，但恢复时仍保留其所属输入身份。
 

@@ -14,7 +14,7 @@ import { reconcileAttributionRewriteGroups } from "./attribution-rewrite-plannin
 import { pendingTaskProgress } from "../review/task-progress.js";
 import { configureStandardReview } from "./review.js";
 
-export const comparisonRepository = createRunRepository(comparisonCodec, encodeResult);
+export const comparisonRepository = createRunRepository(comparisonCodec, encodeResult, { indexedFiles: ["attribution.jsonl"] });
 export const { readRun: readRunState, writeRun: writeRunState, createResultWriter, readTasks: readRunTasks } =
   comparisonRepository;
 export async function reconcileRun(_run: string, state: RunState, current: unknown,

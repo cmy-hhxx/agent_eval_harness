@@ -170,6 +170,8 @@ export const emptyUsage = (): Usage => ({
 export interface ResultReference {
   file?: string;
   id: string;
+  /** One-based row in a result file whose public rows contain no internal identity. */
+  line?: number;
 }
 /** Where a run writes its ledger, results and reports. */
 export interface OutputTarget {
