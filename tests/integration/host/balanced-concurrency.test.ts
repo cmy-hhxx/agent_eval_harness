@@ -10,7 +10,7 @@ import { createBalancedModels } from "@eval/host-app/config";
 import { draftFor, submitFor, taskResult, fakeEvaluatorVersion, fakeIdentity, fixtureConfig, raw } from "../../fixtures/comparison.js";
 import { services } from "../../fixtures/services.js";
 
-test("healthy balanced channels execute different tasks concurrently and accept one submission each", async () => {
+for (const growing of [false, true]) test(`healthy balanced channels execute different tasks concurrently and accept one submission each (growing share: ${growing})`, async () => {
   const previousKey = process.env.BALANCED_CONCURRENCY_TEST_KEY;
   const { directory, config, models } = await fixtureConfig([[raw()], [], [raw()], []]);
   models.channels["evaluation-gateway"].trafficWeight = 1;
@@ -20,6 +20,7 @@ test("healthy balanced channels execute different tasks concurrently and accept 
   const plan = await buildPlan(config), routing = createBalancedModels(models);
   const active = new Map<string, string>(), submissions = new Map<string, number>();
   let simultaneous: [string, string][] = [];
+  let share = growing ? 1 : 2;
   let release!: () => void;
   const barrier = new Promise<void>(resolve => { release = resolve; });
   const controller = new AbortController();
@@ -32,6 +33,7 @@ test("healthy balanced channels execute different tasks concurrently and accept 
       const spec = options.spec;
       if (spec.evaluation.id === "attribution" && spec.evaluation.profile === "component") {
         active.set(spec.taskId, spec.model.provider);
+        if (growing && active.size === 1) share = 2; // Another date drained and released its share.
         if (active.size === 2) {
           simultaneous = [...active];
           assert.deepEqual(new Set(active.values()), new Set(["evaluation-gateway", "openai"]));
@@ -56,7 +58,8 @@ test("healthy balanced channels execute different tasks concurrently and accept 
     const runId = "balanced-concurrency";
     const result = await runEvaluation({ ...services, ...routing, runId, output: config.output, config, plan,
       engine: "pi", identity: fakeIdentity, evaluatorVersion: fakeEvaluatorVersion, policy: config.execution,
-      concurrency: 2, retries: 0, retryDelaySeconds: 0, workerUrls: workers.map(worker => worker.url),
+      concurrency: share, ...(growing ? { modelRequests: { concurrency: () => share, acquire: async () => () => {} } } : {}),
+      retries: 0, retryDelaySeconds: 0, workerUrls: workers.map(worker => worker.url),
       signal: controller.signal });
     assert.equal(controller.signal.aborted, false);
     assert.deepEqual(result.paused_stages, []);

@@ -57,6 +57,8 @@ Worker 与 Host 内部路由统一 `/api`，无协议版本。启动核对底座
 | Host | `GET /api/submissions/:id` 查收据；`/api/tasks/:id/checkpoint` 保存草稿与计数 |
 | Host | `/api/control/concurrency`、`/api/control/stop` 以锁 token 控制；`/api/progress` 只读进度 |
 
+使用外部模型额度控制时，Host 派发每轮读取当前分配额，其他批次结束后能够扩大任务并发；不会固定在启动时的分配值。显式 `taskConcurrency` 仍独立指定会话槽位，运行控制 API 的手动并发覆盖持续生效。降低额度不取消在途任务，实际模型调用仍经过共用额度控制器。
+
 精确方法与参数见 [Host](../packages/host/src/runner.ts)、[Worker](../packages/runtime/src/server.ts)。SSE 按 attempt 连续 seq，支持 after 与 Last-Event-ID；Host 去重、查缺并续读。短暂查询失败不代表 attempt 失联；外部 Worker 忙碌不消耗评测尝试。首次派发遇到连接重置或超时、且 Worker 明确返回该 attempt 不存在时，Host 使用相同 attempt ID 和内容最多重发两次；不会新建模型尝试或重置内容额度。
 
 Adapter 展开本地静态 Schema 引用，拒绝外部、循环和动态引用。提交正文由 Host 校验；普通工具仍做 SDK 参数校验。提交协议见[数据契约](contract.md#提交方式与反馈)。

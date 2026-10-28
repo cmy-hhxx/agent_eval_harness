@@ -141,7 +141,8 @@ export async function runEvaluation(options: RunOptions): Promise<Record<string,
     wake = resolve;
   });
   controller.signal.addEventListener("abort", () => wake(), { once: true });
-  let desiredConcurrency = options.concurrency;
+  let concurrencyOverride: number | undefined;
+  const desiredConcurrency = () => concurrencyOverride ?? options.modelRequests?.concurrency() ?? options.concurrency;
   const busy = new Set<{ url: string }>();
   try {
     const identity = options.identity || (await loadIdentity(options.engine, options.runtime.root));
@@ -236,7 +237,7 @@ export async function runEvaluation(options: RunOptions): Promise<Record<string,
     };
     const paused = (task: PlannedTask) => observesFailures(task) && guard.paused(task.stage);
     const dispatchable = (task: PlannedTask) => inScope(task) && !paused(task);
-    manifest.concurrency = desiredConcurrency;
+    manifest.concurrency = desiredConcurrency();
     workspace = await createRunWorkspace(run, manifest.debug);
     const working = workspace.directory;
     if (manifest.debug) {
@@ -319,8 +320,8 @@ export async function runEvaluation(options: RunOptions): Promise<Record<string,
         const value = ((await body(req)) as { concurrency?: unknown }).concurrency;
         if (!Number.isInteger(value) || Number(value) < 1)
           throw new HttpError(400, "concurrency must be positive");
-        desiredConcurrency = Number(value);
-        manifest.concurrency = desiredConcurrency;
+        concurrencyOverride = Number(value);
+        manifest.concurrency = desiredConcurrency();
         await current.save(undefined, { manifest: true });
         wake();
         return json(res, snapshot());
@@ -361,7 +362,7 @@ export async function runEvaluation(options: RunOptions): Promise<Record<string,
     );
     let workerUrls = options.workerUrls || [];
     const running = new Map<string, Promise<void>>();
-    const taskConcurrency = () => Math.max(1, options.taskConcurrency ?? desiredConcurrency);
+    const taskConcurrency = () => Math.max(1, options.taskConcurrency ?? desiredConcurrency());
     const runnable = (task: PlannedTask) => !current.admissionPaused() && (running.size === 0 || running.size < taskConcurrency()) &&
       manifest.states[task.id].status === "pending" && !executionStopReason(manifest) && dispatchable(task) &&
       (manifest.states[task.id].nextRetryAt ?? 0) <= Date.now() &&
@@ -891,6 +892,7 @@ export async function runEvaluation(options: RunOptions): Promise<Record<string,
     let completions = 0;
     while (true) {
       if (controller.signal.aborted) break;
+      manifest.concurrency = desiredConcurrency();
       if (options.pauseSignal?.aborted) {
         await Promise.all(running.values());
         break;
