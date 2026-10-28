@@ -22,10 +22,13 @@ export function sessionQas(raw: RawInput, candidate: Candidate): SessionQa[] {
 /** Comparison receives the whole session as ordered QA text, never individual trace internals. */
 export function sessionComparisonInput(raw: RawInput, candidate: Candidate): RawInput {
   const qas = sessionQas(raw, candidate);
+  const first = normalizeTraceInput(raw, candidate.turns?.[0]?.trace_index ?? 0);
+  const user = first.messages.findLast(message => message.role === "user" || message.type === "user_question");
   const question = qas.map((qa, index) => `Q${index + 1}: ${qa.question}`).join("\n\n");
   const answer = qas.map((qa, index) => `A${index + 1}: ${qa.answer}`).join("\n\n");
   return { ...raw, messages: [
-    { type: "user_question", role: "user", content: question },
+    { type: "user_question", role: "user", content: question,
+      ...(typeof user?.timestamp === "string" ? { timestamp: user.timestamp } : {}) },
     { type: "final_answer", role: "assistant", content: answer },
   ], meta: { ...(raw.meta ?? {}), session_id: candidate.session_id ?? candidate.case_id } };
 }

@@ -1,4 +1,4 @@
-import type { AgentBinding, PlannedTask, ReviewCase, SubmissionReceipt } from "@eval/contracts";
+import type { AgentBinding, ReviewCase } from "@eval/contracts";
 import { instructionSources } from "@eval/tools";
 import { attributionTrace } from "./public-trace.js";
 import type { Candidate, RawInput } from "../inputs/types.js";
@@ -15,7 +15,6 @@ function processSections(message: RawInput["messages"][number], text: string, so
     return { field, start, length, read_request: { action: "read", source_id, start, length: Math.min(12000, length) } };
   }).sort((a, b) => Number(a.field === "input_messages") - Number(b.field === "input_messages"));
 }
-
 /** A new session gets rules and behavior, never the primary evaluator's findings or judgments. */
 export function bindInstructionReview(candidate: Candidate, raw: RawInput): AgentBinding {
   const trace = attributionTrace(raw, candidate.input_id, candidate.final_index);
@@ -55,12 +54,4 @@ export function bindInstructionReview(candidate: Candidate, raw: RawInput): Agen
       ...process.get(source_id) })),
     availability: material.availability };
   return { agent: "instruction-review", profile: "default", request: { input, sources: { case: { id: candidate.input_id, value: material } } } };
-}
-
-export function instructionReviewRow(task: PlannedTask, receipt: SubmissionReceipt, candidate: Candidate) {
-  return { evaluation_type: "instruction_review", evaluator_version: receipt.evaluatorVersion,
-    task_id: task.id, submission_id: receipt.submissionId, source_attribution_task_id: task.dependencies.source,
-    input_id: candidate.input_id, batch_id: candidate.batch_id, case_id: candidate.case_id, version: candidate.version,
-    trace_id: candidate.trace_id, input_file: candidate.source, input_line: candidate.line, judge: receipt.judge,
-    instruction_review: receipt.evaluation, verification: receipt.audit.review };
 }

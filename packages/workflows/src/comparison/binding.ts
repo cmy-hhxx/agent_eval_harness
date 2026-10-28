@@ -9,7 +9,7 @@ import { contentText } from "../inputs/records.js";
 import { sessionComparisonInput, sessionQas } from "../inputs/session.js";
 import type { TaskData, ComparisonResult } from "./types.js";
 import type { RawInput } from "../inputs/types.js";
-import { bindInstructionReview } from "../review/instruction.js";
+import { attributionDimension } from "../review/dimensions.js";
 import { display, displayComparison } from "./candidate-display.js";
 import { sourceSlots } from "./commentary.js";
 import { taskObservations, requestItems } from "./observations.js";
@@ -34,28 +34,28 @@ export function bindTask(
   dependencies: Record<string, SubmissionReceipt | undefined>,
   context: { tasks: readonly PlannedTask[] },
 ): AgentBinding {
-  if (task.stage.startsWith("attribution-")) return bindAttribution(task, inputs, dependencies);
+  const dimension = attributionDimension(task.stage);
+  if (dimension) {
+    const candidate = Object.values((task.data as TaskData).candidates)[0]!;
+    return dimension.bind(candidate, inputs[candidate.input_id] as RawInput);
+  }
+  if (task.stage.startsWith("attribution-")) {
+    const binding = bindAttribution(task, inputs, dependencies, { reference: (task.data as TaskData).reference });
+    const data = task.data as TaskData;
+    if (binding.modelInput && data.reviewQuestions?.length)
+      binding.modelInput.review_context = { reasons: data.reviewQuestions, kind: "unverified_concerns" };
+    if (binding.modelInput && data.prediction)
+      binding.modelInput.prediction_evaluation = workflowText("prediction-evaluation");
+    return binding;
+  }
   return bindSourceTask(task, inputs, dependencies, context);
-}
-
-/** The accepted analysis is the original Criteria mirror, never a newly submitted judgment. */
-export function bindAcceptedAttribution(task: PlannedTask, receipt: SubmissionReceipt, inputs: Record<string, unknown>,
-  context: { tasks: readonly PlannedTask[] }, analysis:TaskAnalysis): AgentBinding {
-  if (task.stage !== "attribution" || receipt.taskId !== task.id || receipt.status !== "succeeded")
-    throw new Error("程序来源视图必须绑定同一已接受归因任务。");
-  return bindSourceTask(task, inputs, {}, context, analysis);
 }
 
 function bindSourceTask(
   task: PlannedTask, inputs: Record<string, unknown>,
   dependencies: Record<string, SubmissionReceipt | undefined>, context: { tasks: readonly PlannedTask[] },
-  acceptedAnalysis?: TaskAnalysis,
 ): AgentBinding {
   const data = task.data as TaskData;
-  if (task.stage === "instruction-review") {
-    const candidate = data.candidates.A ?? Object.values(data.candidates)[0];
-    return bindInstructionReview(candidate, inputs[candidate.input_id] as RawInput);
-  }
   if ((data.verificationAudit || data.verificationOf) &&
     (task.stage !== "comparison" || data.stage !== "comparison" || data.verificationAudit !== true || !data.verificationOf?.taskId))
     throw new Error("可选核验必须同时声明核验标记与正式对比来源。");
@@ -159,15 +159,14 @@ function bindSourceTask(
   if (data.stage === "comparison" && (data.group?.length ?? 0) < 2)
     throw new Error("对比组至少需要两个候选");
   const criteria = dependencies.criteria;
-  if (!acceptedAnalysis && (!criteria || criteria.taskId !== task.dependencies.criteria || criteria.status !== "succeeded"))
+  if (!criteria || criteria.taskId !== task.dependencies.criteria || criteria.status !== "succeeded")
     throw new Error("缺少已接受的共同验收基准");
   const criteriaTask = task.dependencies.criteria
     ? context.tasks.find(item => item.id === task.dependencies.criteria && item.stage === "criteria") : undefined;
   if (!criteriaTask) throw new Error("缺少共同验收基准的任务上下文");
   const blind = criteriaTask ? blindMaterials((criteriaTask.data as TaskData).candidates) : undefined;
   const reference = structuredClone(data.reference);
-  const task_analysis = acceptedAnalysis ? structuredClone(acceptedAnalysis)
-    : criteriaTask && criteria ? structuredClone(criteria.evaluation) : undefined;
+  const task_analysis = structuredClone(criteria.evaluation);
   const sources = Object.fromEntries(
     Object.entries(task.inputIds).map(([label, id]) => [label, {
       id,

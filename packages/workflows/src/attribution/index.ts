@@ -104,15 +104,17 @@ export async function planAttribution(config: AttributionConfig) {
     session_tasks: tasks.filter(task => task.stage === "attribution-session").length, issues: indexed.issues } };
 }
 
-export function bindAttribution(task: PlannedTask, inputs: Record<string, unknown>, dependencies: Record<string, SubmissionReceipt | undefined>): AgentBinding {
+export function bindAttribution(task: PlannedTask, inputs: Record<string, unknown>, dependencies: Record<string, SubmissionReceipt | undefined>,
+  options: { reference?: unknown } = {}): AgentBinding {
   const data = task.data as AttributionTaskData;
   const session = normalizeInput(inputs[data.candidate.input_id]), analysis = dependencies.criteria?.status === "succeeded"
     ? dependencies.criteria.evaluation as TaskAnalysis : undefined;
   const traceIndex = data.traceIndex ?? 0, traceRaw = normalizeTraceInput(session, traceIndex), trace = turns(data.candidate)[traceIndex];
   const traceCandidate = trace ? { ...data.candidate, trace_id: trace.trace_id, question: trace.question,
     final_index: trace.final_index ?? data.candidate.final_index } : data.candidate;
+  const reference = options.reference === undefined ? traceCandidate.reference : options.reference;
   if (task.stage === "attribution-component") {
-    const binding = bindAttributionMaterial(traceCandidate, traceRaw, analysis, { component: data.component, scope: data.reviewScope });
+    const binding = bindAttributionMaterial(traceCandidate, traceRaw, analysis, { component: data.component, scope: data.reviewScope, reference });
     return { ...binding, request: { ...binding.request, input: { ...binding.request.input, trace_index: traceIndex } },
       modelInput: { ...binding.modelInput!, task_focus: { question: traceCandidate.question,
         review_target: { component: data.component, ...data.reviewScope } } } };
@@ -121,24 +123,29 @@ export function bindAttribution(task: PlannedTask, inputs: Record<string, unknow
   if (task.stage === "attribution-trace") {
     const unreviewed = Object.entries(task.dependencies).filter(([label]) => label.startsWith("component") && !dependencies[label])
       .map(([, id]) => id);
-    return { agent: "attribution", profile: "trace", request: { sources: {}, input: {
+    const input = {
       ...(analysis ? { task_analysis: analysis } : {}),
       trace_meta: session.turns?.[traceIndex]?.meta ?? traceRaw.meta ?? {}, trace_index: traceIndex,
-      ground_truth: { available: traceCandidate.reference !== null, value: traceCandidate.reference },
+      ground_truth: { available: reference !== null, value: reference },
       question: traceCandidate.question, answer: contentText(traceRaw.messages[traceCandidate.final_index]?.content),
       review_coverage: { complete: !unreviewed.length, unreviewed_count: unreviewed.length },
       problems: Object.entries(dependencies).filter(([label]) => label.startsWith("component"))
         .flatMap(([, receipt]) => (receipt?.evaluation as ComponentReviewResult | undefined)?.problems ?? [])
-        .map((problem, index) => ({ ...problem, problem_id: `p${index + 1}` })) } } };
+        .map((problem, index) => ({ ...problem, problem_id: `p${index + 1}` })) };
+    const { trace_meta: _meta, ...modelInput } = input;
+    return { agent: "attribution", profile: "trace", request: { sources: {}, input }, modelInput };
   }
   if (task.stage === "attribution-session") {
-    return { agent: "attribution", profile: "session", request: { sources: {}, input: {
+    const input = {
       ...(analysis ? { task_analysis: analysis } : {}),
       session_meta: session.session_meta ?? session.meta ?? {},
       qa: turns(data.candidate).map((trace, index) => ({ trace_index: index, question: trace.question,
         answer: contentText(normalizeTraceInput(session, index).messages[trace.final_index ?? 0]?.content) })),
       turns: Object.entries(dependencies).filter(([label]) => label.startsWith("trace"))
-        .map(([, receipt]) => receipt!.evaluation as TraceAttributionResult) } } };
+        .map(([, receipt]) => receipt!.evaluation as TraceAttributionResult) };
+    const { session_meta: _meta, turns: traces, ...material } = input;
+    return { agent: "attribution", profile: "session", request: { sources: {}, input },
+      modelInput: { ...material, turns: traces.map(({ meta: _traceMeta, ...trace }) => trace) } };
   }
   throw new Error("未知 Attribution 任务阶段：" + task.stage);
 }
@@ -160,7 +167,7 @@ export const attributionScheduling: WorkflowScheduling = {
 export const attributionWorkflow: WorkflowDefinition = {
   id: "attribution",
   plan: config => planAttribution(config as AttributionConfig),
-  bind: bindAttribution,
+  bind: (task, inputs, dependencies) => bindAttribution(task, inputs, dependencies),
   observesFailures: () => true,
   scheduling: attributionScheduling,
   advance(task, receipt, _state, inputs) {

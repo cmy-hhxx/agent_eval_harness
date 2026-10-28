@@ -168,7 +168,7 @@ export function summarizeResults(
     let source = currentSources.get(key);
     if (!source) currentSources.set(key, source = { tasks: new Set(), inputs: new Set() });
     source.tasks.add(task.id);
-    source.inputs.add(task.inputIds.answer!);
+    source.inputs.add(candidate.input_id);
   }
   for (const [key, value] of answers) {
     const stats = (perVersion[value.version] ??= {
@@ -327,7 +327,7 @@ export async function reportRun(run: string, options: { details?: boolean } = {}
     if (data.stage === "attribution-session") {
       const result = receipt.evaluation as SessionAttributionResult, candidate = (task.data as TaskData).candidate!;
       attribution.push({
-        task_id: task.id, input_id: task.inputIds.answer, batch_id: candidate.batch_id, case_id: candidate.case_id,
+        task_id: task.id, input_id: candidate.input_id, batch_id: candidate.batch_id, case_id: candidate.case_id,
         version: candidate.version, is_correct: sessionCorrectness(result),
       });
       continue;

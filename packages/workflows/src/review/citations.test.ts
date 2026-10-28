@@ -166,10 +166,15 @@ test("deferred answer paragraphs retain context previews and candidate-specific 
     data: { stage: "attribution-component", candidate, candidates: { A: candidate }, reference: null } satisfies TaskData };
   const binding = bindTask(task, { [inputId]: raw }, { criteria: receipt }, { tasks: [criteriaTask, task] });
   const original = citationInventory(raw, inputId, 2).references[0];
-  const shown=binding.modelInput!.answer as {deferred_final_material:{read_request:{candidate:string;offset:number;max_chars:number};total_chars:number}[]};
-  const deferred=shown.deferred_final_material[0];
-  assert.equal(deferred.read_request.candidate,'answer');assert.equal(deferred.read_request.offset,0);
-  assert.equal(deferred.total_chars,paragraph.length);assert(deferred.read_request.max_chars<=16000);
+  const shown = binding.modelInput!.answer as { final_evidence: { quote: string }[];
+    final_context: { partial: boolean; continuations: { read_request: { candidate: string; offset: number; max_chars: number }; end_offset: number }[] } };
+  const deferred = shown.final_context.continuations[0];
+  const prefix = shown.final_evidence.map(entry => entry.quote).join("");
+  assert.equal(prefix, paragraph.slice(0, 1600));
+  assert.equal(deferred.read_request.candidate, "answer");
+  assert.equal(deferred.read_request.offset, prefix.length);
+  assert.equal(deferred.end_offset, paragraph.length);
+  assert(deferred.read_request.max_chars <= 16000);
   assert.equal(resolveEvidence(raw,original.occurrences[0].context,'answer',audit,'/evidence',inputId).quote,paragraph);
 
 });

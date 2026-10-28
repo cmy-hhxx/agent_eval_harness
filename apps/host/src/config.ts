@@ -7,6 +7,7 @@ import { DEFAULT_FAILURE_GUARD, validateFailureGuard } from "@eval/host";
 import type { EvalConfig } from "@eval/workflows/comparison";
 import { assertComparableGroups, selectComparisonGroups } from "@eval/workflows/comparison";
 import { inputAdapterIds } from "@eval/workflows/inputs";
+import { attributionDimensions } from "@eval/workflows/review";
 import {
   THINKING_LEVELS,
   DEFAULT_THINKING,
@@ -358,7 +359,7 @@ function buildModels(source: ConfigObject, configuration: ApplicationSettings): 
   return { models, bindings, channels: configuration.channels };
 }
 
-const DASHBOARD_STAGES = ["criteria", "score", "attribution", "instruction-review", "comparison", "rewrite", "clustering"] as const;
+const DASHBOARD_STAGES = ["criteria", "score", "attribution", ...Object.keys(attributionDimensions), "comparison", "rewrite", "clustering"];
 const DASHBOARD_EXECUTION = ["concurrency", "sessionWindow", "timeoutSeconds", "maxToolCalls", "retries", "repairAttempts", "maxTaskAttempts", "retryDelaySeconds"] as const;
 const DASHBOARD_BINDING = ["channel", "model", "thinking"] as const;
 

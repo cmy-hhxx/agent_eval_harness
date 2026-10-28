@@ -36,7 +36,7 @@ export async function prepareAttributionTargetedReviews(run: string, selection: 
       const original = (requested.data as TaskData).candidate!, source = latest.get(original.input_id)!;
       const candidate = (source.data as TaskData).candidate!;
       if (candidate.version !== original.version || candidate.batch_id !== original.batch_id || candidate.case_id !== original.case_id ||
-        source.inputIds.answer !== candidate.input_id) throw new Error("同一输入的归因身份不一致：" + taskId);
+        candidate.input_id !== original.input_id) throw new Error("同一输入的归因身份不一致：" + taskId);
       if (chosen.has(candidate.input_id)) throw new Error("重复选择同一回答：" + candidate.input_id);
       chosen.add(candidate.input_id);
       const pending = tasks.filter(task => task.stage === "attribution-session" && !state.receipts[task.id] &&

@@ -415,9 +415,12 @@ export const builtinTools: ExecutableTool[] = [
       // and equal values at other paths do not establish that physical coverage.
       const requiredSource = ctx.requiredReads?.some(read => read.candidate === args.candidate &&
         read.message_index === args.message_index && read.kind === source.kind && read.path === source.path);
-      const jsonLeaf = source.kind === "text" && !requiredSource
+      const shownAudit = presentedAudit(ctx);
+      const hasJsonRead = shownAudit.traceReads.some(read => read.candidate === args.candidate &&
+        read.message_index === args.message_index && read.kind === "json");
+      const jsonLeaf = source.kind === "text" && !requiredSource && hasJsonRead
         ? selectEvidenceSource(sources.filter(item => item.kind === "json"), source.path) : undefined;
-      const readInJson = jsonLeaf && traceReadCoverage(presentedAudit(ctx), { candidate: args.candidate, message_index: args.message_index,
+      const readInJson = jsonLeaf && traceReadCoverage(shownAudit, { candidate: args.candidate, message_index: args.message_index,
         kind: "json", path: jsonLeaf.source.path, start: jsonLeaf.start, end: jsonLeaf.end }).covered;
       const totalChars = selectionEnd - start;
       if (path !== undefined && (args.source_offset ?? 0) > 0) throw new Error("非零 source_offset 仅用于整条消息的文本路径目录，读取具体路径时使用正文 offset");
@@ -428,7 +431,7 @@ export const builtinTools: ExecutableTool[] = [
       if (sourceOffset > paths.length) throw new Error("source_offset 超出文本路径目录范围");
       const showDirectory = path === undefined || source.quotable === false;
       const shownPaths = showDirectory ? paths.slice(sourceOffset, sourceOffset + 16).map((item) => ({ path: item.path, chars: item.text.length })) : [];
-      const coverage = (end: number) => readInJson ? { covered: true, missing: [] } : traceReadCoverage(requiredSource ? ctx.audit : presentedAudit(ctx), {
+      const coverage = (end: number) => readInJson ? { covered: true, missing: [] } : traceReadCoverage(requiredSource ? ctx.audit : shownAudit, {
         candidate: args.candidate, message_index: args.message_index, kind: source.kind, path: source.path,
         start: start + offset, end: start + end,
       });
@@ -528,9 +531,10 @@ export const builtinTools: ExecutableTool[] = [
         { message_indices: number[]; final_ranges?: unknown[] } | undefined;
       const localMessages = args.message_index == null && reviewScope && !reviewScope.message_indices.includes(Number(navigation.final_message_index))
         ? reviewScope.message_indices : undefined;
-      const messages = record(ctx, args.candidate).messages.map((message, index) => ({ message, index }))
-        .filter(item => (args.message_index == null || item.index === args.message_index) &&
-          (!localMessages || localMessages.includes(item.index)));
+      const rawMessages = record(ctx, args.candidate).messages;
+      const indices = args.message_index != null ? [args.message_index] : localMessages;
+      const messages = indices ? indices.map(index => ({ message: rawMessages[index], index }))
+        : rawMessages.map((message, index) => ({ message, index }));
       const selected = args.scope === "tool_returns" ? messages.filter(({ message }) => {
         const value = object(message);
         return value.role === "tool" || ["function_call_output", "tool_result"].includes(String(value.type));

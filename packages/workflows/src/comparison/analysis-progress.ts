@@ -2,10 +2,11 @@ import type { RunState, TaskState } from "@eval/contracts";
 import type { Checkpoint } from "./checkpoint.js";
 import type { EvalConfig } from "./types.js";
 import { analysisComparisonRecords, analysisComparisonStats } from "./analysis-comparison.js";
+import { attributionDimensions, type DimensionAttributionStage } from "../review/dimensions.js";
 
 type SavedTask = Checkpoint["tasks"][string];
 type AnalysisCheckpoint = Pick<Checkpoint, "runId" | "status" | "startedAt" | "finishedAt" | "config" | "inputs" | "tasks">;
-export type AnalysisTaskPurpose = "criteria" | "attribution" | "instruction-review" |
+export type AnalysisTaskPurpose = "criteria" | "attribution" | DimensionAttributionStage |
   "rewrite" | "clustering" | "comparison_verification" | "comparison_formal";
 export interface AnalysisTaskCounts { total: number; states: Record<TaskState["status"], number> }
 
@@ -14,7 +15,7 @@ function registeredInput(taskId: string, tasks: AnalysisCheckpoint["tasks"], see
   seen.add(taskId);
   const task = tasks[taskId];
   if (!task) return undefined;
-  return task.inputIds.answer ?? Object.values(task.dependencies)
+  return task.data.candidate?.input_id ?? task.inputIds.answer ?? Object.values(task.dependencies)
     .map(dependency => registeredInput(dependency, tasks, seen)).find(Boolean);
 }
 
@@ -57,7 +58,8 @@ export function analysisProgress(saved: AnalysisCheckpoint) {
   }
   const total = counts();
   const byPurpose: Record<AnalysisTaskPurpose, AnalysisTaskCounts> = {
-    "instruction-review": counts(), criteria: counts(), attribution: counts(), comparison_verification: counts(),
+    ...Object.fromEntries(Object.keys(attributionDimensions).map(stage => [stage, counts()])) as Record<DimensionAttributionStage, AnalysisTaskCounts>,
+    criteria: counts(), attribution: counts(), comparison_verification: counts(),
     comparison_formal: counts(), rewrite: counts(), clustering: counts(),
   };
   const formalComparisonReferences: { runId: string; taskId: string }[] = [];

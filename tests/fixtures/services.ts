@@ -1,4 +1,4 @@
-import { instructionReviewAgent } from "@eval/agents/instruction-review";
+import { attributionDimensions } from "@eval/workflows/review";
 import { services as appServices } from "@eval/host-app/composition";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -17,7 +17,8 @@ import {
 } from "@eval/workflows/comparison";
 import type { PlannedTask, SubmissionReceipt, ToolAudit } from "@eval/contracts";
 export const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../..");
-export const agents = new AgentRegistry([instructionReviewAgent,criteriaAgent, comparisonAgent, attributionAgent, rewriteAgent, clusteringAgent]);
+export const agents = new AgentRegistry([...Object.values(attributionDimensions).map(dimension => dimension.agent),
+  criteriaAgent, comparisonAgent, attributionAgent, rewriteAgent, clusteringAgent]);
 /** A fixed rubric for focused binding tests that do not schedule its preparation. */
 function testDependencies(task: PlannedTask, inputs: Record<string, unknown>, dependencies: Record<string, SubmissionReceipt | undefined>) {
   if (!task.dependencies.criteria || dependencies.criteria?.evaluation && "requirements" in (dependencies.criteria.evaluation as object)) return dependencies;

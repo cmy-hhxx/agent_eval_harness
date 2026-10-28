@@ -20,8 +20,8 @@ export { clusteringJobStorage } from "./clustering-job-codec.js";
 export type { ClusteringJobConfig, ClusteringJobSource, ClusteringRunReader } from "./clustering-job-types.js";
 
 /** Answer selection is frozen only by scopes containing attribution tasks, not rewrite or audit scopes. */
-function clusteringAttributionIds(tasks: Pick<PlannedTask, "id" | "stage" | "inputIds">[], executionScope?: string[], inputIds?: ReadonlySet<string>): string[] {
-  const ids = tasks.filter(task => task.stage === "attribution-session" && (!inputIds || inputIds.has(task.inputIds.answer))).map(task => task.id);
+function clusteringAttributionIds(tasks: Pick<PlannedTask, "id" | "stage" | "data">[], executionScope?: string[], inputIds?: ReadonlySet<string>): string[] {
+  const ids = tasks.filter(task => task.stage === "attribution-session" && (!inputIds || inputIds.has((task.data as TaskData).candidate!.input_id))).map(task => task.id);
   if (inputIds) return ids;
   const selected = executionScope && new Set(executionScope);
   return selected && ids.some(id => selected.has(id)) ? ids.filter(id => selected.has(id)) : ids;

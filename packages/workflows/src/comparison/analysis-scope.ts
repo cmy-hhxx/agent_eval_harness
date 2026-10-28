@@ -9,7 +9,7 @@ export async function readAnalysisAnswers(run: string) {
   if (saved.format !== "evaluation-run") throw new Error("分析来源必须是评测运行");
   const rows = Object.entries(saved.tasks).flatMap(([id, task]) => {
     if (task.stage !== "attribution-session") return [];
-    const input_id = task.inputIds.answer, candidate = saved.inputs[input_id];
+    const input_id = task.data.candidate!.input_id, candidate = saved.inputs[input_id];
     if (!candidate) throw new Error("归因任务缺少输入引用：" + id);
     const receipt = task.status === "succeeded" ? task.receipt : undefined;
     const source: ClusteringJobSource | undefined = receipt ? {

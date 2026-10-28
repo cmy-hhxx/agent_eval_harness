@@ -10,6 +10,7 @@ import { services, logger } from "./composition.js";
 import { automationEvaluationConfig, type AutomationConfig } from "./automation-config.js";
 import { predictionEvaluationConfig } from "./automation-prediction.js";
 import { loadDailyHost } from "./daily-settings.js";
+import { attributionDimension, attributionDimensions } from "@eval/workflows/review";
 
 /** A daily run reserves battles separately for each pair; accepted work always survives the cap. */
 function automationSelection(
@@ -36,7 +37,7 @@ function automationSelection(
   for (const task of tasks) {
     const source = (task.data as TaskData).rewriteOf;
     if (source && source.stage !== "clustering" && selected.has(source.taskId)) selected.add(task.id);
-    if (task.stage === "instruction-review" && selected.has(task.dependencies.source)) selected.add(task.id);
+    if (attributionDimension(task.stage) && selected.has(task.dependencies.source)) selected.add(task.id);
   }
   return selected;
 }
@@ -62,8 +63,9 @@ function limitAutomationPlan(plan: TaskPlan, limit: number, allowedGroups: reado
   plan.tasks = plan.tasks.filter((task) => selected.has(task.id)).sort((a, b) =>
     Number((b.data as TaskData).rewriteOf?.stage === "comparison") -
     Number((a.data as TaskData).rewriteOf?.stage === "comparison"));
-  for (const stage of ["attribution", "instruction-review", "comparison", "rewrite", "clustering"])
+  for (const stage of ["attribution-component", "attribution-trace", "attribution-session", ...Object.keys(attributionDimensions), "comparison", "rewrite", "clustering"])
     plan.summary[stage + "_tasks"] = plan.tasks.filter((task) => task.stage === stage).length;
+  plan.summary.attribution_tasks = plan.tasks.filter(task => task.stage === "attribution-session").length;
   const groups: Record<string, number> = {};
   for (const task of plan.tasks.filter((task) => task.stage === "comparison")) {
     const key = (task.data as TaskData).group!.join("+");
@@ -72,7 +74,7 @@ function limitAutomationPlan(plan: TaskPlan, limit: number, allowedGroups: reado
   plan.summary.group_counts = groups;
   for (const [batch, counts] of Object.entries(plan.summary.by_batch as Record<string, BatchPreflight>)) {
     const tasks = plan.tasks.filter((task) => taskIdentity(task.data as TaskData).batch_id === batch);
-    counts.attribution_tasks = tasks.filter((task) => task.stage === "attribution").length;
+    counts.attribution_tasks = tasks.filter((task) => task.stage === "attribution-session").length;
     counts.comparison_tasks = tasks.filter((task) => task.stage === "comparison").length;
   }
   return plan;

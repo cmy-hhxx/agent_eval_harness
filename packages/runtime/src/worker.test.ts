@@ -1624,7 +1624,7 @@ test(`model permit ${mode} network failures preserve transport retries and compl
     await release();
     await options.execute("read_trace", { candidate: "answer", message_index: 0, path: "/content" });
     await submitFor(options, { ok: true });
-  }, async abort() {}, async dispose() {} }));
+  }, async abort() {}, async dispose() {} }), { material: "source" });
   fixture.spec.controlModelRequests = true;
   try {
     await fixture.start();

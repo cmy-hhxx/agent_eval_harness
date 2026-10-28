@@ -37,7 +37,7 @@ Agent Profile 向 `agentPrompt` 显式传入 `fileSubmission`、`draftWriteInCal
 
 修改后构建并重启，运行中的 Worker 不热读文件。已接受结果保留，未完成任务使用新启动文本；判词变更及验证要求见[开发指南](../../docs/development.md#验证)。
 
-测试检查资源来源、工具覆盖、实际装配、材料隔离与预算，不逐句锁定文风。语义变化用[真实模型复核](../../docs/quality.md#真实模型复核)验证；测试 fixture 不进入模型上下文。
+测试检查资源来源、工具覆盖、实际装配、材料隔离与预算，不逐句锁定文风。材料与提示词变更使用固定样本做[真实模型实验](../../docs/quality.md#真实模型实验)，不增加归因效果复核环节；测试 fixture 不进入模型上下文。
 
 Eris 通过 `erisPrompt(toolNames)` 和 [createEris](../../agent/src/core/profile.ts)装配；能力与维护入口见 [Eris](../../agent/README.md#修改-eris)。
 

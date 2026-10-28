@@ -48,21 +48,21 @@ test("prediction plan selects accepted pairs, supplies outcome evidence and pres
   }] };
   const plan = await buildPlan(fixture.config);
   assert.equal(plan.tasks.filter(task => task.stage === "comparison").length, 1);
-  assert.equal(plan.tasks.filter(task => task.stage === "attribution").length, 2);
+  assert.equal(plan.tasks.filter(task => task.stage === "attribution-component").length, 2);
   assert.equal((plan.summary.issues as unknown[]).length, 0);
-  const task = plan.tasks.find(task => task.stage === "attribution")!, data = task.data as TaskData;
+  const task = plan.tasks.find(task => task.stage === "attribution-component")!, data = task.data as TaskData;
   assert.equal(data.prediction?.source_comparison_id, "old-comparison");
   assert.deepEqual((data.reference as { prediction_results: unknown[] }).prediction_results, answer.prediction_results);
   assert.deepEqual(plan.inputs[task.inputIds.answer], input);
   const binding = bindTask(task, plan.inputs, {}, { tasks: plan.tasks });
-  assert.equal((binding.request.input.ground_truth as { available: boolean }).available, true);
+  assert.equal((binding.modelInput!.ground_truth as { available: boolean }).available, true);
   assert(componentAttributionProfile.renderPrompt!(binding.modelInput!).includes("事前预测"));
   assert(!JSON.stringify(binding.request.sources).includes("old-comparison"));
   const comparison = plan.tasks.find(item => item.stage === "comparison")!;
-  const receipts = new Map(plan.tasks.filter(item => item.stage === "attribution").map(item => [item.id, {
+  const receipts = new Map(plan.tasks.filter(item => item.stage === "attribution-session").map(item => [item.id, {
     taskId: item.id, attemptId: "attribution", submissionId: "attribution", acceptedAt: 1, status: "succeeded" as const,
     evaluatorVersion: "fixture", judge: "fixture", audit: emptyAudit(), usage: emptyUsage(),
-    evaluation: attributionResult(true, "2+2=4", true, item.inputIds.answer),
+    evaluation: attributionResult(true, "2+2=4", true, (item.data as TaskData).candidate!.input_id),
   }]));
   const row = comparisonRow(plan.inputs, comparison, comparisonResult(), receipts, {}, "fixture");
   const validate = new Ajv2020({ strict: false }).compile(outputSchema);

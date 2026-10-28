@@ -112,7 +112,7 @@ Attribution 正式结果顶层只有 meta、summary、Problem、has_standard_ans
 
 Comparison 按 comparison_slots 显式选择 slot_index 与 kind，提交 importance、普通格可选 better_candidate 和双方 candidate 评估；核心完成 assessments 也逐候选提交。每个比较槽最多一行，候选专有且无需评审的槽可省略，不提交 null 或重复槽。整体另交可选 quality_winner、必填 relative_preference 及一段完整 tradeoff。取舍先说明决定性差异，再解释实际存在的重要反向事实为何不足以逆转。逐格点评、状态、关联、核心失败引用和排名由程序从已接受归因派生。
 
-普通 Comparison 对尚未统一、且可能改变核心可用性、正式胜负或使主胜因失效的共同口径冲突，提交可选 `scope_conflicts: [{slot_index, reason}]`。reason 说明双方口径及受影响的结论。索引沿用已有零起始 comparison_slots，只允许共同 criterion 槽；程序派生双方现有来源复核请求，结果为 needs_review、空排名，不改源 Attribution。非空冲突时不得同时给出正式或相对偏好；重复、越界、资源与私规槽均拒绝，importance=low 不能绕过已提报的关键冲突。普通质量差距、等价表达或不影响独立充分胜因的局部瑕疵不进入该入口；不可靠的次要理由不作为优势，保留限制后可继续裁决。识别及影响判断由同一次 Comparison 调用负责，程序只约束来源与状态转换。验收分层见[三层验收](quality.md#三层验收)。
+普通 Comparison 对尚未统一、且可能改变核心可用性、正式胜负或使主胜因失效的共同口径冲突，提交可选 `scope_conflicts: [{slot_index, reason}]`。reason 说明双方口径及受影响的结论。索引沿用已有零起始 comparison_slots，只允许共同 criterion 槽；程序派生双方现有来源复核请求，结果为 needs_review、空排名，不改源 Attribution。非空冲突时不得同时给出正式或相对偏好；重复、越界、资源与私规槽均拒绝，importance=low 不能绕过已提报的关键冲突。普通质量差距、等价表达或不影响独立充分胜因的局部瑕疵不进入该入口；不可靠的次要理由不作为优势，保留限制后可继续裁决。识别及影响判断由同一次 Comparison 调用负责，程序只约束来源与状态转换。执行边界见[归因执行边界](quality.md#归因执行边界)。
 
 横向优势须来自共同适用、双方 established 的同方面事实；普通项不能选择已确认 status 更差的一方，资源项方向由双方同种有效原始指标的支配关系重算并校验。没有同名 finding 不等于另一方没做到；私规不参与共同优势。核心未知、基准不一致或已知材料冲突保留 needs_review，不进入正式胜负、都好、都差或上传。双方核心均已确认失败时，额外未关联问题不阻塞都差。
 

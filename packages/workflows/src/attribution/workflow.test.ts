@@ -40,6 +40,27 @@ async function fixture(t: TestContext) {
   return f;
 }
 
+test("session and trace metadata pass through unchanged without entering model material", async t => {
+  const f = await fixture(t);
+  const config = { ...f.config, workflow: "attribution", inputs: { ...f.config.inputs,
+    versions: f.config.inputs.versions.slice(0, 1) } } as AttributionConfig;
+  const plan = await planAttribution(config), registry = new AgentRegistry([attributionAgent]);
+  const traceTask = plan.tasks.find(task => task.stage === "attribution-trace")!;
+  const traceBinding = bindAttribution(traceTask, plan.inputs, {});
+  assert(!Object.hasOwn(traceBinding.modelInput!, "trace_meta"));
+  const turn = registry.resolve(traceBinding, { summary: "该轮已完成。" }, emptyAudit()) as { meta: unknown };
+  assert.deepEqual(turn.meta, traceBinding.request.input.trace_meta);
+  const sessionTask = plan.tasks.find(task => task.stage === "attribution-session")!;
+  const sessionBinding = bindAttribution(sessionTask, plan.inputs, {
+    trace0: { evaluation: turn } as never, trace1: { evaluation: turn } as never,
+  });
+  assert(!Object.hasOwn(sessionBinding.modelInput!, "session_meta"));
+  assert((sessionBinding.modelInput!.turns as object[]).every(trace => !Object.hasOwn(trace, "meta")));
+  const result = registry.resolve(sessionBinding, { session_summary: "整场已完成。", session_problem: [] }, emptyAudit()) as { session_meta: unknown; turns: { meta: unknown }[] };
+  assert.deepEqual(result.session_meta, sessionBinding.request.input.session_meta);
+  assert.deepEqual(result.turns.map(trace => trace.meta), [turn.meta, turn.meta]);
+});
+
 test("same session different captured traces append unchanged and resume by trace identity", async t => {
   const capture = (caseId: string, question: string) => ({
     batch_id: "batch", case_id: caseId, has_standard_answer: false,

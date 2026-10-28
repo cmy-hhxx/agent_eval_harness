@@ -1,4 +1,5 @@
 import { collectInputs } from "../inputs/scan.js";
+import { attributionDimension } from "../review/dimensions.js";
 import { candidateKey, type InputScanner } from "../inputs/records.js";
 import { problemLibraryFile, readProblemLibrary } from "@eval/data";
 import { randomInt, randomUUID } from "node:crypto";
@@ -20,7 +21,7 @@ export function taskCase(data: TaskData): { batch_id: string; case_id: string } 
 }
 function taskKey(task: PlannedTask): string {
   const data = task.data as TaskData;
-  if (task.stage === "instruction-review") return canonical([task.stage, task.dependencies.source]);
+  if (attributionDimension(task.stage)) return canonical([task.stage, task.dependencies.source]);
   if (task.stage.startsWith("attribution-")) {
     const attribution = task.data as AttributionTaskData;
     return canonical(["attribution-unit", attribution.candidate.input_id, task.stage,

@@ -159,7 +159,7 @@ export async function reviewProblemOccurrences(
         submission_id: source.submission_id, evaluator_version: source.evaluator_version }) === canonical(occurrence.attribution))
       : scope!.cases[occurrence.input_id];
     if (!attributionTask || attributionTask.stage !== "attribution-session" || !attribution ||
-      attributionTask.inputIds.answer !== occurrence.input_id || owner?.input_id !== occurrence.input_id ||
+      owner?.input_id !== occurrence.input_id ||
       owner.version !== decision.model || owner.case_id !== occurrence.case_id || owner.batch_id !== occurrence.batch_id ||
       !scopeCase || scopeCase.case_id !== occurrence.case_id ||
       canonical(scopeCase.source) !== canonical(occurrence.source))

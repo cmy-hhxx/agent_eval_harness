@@ -1,4 +1,5 @@
 import { localFiles } from "@eval/data";
+import { attributionDimension } from "../review/dimensions.js";
 import path from "node:path";
 import type { SubmissionReceipt, ValidationIssue } from "@eval/contracts";
 import { canonical, errorText } from "@eval/contracts";
@@ -142,12 +143,15 @@ export async function validateRun(
     if (receipts.has(task.id)) {
       try {
         const receipt = receipts.get(task.id)!;
-        if (task.stage === "instruction-review") {
+        // Internal receipts are validated above; only session attribution is a formal row.
+        if (task.stage === "attribution-component" || task.stage === "attribution-trace") continue;
+        const dimension = attributionDimension(task.stage);
+        if (dimension) {
           const exported = encodeResult(task, state, inputs);
-          if (!exported) throw new Error("指令遵循归因没有正式结果：" + task.id);
+          if (!exported) throw new Error("维度归因没有正式结果：" + task.id);
           if (exported.row.source_attribution_task_id !== task.dependencies.source ||
-            canonical(exported.row.instruction_review) !== canonical(receipt.evaluation))
-            throw new Error("指令遵循归因与原归因或已接受收据不一致");
+            canonical(exported.row[dimension.resultKey]) !== canonical(receipt.evaluation))
+            throw new Error("维度归因与原归因或已接受收据不一致");
           if (!expected.has(exported.file!)) expected.set(exported.file!, []);
           expected.get(exported.file!)!.push(canonical(exported.row));
           continue;

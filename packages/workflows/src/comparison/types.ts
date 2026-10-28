@@ -41,7 +41,7 @@ export interface BatchPreflight {
   input_issues: number;
 }
 export type Stage = "criteria" | "attribution-component" | "attribution-trace" | "attribution-session" |
-  "comparison" | "rewrite" | "clustering" | "instruction-review";
+  "comparison" | "rewrite" | "clustering" | import("../review/dimensions.js").DimensionAttributionStage;
 /** The accepted result a rewrite task polishes. */
 export interface RewriteSource {
   stage: "attribution" | "comparison" | "clustering";

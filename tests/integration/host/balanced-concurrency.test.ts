@@ -30,7 +30,7 @@ test("healthy balanced channels execute different tasks concurrently and accept 
   const backend: AgentBackend = { identity: fakeIdentity, async createSession(options) { return {
     async run() {
       const spec = options.spec;
-      if (spec.evaluation.id === "attribution") {
+      if (spec.evaluation.id === "attribution" && spec.evaluation.profile === "component") {
         active.set(spec.taskId, spec.model.provider);
         if (active.size === 2) {
           simultaneous = [...active];
@@ -60,7 +60,7 @@ test("healthy balanced channels execute different tasks concurrently and accept 
       signal: controller.signal });
     assert.equal(controller.signal.aborted, false);
     assert.deepEqual(result.paused_stages, []);
-    const attributionTasks = plan.tasks.filter(task => task.stage === "attribution");
+    const attributionTasks = plan.tasks.filter(task => task.stage === "attribution-component");
     assert.equal(attributionTasks.length, 2);
     assert.deepEqual(new Set(simultaneous.map(([id]) => id)), new Set(attributionTasks.map(task => task.id)),
       "both attribution sessions must be active before either submits");

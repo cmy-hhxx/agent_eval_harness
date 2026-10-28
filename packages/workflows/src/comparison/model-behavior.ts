@@ -42,31 +42,31 @@ export function modelBehavior(tasks: readonly PlannedTask[], receipts: Readonly<
   // A consumer can already point to a pending review; retain its last accepted same-input source.
   for (const id of [...referenced]) {
     let source = byId.get(id);
-    const inputId = source?.inputIds.answer, visited = new Set<string>();
+    const inputId = (source?.data as TaskData | undefined)?.candidate?.input_id, visited = new Set<string>();
     while (source && !receipts[source.id] && !visited.has(source.id)) {
       visited.add(source.id);
       const parentId = (source.data as TaskData).reviewOf?.taskId;
       const parent = parentId && byId.get(parentId);
-      if (!parent || parent.inputIds.answer !== inputId) break;
+      if (!parent || (parent.data as TaskData).candidate!.input_id !== inputId) break;
       source = parent;
     }
     if (source && receipts[source.id]) referenced.add(source.id);
   }
   const candidates = attributionTasks.filter(task =>
-    (!comparedInputs.has(task.inputIds.answer) || referenced.has(task.id)));
+    (!comparedInputs.has((task.data as TaskData).candidate!.input_id) || referenced.has(task.id)));
   const superseded = new Set<string>();
   for (const task of candidates) {
     if (!receipts[task.id]) continue;
     let sourceId = (task.data as TaskData).reviewOf?.taskId;
     while (sourceId && !superseded.has(sourceId)) {
       const source = byId.get(sourceId);
-      if (!source || source.inputIds.answer !== task.inputIds.answer) break;
+      if (!source || (source.data as TaskData).candidate!.input_id !== (task.data as TaskData).candidate!.input_id) break;
       superseded.add(sourceId);
       sourceId = (source.data as TaskData).reviewOf?.taskId;
     }
   }
   const attributions = candidates.filter(task => !superseded.has(task.id));
-  const planned = new Set(attributions.map(task => task.inputIds.answer));
+  const planned = new Set(attributions.map(task => (task.data as TaskData).candidate!.input_id));
   const rows = new Map<string, ModelBehaviorRow>();
   for (const task of attributions) {
     const receipt = receipts[task.id];
@@ -100,7 +100,7 @@ export function modelBehavior(tasks: readonly PlannedTask[], receipts: Readonly<
     byVersion[version] ??= { planned_answers: 0, accepted_answers: 0, problems: emptyCounts() };
   }
   for (const inputId of planned) {
-    const task = attributions.find(item => item.inputIds.answer === inputId)!;
+    const task = attributions.find(item => (item.data as TaskData).candidate!.input_id === inputId)!;
     byVersion[(task.data as TaskData).candidates.A.version].planned_answers++;
   }
   for (const row of rows.values()) {

@@ -1,4 +1,5 @@
 import { isDeepStrictEqual } from "node:util";
+import { attributionDimension } from "../review/dimensions.js";
 import type { JsonObject, RunState, SubmissionReceipt } from "@eval/contracts";
 import { canonical, type ResultReference } from "@eval/contracts";
 import type { RunCodec } from "@eval/data";
@@ -178,7 +179,8 @@ function evaluationFromRow(data: TaskData, row: JsonObject): ComparisonResult {
 }
 
 function resultEvaluation(data: TaskData, row: JsonObject, rewriteIds?: string[]): unknown {
-  if (data.stage === "instruction-review") return row.instruction_review;
+  const dimension = attributionDimension(data.stage);
+  if (dimension) return row[dimension.resultKey];
   if (data.stage === "rewrite") {
     const rewrites = (stageRewritten(data.rewriteOf!.stage,row) as { rewrites: { id: string; text: string }[] }).rewrites;
     return { rewrites: rewriteIds ? rewriteIds.map((id) => {
@@ -237,7 +239,7 @@ function decodeState(
         candidates: attribution ? { A: attribution } : Object.fromEntries(
           Object.entries(t.inputIds).map(([label, id]) => {
             if (!candidates[id]) throw new Error("输入引用缺失：" + id);
-            return [t.stage === "instruction-review" ? "A" : label, candidates[id]];
+            return [attributionDimension(t.stage) ? "A" : label, candidates[id]];
           }),
         ),
         ...(attribution ? { candidate: attribution } : {}),
@@ -297,13 +299,14 @@ function decodeState(
         exported: { id: receipt.exported.taskId!, file: "attribution.jsonl", row } };
       continue;
     }
-    if (data.stage === "instruction-review") {
-      const row = resultRow(receipt, { id: task.id, file: "instruction_review.jsonl" });
-      if (row.task_id !== task.id || row.source_attribution_task_id !== task.dependencies.source || row.evaluation_type !== "instruction_review")
-        throw new Error("指令遵循归因结果与归因来源不一致：" + task.id);
-      const evaluation = restore(row.instruction_review, evaluationPatch || []);
+    const dimension = attributionDimension(data.stage);
+    if (dimension) {
+      const file = resultFile(data.stage), row = resultRow(receipt, { id: task.id, file });
+      if (row.task_id !== task.id || row.source_attribution_task_id !== task.dependencies.source || row.evaluation_type !== dimension.resultKey)
+        throw new Error("维度归因结果与归因来源不一致：" + task.id);
+      const evaluation = restore(row[dimension.resultKey], evaluationPatch || []);
       state.receipts[task.id] = { ...value, evaluation, ...(submittedPatch ? { submitted: restore(evaluation, submittedPatch) } : {}),
-        exported: { id: task.id, file: "instruction_review.jsonl", row } };
+        exported: { id: task.id, file, row } };
       continue;
     }
     if (data.stage === "criteria" || data.verificationAudit || receipt.exported.file === "comparison-review.jsonl") {
