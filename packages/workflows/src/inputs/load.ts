@@ -13,10 +13,12 @@ export async function loadRunInputs(
 ): Promise<Record<string, unknown>> {
   const inputs: Record<string, unknown> = {},
     errors: ValidationIssue[] = [];
-  // Consecutive atomic tasks share one immutable record. A new input replaces it;
-  // the run never accumulates the parsed bodies of its entire input catalog.
-  let last: { id: string; value: unknown } | undefined;
   const config = manifest.config as EvaluationConfig;
+  // Interleaved tasks share immutable records within the admitted session window.
+  // Bound retained bodies by the window and the widest task's input set, never the catalog.
+  const cacheLimit = config.execution.sessionWindow * manifest.tasks.reduce((max, task) => Math.max(max, Object.keys(task.inputIds).length), 1);
+  if (!Number.isSafeInteger(cacheLimit) || cacheLimit < 1) throw new Error("输入读取需要有效的 sessionWindow");
+  const cache = new Map<string, unknown>();
   const inputIds = taskIds && new Set(manifest.tasks.filter((task) => taskIds.has(task.id)).flatMap((task) => Object.values(task.inputIds)));
   const sources = inputSources((manifest.inputCatalog as Candidate[]).filter((candidate) => !inputIds || inputIds.has(candidate.input_id)));
   for (const [source, candidates] of sources) {
@@ -29,9 +31,12 @@ export async function loadRunInputs(
         configurable: true,
         get: () => {
           assertSourceRevision(source, revision);
-          if (last?.id !== candidate.input_id) last = { id: candidate.input_id,
-            value: projectInput(JSON.parse(fileSourceReader.record(source, byteOffset, byteLength, revision))) };
-          return last.value;
+          const value = cache.has(candidate.input_id) ? cache.get(candidate.input_id)
+            : projectInput(JSON.parse(fileSourceReader.record(source, byteOffset, byteLength, revision)));
+          cache.delete(candidate.input_id);
+          cache.set(candidate.input_id, value);
+          if (cache.size > cacheLimit) cache.delete(cache.keys().next().value!);
+          return value;
         },
       });
     };

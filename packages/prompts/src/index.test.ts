@@ -192,7 +192,7 @@ test("session attribution profiles are independently addressable and never expos
     assert.doesNotMatch(prompt.systemPrompt, /boundary:\d+/u);
     assert.doesNotMatch(prompt.instructions, /boundary:\d+/u);
   }
-  assert.match(component.instructions, /三次续读/u);
+  assert.match(component.instructions, /材料足够时直接提交/u);
   assert.match(component.instructions, /合并同一技术原因/u);
   assert.match(component.instructions, /evidence.*只说明该段原文直接证明了什么/u);
   assert.match(session.instructions, /session_problem/u);

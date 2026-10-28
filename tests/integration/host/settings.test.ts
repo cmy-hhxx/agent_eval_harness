@@ -108,9 +108,12 @@ base_url=http://catalog.invalid/v1
 api_key=proxy-fixture
 [environment]
 http_proxy=http://127.0.0.1:${(proxy.address() as { port: number }).port}
-no_proxy=localhost,127.0.0.1,::1
+no_proxy=internal.example
+NO_PROXY=legacy.example
 `);
     applySettings(settings);
+    assert.deepEqual(new Set(process.env.no_proxy!.split(",")), new Set(["internal.example", "legacy.example", "localhost", "127.0.0.1", "::1"]));
+    assert.equal(process.env.NO_PROXY, process.env.no_proxy);
     assert.equal((await discoverAssistantModels(settings.channels["proxy-test"]))[0].id, "shared-model");
     assert.deepEqual(await (await fetch(local.url)).json(), { ok: true });
     assert.deepEqual(requests, ["catalog.invalid:80"]);

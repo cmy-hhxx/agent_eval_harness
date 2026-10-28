@@ -1,4 +1,5 @@
 import { mkdir, writeFile } from "node:fs/promises";
+import { execFileSync } from "node:child_process";
 import path from "node:path";
 import { loadConfig } from "@eval/host-app/config";
 import { planAttribution, bindAttribution } from "@eval/workflows/attribution";
@@ -8,16 +9,27 @@ import { fileSourceReader } from "@eval/data";
 
 // Material preparation and retention only: no model calls, Worker processes or verdicts.
 // Each process measures one size, including a separately parsed Worker-side input copy.
-const [configFile, countText, output] = process.argv.slice(2), count = Number(countText);
+const [configFile, countText, output, order = "interleaved"] = process.argv.slice(2), count = Number(countText);
 if (!configFile || !Number.isSafeInteger(count) || count < 1 || count > 200 || !output ||
+    !["grouped", "interleaved"].includes(order) ||
     !/^\/mnt\/fin_bench\/eval_data\/[^/]+\/eval_output\/test_eval\//u.test(path.resolve(output)))
-  throw new Error("node --expose-gc scripts/attribution-material-benchmark.mjs CONFIG 1..200 SOURCE_TEST_EVAL_REPORT.json");
+  throw new Error("node --expose-gc scripts/attribution-material-benchmark.mjs CONFIG 1..200 SOURCE_TEST_EVAL_REPORT.json [grouped|interleaved]");
 const host = await loadConfig(["configs/host.json", configFile]);
 const started = performance.now(), plan = await planAttribution({ ...host.evaluation, workflow: "attribution" });
 if (plan.summary.issues.length) throw new Error(JSON.stringify(plan.summary.issues));
 const tasks = plan.tasks.filter(task => task.stage === "attribution-component");
 if (tasks.length < count) throw new Error("Use distinct planned tasks; do not duplicate a tiny fixture to imply scale.");
-const selected = Array.from({ length: count }, (_, index) => tasks[Math.floor(index * tasks.length / count)]);
+let selected = Array.from({ length: count }, (_, index) => tasks[Math.floor(index * tasks.length / count)]);
+if (order === "interleaved") {
+  const groups = new Map();
+  for (const task of selected) {
+    const id = task.inputIds.answer;
+    if (!groups.has(id)) groups.set(id, []);
+    groups.get(id).push(task);
+  }
+  selected = [];
+  while (selected.length < count) for (const group of groups.values()) if (group.length) selected.push(group.shift());
+}
 let recordReads = 0, inputAccesses = 0;
 const readRecord = fileSourceReader.record;
 fileSourceReader.record = (...args) => { recordReads++; return readRecord(...args); };
@@ -55,7 +67,8 @@ for (const task of selected) {
 global.gc?.();
 const retained = process.memoryUsage(), cpu = process.cpuUsage(cpuStarted);
 const sorted = [...bindingTimes].sort((a, b) => a - b);
-const report = { kind: "material-retention-only", evaluator_version: host.evaluatorVersion,
+const report = { kind: "material-retention-only", git_revision: execFileSync("git", ["rev-parse", "HEAD"], { encoding: "utf8" }).trim(),
+  evaluator_version: host.evaluatorVersion, order,
   sessions_requested: count, sessions_prepared: held.length, memory_limit_reached: held.length < count,
   distinct_inputs: new Set(selected.slice(0, held.length).flatMap(task => Object.values(task.inputIds))).size,
   plan_ms: preparationStarted - started, preparation_ms: performance.now() - preparationStarted,
