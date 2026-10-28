@@ -33,7 +33,7 @@ test("model review entrypoints use message coordinates and retain public output 
   validateReadRequests(binding.modelInput!.answer);
   assert.equal(binding.modelInput!.review_kind, "model_turn");
   assert.equal(binding.modelInput!.task_analysis, undefined, "a local model transformation does not inherit the final-delivery checklist");
-  assert(Number(binding.modelInput!.component_entrypoints_total) > 0);
+  assert(JSON.stringify(binding.modelInput).includes("context_sources"));
   const material = JSON.stringify(binding.modelInput!.answer);
   assert(material.includes("收入为10亿元。"));
   assert(!material.includes("PRIVATE_SENTINEL"));
@@ -45,9 +45,7 @@ test("model review entrypoints use message coordinates and retain public output 
   assert.equal(repeated.request.sources.answer.value, binding.request.sources.answer.value);
   assert.deepEqual(repeated.modelInput, binding.modelInput);
   assert.equal(repeated.preparationTimings!.directoryMs, 0, "shared immutable trace facts are not rebuilt");
-  const navigation = binding.materialNavigation!.answer as { boundaries: { before: object[]; after: object[] }[] };
-  assert(navigation.boundaries.every(boundary => [...boundary.before, ...boundary.after].every(item => !Object.hasOwn(item, "quote"))),
-    "navigation stores source coordinates without duplicating original text per edge");
+  assert(!Object.hasOwn(binding.materialNavigation!.answer as object, "boundaries"));
   const isolated = bindAttribution(task, { [candidate.input_id]: normalizeInput(structuredClone(raw)) }, {});
   assert.notEqual(isolated.request.sources.answer.value, binding.request.sources.answer.value,
     "another loaded source object never inherits this trace's cached facts");
@@ -63,6 +61,27 @@ test("a mixed-media answer retains its image entrypoint after text scope splitti
   const binding = bindAttribution(task, { [candidate.input_id]: normalizeInput(raw) }, {});
   assert.equal((binding.modelInput!.answer as { final_images: { image_count: number } }).final_images.image_count, 1);
   assert.equal((binding.materialNavigation!.answer as { final_message_index: number }).final_message_index, 1);
+});
+
+test("local calls retain proven argument links without inventing links to nearby model turns", () => {
+  const raw = { batch_id: "batch", case_id: "arguments", messages: [
+    { type: "user_question", content: "查询收入。" },
+    { type: "llm_turn", name: "planner", parent_span: "call-parent", input_messages: [{ role: "user", content: "查询收入。" }],
+      output: [{ role: "assistant", tool_calls: [{ id: "query", function: { name: "finquery", arguments: '{"query":"收入"}' } }] }] },
+    { type: "tool_call", name: "finquery", parent_span: "call-parent", call_id: "query", input: { query: "收入" } },
+    { type: "tool_result", name: "finquery", call_id: "query", output: "收入10亿元。" },
+    { type: "final_answer", content: "收入10亿元。" },
+  ] };
+  const candidate = adapt(raw, { id: "answer", name: "Answer", adapter: "b", sources: [] }, "fixture.jsonl", 1);
+  const task = planAttributionUnit(candidate).tasks.find(task => task.stage === "attribution-component" &&
+    (task.data as AttributionTaskData).reviewScope!.message_indices.includes(2))!;
+  const links = (value: typeof raw) => (bindAttribution(task, { [candidate.input_id]: normalizeInput(value) }, {}).modelInput!.answer as
+    { direct_call_links: unknown[] }).direct_call_links;
+  assert.deepEqual(links(raw), [{ request: { message_index: 2, path: "/input" },
+    generated_arguments: { message_index: 1, path: "/output/0/tool_calls/0/function/arguments" } }]);
+  const other = structuredClone(raw);
+  other.messages[2]!.parent_span = "different-parent";
+  assert.deepEqual(links(other), []);
 });
 
 test("a mixed-media tool return registers text leaves without citing image placeholders", () => {

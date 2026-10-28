@@ -46,7 +46,7 @@ async function replay(events: Record<string, unknown>[], debug = false, readBatc
       runId: "responses-test", debug, taskId: "task", attemptId: "attempt", inputRevision: 1,
       engine: identity, evidenceBank: [],
       evaluation: { id: "fixture", profile: "default", systemPrompt: "Submit the value.",
-        outputSchema: { type: "object" }, toolNames: readBatch ? ["read_responsibility_chain"] : [], fileSubmission: false,
+        outputSchema: { type: "object" }, toolNames: readBatch ? ["read_trace"] : [], fileSubmission: false,
         toolDescriptions: {}, submissionNudge: "Submit." },
       model: { provider: "fixture", baseUrl: gateway.url + "/v1", api: "openai-responses", apiKeyEnv: keyName,
         model: "fixture", thinking: "off", contextWindow: 10000, maxOutputTokens: 1000 },
@@ -54,7 +54,7 @@ async function replay(events: Record<string, unknown>[], debug = false, readBatc
     };
     const session = await piBackend(identity).createSession({
       spec, workdir: directory,
-      tools: (readBatch ? ["read_responsibility_chain", "submit_evaluation"] : ["submit_evaluation"]).map(name => ({ name, description: "Read or submit the value.",
+      tools: (readBatch ? ["read_trace", "submit_evaluation"] : ["submit_evaluation"]).map(name => ({ name, description: "Read or submit the value.",
         inputSchema: { type: "object", properties: { value: { type: "string" } }, required: ["value"], additionalProperties: false },
         async execute() { return { content: [] }; } })),
       async execute(_name, args) {
@@ -92,7 +92,7 @@ async function replay(events: Record<string, unknown>[], debug = false, readBatc
 }
 
 test("pi: independent navigation reads share one response and execute serially before the next model request", async () => {
-  const calls = ["第一段原文", "第二段原文"].map((value, index) => ({ ...call(String(index), JSON.stringify({ value })), name: "read_responsibility_chain" }));
+  const calls = ["第一段原文", "第二段原文"].map((value, index) => ({ ...call(String(index), JSON.stringify({ value })), name: "read_trace" }));
   const result = await replay([...calls.flatMap((item, index) => [itemEvent("added", index, { ...item, arguments: "" }),
     itemEvent("done", index, item)]), terminal(calls)], false, true);
   assert.deepEqual(result.errors, []);

@@ -4,7 +4,7 @@ import { canonical, submissionToolNames, type FailureContext, type JsonObject, t
 export type PromptStage = "criteria" | "attribution" | "comparison" | "rewrite" | "clustering" | "score" | "instruction-review";
 
 const builtinToolNames = [
-  "read_execution", "read_responsibility_chain", "read_trace", "search_trace", "view_image", "calculate", "calculate_pair", "execute_code",
+  "read_trace", "search_trace", "view_image", "calculate", "calculate_pair", "execute_code",
   "read_artifact", "check_table", "inspect_material", "edit_json", "review_material", "review_calculate", "review_external", "score_material", "score_calculate", "score_external", ...submissionToolNames(false), ...submissionToolNames(true),
 ] as const;
 
@@ -26,7 +26,7 @@ export const standardConflictInstructions = resource("attribution/standard-chall
 export function workflowText(name: "attribution-material" | "core-rewrite" | "criteria-review" | "prediction-evaluation" | "material-omitted"): string {
   return resource(`workflow/${name}.md`);
 }
-export const attributionNotApplicableText = resource("attribution/default/not_applicable.md");
+export const attributionNotApplicableText = resource("attribution/not_applicable.md");
 export const attributionNoStandardReason = resource("attribution/trace/no-standard-reason.md");
 const attributionRules = Object.fromEntries(["standard-answer", "numeric", "table-doubts", "images", "capture-gaps"]
   .map(name => [name, resource(`attribution/conditional/${name}.md`)]));
@@ -93,7 +93,7 @@ export function agentPrompt(stage: PromptStage, toolNames: string[], options: Ag
   if (new Set(names).size !== names.length) throw new Error(`Duplicate prompt tool in ${stage}`);
   const toolDescriptions = Object.fromEntries(names.map((name) => {
     const description = stage === "attribution" && !fileSubmission && name === "execute_code"
-      ? resource("attribution/default/execute_code.md") : descriptions.get(name);
+      ? resource("attribution/component/execute_code.md") : descriptions.get(name);
     if (!description) throw new Error(`Missing tool description: ${name}`);
     return [name, description];
   }));
@@ -107,7 +107,7 @@ export function agentPrompt(stage: PromptStage, toolNames: string[], options: Ag
     renderPrompt(input: JsonObject, policy?: Policy, failure?: FailureContext): string {
       if (failure && !policy) throw new Error("Recovery requires an execution policy");
       const { task_focus, ...complete } = input;
-      const focus = task_focus === undefined ? "" : `${stage === "attribution" ? resource("attribution/default/task-focus.md") : taskFocus}\n${JSON.stringify(task_focus)}\n\n`;
+      const focus = task_focus === undefined ? "" : `${stage === "attribution" ? resource("attribution/component/task-focus.md") : taskFocus}\n${JSON.stringify(task_focus)}\n\n`;
       const limits = policy ? {
         content_call_limit: 1 + policy.repairAttempts,
         ...(toolNames.some(name => name !== "inspect_material") ? {

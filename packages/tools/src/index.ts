@@ -11,7 +11,6 @@ import { cite, displayEvidence, evidenceId, evidenceSources, overlapsImagePlaceh
 import { compareTraceTableRows, parseTraceTables, type TableCheckRequest } from "./table-correspondence.js";
 import { calculate } from "./decimal.js";
 import { fitStringPage } from "./pagination.js";
-import { countNavigationPage, readExecutionTool, readResponsibilityChainTool } from "./execution-navigation.js";
 import { RequiredReadBudget } from "./required-reading.js";
 import { traceReadCoverage } from "./trace-audit.js";
 import { reviewTools,scoreTools } from "./review.js";
@@ -208,8 +207,6 @@ export async function executeCode(ctx: Pick<ToolContext, "workdir" | "execution"
 export type ExecutableTool = Omit<ToolDefinition, "description">;
 
 export const builtinTools: ExecutableTool[] = [
-  readExecutionTool,
-  readResponsibilityChainTool,
   ...reviewTools,
   ...scoreTools,
   {
@@ -937,7 +934,7 @@ export class ToolRuntime {
       }
       // Register only the committed page after pagination; source text is carried as strings.
       // Delegated tools and arbitrary artifacts are excluded because their objects are not generated evidence envelopes.
-      if (!result.isError && ["read_execution", "read_responsibility_chain", "read_trace", "search_trace", "view_image", "check_table"].includes(name)) {
+      if (!result.isError && ["read_trace", "search_trace", "view_image", "check_table"].includes(name)) {
         const bank = this.context.audit.evidenceBank!;
         for (const content of result.content) if (content.type === "text" && content.text)
           content.text = JSON.stringify(projectEvidenceReferences(JSON.parse(content.text), bank, this.context.maxEvidenceQuoteChars));
@@ -946,7 +943,7 @@ export class ToolRuntime {
         this.persistQueue = write.then(() => undefined, () => undefined);
         await write;
       }
-      if (!result.isError && ["read_execution", "read_responsibility_chain", "read_trace", "search_trace", "view_image", "check_table"].includes(name)) {
+      if (!result.isError && ["read_trace", "search_trace", "view_image", "check_table"].includes(name)) {
         const candidate = (args as { candidate?: string }).candidate;
         const presentation = candidate && this.context.sourcePresentations?.get(candidate);
         if (presentation) {
@@ -954,11 +951,6 @@ export class ToolRuntime {
             content.text = JSON.stringify(presentSource(JSON.parse(content.text), presentation));
           if (result.details !== undefined) result.details = presentSource(result.details, presentation);
         }
-      }
-      if (!result.isError && name === "read_execution") {
-        const page = object(result.details);
-        countNavigationPage(page);
-        result.content = [{ type: "text", text: JSON.stringify(page) }];
       }
       await this.present(result, outputChars);
       if (cacheable && !result.isError) this.reads.set(key, structuredClone(result));

@@ -1,51 +1,10 @@
-import { cite, evidenceSources, selectEvidenceSource, displayEvidence, images, overlapsImagePlaceholder, parseEvidenceCoordinates, visualCaptureMarkers, type TraceComponentIdentity, type TableCheckResult } from "@eval/tools";
-import { responsibilityComponentName, responsibilityComponent, transferChanged, type ResponsibilityMaterial, type AttributionExecutionNode, type AttributionTransition, type AttributionNorm } from "@eval/agents/attribution";
-import type { JsonObject } from "@eval/contracts";
-import { tableChecksPresentation } from "./attribution-presentation.js";
+import { cite, evidenceSources, selectEvidenceSource, displayEvidence, images, overlapsImagePlaceholder, visualCaptureMarkers } from "@eval/tools";
 import type { RawInput, ComponentReviewScope } from "../inputs/types.js";
 
-/** The graph travels to the tool runtime, never through the initial model prompt. */
-export function attributionNavigation(answer: JsonObject, raw: RawInput, inputId: string) {
-  const actors = answer.component_catalog as TraceComponentIdentity[];
-  const checks = answer.table_check_results as TableCheckResult[];
-  const reference = ({ quote: _quote, ...item }: { evidence_id: string; message_index: number; quote: string }) => displayEvidence(item);
-  const table_checks = checks.some(check => check.rows.length) ? tableChecksPresentation(checks, raw, inputId).flatMap(table =>
-    table.rows.map(row => ({ table_index: table.answer_table_index, ...row,
-      answer: { ...row.answer, evidence: reference(row.answer.evidence) },
-      sources: row.sources.map(source => ({ ...source, evidence: reference(source.evidence) })),
-    }))) : [];
-  const model = answer as unknown as ResponsibilityMaterial;
-  const responsibility_choices = (answer.transitions as AttributionTransition[]).flatMap(t => {
-    if (t.execution_node_index === null && !(t.kind === "transfer" && transferChanged(model, raw, t))) return [];
-    const node = (answer.execution_nodes as AttributionExecutionNode[]).find(n => n.execution_node_index === t.execution_node_index);
-    return [{ transition_index:t.transition_index, responsibility_boundary:`boundary:${t.transition_index}`, execution_node_index:t.execution_node_index,
-      message_index:node?.message_index ?? null, component:responsibilityComponent(model, raw, t.transition_index), kind:t.kind }];
-  });
-  return { final_message_index: answer.final_message_index, table_checks, responsibility_choices, nodes: (answer.execution_nodes as AttributionExecutionNode[]).map(node => {
-    const message = raw.messages[node.message_index];
-    const outputs = Array.isArray(message.output) ? message.output : [];
-    const calls = outputs.flatMap(value => value && typeof value === "object" && Array.isArray(value.tool_calls) ? value.tool_calls : []);
-    const names = calls.flatMap(call => typeof call?.function?.name === "string" ? [call.function.name] : []).slice(0, 3);
-    const text = outputs.find(value => value && typeof value === "object" && typeof value.content === "string")?.content;
-    return { ...node, component: node.actor_index === null ? null : responsibilityComponentName(actors[node.actor_index - 1]),
-      summary: names.length ? names.join(", ") : typeof text === "string" ? text.slice(0, 120) : String(message.name ?? message.type ?? node.kind),
-    };
-  }), boundaries: answer.transitions as AttributionTransition[] };
-}
-
 /** Explicit allowlist: new canonical fields cannot silently inflate the model context. */
-export function initialAttributionMaterial(answer: JsonObject, raw: RawInput, navigation: ReturnType<typeof attributionNavigation>, inputId: string, scope?: ComponentReviewScope) {
+export function initialAttributionMaterial(finalIndex: number, raw: RawInput, inputId: string, scope: ComponentReviewScope) {
   const candidate = "answer";
-  const finalIndex = answer.final_message_index as number;
   const finalReview = !scope || scope.message_indices.includes(finalIndex);
-  const selectedNodes = scope ? navigation.nodes.filter(node => scope.message_indices.includes(node.message_index)) : navigation.nodes;
-  const nodes = selectedNodes.slice(0, 8);
-  const readRequest = (item: { evidence_id: string; message_index: number }) => {
-    const point = parseEvidenceCoordinates(item.evidence_id)!;
-    return point.kind === "image" ? { view_request: { candidate, message_index: point.message_index } }
-      : { read_request: { candidate, message_index: point.message_index, path: point.path,
-        offset: point.start, max_chars: Math.min(16000, point.end - point.start) }, end_offset: point.end };
-  };
   const imageCount = finalReview ? images(raw.messages[finalIndex]).length : 0;
   const gaps = finalReview ? visualCaptureMarkers(raw.messages[finalIndex]) : [];
   const finalEvidence = scope?.final_ranges ? scope.final_ranges.flatMap(range => {
@@ -58,9 +17,11 @@ export function initialAttributionMaterial(answer: JsonObject, raw: RawInput, na
     for (let start = range.start; start < Math.min(range.end, range.start + 1600); start += 400)
       entries.push(cite(inputId, finalIndex, source, start, Math.min(range.end, start + 400)));
     return entries;
-  }) : finalReview ? answer.final_evidence as { evidence_id: string; message_index: number; quote: string }[] : [];
+  }) : finalReview ? evidenceSources(raw.messages[finalIndex]).filter(source => source.kind === "text" && source.path.startsWith("/content"))
+    .flatMap(source => { const entries = []; for (let start = 0; start < Math.min(1600, source.text.length); start += 400)
+      entries.push(cite(inputId, finalIndex, source, start, Math.min(source.text.length, start + 400))); return entries; }) : [];
   return {
-    question: answer.question, final_message_index: finalIndex,
+    final_message_index: finalIndex,
     // Original final text occurs once and only these displayed ranges count as read.
     final_evidence: finalEvidence.map(displayEvidence),
     ...(scope?.final_ranges ? { final_context: {
@@ -70,42 +31,14 @@ export function initialAttributionMaterial(answer: JsonObject, raw: RawInput, na
           offset: range.start + 1600, max_chars: Math.min(16000, range.end - range.start - 1600) },
       })),
     } } : {}),
-    deferred_final_material: (finalReview && !scope?.final_ranges ? answer.deferred_final_material as { message_index: number; path: string; total_chars: number }[] : [])
-      .map(source => ({ ...source, read_request: { candidate, message_index: source.message_index, path: source.path, offset: 0, max_chars: 16000 } })),
     ...(imageCount ? { final_images: { image_count: imageCount, view_request: { candidate, message_index: finalIndex } } } : {}),
     ...(gaps.length ? { capture_gaps: gaps.map(({ path, status, resource_ref }) => ({ message_index: finalIndex, path, status, resource_ref })) } : {}),
-    execution_overview: {
-      model_calls: navigation.nodes.filter(node => node.kind === "model").length,
-      tool_calls: navigation.nodes.filter(node => node.kind === "tool").length,
-      execution_nodes: navigation.nodes.length, transfer_boundaries: navigation.boundaries.filter(boundary => boundary.kind === "transfer").length,
-      entries: nodes.map(({ actor_index: _actor, ...node }) => ({...node,
-        responsibility_choices:navigation.responsibility_choices.filter(c=>c.execution_node_index===node.execution_node_index)})), offset: 0, total: selectedNodes.length,
-      has_more: nodes.length < selectedNodes.length,
-      next_request: !scope && nodes.length < navigation.nodes.length ? { candidate, view: "nodes", offset: nodes.length } : null,
-    },
-    final_generation_choices: finalReview ? navigation.responsibility_choices.filter(c=>c.component==='终稿生成轮') : [],
-    context_transfer_choices: navigation.responsibility_choices.filter(c=>c.kind==='transfer' &&
-      (!scope || c.message_index !== null && scope.message_indices.includes(c.message_index))),
-    table_check_count: finalReview ? navigation.table_checks.length : 0,
-    ...(navigation.table_checks.length && finalReview ? { table_check_request: { candidate, view: "table_checks", offset: 0 } } : {}),
-    ...(finalReview ? { norm_directory: (answer.norm_directory as AttributionNorm[]).map(norm => ({ ...norm,
-      evidence: norm.evidence.map(({ quote, ...item }) => ({ ...displayEvidence(quote.length <= 200 ? { ...item, quote }
-        : { ...item, quote_preview: quote.slice(0, 200), has_more: true }), ...readRequest(item) })),
-    })),
-    criterion_instruction_sources: Object.fromEntries(Object.entries(answer.criterion_instruction_sources as Record<string,
-      { evidence_id: string; message_index: number; quote: string }[]>).map(([key, entries]) => [key, entries.map(({ quote, ...item }) =>
-      ({ ...displayEvidence(quote.length <= 200 ? { ...item, quote } : { ...item, quote_preview: quote.slice(0, 200), has_more: true }), ...readRequest(item) }))])) } : {}),
   };
 }
 
 /** Preload a bounded part of the selected component, with exact original coordinates. */
 export function initialComponentScene(raw: RawInput, original: RawInput, inputId: string,
-  navigation: ReturnType<typeof attributionNavigation>, component: string, scope?: ComponentReviewScope) {
-  const choices = navigation.responsibility_choices.filter(choice => scope
-    ? choice.message_index !== null && scope.message_indices.includes(choice.message_index)
-    : choice.component === component);
-  const sources = new Map<number, ReturnType<typeof evidenceSources>>();
-  const originals = new Map<number, ReturnType<typeof evidenceSources>>();
+  component: string, scope: ComponentReviewScope) {
   const entries = [];
   const unread = [];
   const seen = new Set<string>();
@@ -146,33 +79,12 @@ export function initialComponentScene(raw: RawInput, original: RawInput, inputId
       }
     }
   }
-  for (const choice of choices.filter(choice => choice.kind !== "execution" || !entries.length).slice(0, 2)) {
-    const boundary = navigation.boundaries.find(boundary => boundary.transition_index === choice.transition_index)!;
-    for (const [part, items] of [["before", boundary.before], ["after", boundary.after]] as const) {
-      for (const item of items) {
-        if (entries.length >= 40) break;
-        const point = parseEvidenceCoordinates(item.evidence_id);
-        if (!point || point.kind === "image") continue;
-        if (!sources.has(point.message_index)) sources.set(point.message_index, evidenceSources(raw.messages[point.message_index]));
-        if (!originals.has(point.message_index)) originals.set(point.message_index, evidenceSources(original.messages[point.message_index]));
-        const source = sources.get(point.message_index)!.find(source => source.kind === point.kind && source.path === point.path);
-        const originalSource = originals.get(point.message_index)!.find(source => source.kind === point.kind && source.path === point.path);
-        if (!source || source.quotable === false || !originalSource) continue;
-        const end = Math.min(point.end, point.start + 400);
-        const evidence = cite(inputId, point.message_index, source, point.start, end);
-        if (!evidence.quote || overlapsImagePlaceholder(source.text, point.start, end) ||
-          evidence.quote !== originalSource.text.slice(point.start, end) || seen.has(evidence.evidence_id)) continue;
-        seen.add(evidence.evidence_id);
-        entries.push({ transition_index: choice.transition_index, part, ...displayEvidence(evidence),
-          end_offset: point.end, has_more: end < point.end,
-          ...(end < point.end ? { next_request: { candidate: "answer", message_index: point.message_index,
-            path: point.path, offset: end, max_chars: Math.min(16000, point.end - end) } } : {}) });
-      }
-    }
-  }
   return { component, partial: unread.length > 0 || entries.some(entry => entry.has_more), entries, unread,
     images: (scope?.message_indices ?? []).flatMap(message_index => {
       const count = images(raw.messages[message_index]).length;
       return count ? [{ message_index, image_count: count, view_request: { candidate: "answer", message_index } }] : [];
-    }), responsibility_choices_total: choices.length };
+    }), context_sources: scope.message_indices.flatMap(message_index => evidenceSources(raw.messages[message_index])
+      .filter(source => source.kind === "text" && source.quotable !== false && source.path.startsWith("/input_messages/") && /\/(?:content|text)$/u.test(source.path))
+      .map(source => ({ message_index, path: source.path, chars: source.text.length,
+        read_request: { candidate: "answer", message_index, path: source.path, offset: 0, max_chars: Math.min(16000, source.text.length) } }))) };
 }

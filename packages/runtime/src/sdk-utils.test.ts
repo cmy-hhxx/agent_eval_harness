@@ -186,10 +186,10 @@ test("provider capabilities preserve explicit max reasoning and opt-out of devel
 });
 const evaluation = (toolNames: string[]) => ({ systemPrompt: "Exact rules", toolNames, outputSchema: { type: "object" }, fileSubmission: false });
 test("navigation reads may share a model turn while exhausted and submission-only requests cannot", () => {
-  const contract = evaluation(["read_responsibility_chain", "read_trace"]);
+  const contract = evaluation(["search_trace", "read_trace"]);
   for (const api of ["openai-completions", "openai-responses"] as const) {
     const tool = (name: string) => api === "openai-completions" ? { type: "function", function: { name } } : { type: "function", name };
-    const payload = { tools: [tool("read_responsibility_chain"), tool("read_trace"), tool("submit_evaluation")],
+    const payload = { tools: [tool("search_trace"), tool("read_trace"), tool("submit_evaluation")],
       reasoning: { effort: "low" }, input: [{ role: "user", content: "完整原文与坐标" }] };
     const original = structuredClone(payload);
     const result = transformPayload(payload, { ...model, api }, contract) as Record<string, unknown>;

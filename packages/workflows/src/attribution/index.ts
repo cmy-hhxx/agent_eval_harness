@@ -113,22 +113,11 @@ export function bindAttribution(task: PlannedTask, inputs: Record<string, unknow
     final_index: trace.final_index ?? data.candidate.final_index } : data.candidate;
   if (task.stage === "attribution-component") {
     const binding = bindAttributionMaterial(traceCandidate, traceRaw, analysis, { component: data.component, scope: data.reviewScope });
-    const navigation = binding.materialNavigation!.answer as { responsibility_choices: {
-      component: string; kind: string; message_index: number | null; transition_index: number;
-    }[] };
-    const choices = navigation.responsibility_choices.filter(choice => data.reviewScope
-      ? choice.message_index !== null && data.reviewScope.message_indices.includes(choice.message_index)
-      : choice.component === data.component);
-    const entrypoints = choices.slice(0, 8).map(choice => ({ component: choice.component, kind: choice.kind, message_index: choice.message_index,
-        read_request: { tool: "read_responsibility_chain", arguments: { candidate: "answer", transition_index: choice.transition_index } } }));
-    // Submission needs the assigned identity and original sources; the full trace
-    // graph belongs to tool navigation, not a second retained request payload.
-    return { ...binding, profile: "component", request: { sources: binding.request.sources, input: {
-      component: data.component, trace_index: traceIndex, ...(data.reviewScope ? { review_scope: data.reviewScope } : {}) } }, modelInput: { ...(binding.modelInput ?? binding.request.input),
-      task_focus: { question: traceCandidate.question, review_target: { component: data.component, ...data.reviewScope } },
-      component: data.component, trace_index: traceIndex, review_scope: data.reviewScope, component_entrypoints: entrypoints,
-      component_entrypoints_total: choices.length } };
+    return { ...binding, request: { ...binding.request, input: { ...binding.request.input, trace_index: traceIndex } },
+      modelInput: { ...binding.modelInput!, task_focus: { question: traceCandidate.question,
+        review_target: { component: data.component, ...data.reviewScope } } } };
   }
+
   if (task.stage === "attribution-trace") {
     const unreviewed = Object.entries(task.dependencies).filter(([label]) => label.startsWith("component") && !dependencies[label])
       .map(([, id]) => id);

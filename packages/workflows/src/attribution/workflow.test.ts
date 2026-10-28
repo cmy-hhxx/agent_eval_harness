@@ -285,23 +285,14 @@ test("component entrypoints stay bounded while preserving every source call and 
   assert.deepEqual(plan.summary.issues, []);
   const task = plan.tasks.find(task => (task.data as AttributionTaskData).component === "finquery 取数服务")!;
   const directed = bindAttribution(task, plan.inputs, {});
-  const entries = directed.modelInput!.component_entrypoints as { component: string; message_index: number;
-    read_request: { tool: string; arguments: { candidate: string; transition_index: number } } }[];
   assert.equal(plan.tasks.filter(task => (task.data as AttributionTaskData).component === "finquery 取数服务").length, 10);
-  assert.equal(entries.length, 1, "each task navigates directly to its own invocation");
-  assert.equal(directed.modelInput!.component_entrypoints_total, 1);
-  const navigation = directed.materialNavigation!.answer as { responsibility_choices: { component: string; transition_index: number }[] };
-  assert.equal(navigation.responsibility_choices.filter(choice => choice.component === "finquery 取数服务").length, 10);
-  assert(navigation.responsibility_choices.some(choice => choice.component !== "finquery 取数服务"),
-    "cross-component context remains available for causal checks");
-  assert.deepEqual((directed.request.sources.answer!.value as RawInput).messages, messages);
-  for (const entry of entries) {
-    assert.equal(entry.component, "finquery 取数服务");
-    assert.equal(entry.read_request.tool, "read_responsibility_chain");
-    assert.equal(entry.read_request.arguments.candidate, "answer");
-    assert(navigation.responsibility_choices.some(choice => choice.component === entry.component &&
-      choice.transition_index === entry.read_request.arguments.transition_index));
-  }
+  const scene = (directed.modelInput!.answer as { component_scene: { entries: { reference: { evidence_id: string } }[] } }).component_scene;
+  const scope = (task.data as AttributionTaskData).reviewScope!;
+  assert(scene.entries.length > 0);
+  assert(scene.entries.every(entry => scope.message_indices.includes(parseEvidenceCoordinates(entry.reference.evidence_id)!.message_index)));
+  assert.deepEqual((directed.request.sources.answer!.value as RawInput).messages, messages,
+    "original cross-step context remains available at its exact message coordinates");
+  assert(!Object.hasOwn(directed.materialNavigation!.answer as object, "boundaries"));
 });
 
 test("planning filters execution locators and always creates one final-generation task per trace", () => {

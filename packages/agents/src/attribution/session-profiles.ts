@@ -16,7 +16,7 @@ import { numericReferenceDirectory } from "./units.js";
 import type { ComponentReviewResult, SessionAttributionResult, SessionProblem, TraceAttributionResult } from "./types.js";
 
 const componentTools = [
-  "read_execution", "read_responsibility_chain", "read_trace", "search_trace", "view_image", "calculate", "execute_code",
+  "read_trace", "search_trace", "view_image", "calculate", "execute_code",
   "read_artifact",
 ];
 const componentPrompt = agentPrompt("attribution", componentTools, { profile: "component", fileSubmission: false });
