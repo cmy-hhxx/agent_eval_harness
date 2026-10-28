@@ -220,8 +220,17 @@ export function modelMaterial(material: Record<string, unknown>, candidate: stri
 
 /** Both workflows adapt their public task and trace into this single Attribution contract. */
 export function bindAttributionMaterial(candidate: Candidate, original: RawInput, analysis?: TaskAnalysis,
-  options: { reference?: unknown; initialContextChars?: number; component?: string } = {}): AgentBinding {
+  options: { reference?: unknown; initialContextChars?: number; component?: string; prepared?: AgentBinding } = {}): AgentBinding {
   const started = performance.now();
+  if (options.prepared) {
+    const binding = options.prepared, raw = binding.request.sources.answer.value as RawInput;
+    const navigation = binding.materialNavigation!.answer as Parameters<typeof initialComponentScene>[3];
+    const modelInput = { ...binding.modelInput!, answer: { ...binding.modelInput!.answer as Record<string, unknown>,
+      component_scene: initialComponentScene(raw, original, candidate.input_id, navigation, options.component!) } };
+    return { ...binding, request: { ...binding.request, input: { ...binding.request.input } }, modelInput,
+      preparationTimings: { materialMs: performance.now() - started, directoryMs: 0 },
+      presentedReads: presentedMaterialReads(modelInput.answer, "answer", candidate.input_id) };
+  }
   const raw = attributionTrace(original, candidate.input_id, candidate.final_index);
   const task_analysis: TaskAnalysis = analysis ?? { task_type: "回答评审", goal: candidate.question,
     requirements: [{ id: "r1", text: candidate.question, acceptance_rule: candidate.question, applies_to: [] }], scoring_points: [], red_flags: [] };

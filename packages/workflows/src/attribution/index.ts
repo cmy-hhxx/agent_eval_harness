@@ -88,6 +88,10 @@ export async function planAttribution(config: AttributionConfig) {
     session_tasks: tasks.filter(task => task.stage === "attribution-session").length, issues: indexed.issues } };
 }
 
+const componentMaterials = new WeakMap<Record<string, unknown>, Map<string, {
+  source: unknown; analysis: TaskAnalysis | undefined; binding: AgentBinding;
+}>>();
+
 export function bindAttribution(task: PlannedTask, inputs: Record<string, unknown>, dependencies: Record<string, SubmissionReceipt | undefined>): AgentBinding {
   const data = task.data as AttributionTaskData;
   const session = normalizeInput(inputs[data.candidate.input_id]), analysis = dependencies.criteria?.status === "succeeded"
@@ -96,7 +100,12 @@ export function bindAttribution(task: PlannedTask, inputs: Record<string, unknow
   const traceCandidate = trace ? { ...data.candidate, trace_id: trace.trace_id, question: trace.question,
     final_index: trace.final_index ?? data.candidate.final_index } : data.candidate;
   if (task.stage === "attribution-component") {
-    const binding = bindAttributionMaterial(traceCandidate, traceRaw, analysis, { component: data.component });
+    let materials = componentMaterials.get(inputs);
+    if (!materials) { materials = new Map(); componentMaterials.set(inputs, materials); }
+    const key = canonical([data.candidate.input_id, traceIndex]), previous = materials.get(key);
+    const prepared = previous && previous.source === inputs[data.candidate.input_id] && previous.analysis === analysis ? previous.binding : undefined;
+    const binding = bindAttributionMaterial(traceCandidate, traceRaw, analysis, { component: data.component, prepared });
+    if (!prepared) materials.set(key, { source: inputs[data.candidate.input_id], analysis, binding });
     const navigation = binding.materialNavigation!.answer as { responsibility_choices: {
       component: string; kind: string; message_index: number | null; transition_index: number;
     }[] };
