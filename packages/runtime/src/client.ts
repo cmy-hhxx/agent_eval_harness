@@ -79,7 +79,9 @@ export async function spawnWorker(
     url = await new Promise<string>((resolve, reject) => {
       const timeout = setTimeout(() => {
         proc.kill("SIGTERM");
-        reject(new Error("Worker startup timeout: " + stderr));
+        const error = new Error("Worker startup timeout: " + stderr);
+        error.name = "TimeoutError";
+        reject(error);
       }, 60000);
       const fail = (code: number | null) => {
         clearTimeout(timeout);

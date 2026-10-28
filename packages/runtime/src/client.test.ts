@@ -138,6 +138,24 @@ test("startup failure still reports its original stderr and exit code", async ()
   } finally { await rm(root, { recursive: true, force: true }); }
 });
 
+test("startup timeout is retryable and the timed-out process is closed", async t => {
+  const root = await mkdtemp(path.join(tmpdir(), "worker-startup-timeout-"));
+  const workerEntry = path.join(root, "worker.mjs"), pidFile = path.join(root, "pid");
+  const timer = globalThis.setTimeout;
+  t.mock.method(globalThis, "setTimeout", ((...args: Parameters<typeof setTimeout>) => {
+    if (args[1] === 60000) args[1] = 750;
+    return timer(...args);
+  }) as typeof setTimeout);
+  try {
+    await writeFile(workerEntry, `import { writeFileSync, writeSync } from "node:fs";
+writeFileSync(${JSON.stringify(pidFile)}, String(process.pid)); writeSync(2,"fixture never ready"); setInterval(()=>{},1000);`);
+    await assert.rejects(spawnWorker("pi", path.join(root, "workspace"), { root, workerEntry }),
+      (error: Error) => error.name === "TimeoutError" && error.message.includes("fixture never ready"));
+    const pid = Number(await readFile(pidFile, "utf8"));
+    assert.throws(() => process.kill(pid, 0), /ESRCH/);
+  } finally { await rm(root, { recursive: true, force: true }); }
+});
+
 for (const shutdown of ["close", "disconnect"] as const) test(`six Workers survive their parent's group signal and leave no orphans after ${shutdown}`, async () => {
   const root = await mkdtemp(path.join(tmpdir(), "worker-group-test-"));
   const workerEntry = path.join(root, "worker.mjs"), hostEntry = path.join(root, "host.mjs");

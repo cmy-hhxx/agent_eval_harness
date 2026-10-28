@@ -996,12 +996,17 @@ export async function runEvaluation(options: RunOptions): Promise<Record<string,
             await worker?.close();
             const state = manifest.states[task.id];
             state.transportFailures = (state.transportFailures ?? 0) + 1;
-            state.reason = "Worker startup network failure: " + errorText(error);
-            if (state.transportFailures > options.retries) state.status = "failed";
+            const exhausted = state.transportFailures > options.retries;
+            state.reason = exhausted ? `Worker startup retries exhausted (${state.transportFailures} failures, ${options.retries} retries): ${errorText(error)}`
+              : "Worker startup failure: " + errorText(error);
+            if (exhausted) state.status = "failed";
             else state.nextRetryAt = Date.now() + options.retryDelaySeconds * 1000 * 2 ** (state.transportFailures - 1);
             await current.save(task.id);
-            await options.logger?.error(error, { component: "host", event: "worker_startup_failed", run_id: options.runId,
-              task_id: task.id, stage: task.stage });
+            const event = exhausted ? "worker_startup_retries_exhausted" : "worker_startup_failed";
+            const detail = { failures: state.transportFailures, retries: options.retries };
+            await options.logger?.error(error, { component: "host", event, run_id: options.runId,
+              task_id: task.id, stage: task.stage, detail: JSON.stringify(detail) });
+            if (exhausted) options.onProgress?.(event + " " + JSON.stringify({ task_id: task.id, stage: task.stage, ...detail }));
             scheduled = true;
             continue;
           }

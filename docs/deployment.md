@@ -90,6 +90,8 @@ EVAL_CONFIG_FILE=/absolute/path/config.ini npm run eval -- run --run-id comparis
 
 Host 热状态默认写入 `~/.cache/eval-agent-harness/hot`，可通过 `EVAL_HOT_STATE_ROOT` 指定服务器本机 SSD。正式 JSONL、`progress.jsonl`、报告和 `state.json` 仍写评测产物目录。
 
+Worker 启动期限保持 60 秒。启动超时与短暂连接故障使用任务持久化的 `transportFailures` 和 `execution.retries` 有界重试，每次重建 Worker；启动失败不消耗模型尝试。耗尽后只将受影响任务标记失败，保存计数、原因并记录 `worker_startup_retries_exhausted`，其余任务继续；同 run 恢复不清零累计预算。
+
 ## 更新代码
 
 先停止对应 Host 或 Eris 进程并等待保存完成，再在服务器对应 checkout（主线为 `/mnt/fin_bench/sync_datasets/code/1_eval_harnes/main`）执行 `git pull --ff-only`。依赖、vendor 或工具链有变化时重新执行 `npm run bootstrap`，随后 `npm run build`、`npm run doctor`。更新完成后手动启动所需入口。
