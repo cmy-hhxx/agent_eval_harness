@@ -4,7 +4,7 @@ import { cleaningReason } from './cleaning-labels.js';
 
 const sourceLabels = { wencai:'问财日常四路', aime:'AIME 日常全量' };
 const statusLabels = { idle:'待运行', running:'运行中', pausing:'暂停中', paused:'已暂停', stopping:'停止中', failed:'失败', finished:'已完成', completed:'已完成', pending:'待处理', queued:'排队', stable:'待处理', uploading:'上传中', cleaning:'清洗中', cleaned:'清洗完成', evaluating:'评测中', interrupted:'已中断', ready:'已就绪', retry:'等待重试', stopped:'已停止', waiting:'等待数据', waiting_inputs:'等待配对', partial:'部分完成', empty:'无有效数据', cancelling:'取消中', cancelled:'已取消', uploaded:'已上传', blocked:'已暂停' };
-const stageLabels = { criteria:'共同标准', score:'独立评分', attribution:'回答归因', 'instruction-review':'指令检查', comparison:'对比', rewrite:'改写', clustering:'聚类' };
+const stageLabels = { criteria:'共同标准', score:'独立评分', attribution:'回答归因', 'instruction-review':'指令遵循归因', comparison:'对比', rewrite:'改写', clustering:'聚类' };
 const live = status => ['running','pausing','stopping'].includes(status);
 const textStatus = status => statusLabels[status] || status || '未知';
 const numeric = value => typeof value === 'number' && Number.isFinite(value);

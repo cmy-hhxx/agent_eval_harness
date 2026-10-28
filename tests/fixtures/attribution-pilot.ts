@@ -34,7 +34,8 @@ export async function attributionPilotFixture() {
     }
   }
   const chosen = tasks.filter(task => task.stage === "attribution-session").slice(0, 2), scope = new Set(chosen.map(task => task.id));
-  chosen.forEach(task => scope.add(task.dependencies.criteria));
+  const byTask = new Map(tasks.map(task => [task.id, task]));
+  for (const id of scope) Object.values(byTask.get(id)!.dependencies).forEach(dependency => scope.add(dependency));
   tasks.filter(task => task.stage === "rewrite" && scope.has(task.dependencies.source)).forEach(task => scope.add(task.id));
   const config: AttributionJobConfig = { ...fixture.config, comparisons: [], clustering: { ...fixture.config.clustering, enabled: false },
     attributionJob: { runs: [path.join(fixture.directory, "formal-source")], fromBatch: "2026-10-01" } };

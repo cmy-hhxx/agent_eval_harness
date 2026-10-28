@@ -144,10 +144,10 @@ export async function validateRun(
         const receipt = receipts.get(task.id)!;
         if (task.stage === "instruction-review") {
           const exported = encodeResult(task, state, inputs);
-          if (!exported) throw new Error("指令检查没有正式结果：" + task.id);
+          if (!exported) throw new Error("指令遵循归因没有正式结果：" + task.id);
           if (exported.row.source_attribution_task_id !== task.dependencies.source ||
             canonical(exported.row.instruction_review) !== canonical(receipt.evaluation))
-            throw new Error("指令检查与原归因或已接受收据不一致");
+            throw new Error("指令遵循归因与原归因或已接受收据不一致");
           if (!expected.has(exported.file!)) expected.set(exported.file!, []);
           expected.get(exported.file!)!.push(canonical(exported.row));
           continue;

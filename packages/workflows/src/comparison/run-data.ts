@@ -112,9 +112,13 @@ export async function reconcileRun(_run: string, state: RunState, current: unkno
     if (task.stage !== "clustering" || state.receipts[id]) continue;
     if (Object.values(task.dependencies).some((taskId) => !tasks.has(taskId))) tasks.delete(id);
   }
-  const requiredCriteria = new Set([...tasks.values()].flatMap(task => Object.values(task.dependencies)));
-  for (const [id, task] of tasks)
-    if (task.stage === "criteria" && !state.receipts[id] && !requiredCriteria.has(id)) tasks.delete(id);
+  // Remove unused upstream work from downstream to upstream after session replacement.
+  // Accepted tasks keep their original dependency chain for evidence and resume.
+  for (const stage of ["attribution-trace", "attribution-component", "criteria"]) {
+    const required = new Set([...tasks.values()].flatMap(task => Object.values(task.dependencies)));
+    for (const [id, task] of tasks)
+      if (task.stage === stage && !state.receipts[id] && !required.has(id)) tasks.delete(id);
+  }
   plan.tasks = [...tasks.values()];
   plan.summary.issues = issues;
   plan.summary.attribution_tasks = plan.tasks.filter((task) => task.stage === "attribution-session").length;

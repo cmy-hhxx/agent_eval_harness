@@ -175,7 +175,7 @@ export function taskResult(spec: Pick<AttemptSpec, "evaluation" | "prompt" | "in
     const result = attributionResult(false);
     return { session_summary: result.session_summary, session_problem: [] };
   }
-  if (spec.evaluation.id === "instruction-review") return {summary:"内部指令检查独立完成。",checks:[]};
+  if (spec.evaluation.id === "instruction-review") return {summary:"指令遵循归因独立完成。",checks:[]};
   if ("rewrites" in properties) {
     const request = parsedMaterial(spec, revealed) as { items: { id: string; text: string; preference?: string }[] };
     return { rewrites: request.items.map(item => ({ id: item.id, text: item.preference ? item.preference + "：核对了结果及具体交付。" : "精简：" + item.text })) };

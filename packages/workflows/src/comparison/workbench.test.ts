@@ -22,13 +22,13 @@ test("cleaning scope selects exact records, keeps unpaired attribution and prese
   assert.equal(plan.summary.attribution_tasks,2);
   assert((plan.catalog as Candidate[]).every(row => row.case_id === "one"));
   const resumed = await buildPlan(config,plan,{ acceptedTaskIds:new Set(plan.tasks.map(task => task.id)) });
-  assert.equal(resumed.tasks.filter(task => task.stage === "attribution" && !plan.tasks.some(previous => previous.id === task.id)).length,0);
+  assert.equal(resumed.tasks.filter(task => task.stage.startsWith("attribution-") && !plan.tasks.some(previous => previous.id === task.id)).length,0);
   config.inputs.workbench.records = [records[0]!];
   const alone = await buildPlan(config);
   assert.equal(alone.summary.comparison_tasks,0);
   assert.equal(alone.summary.attribution_tasks,1);
   assert(alone.tasks.some(task => task.stage === "criteria"));
-  assert.equal((alone.tasks.find(task => task.stage === "attribution")!.data as TaskData).candidates.A.case_id,"one");
+  assert.equal((alone.tasks.find(task => task.stage === "attribution-session")!.data as TaskData).candidates.A.case_id,"one");
   await writeJsonl(records[0]!.input_file,[raw("different"),raw("outside")]);
   await assert.rejects(buildPlan(config),/清洗范围与输入身份不一致/);
 });

@@ -1,20 +1,20 @@
 import type { RunState, WorkflowScheduling } from "@eval/contracts";
-import { sessionAdmissionSnapshot } from "./scheduling.js";
+import { dependencyReady, sessionAdmissionSnapshot } from "./scheduling.js";
 
 export function progressSnapshot(state: RunState, now = Date.now(), preparing: ReadonlySet<string> = new Set(),
   sessionAdmission?: WorkflowScheduling["sessionAdmission"]) {
   const repairing = (id: string) => state.manifest.states[id].status === "running" &&
     !preparing.has(id) && state.manifest.states[id].failure?.draft !== undefined;
-  const stages: Record<string, { queued: number; ready: number; preparing: number; running: number; repairing: number; accepted: number; failed: number; recent_completed_per_minute: number }> = {};
+  const stages: Record<string, { queued: number; ready: number; preparing: number; running: number; repairing: number; accepted: number; complete: number; partial: number; failed: number; recent_completed_per_minute: number }> = {};
   const scope = state.manifest.executionScope && new Set(state.manifest.executionScope);
   for (const task of state.manifest.tasks) {
-    const stage = stages[task.stage] ??= { queued: 0, ready: 0, preparing: 0, running: 0, repairing: 0, accepted: 0, failed: 0, recent_completed_per_minute: 0 };
+    const stage = stages[task.stage] ??= { queued: 0, ready: 0, preparing: 0, running: 0, repairing: 0, accepted: 0, complete: 0, partial: 0, failed: 0, recent_completed_per_minute: 0 };
     const status = state.manifest.states[task.id].status;
     if (preparing.has(task.id)) stage.preparing++;
     if (status === "pending" && !preparing.has(task.id) && (!scope || scope.has(task.id))) {
       stage.queued++;
       if (!state.manifest.pausedStages?.some((pause) => pause.stage === task.stage) &&
-        Object.values(task.dependencies).every((id) => state.receipts[id])) stage.ready++;
+        Object.keys(task.dependencies).every(label => dependencyReady(task, label, state.manifest.states, preparing))) stage.ready++;
     }
     if (status === "running" && !preparing.has(task.id)) {
       if (repairing(task.id)) stage.repairing++; else stage.running++;
@@ -23,6 +23,7 @@ export function progressSnapshot(state: RunState, now = Date.now(), preparing: R
     const receipt = state.receipts[task.id];
     if (receipt) {
       stage.accepted++;
+      if (receipt.incompleteDependencies?.length) stage.partial++; else stage.complete++;
       if (receipt.acceptedAt >= now - 60000 && receipt.acceptedAt <= now) stage.recent_completed_per_minute++;
     }
   }
@@ -70,6 +71,8 @@ export function progressSnapshot(state: RunState, now = Date.now(), preparing: R
     preparing: preparing.size,
     running: running.filter(task => !repairing(task.id)).length,
     accepted: Object.keys(state.receipts).length,
+    complete: Object.values(stages).reduce((count, stage) => count + stage.complete, 0),
+    partial: Object.values(stages).reduce((count, stage) => count + stage.partial, 0),
     repairing: running.filter(task => repairing(task.id)).length,
     failed: Object.values(failures).reduce((total, count) => total + count, 0),
     failures,

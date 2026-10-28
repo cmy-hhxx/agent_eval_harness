@@ -389,8 +389,9 @@ export async function buildPlan(
   }
   // Cleaned answers without a complete configured pair still receive independent attribution.
   const selectedKeys = new Set(selected.map(entry => canonical(entry)));
-  const attributed = new Set([...checks.values()].map(unit => unit.session)
-    .flatMap(task => Object.values(task.inputIds)));
+  const attributed = new Set([...checks.values()].map(unit => (unit.session.data as AttributionTaskData).candidate.input_id));
+  for (const task of previous?.tasks ?? [])
+    if (task.stage === "attribution-session" && accepted.has(task.id)) attributed.add((task.data as AttributionTaskData).candidate.input_id);
   if (config.inputs.workbench) for (const record of records.values()) {
     if (!selectedKeys.has(canonical([record.batch_id, record.case_id])) || attributed.has(record.input_id)) continue;
     const criteriaScope = canonical([record.batch_id, record.case_id, [record.version]]);

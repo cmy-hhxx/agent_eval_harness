@@ -1,6 +1,6 @@
 # 单样本归因与评分
 
-Attribution 已拆为独立 `workflow: attribution`，Score、Rewrite、Instruction Review 和 Clustering 不属于该 workflow。一个 session 输入按 component → trace → session 三阶段完成归因，只导出 `attribution.jsonl`。具体契约见 [Session 归因](attribution.md)。
+Attribution 已拆为独立 `workflow: attribution`，Score、Rewrite、指令遵循归因 和 Clustering 不属于该 workflow。一个 session 输入按 component → trace → session 三阶段完成归因，只导出 `attribution.jsonl`。具体契约见 [Session 归因](attribution.md)。
 
 旧 `workflow: answer-review` 归因入口已移除；Score 暂不迁入新的 session workflow。
 

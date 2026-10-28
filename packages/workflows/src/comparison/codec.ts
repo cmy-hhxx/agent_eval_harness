@@ -300,7 +300,7 @@ function decodeState(
     if (data.stage === "instruction-review") {
       const row = resultRow(receipt, { id: task.id, file: "instruction_review.jsonl" });
       if (row.task_id !== task.id || row.source_attribution_task_id !== task.dependencies.source || row.evaluation_type !== "instruction_review")
-        throw new Error("指令检查结果与归因来源不一致：" + task.id);
+        throw new Error("指令遵循归因结果与归因来源不一致：" + task.id);
       const evaluation = restore(row.instruction_review, evaluationPatch || []);
       state.receipts[task.id] = { ...value, evaluation, ...(submittedPatch ? { submitted: restore(evaluation, submittedPatch) } : {}),
         exported: { id: task.id, file: "instruction_review.jsonl", row } };
@@ -370,7 +370,7 @@ function decodeState(
         evaluation,
         ...(submittedPatch ? { submitted: restore(evaluation, submittedPatch) } : {}),
         exported: {
-          id: source.resultId,
+          id: source.stage === "attribution" ? task.id : source.resultId,
           auxiliary: true,
           ...(receipt.exported.file ? { file: receipt.exported.file } : {}),
           row,

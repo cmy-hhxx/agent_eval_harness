@@ -31,6 +31,7 @@ import { createRunRepository, exists, readJson } from "@eval/data";
 import { object } from "@eval/contracts";
 import { services } from "../../../tests/fixtures/services.js";
 import { attributionAgent } from "@eval/agents/attribution";
+import { agentPrompt } from "@eval/prompts";
 import { traceReadCoverage, ToolRuntime } from "@eval/tools";
 import { buildPlan } from "@eval/workflows/comparison";
 import { AgentRegistry, RunStore, type EvaluationServices } from "@eval/host";
@@ -58,6 +59,8 @@ interface WorkerHarnessOptions {
 
 const fileProfile: Partial<AgentProfile> = {
   fileSubmission: true, jsonStringSubmission:false, draftWriteInCallLimit:false,
+  toolDescriptions: agentPrompt("attribution", attributionAgent.profiles.component!.toolNames,
+    { profile: "component", fileSubmission: true }).toolDescriptions,
 };
 
 for (const method of ["accept", "inspect"] as const)
@@ -982,6 +985,8 @@ test("file loading feedback cannot renew exhausted protected writers or bypass t
 
 test("file profiles retain their JSON schema and expose no direct submission fallback", async () => {
   const fixture = await harness(async options => ({ async run() {
+    for (const name of ["read_trace", "search_trace", "view_image"])
+      assert.deepEqual((options.tools.find(tool => tool.name === name)!.inputSchema.properties as any).candidate.enum, ["answer"]);
     assert(!options.tools.some(tool => tool.name === "submit_evaluation"));
     const tool = options.tools.find(tool => tool.name === "submit_evaluation_file")!;
     assert.deepEqual(tool.inputSchema, { type: "object", additionalProperties: false, required: ["path"],

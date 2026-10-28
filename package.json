@@ -23,7 +23,6 @@
     "typecheck": "tsc --noEmit",
     "doctor": "node scripts/doctor.mjs",
     "eval": "node dist/apps/host/src/cli.js",
-    "aime:ingest-and-attribute": "node dist/apps/host/src/aime-ingest-and-attribute.js",
     "attribution:check-language": "node dist/apps/host/src/attribution-language-check.js",
     "automations": "node dist/apps/host/src/automations.js",
     "workbench": "bash workbench.sh",

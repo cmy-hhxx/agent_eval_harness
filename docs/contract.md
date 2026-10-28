@@ -88,7 +88,7 @@ Attribution 每条输入记录导出一行，包含 `session_meta`、`turns[]`�
 
 ### 归因与共同基准
 
-Criteria 提交三组 `{source_indices,text}`：requirements、scoring_points、red_flags。程序生成 ID、来源交集作用域和含完整原文的 acceptance_rule。同一来源可支持多个独立检查项；三个数组中作用于全部候选的共同项去重后合计5–12项，私有项不计入共同数量，全部项最多24项。数量在提交解析及正式结果校验时检查，不自动填充。原问与质量来源须由共同 requirement 覆盖。SYS/DEV与已确认加载Skill不进入共同基准和主归因，统一由后置独立指令检查处理。公开要求的数量、必交范围、可选性与例外按原文保留。标准答案不进入 Criteria 来源目录，完整保留给 Attribution 核对事实。
+Criteria 提交三组 `{source_indices,text}`：requirements、scoring_points、red_flags。程序生成 ID、来源交集作用域和含完整原文的 acceptance_rule。同一来源可支持多个独立检查项；三个数组中作用于全部候选的共同项去重后合计5–12项，私有项不计入共同数量，全部项最多24项。数量在提交解析及正式结果校验时检查，不自动填充。原问与质量来源须由共同 requirement 覆盖。SYS/DEV与已确认加载Skill不进入共同基准和主归因，统一由后置独立指令遵循归因处理。公开要求的数量、必交范围、可选性与例外按原文保留。标准答案不进入 Criteria 来源目录，完整保留给 Attribution 核对事实。
 
 Attribution 正式结果顶层只有 meta、summary、Problem、has_standard_answer、is_correct、correct_reason。meta 由程序组装样本、run、评测器及来源；模型只提交 summary、Problem，以及有标准答案时的正确性判断。原问与适用评测规则继续提供，不要求逐项填表。
 

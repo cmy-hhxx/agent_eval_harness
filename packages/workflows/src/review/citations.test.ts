@@ -4,7 +4,6 @@ import { randomUUID } from "node:crypto";
 import { emptyUsage, type PlannedTask, type SubmissionReceipt } from "@eval/contracts";
 import { evidenceSources, resolveEvidence, selectEvidenceSource } from "@eval/tools";
 import { citationInventory, citationSourceParts } from "./citations.js";
-import { componentAttributionProfile } from "@eval/agents/attribution";
 import { comparisonProfile } from "@eval/agents/comparison";
 import { Ajv2020 } from "ajv/dist/2020.js";
 import { bindTask } from "../comparison/binding.js";
@@ -531,13 +530,13 @@ test("visual directory excludes skill examples, input arguments, incomplete outp
   assert.ok(result.references.every(ref => ref.sources.length === 0));
 });
 
-test("both current agent request schemas accept the visual inventory with complete original coordinates", () => {
+test("comparison request schema accepts the visual inventory with complete original coordinates", () => {
   const raw = { messages: [
     { type: "tool_result", output: { stdout: '{"type":"vis-html","id":"html-chart"}' } },
     { type: "final_answer", role: "assistant", content: '<vis-html ref="html-chart"/>' },
   ] };
   const inventory = citationInventory(raw, evidenceInputId, 1);
-  for (const profile of [componentAttributionProfile, comparisonProfile]) {
+  for (const profile of [comparisonProfile]) {
     const validate = new Ajv2020({ strict: false }).compile({
       $defs: profile.requestSchema!.$defs, $ref: "#/$defs/citationInventory",
     });

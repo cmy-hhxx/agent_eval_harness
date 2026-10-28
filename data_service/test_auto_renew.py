@@ -97,16 +97,20 @@ class RenewTest(unittest.TestCase):
 class RenewShellTest(unittest.TestCase):
     def test_real_archives_both_sources_backlog_delivery_restart_and_signal(self):
         import py7zr
-        from test_aime_ingest_once import session
         project = Path(__file__).resolve().parent.parent
         with tempfile.TemporaryDirectory() as folder:
             root = Path(folder)
             data, runtime = root / "data", root / "runtime"
+            aime = {"meta": {"session_id": "one", "trace_id": "one", "agent_mode": "fast-analyst",
+                             "session_type": "fast", "request_time": "2026-10-27T12:00:00+08:00", "ok": True},
+                    "traces": [{"meta": {"trace_id": "trace-one", "mode": "fast", "model": "aime-fast"},
+                                "messages": [{"type": "user_question", "role": "user", "content": "计算2+2"},
+                                             {"type": "final_answer", "role": "assistant", "content": "2+2=4"}]}]}
             definitions = [
                 ("wencai", "0_wencai", "A_AA_comparision_data", "a_fast", "A-fast.jsonl",
                  archive_row("a_fast", "one", request_time="2026-10-27 12:00:00")),
                 ("aime", "1_aime", "online_data", "aime_fast", "answers.jsonl",
-                 session(request="2026-10-27T12:00:00+08:00")),
+                 aime),
             ]
             sources, packages = [], []
             for identity, source, inbox, model, member, row in definitions:

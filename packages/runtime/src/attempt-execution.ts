@@ -113,7 +113,7 @@ export async function executeAttempt(attempt: AttemptExecution, deps: AttemptExe
       timings.inputIoMs = performance.now() - inputStarted;
       activity();
       const artifacts = new ArtifactStore(path.join(attempt.directory, "artifacts"));
-      const definitions = registry.select(spec.evaluation.toolNames).map(tool =>
+      const definitions = registry.select(spec.evaluation.toolNames, [...inputs.keys()]).map(tool =>
         tool.name === "inspect_material" && !spec.evaluation.fileSubmission && spec.evaluation.inspectionSchema
           ? { ...tool, inputSchema: spec.evaluation.inspectionSchema }
           : tool);

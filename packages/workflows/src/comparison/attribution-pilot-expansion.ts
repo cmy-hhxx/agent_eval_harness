@@ -13,7 +13,7 @@ export async function prepareAttributionPilotExpansion(run: string, options: { a
     const state = await readRunState(run), manifest = state.manifest, config = manifest.config as AttributionJobConfig;
     if (!config.attributionJob || !manifest.executionScope) throw new Error("只能扩大已有独立归因作业的冻结试跑范围");
     const models = config.inputs.versions.map(version => version.id);
-    const attributions = manifest.tasks.filter(task => task.stage === "attribution"), allByTask = new Map(attributions.map(task => [task.id, task]));
+    const attributions = manifest.tasks.filter(task => task.stage === "attribution-session"), allByTask = new Map(manifest.tasks.map(task => [task.id, task]));
     const answers = attributions.filter(task => !(task.data as TaskData).reviewOf).map(task => {
       const data = task.data as TaskData, candidate = data.candidates.A;
       return { task, candidate, standard: data.reference !== null };
@@ -95,8 +95,12 @@ export async function prepareAttributionPilotExpansion(run: string, options: { a
         ["pending", "running"].includes(manifest.states[review.id].status)) sources.add(review.id);
     }
     const superseded = supersededAttributionRewriteIds(state), scope = new Set(sources);
-    sources.forEach(id => scope.add(allByTask.get(id)!.dependencies.criteria));
     for (const task of manifest.tasks) if (task.stage === "rewrite" && sources.has(task.dependencies.source) && !superseded.has(task.id)) scope.add(task.id);
+    for (const id of scope) {
+      const task = allByTask.get(id);
+      if (!task) throw new Error("所选回答缺少已规划依赖：" + id);
+      Object.values(task.dependencies).forEach(dependency => scope.add(dependency));
+    }
     if ([...scope].some(id => !manifest.tasks.some(task => task.id === id))) throw new Error("所选回答缺少已规划依赖");
     const executionScope = manifest.tasks.filter(task => scope.has(task.id)).map(task => task.id);
     const selectedAnswers = selected.map(({ candidate, task, standard }) => ({ batch_id: candidate.batch_id, case_id: candidate.case_id,

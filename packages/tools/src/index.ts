@@ -779,10 +779,14 @@ export class ToolRegistry {
   names(): string[] {
     return [...this.tools.keys()];
   }
-  select(names: string[]): ExecutableTool[] {
+  select(names: string[], candidates?: readonly string[]): ExecutableTool[] {
     return names.map((name) => {
       const tool = this.tools.get(name);
       if (!tool) throw new Error(`Tool unavailable: ${name}`);
+      const properties = tool.inputSchema.properties as Record<string, JsonSchema> | undefined;
+      if (candidates?.length && properties?.candidate)
+        return { ...tool, inputSchema: { ...tool.inputSchema, properties: { ...properties,
+          candidate: { ...properties.candidate, enum: [...candidates] } } } };
       return tool;
     });
   }

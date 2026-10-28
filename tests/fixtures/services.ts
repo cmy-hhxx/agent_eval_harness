@@ -40,8 +40,9 @@ export const prepare = (
   task: PlannedTask,
   inputs: Record<string, unknown>,
   dependencies: Record<string, SubmissionReceipt>,
+  tasks?: PlannedTask[],
 ) => agents.prepare(comparisonWorkflow.bind(task, inputs, testDependencies(task, inputs, dependencies), {
-  tasks: task.dependencies.criteria ? [criteriaTaskFor(task), task] : [task],
+  tasks: tasks ?? (task.dependencies.criteria ? [criteriaTaskFor(task), task] : [task]),
 }));
 export const validateEvaluation = (
   task: PlannedTask,
@@ -49,8 +50,9 @@ export const validateEvaluation = (
   result: unknown,
   audit: ToolAudit,
   dependencies: Record<string, SubmissionReceipt | undefined>,
+  tasks?: PlannedTask[],
 ) => agents.validate(comparisonWorkflow.bind(task, inputs, testDependencies(task, inputs, dependencies), {
-  tasks: task.dependencies.criteria ? [criteriaTaskFor(task), task] : [task],
+  tasks: tasks ?? (task.dependencies.criteria ? [criteriaTaskFor(task), task] : [task]),
 }), result, audit);
 export const validateRun = (run: string) =>
   validateStoredRun(run, (binding, result, audit) => agents.validate(binding, result, audit));
