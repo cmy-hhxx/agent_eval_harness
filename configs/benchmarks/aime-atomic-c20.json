@@ -1,0 +1,93 @@
+{
+  "inputs": {
+    "timing_unit": "ms",
+    "versions": [
+      {
+        "id": "aime_fast",
+        "name": "aime_fast",
+        "display_name": "AIME Fast",
+        "adapter": "a",
+        "sources": [
+          {
+            "kind": "file",
+            "path": "/mnt/fin_bench/eval_data/1_aime/4_daily_eval_input_clean_slim/aime_fast/2026-10-26.jsonl"
+          }
+        ]
+      },
+      {
+        "id": "aime_expert",
+        "name": "aime_expert",
+        "display_name": "AIME Expert",
+        "adapter": "a",
+        "sources": [
+          {
+            "kind": "file",
+            "path": "/mnt/fin_bench/eval_data/1_aime/4_daily_eval_input_clean_slim/aime_expert/2026-10-26.jsonl"
+          }
+        ]
+      }
+    ],
+    "batches": [
+      "2026-10-26"
+    ],
+    "case_ids": [
+      "thread_29baea426dd04473b6089bb4444137c7",
+      "thread_00006b3afedd4ce784d248a141906325",
+      "thread_8233b14fec4847319fcbc511742e7f49",
+      "thread_539b727379a84ecfa4ca798cda82f8d1"
+    ]
+  },
+  "comparisons": [],
+  "rewrite": {
+    "comparison": true,
+    "attribution": true,
+    "clustering": true,
+    "comparisonItems": true
+  },
+  "clustering": {
+    "enabled": false
+  },
+  "output": {
+    "kind": "directory",
+    "path": "/mnt/fin_bench/eval_data/1_aime/eval_output/test_eval"
+  },
+  "execution": {
+    "concurrency": 20,
+    "sessionWindow": 16,
+    "retries": 1,
+    "timeoutSeconds": 900
+  },
+  "models": {
+    "judge": {
+      "model": "deepseek-v4.1-flash",
+      "thinking": "low"
+    }
+  },
+  "bindings": {
+    "criteria": {
+      "profile": "judge",
+      "thinking": "low"
+    },
+    "attribution": {
+      "profile": "judge",
+      "thinking": "low"
+    },
+    "comparison": {
+      "profile": "judge",
+      "thinking": "low"
+    },
+    "rewrite": {
+      "profile": "judge",
+      "thinking": "low"
+    },
+    "clustering": {
+      "profile": "judge",
+      "thinking": "low"
+    },
+    "instruction-review": {
+      "profile": "judge",
+      "thinking": "low"
+    }
+  },
+  "workflow": "attribution"
+}

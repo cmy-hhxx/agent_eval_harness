@@ -104,8 +104,9 @@ export function initialAttributionMaterial(answer: JsonObject, raw: RawInput, na
 /** Preload a bounded part of the selected component, with exact original coordinates. */
 export function initialComponentScene(raw: RawInput, original: RawInput, inputId: string,
   navigation: ReturnType<typeof attributionNavigation>, component: string, scope?: ComponentReviewScope) {
-  const choices = navigation.responsibility_choices.filter(choice => choice.component === component &&
-    (!scope || choice.message_index !== null && scope.message_indices.includes(choice.message_index)));
+  const choices = navigation.responsibility_choices.filter(choice => scope
+    ? choice.message_index !== null && scope.message_indices.includes(choice.message_index)
+    : choice.component === component);
   if (scope?.final_ranges) return { component, partial: true, entries: [], responsibility_choices_total: choices.length };
   const sources = new Map<number, ReturnType<typeof evidenceSources>>();
   const originals = new Map<number, ReturnType<typeof evidenceSources>>();
@@ -121,13 +122,14 @@ export function initialComponentScene(raw: RawInput, original: RawInput, inputId
     for (const key of ["input", "arguments", "output", "result", "content"]) {
       if (!Object.hasOwn(message, key) || remaining <= 0) continue;
       const value = message[key];
+      const whole = selectEvidenceSource(locations, `/${key}`);
       const textBlocks = typeof value === "string" || Array.isArray(value) && value.every(part =>
         part && typeof part === "object" && ["text", "output_text"].includes(String(part.type)) && typeof part.text === "string");
-      const leaves = textBlocks ? locations.filter(source => source.kind === "text" && source.quotable !== false &&
+      const leaves = textBlocks || whole?.source.quotable === false ? locations.filter(source => source.kind === "text" && source.quotable !== false &&
         (source.path === `/${key}` || source.path.startsWith(`/${key}/`) && /\/(?:text|content|arguments|reasoning_content)$/u.test(source.path)))
         : [];
       const selected = leaves.length ? leaves.map(source => ({ source, start: 0, end: source.text.length }))
-        : [selectEvidenceSource(locations, `/${key}`)].filter(item => item !== undefined);
+        : [whole].filter(item => item !== undefined);
       for (const item of selected) {
         if (item.source.quotable === false || remaining <= 0) continue;
         const originalSource = originals.find(source => source.kind === item.source.kind && source.path === item.source.path);

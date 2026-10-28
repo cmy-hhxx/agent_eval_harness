@@ -116,8 +116,9 @@ export function bindAttribution(task: PlannedTask, inputs: Record<string, unknow
     const navigation = binding.materialNavigation!.answer as { responsibility_choices: {
       component: string; kind: string; message_index: number | null; transition_index: number;
     }[] };
-    const choices = navigation.responsibility_choices.filter(choice => choice.component === data.component &&
-      (!data.reviewScope || choice.message_index !== null && data.reviewScope.message_indices.includes(choice.message_index)));
+    const choices = navigation.responsibility_choices.filter(choice => data.reviewScope
+      ? choice.message_index !== null && data.reviewScope.message_indices.includes(choice.message_index)
+      : choice.component === data.component);
     const entrypoints = choices.slice(0, 8).map(choice => ({ component: choice.component, kind: choice.kind, message_index: choice.message_index,
         read_request: { tool: "read_responsibility_chain", arguments: { candidate: "answer", transition_index: choice.transition_index } } }));
     return { ...binding, profile: "component", request: { ...binding.request, input: { ...binding.request.input,

@@ -7,6 +7,24 @@ import { parseEvidenceCoordinates } from "@eval/tools";
 import { bindAttribution, planAttributionUnit, type AttributionTaskData } from "./index.js";
 import { emptyAudit } from "../../../../tests/fixtures/comparison.js";
 
+test("model review entrypoints use message coordinates and retain public output beside private inputs", () => {
+  const raw = { batch_id: "batch", case_id: "model-scene", messages: [
+    { type: "user_question", content: "核对收入。" },
+    { type: "llm_turn", name: "llm-call-1", input_messages: [{ role: "system", content: "PRIVATE_SENTINEL" },
+      { role: "user", content: "核对收入。" }], output: [{ role: "assistant", content: "收入为10亿元。" }] },
+    { type: "final_answer", content: "收入为10亿元。" } ] };
+  const candidate = adapt(raw, { id: "answer", name: "Answer", adapter: "b", sources: [] }, "fixture.jsonl", 1);
+  const task = planAttributionUnit(candidate).tasks.find(task => task.stage === "attribution-component" &&
+    (task.data as AttributionTaskData).reviewScope!.message_indices.includes(1))!;
+  const binding = bindAttribution(task, { [candidate.input_id]: normalizeInput(raw) }, {});
+  assert(Number(binding.modelInput!.component_entrypoints_total) > 0);
+  const material = JSON.stringify(binding.modelInput!.answer);
+  assert(material.includes("收入为10亿元。"));
+  assert(!material.includes("PRIVATE_SENTINEL"));
+  const prepared = new AgentRegistry([attributionAgent]).prepare(binding);
+  assert(prepared.evidenceBank.some(id => parseEvidenceCoordinates(id)?.message_index === 1));
+});
+
 test("a mixed-media answer retains its image entrypoint after text scope splitting", () => {
   const raw = { batch_id: "batch", case_id: "image", messages: [
     { type: "user_question", content: "请画出函数图像。" },
