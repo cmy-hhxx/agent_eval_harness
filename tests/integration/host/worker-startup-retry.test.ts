@@ -24,8 +24,12 @@ const backend={identity:fakeIdentity,async createSession(options){return{async r
 const w=await startWorkerPool(backend,process.argv[process.argv.indexOf("--directory")+1],1);
 process.send({type:"ready",url:w.urls[0]});process.once("SIGTERM",async()=>{await w.close();process.exit(0);});process.once("disconnect",async()=>{await w.close();process.exit(0);});}`);
   const timer = globalThis.setTimeout;
+  let startupTimerShortened = false;
   t.mock.method(globalThis, "setTimeout", ((...args: Parameters<typeof setTimeout>) => {
-    if (args[1] === 60000) args[1] = 1000;
+    if (args[1] === 60000 && (!recover || !startupTimerShortened)) {
+      args[1] = 1000;
+      startupTimerShortened = true;
+    }
     return timer(...args);
   }) as typeof setTimeout);
   const events: string[] = [], runId = "startup-retry";
