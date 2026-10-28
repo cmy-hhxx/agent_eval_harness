@@ -367,7 +367,7 @@ test("daily jobs freeze exact coordinates and outputs are the three agreed direc
   assert.deepEqual(jobs.map(job => job.runId), ["2026-10-26", "2026-10-27"]);
   assert.equal(jobs[0].inputs.records.length, 1);
   const config = resolveNightConfig({ dataRoot: "/data", runtimeRoot: "/runtime", settingsFile: "/runtime/config.ini",
-    pollSeconds: 30, stableSeconds: 30, admissionSeconds: 7200, channels: ["a", "b"],
+    pollSeconds: 30, stableSeconds: 30, admissionSeconds: 7200, channels: ["a", "b"], requestsPerChannel: 200,
     hostConfigs: { wencai: ["w.json"], lost: ["a.json"], aime: ["a.json"] } }, "/configs/night.json");
   assert.equal(config.outputs.lost, "/data/1_aime/eval_output/3_lost_user_eval");
   assert.equal(config.lost.targetDirectory, "/data/1_aime/6_lost_user_eval_clean_slim");

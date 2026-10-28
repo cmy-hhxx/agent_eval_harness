@@ -8,6 +8,7 @@
   "stableSeconds": 30,
   "admissionSeconds": 7200,
   "channels": ["evaluation-gateway", "evaluation-gateway-2"],
+  "requestsPerChannel": 128,
   "activeSources": ["lost"],
   "hostConfigs": {
     "wencai": ["host.json", "automations-host.json", "night-wencai.json"],

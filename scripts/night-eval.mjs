@@ -141,6 +141,8 @@ export function resolveNightConfig(value, configFile) {
     if (typeof config[key] !== "string" || !path.isAbsolute(config[key])) throw new Error(`${key} 必须为绝对路径`);
   for (const key of ["pollSeconds", "stableSeconds", "admissionSeconds"])
     if (!Number.isSafeInteger(config[key]) || config[key] < 1) throw new Error(`Invalid ${key}`);
+  if (!Number.isSafeInteger(config.requestsPerChannel) || config.requestsPerChannel < 1 || config.requestsPerChannel > 200)
+    throw new Error("requestsPerChannel must be between 1 and 200");
   if (!Array.isArray(config.channels) || config.channels.length !== 2 || new Set(config.channels).size !== 2 ||
       config.channels.some(channel => typeof channel !== "string" || !channel)) throw new Error("需要两个不同的评测渠道");
   for (const source of priority) {
@@ -275,7 +277,7 @@ export async function main(argv) {
     await save();
     const requestPriorities = { comparison: 0, "attribution-session": 1, "attribution-trace": 2,
       "attribution-component": 3, criteria: 4 };
-    const requests = createChannelRequests(Object.fromEntries(config.channels.map(channel => [channel, 200])),
+    const requests = createChannelRequests(Object.fromEntries(config.channels.map(channel => [channel, config.requestsPerChannel])),
       Object.fromEntries(config.activeSources.map(source => [source, { wencai: 7, lost: 2, aime: 1 }[source]])),
       context => requestPriorities[context.stage] ?? 5);
     const writeRequests = () => writeJson(requestFile, requests.snapshot());
