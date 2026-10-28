@@ -524,8 +524,14 @@ export const builtinTools: ExecutableTool[] = [
       const matches: (Excerpt & { context: Excerpt[]; has_more: boolean })[] = [];
       let total = 0;
       if (args.message_index != null) message(ctx, args.candidate, args.message_index);
+      const navigation = object(ctx.materialNavigation?.[args.candidate] ?? {});
+      const reviewScope = navigation.review_scope as
+        { message_indices: number[]; final_ranges?: unknown[] } | undefined;
+      const localMessages = args.message_index == null && reviewScope && !reviewScope.message_indices.includes(Number(navigation.final_message_index))
+        ? reviewScope.message_indices : undefined;
       const messages = record(ctx, args.candidate).messages.map((message, index) => ({ message, index }))
-        .filter(item => args.message_index == null || item.index === args.message_index);
+        .filter(item => (args.message_index == null || item.index === args.message_index) &&
+          (!localMessages || localMessages.includes(item.index)));
       const selected = args.scope === "tool_returns" ? messages.filter(({ message }) => {
         const value = object(message);
         return value.role === "tool" || ["function_call_output", "tool_result"].includes(String(value.type));
@@ -621,6 +627,7 @@ export const builtinTools: ExecutableTool[] = [
         });
         return textResult({
           matches: displayed, new_source_chars: newChars,
+          ...(localMessages ? { searched_message_indices: localMessages } : {}),
           total, next_offset: offset + shown.length, has_more: offset + shown.length < total,
         });
       };

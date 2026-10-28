@@ -40,7 +40,7 @@ import { loadIdentity } from "@eval/runtime/client";
 import type { FailureContext } from "@eval/contracts";
 import { progressSnapshot } from "./progress.js";
 import { RunStore, type EvaluationServices } from "./store.js";
-import { createScopeMembership, scheduleTasks, sessionAdmissionSnapshot } from "./scheduling.js";
+import { createScopeMembership, dependencyReady, scheduleTasks, sessionAdmissionSnapshot } from "./scheduling.js";
 import { FailureGuard } from "./failure-guard.js";
 import { cumulativeAttempts, executionStopReason } from "./run-limits.js";
 import { consumeEvents, spawnWorker, createRunWorkspace } from "@eval/runtime/client";
@@ -365,7 +365,7 @@ export async function runEvaluation(options: RunOptions): Promise<Record<string,
     const runnable = (task: PlannedTask) => !current.admissionPaused() && (running.size === 0 || running.size < taskConcurrency()) &&
       manifest.states[task.id].status === "pending" && !executionStopReason(manifest) && dispatchable(task) &&
       (manifest.states[task.id].nextRetryAt ?? 0) <= Date.now() &&
-      Object.values(task.dependencies).every((id) => manifest.states[id]?.status === "succeeded");
+      Object.keys(task.dependencies).every(label => dependencyReady(task, label, manifest.states, running));
     const workers = await Promise.all(
       workerUrls.map(async (url) => ({
         url,
@@ -925,15 +925,15 @@ export async function runEvaluation(options: RunOptions): Promise<Record<string,
         if (!dispatchable(task)) continue;
         if (manifest.states[task.id].status !== "pending" || running.has(task.id) ||
             (manifest.states[task.id].nextRetryAt ?? 0) > Date.now()) continue;
-        const dependencies = Object.values(task.dependencies);
-        if (dependencies.some((id) => !running.has(id) && manifest.states[id]?.status &&
+        const dependencies = Object.entries(task.dependencies);
+        if (dependencies.some(([label, id]) => !dependencyReady(task, label, manifest.states, running) && !running.has(id) && manifest.states[id]?.status &&
           !["pending", "running", "succeeded"].includes(manifest.states[id].status))) {
           manifest.states[task.id].status = "blocked";
           manifest.states[task.id].reason = "Dependency did not succeed";
           blocked = true;
           continue;
         }
-        if (dependencies.some((id) => manifest.states[id]?.status !== "succeeded")) continue;
+        if (dependencies.some(([label]) => !dependencyReady(task, label, manifest.states, running))) continue;
         const sessionId = sessionAdmission?.id(task);
         if (sessionId && !admission!.admitted.has(sessionId)) continue;
         if (options.taskSource.canStart?.(task, manifest) === false) continue;

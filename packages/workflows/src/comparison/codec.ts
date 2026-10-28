@@ -107,6 +107,7 @@ function encodeState(state: RunState): Checkpoint {
         stage: task.stage as Stage,
         inputIds: task.inputIds,
         dependencies: task.dependencies,
+        ...(task.settledDependencies ? { settledDependencies: task.settledDependencies } : {}),
         data,
       };
       const receipt = state.receipts[task.id];
@@ -223,6 +224,7 @@ function decodeState(
       stage: t.stage,
       inputIds: t.inputIds,
       dependencies: t.dependencies,
+      ...(t.settledDependencies ? { settledDependencies: t.settledDependencies } : {}),
       data: {
         ...t.data,
         stage: t.stage,
@@ -269,6 +271,7 @@ function decodeState(
       stage: _stage,
       inputIds: _inputIds,
       dependencies: _dependencies,
+      settledDependencies: _settledDependencies,
       data: _data,
       ...status
     } = saved;

@@ -72,7 +72,7 @@ export function validateDerivations(rows: readonly ResolvedDerivation[], path = 
     for (const field of ["label", "result_unit", "result_period"] as const)
       if (!row[field]?.trim()) invalid(`/${field}`, "计算必须声明用途、结果单位和期间。");
     for (const [name, operand] of Object.entries(operands)) {
-      if (!/^[A-Za-z_][A-Za-z_0-9]*$/u.test(name) || name === "display_scale") invalid(`/operands/${name}`, "操作数名须为合法变量名，display_scale为程序保留名。");
+      if (!/^[A-Za-z_][A-Za-z_0-9]*$/u.test(name) || name === "display_scale") invalid(`/operands/${name}`, "操作数名须为合法变量名，不能使用 display_scale。");
       if (![operand.unit, operand.period, operand.role].every(item => typeof item === "string" && item.trim()))
         invalid(`/operands/${name}`, "每个操作数须声明单位、期间和业务角色。");
       try { values[name] = numberValue(operand.value); calculateExpression(name, { [name]: values[name] }); }

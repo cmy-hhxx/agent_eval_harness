@@ -47,7 +47,9 @@ export function planAttributionUnit(candidate: Candidate, options: AttributionUn
     (task.data as Record<string, unknown>).attributionIdentity === options.identity);
   const retainedSession = retained.find(task => task.stage === "attribution-session");
   if (retainedSession) {
-    const tasks = retained.map(task => ({ ...task, data: { ...(task.data as AttributionTaskData), candidate } }));
+    const tasks = retained.map(task => ({ ...task,
+      ...(task.stage === "attribution-trace" ? { settledDependencies: Object.keys(task.dependencies).filter(label => label.startsWith("component")) } : {}),
+      data: { ...(task.data as AttributionTaskData), candidate } }));
     return { tasks, session: tasks.find(task => task.id === retainedSession.id)! };
   }
   const traceList = turns(candidate), previous = new Map((options.previousTasks ?? [])
@@ -70,6 +72,7 @@ export function planAttributionUnit(candidate: Candidate, options: AttributionUn
         traceCount: traceList.length, component: scope.component, reviewScope: scope } satisfies AttributionTaskData }));
     tasks.push(...componentTasks);
     const traceTask: PlannedTask = { id: id("attribution-trace", trace.trace_index), stage: "attribution-trace",
+      settledDependencies: componentTasks.map((_, index) => `component${index}`),
       inputIds: {}, dependencies: { ...upstream,
         ...Object.fromEntries(componentTasks.map((task, index) => [`component${index}`, task.id])) },
       data: { ...base, stage: "attribution-trace", candidate, traceIndex: trace.trace_index,
@@ -119,15 +122,19 @@ export function bindAttribution(task: PlannedTask, inputs: Record<string, unknow
         read_request: { tool: "read_responsibility_chain", arguments: { candidate: "answer", transition_index: choice.transition_index } } }));
     return { ...binding, profile: "component", request: { ...binding.request, input: { ...binding.request.input,
       component: data.component, trace_index: traceIndex, review_scope: data.reviewScope } }, modelInput: { ...(binding.modelInput ?? binding.request.input),
+      task_focus: { question: traceCandidate.question, review_target: { component: data.component, ...data.reviewScope } },
       component: data.component, trace_index: traceIndex, review_scope: data.reviewScope, component_entrypoints: entrypoints,
       component_entrypoints_total: choices.length } };
   }
   if (task.stage === "attribution-trace") {
+    const unreviewed = Object.entries(task.dependencies).filter(([label]) => label.startsWith("component") && !dependencies[label])
+      .map(([, id]) => id);
     return { agent: "attribution", profile: "trace", request: { sources: {}, input: {
       ...(analysis ? { task_analysis: analysis } : {}),
       trace_meta: session.turns?.[traceIndex]?.meta ?? traceRaw.meta ?? {}, trace_index: traceIndex,
       ground_truth: { available: traceCandidate.reference !== null, value: traceCandidate.reference },
       question: traceCandidate.question, answer: contentText(traceRaw.messages[traceCandidate.final_index]?.content),
+      review_coverage: { complete: !unreviewed.length, unreviewed_count: unreviewed.length },
       problems: Object.entries(dependencies).filter(([label]) => label.startsWith("component"))
         .flatMap(([, receipt]) => (receipt?.evaluation as ComponentReviewResult | undefined)?.problems ?? [])
         .map((problem, index) => ({ ...problem, problem_id: `p${index + 1}` })) } } };
@@ -184,7 +191,10 @@ export const attributionWorkflow: WorkflowDefinition = {
     const records = new Map<string, Candidate>();
     const inputs = await loadRunInputs(manifest, undefined, undefined, records, source => normalizeInput(source));
     const catalog = (manifest.inputCatalog as Candidate[]).map(candidate => ({ ...records.get(candidate.input_id)!, input_id: candidate.input_id }));
-    for (const task of manifest.tasks) (task.data as AttributionTaskData).candidate = catalog.find(candidate => candidate.input_id === (task.data as AttributionTaskData).candidate.input_id)!;
+    for (const task of manifest.tasks) {
+      (task.data as AttributionTaskData).candidate = catalog.find(candidate => candidate.input_id === (task.data as AttributionTaskData).candidate.input_id)!;
+      if (task.stage === "attribution-trace") task.settledDependencies = Object.keys(task.dependencies).filter(label => label.startsWith("component"));
+    }
     manifest.inputCatalog = catalog;
     return { tasks: manifest.tasks, inputs, catalog, summary: manifest.preflight };
   },

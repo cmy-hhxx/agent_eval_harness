@@ -5,6 +5,34 @@ import { AgentRegistry } from "@eval/host";
 import { attributionAgent } from "@eval/agents/attribution";
 import { parseEvidenceCoordinates } from "@eval/tools";
 import { bindAttribution, planAttributionUnit, type AttributionTaskData } from "./index.js";
+import { emptyAudit } from "../../../../tests/fixtures/comparison.js";
+
+test("a mixed-media answer retains its image entrypoint after text scope splitting", () => {
+  const raw = { batch_id: "batch", case_id: "image", messages: [
+    { type: "user_question", content: "请画出函数图像。" },
+    { type: "final_answer", content: [{ type: "output_text", text: "函数图像如下。" },
+      { type: "output_image", image_url: "data:image/png;base64,AA==" }] } ] };
+  const candidate = adapt(raw, { id: "answer", name: "Answer", adapter: "b", sources: [] }, "fixture.jsonl", 1);
+  const task = planAttributionUnit(candidate).tasks.find(task => task.stage === "attribution-component")!;
+  const binding = bindAttribution(task, { [candidate.input_id]: normalizeInput(raw) }, {});
+  assert.equal((binding.modelInput!.answer as { final_images: { image_count: number } }).final_images.image_count, 1);
+  assert.equal((binding.materialNavigation!.answer as { final_message_index: number }).final_message_index, 1);
+});
+
+test("partial trace aggregation preserves confirmed problems without turning an unreviewed range into a defect", () => {
+  const raw = { batch_id: "batch", case_id: "partial", messages: [
+    { type: "user_question", content: "计算一加一。" }, { type: "final_answer", content: "2" } ] };
+  const candidate = adapt(raw, { id: "answer", name: "Answer", adapter: "b", sources: [] }, "fixture.jsonl", 1);
+  const tasks = planAttributionUnit(candidate).tasks;
+  const trace = tasks.find(task => task.stage === "attribution-trace")!;
+  assert.deepEqual(trace.settledDependencies, ["component0"]);
+  const binding = bindAttribution(trace, { [candidate.input_id]: normalizeInput(raw) }, {});
+  const registry = new AgentRegistry([attributionAgent]);
+  const result = registry.resolve(binding, { summary: "回答给出2。" }, emptyAudit()) as { summary: string; problem: unknown[] };
+  assert.deepEqual(result.problem, [], "a failed review is not an error in the answer");
+  assert.match(result.summary, /1 项审查未完成/);
+  registry.validate(binding, result, emptyAudit());
+});
 
 test("repeated tool invocations and independent final sections do not share an unbounded review task", () => {
   const messages = [{ type: "user_question", content: "核查两家公司收入及风险。" },

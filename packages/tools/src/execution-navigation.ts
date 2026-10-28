@@ -44,6 +44,11 @@ export const readExecutionTool: Omit<ToolDefinition, "description"> = {
       throw new Error("candidate 必须选择本任务已登记的执行导航材料");
     const material = object(ctx.materialNavigation[args.candidate]);
     const nodes = rows(material.nodes), boundaries = rows(material.boundaries);
+    const scope = material.review_scope as { message_indices: number[] } | undefined;
+    const localOnly = scope && args.query === undefined && args.message_index === undefined &&
+      args.execution_node_index === undefined && args.transition_index === undefined && args.evidence_index === undefined;
+    const localNodes = new Set(scope ? nodes.filter(node => scope.message_indices.includes(Number(node.message_index)))
+      .map(node => node.execution_node_index) : []);
     const choices = rows(material.responsibility_choices);
     const choiceByIndex = new Map(choices.map(choice=>[choice.transition_index,choice]));
     const nodeByIndex = new Map(nodes.map(node => [node.execution_node_index, node]));
@@ -125,6 +130,7 @@ export const readExecutionTool: Omit<ToolDefinition, "description"> = {
     if (args.view === "nodes") {
       const query = args.query?.toLocaleLowerCase();
       items = nodes.filter(node => (args.execution_node_index === undefined || node.execution_node_index === args.execution_node_index) &&
+        (!localOnly || localNodes.has(node.execution_node_index)) &&
         (args.message_index === undefined || node.message_index === args.message_index) &&
         (query === undefined || [node.component, node.summary].some(text => typeof text === "string" && text.toLocaleLowerCase().includes(query))));
       render = node => ({ execution_node_index: node.execution_node_index, kind: node.kind, actor_index: node.actor_index,
@@ -136,6 +142,7 @@ export const readExecutionTool: Omit<ToolDefinition, "description"> = {
         });
     } else if (args.view === "boundaries") {
       items = boundaries.filter(boundary => (!selected || boundary === selected) &&
+        (!localOnly || [boundary.execution_node_index, boundary.source_node_index, boundary.target_node_index].some(id => localNodes.has(id))) &&
         (selectedEvidence === undefined || matchedSides(boundary).length > 0) &&
         (args.kind === undefined || boundary.kind === args.kind) &&
         (args.execution_node_index === undefined || related(boundary, args.execution_node_index)) &&

@@ -23,7 +23,7 @@ const recovery = resource("shared/recovery.md");
 const nudge = resource("shared/nudge.md");
 export const standardConflictReviewInstructions = resource("attribution/standard-review.md");
 export const standardConflictInstructions = resource("attribution/standard-challenge.md");
-export function workflowText(name: "attribution-material" | "core-rewrite" | "criteria-review" | "prediction-evaluation"): string {
+export function workflowText(name: "attribution-material" | "core-rewrite" | "criteria-review" | "prediction-evaluation" | "material-omitted"): string {
   return resource(`workflow/${name}.md`);
 }
 export const attributionNotApplicableText = resource("attribution/default/not_applicable.md");

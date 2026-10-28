@@ -1,6 +1,9 @@
 import { evidenceSources, instructionSources, parseEvidenceCoordinates, resolveEvidence } from "@eval/tools";
 import { ValidationError, type ToolAudit, type ValidationIssue } from "@eval/contracts";
 import type { RawInput } from "../inputs/types.js";
+import { workflowText } from "@eval/prompts";
+
+const omitted = workflowText("material-omitted");
 
 /** Task-local view: preserve message positions and factual leaf paths while excluding private instructions. */
 export function attributionTrace(raw: RawInput, inputId: string, finalIndex: number): RawInput {
@@ -9,7 +12,7 @@ export function attributionTrace(raw: RawInput, inputId: string, finalIndex: num
   const skillContents = new Set(skills.flatMap(source => typeof source.content === "string" ? [source.content] : []));
   const projected = new WeakMap<object, unknown>();
   const visit = (value: unknown): unknown => {
-    if (typeof value === "string" && skillContents.has(value)) return "[内部技能规范由独立指令会话检查]";
+    if (typeof value === "string" && skillContents.has(value)) return omitted;
     if (!value || typeof value !== "object") return value;
     if (projected.has(value)) return projected.get(value);
     if (Array.isArray(value)) {
@@ -20,14 +23,14 @@ export function attributionTrace(raw: RawInput, inputId: string, finalIndex: num
     const result = Object.fromEntries(Object.entries(row)
       .map(([key, child]) => {
         if (["system_prompt", "developer_prompt", "systemPrompt", "developerPrompt"].includes(key))
-          return [key, "[内部技能规范由独立指令会话检查]"];
+          return [key, omitted];
         // A serialized snapshot has no independent leaf coordinates. Keep it outside
         // the main view when decoding reveals private instructions.
         if (key === "input_messages" && typeof child === "string") {
           try {
             const decoded = JSON.parse(child);
             if (JSON.stringify(visit(decoded)) !== JSON.stringify(decoded))
-              return [key, "[含内部规范的序列化输入未进入主归因]"];
+              return [key, omitted];
           } catch { /* Non-JSON factual input remains an ordinary source. */ }
         }
         return [key, visit(child)];
@@ -36,7 +39,7 @@ export function attributionTrace(raw: RawInput, inputId: string, finalIndex: num
     return result;
   };
   return { messages: raw.messages.map((message, index) => hiddenSkills.has(index)
-    ? { type: message.type, name: message.name, output: "[内部技能规范由独立指令会话检查]" }
+    ? { type: message.type, name: message.name, output: omitted }
     : visit(message) as RawInput["messages"][number]) };
 }
 

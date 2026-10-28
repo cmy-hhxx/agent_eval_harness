@@ -277,6 +277,10 @@ function bindSourceTask(
   );
   const attributions = Object.fromEntries(Object.entries(acceptedAttributions).map(([label, result]) =>
     [label, comparisonAttribution(result)]));
+  const reviewCoverage = Object.fromEntries(Object.keys(acceptedAttributions).map(label => [label, {
+    complete: !dependencies[label]?.incompleteDependencies?.length,
+    unreviewed_count: dependencies[label]?.incompleteDependencies?.length ?? 0,
+  }]));
   let comparisonDraft: ComparisonResult | undefined;
   if (data.verificationAudit) {
     const draftTask = context.tasks.find(item => item.id === data.verificationOf!.taskId);
@@ -291,7 +295,7 @@ function bindSourceTask(
     comparisonDraft = structuredClone(draft?.evaluation as ComparisonResult);
   }
   const input = { task_analysis, ground_truth: { available: data.reference !== null, value: reference }, candidates: materials,
-    ...(comparisonDraft ? { comparison_draft: comparisonDraft } : {}), attributions };
+    ...(comparisonDraft ? { comparison_draft: comparisonDraft } : {}), attributions, review_coverage: reviewCoverage };
   const focus = taskFocus(materials, input.ground_truth,
     Object.fromEntries(Object.entries(data.candidates).map(([label, candidate]) =>
       [label, inputs[candidate.input_id] as RawInput])));

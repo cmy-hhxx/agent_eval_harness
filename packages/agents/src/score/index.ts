@@ -70,7 +70,7 @@ export const scoreProfile:AgentProfile={
       final_answer_score:{...grade(value.final_answer_score,true),finding_ids},
       explicit_probability:value.explicit_probability,probability_evidence_ids:value.probability_evidence_ids,evidence:[]};
     const used=new Set<string>([...evaluations,...diagnosticRows,...findings,result.final_answer_score,{evidence_ids:result.probability_evidence_ids}].flatMap(row=>row.evidence_ids));
-    result.evidence=[...used].map(id=>material.shared_quotes.find(quote=>quote.evidence_id===id)??fail('/evidence_ids','只引用程序提供的归因或原问、完整回答证据编号。'));
+    result.evidence=[...used].map(id=>material.shared_quotes.find(quote=>quote.evidence_id===id)??fail('/evidence_ids','只引用已列出的归因、原问或完整回答证据编号。'));
     validateScore(request,result,audit);return result;
   },
   validate(request,result,audit){

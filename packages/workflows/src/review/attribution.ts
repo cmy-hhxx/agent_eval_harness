@@ -323,6 +323,6 @@ export function bindAttributionMaterial(candidate: Candidate, original: RawInput
       ...(options.component ? { component_scene: initialComponentScene(raw, original, candidate.input_id, navigation, options.component, options.scope) } : {}) } };
   return { agent: "attribution", profile: "default", request: { input, sources }, modelInput,
     preparationTimings: { materialMs: performance.now() - started, directoryMs },
-    materialNavigation: { answer: navigation },
+    materialNavigation: { answer: { ...navigation, ...(options.scope ? { review_scope: options.scope } : {}) } },
     projectModelInput: projectComparisonEvidence, presentedReads: presentedMaterialReads(modelInput.answer, "answer", candidate.input_id) };
 }

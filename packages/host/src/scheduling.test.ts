@@ -2,7 +2,29 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import type { PlannedTask, RunManifest } from "@eval/contracts";
 import { attributionScheduling } from "@eval/workflows/attribution";
-import { createScopeMembership, scheduleTasks, sessionAdmissionSnapshot } from "./scheduling.js";
+import { createScopeMembership, dependencyReady, scheduleTasks, sessionAdmissionSnapshot } from "./scheduling.js";
+
+test("settled dependencies release aggregation after failure but never consume pending work or a pause", () => {
+  const task: PlannedTask = { id: "aggregate", stage: "aggregate", inputIds: {}, data: {},
+    dependencies: { component: "component", criteria: "criteria" }, settledDependencies: ["component"] };
+  const states: RunManifest["states"] = { criteria: { status: "succeeded", attempts: 1 },
+    component: { status: "failed", attempts: 1 }, aggregate: { status: "pending", attempts: 0 } };
+  for (const status of ["failed", "timed_out", "succeeded"] as const) {
+    states.component.status = status;
+    assert(dependencyReady(task, "component", states));
+    assert.equal(scheduleTasks([task], states)[0], task);
+  }
+  for (const status of ["pending", "running", "cancelled", "blocked"] as const) {
+    states.component.status = status;
+    assert(!dependencyReady(task, "component", states));
+  }
+  states.criteria.status = "failed";
+  assert(!dependencyReady(task, "criteria", states), "ordinary required inputs remain strict");
+  states.component.status = "failed";
+  assert(!dependencyReady(task, "component", states, new Set(["component"])), "a failed attempt may still be arranging its bounded retry");
+  states.component.status = "succeeded";
+  assert(dependencyReady(task, "component", states, new Set(["component"])), "accepted results do not wait for slow worker cleanup");
+});
 
 function attributionSessionTasks(session: string): PlannedTask[] {
   const components = ["query", "search"].map(component => ({ id: `${session}-component-${component}`,

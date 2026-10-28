@@ -37,6 +37,31 @@ function page(result: ToolResult) {
   return value;
 }
 
+test("a scoped review cannot paginate the global execution directory, while targeted context remains accessible", async () => {
+  const f = await setup();
+  try {
+    Object.assign(f.ctx.materialNavigation!.answer as object, { review_scope: { message_indices: [3] } });
+    const local = page(await f.call({ view: "nodes" }));
+    assert.deepEqual(local.items.map((item: any) => item.message_index), [3]);
+    assert.equal(local.has_more, false);
+    assert.deepEqual(page(await f.call({ view: "boundaries" })).items.map((item: any) => item.transition_index), [3, 4]);
+    assert.equal(page(await f.call({ view: "nodes", query: "摘要 22" })).items[0].message_index, 22);
+    assert.equal(page(await f.call({ view: "nodes", message_index: 15 })).items[0].message_index, 15);
+    const runtime = new ToolRuntime(f.ctx, createRegistry().select(["search_trace"]));
+    const search = async (args: Record<string, unknown> = {}) => {
+      const result = await runtime.execute("search_trace", { candidate: "answer", query: "证据正文", ...args }, new AbortController().signal);
+      assert(!result.isError, result.content[0].text);
+      return JSON.parse(result.content[0].text!);
+    };
+    const found = await search();
+    assert.deepEqual(found.searched_message_indices, [3]);
+    assert.equal(found.total, 1);
+    assert.equal((await search({ message_index: 15 })).total, 1);
+    Object.assign(f.ctx.materialNavigation!.answer as object, { final_message_index: 3, review_scope: { message_indices: [3] } });
+    assert.equal((await search()).total, 25, "answer claims may search all original sources by concrete text");
+  } finally { await f.close(); }
+});
+
 test('reading a captured call presents its responsibility choice without a second navigation call',async()=>{
  const f=await setup();
  try {

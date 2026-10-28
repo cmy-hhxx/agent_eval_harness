@@ -178,8 +178,10 @@ export const traceAttributionProfile: AgentProfile = {
   toolNames: [],
   resolve(request, draft) {
     const value = draft as { summary: string; is_correct: 1 | 0 | null; correct_reason: string };
+    const unreviewed = (request.input.review_coverage as { unreviewed_count: number } | undefined)?.unreviewed_count ?? 0;
     const result: TraceAttributionResult = { meta: (request.input.trace_meta ?? {}) as JsonObject,
-      summary: value.summary, problem: (request.input.problems ?? []) as SessionProblem[],
+      summary: value.summary + (unreviewed ? `（本次有 ${unreviewed} 项审查未完成，问题清单仅覆盖已完成范围。）` : ""),
+      problem: (request.input.problems ?? []) as SessionProblem[],
       is_correct: traceHasStandard(request) ? value.is_correct : null,
       correct_reason: traceHasStandard(request) ? value.correct_reason : attributionNoStandardReason };
     return result;

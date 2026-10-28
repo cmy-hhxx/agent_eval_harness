@@ -14,6 +14,7 @@ import {
   type AgentDefinition,
   type AgentProfile,
   type RunState,
+  type PlannedTask,
   type WorkflowDefinition,
 } from "@eval/contracts";
 
@@ -96,6 +97,51 @@ const repository = createRunRepository(codec, (task, state) => ({
   file: "scores.jsonl",
   row: { id: task.id, result: state.receipts[task.id].evaluation },
 }));
+
+test("one failed review does not block aggregation and its incomplete coverage survives downstream and resume", async t => {
+  const directory = await mkdtemp(path.join(tmpdir(), "eval-settled-dependency-"));
+  const tasks: PlannedTask[] = [...plan.tasks,
+    { ...plan.tasks[0], id: "aggregate", dependencies: { failed: "task-1", accepted: "task-2" }, settledDependencies: ["failed"] },
+    { ...plan.tasks[0], id: "follow", dependencies: { aggregate: "aggregate" } },
+    { ...plan.tasks[0], id: "strict", dependencies: { failed: "task-1" } }];
+  const selectedPlan = { ...plan, tasks };
+  const seen: string[] = [];
+  const selectedWorkflow: WorkflowDefinition = { ...workflow, plan: async () => selectedPlan,
+    bind(task, inputs, dependencies, context) {
+      if (task.id === "aggregate") {
+        assert.equal(dependencies.failed, undefined, "a failed review has no fabricated empty evaluation");
+        assert.deepEqual(dependencies.accepted!.evaluation, { score: 22 });
+      }
+      if (task.id === "follow") assert.deepEqual(dependencies.aggregate!.incompleteDependencies, ["task-1"]);
+      return workflow.bind(task, inputs, dependencies, context);
+    } };
+  const worker = await startWorker({ identity, async createSession(options) {
+    return { async run() {
+      seen.push(options.spec.taskId);
+      if (options.spec.taskId === "task-1") throw new Error("review failed");
+      const value = options.spec.taskId === "task-2" ? 22 : 11;
+      assert(!(await options.execute("submit_evaluation", { score: value })).isError);
+    }, async abort() {}, async dispose() {} };
+  } }, path.join(directory, "worker"));
+  t.after(async () => { await worker.close(); await rm(directory, { recursive: true, force: true }); });
+  const options = { agents: new AgentRegistry([agent]), taskSource: selectedWorkflow, repository,
+    runtime: { root: directory, workerEntry: "unused" }, runId: "partial", output: { kind: "directory" as const, path: directory },
+    engine: "pi" as const, identity, evaluatorVersion: "test", config: {}, plan: selectedPlan,
+    policy: { ...DEFAULT_POLICY, repairAttempts: 0, timeoutSeconds: 10, idleTimeoutSeconds: 5 },
+    modelForStage: () => model, concurrency: 2, retries: 0, retryDelaySeconds: 0, workerUrls: [worker.url], skipFailed: true };
+  await runEvaluation(options);
+  const saved = await repository.readRun(path.join(directory, "partial"));
+  assert.equal(saved.manifest.states["task-1"].status, "failed");
+  assert.equal(saved.manifest.states.strict.status, "blocked");
+  assert.equal(saved.manifest.states.follow.status, "succeeded");
+  assert.deepEqual(saved.receipts.follow.incompleteDependencies, ["task-1"]);
+  const accepted = saved.receipts.follow.submissionId, before = [...seen];
+  await runEvaluation(options);
+  const resumed = await repository.readRun(path.join(directory, "partial"));
+  assert.equal(resumed.receipts.follow.submissionId, accepted);
+  assert.deepEqual(resumed.receipts.follow.incompleteDependencies, ["task-1"]);
+  assert.deepEqual(seen, before, "resume neither repeats accepted work nor silently clears failed coverage");
+});
 
 for (const scenario of ["projection", "conflict", "missing-hot-store"])
 test(`resume reconciles projected receipt metadata while rejecting changed verdicts (${scenario})`, async t => {
@@ -262,7 +308,7 @@ test("a delayed permit-release acknowledgement preserves a completed model turn 
   } finally { await worker.close(); await proxy.close(); await rm(directory, { recursive: true, force: true }); }
 });
 
-test("LLM allocation pauses admission and queued permits do not consume worker or Host timeouts", { timeout: 15000 }, async () => {
+test("sessions warm up without model permits and queued permits do not consume worker or Host timeouts", { timeout: 15000 }, async () => {
   const directory = await mkdtemp(path.join(tmpdir(), "eval-model-permits-"));
   let limit = 0, sessions = 0, active = 0, grants = 0;
   const worker = await startWorker({ identity, async createSession(options) {
@@ -285,14 +331,18 @@ test("LLM allocation pauses admission and queued permits do not consume worker o
       policy: { ...DEFAULT_POLICY, timeoutSeconds: 2, idleTimeoutSeconds: 1 },
       modelForStage: () => model, concurrency: 1, retries: 0, retryDelaySeconds: 0,
       workerUrls: [worker.url],
-      modelRequests: { concurrency: () => limit, acquire: async () => {
+      modelRequests: { concurrency: () => limit, acquire: async (_context, signal) => {
+        while (!limit && !signal.aborted) await new Promise(resolve => setTimeout(resolve, 25));
+        signal.throwIfAborted();
         await new Promise(resolve => setTimeout(resolve, 2200));
         grants++; active++;
         return () => { active--; };
       } },
     });
     await new Promise(resolve => setTimeout(resolve, 300));
-    assert.equal(sessions, 0, "zero allocation must not start paid task attempts");
+    assert.equal(sessions, 1, "the local session can warm up while waiting for a model permit");
+    assert.equal(grants, 0, "zero allocation must not start a paid model call");
+    assert.equal(active, 0);
     limit = 1;
     const result = await pending;
     assert.deepEqual(result.execution_task_statuses, { succeeded: 2 },
@@ -534,7 +584,7 @@ for (const scenario of ["resume", "missing-tool", "invalid-input"]) {
       if (scenario !== "resume") {
         await assert.rejects(
           runEvaluation(options),
-          scenario === "missing-tool" ? /Required engine or tools not available/ : /value/,
+          scenario === "missing-tool" ? /Required tools not available/ : /value/,
         );
         const saved = await repository.readRun(path.join(directory, options.runId));
         assert.deepEqual(saved.receipts[plan.tasks[0].id].evaluation, { score: 11 });
@@ -548,15 +598,19 @@ for (const scenario of ["resume", "missing-tool", "invalid-input"]) {
       assert.equal(interrupted.manifest.states[plan.tasks[1].id].status, "failed");
 
       skipDependentSubmission = false;
+      const beforeRetry = [...entered];
+      await runEvaluation(options);
+      assert.deepEqual(entered, beforeRetry, "resume does not refund an exhausted interruption retry budget");
+      options.retries = interrupted.manifest.states[plan.tasks[1].id].transportFailures!;
       await runEvaluation(options);
       const completed = await repository.readRun(path.join(directory, options.runId));
+      assert(completed.receipts[plan.tasks[1].id]);
       assert.deepEqual(completed.receipts[plan.tasks[1].id].evaluation, { score: 12 });
       assert.equal(
         completed.receipts[plan.tasks[0].id].submissionId,
         interrupted.receipts[plan.tasks[0].id].submissionId,
       );
-      // The first task-2 attempt stops before submitting and receives one follow-up; resume then retries it.
-      assert.deepEqual(entered, [plan.tasks[0].id, plan.tasks[1].id, plan.tasks[1].id, plan.tasks[1].id]);
+      assert.deepEqual(entered, [...beforeRetry, plan.tasks[1].id], "one explicitly added retry completes only the unfinished task");
     } finally {
       await worker.close();
       await rm(directory, { recursive: true, force: true });

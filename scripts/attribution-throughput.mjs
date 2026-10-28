@@ -18,7 +18,7 @@ export async function measureAttributionRun(run) {
   const end = manifest.finishedAt ?? Date.now(), stages = {};
   for (const task of manifest.tasks) {
     const progress = manifest.states[task.id], receipt = receipts[task.id];
-    const group = stages[task.stage] ??= { planned: 0, accepted: 0, statuses: {}, completed_seconds: [],
+    const group = stages[task.stage] ??= { planned: 0, accepted: 0, accepted_with_incomplete_dependencies: 0, statuses: {}, completed_seconds: [],
       accepted_at: [], attempts: 0, tool_calls: 0, model_seconds: 0, measured_attempts: 0,
       attempt_statuses: {}, output_tokens: 0 };
     group.planned++;
@@ -26,6 +26,7 @@ export async function measureAttributionRun(run) {
     group.attempts += progress.attempts;
     if (receipt?.status === "succeeded") {
       group.accepted++; group.accepted_at.push(receipt.acceptedAt);
+      if (receipt.incompleteDependencies?.length) group.accepted_with_incomplete_dependencies++;
       if (progress.durationMs !== undefined) group.completed_seconds.push(progress.durationMs / 1000);
     }
     const directory = path.join(run, "_internal/tasks", task.id);
@@ -48,6 +49,7 @@ export async function measureAttributionRun(run) {
       const { completed_seconds, accepted_at, ...counts } = group;
       return [stage, { ...counts, coverage: group.accepted / group.planned,
         accepted_per_minute: group.accepted / (elapsed / 60),
+        complete_review_per_minute: (group.accepted - group.accepted_with_incomplete_dependencies) / (elapsed / 60),
         first_accept_seconds: accepted_at.length ? (Math.min(...accepted_at) - manifest.startedAt) / 1000 : null,
         completed_task_p50_seconds: percentile(completed_seconds, .5), completed_task_p95_seconds: percentile(completed_seconds, .95),
         incomplete: group.planned - group.accepted,

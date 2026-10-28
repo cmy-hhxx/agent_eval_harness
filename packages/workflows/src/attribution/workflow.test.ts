@@ -321,7 +321,9 @@ test("trace correctness without a standard is program-owned and survives session
   const plan = await planAttribution({ ...f.config, workflow: "attribution", inputs: { ...f.config.inputs,
     versions: f.config.inputs.versions.slice(0, 1) } });
   const task = plan.tasks.find(task => task.stage === "attribution-trace")!;
-  const binding = bindAttribution(task, plan.inputs, {}), registry = new AgentRegistry([attributionAgent]);
+  const dependencies = Object.fromEntries(Object.keys(task.dependencies).map(label =>
+    [label, { evaluation: { problems: [] } } as never]));
+  const binding = bindAttribution(task, plan.inputs, dependencies), registry = new AgentRegistry([attributionAgent]);
   assert.deepEqual(binding.request.input.ground_truth, { available: false, value: null });
   const prepared = registry.prepare(binding);
   assert.deepEqual(Object.keys(prepared.evaluation.outputSchema.properties as object), ["summary"]);

@@ -1,1 +1,1 @@
-独立复算本题关键数值。inputs每个变量填写已登记的EV evidence_id、原文中唯一的number_token（或text_token）、role和unit，不复写quote或坐标。expression只用变量名；operation为arithmetic/range/suffix，范围明确两侧是否包含。程序从原始引文回填输入来源与坐标，计算并自动登记结果引文，直接返回result及可用于评分的evidence_id。只复算能改变判断的关键派生值，不对忠实抄录的每个数据重复运算。失败须修正或保留待核，不能以心算冒充成功复算。
+独立复算本题关键数值。inputs每个变量填写已登记的EV evidence_id、原文中唯一的number_token（或text_token）、role和unit，不复写quote或坐标。expression只用变量名；operation为arithmetic/range/suffix，范围明确两侧是否包含。返回 result 及可引用的 evidence_id，输入来源沿用所选原文。只复算能改变判断的关键派生值，不对忠实抄录的每个数据重复运算。失败须修正或保留待核，不能以心算冒充成功复算。

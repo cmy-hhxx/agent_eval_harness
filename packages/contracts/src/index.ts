@@ -314,6 +314,8 @@ export interface SubmissionReceipt extends Submission {
   evaluatorVersion: string;
   /** Resolved judge model ID used by the accepted attempt (no endpoint configuration). */
   judge: string;
+  /** Unaccepted upstream task IDs at acceptance, propagated without inventing evaluations. */
+  incompleteDependencies?: string[];
   submitted?: unknown;
   exported?: ResultReference & { row: JsonObject; auxiliary?: boolean };
 }
@@ -417,6 +419,8 @@ export interface PlannedTask {
   id: string;
   stage: string;
   dependencies: Record<string, string>;
+  /** These dependency labels may finish unsuccessfully; pending/running/cancelled still wait. */
+  settledDependencies?: string[];
   inputIds: Record<string, string>;
   data: unknown;
 }

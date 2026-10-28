@@ -29,6 +29,7 @@ import type {
 import { AgentRegistry } from "./agents.js";
 import { checkpointSnapshot } from "./checkpoint.js";
 import { cumulativeAttempts, executionStopReason } from "./run-limits.js";
+import { dependencyReady } from "./scheduling.js";
 
 /** Mandatory calls must be backed by distinct pages advancing declared material. */
 function availableRequiredReadCalls(reads: TraceRead[], required: { target: TraceRead; text: string }[]): number {
@@ -316,7 +317,10 @@ export class RunStore {
     const dependencies: Record<string, SubmissionReceipt> = {};
     for (const [label, id] of Object.entries(task.dependencies)) {
       const receipt = await this.receipt(id);
-      if (!receipt) throw new Error(`Dependency missing: ${id}`);
+      if (!receipt) {
+        if (dependencyReady(task, label, this.manifest.states) && this.manifest.states[id]?.status !== "succeeded") continue;
+        throw new Error(`Dependency missing: ${id}`);
+      }
       dependencies[label] = receipt;
     }
     return dependencies;
@@ -569,6 +573,8 @@ export class RunStore {
         message: value.submissionId,
         validationMs: performance.now() - validationStarted, validationCpuMs: (cpu.user + cpu.system) / 1000 });
     }
+    const incompleteDependencies = [...new Set(Object.values(task.dependencies).flatMap(id =>
+      this.committedReceipts[id] ? this.committedReceipts[id].incompleteDependencies ?? [] : [id]))];
     const receipt: SubmissionReceipt = {
       ...value,
       evaluation,
@@ -577,6 +583,7 @@ export class RunStore {
       judge: spec.model.model,
       status: "succeeded",
       acceptedAt: Date.now(),
+      ...(incompleteDependencies.length ? { incompleteDependencies } : {}),
     };
     const failure = state.failure,
       repeatedErrors = state.repeatedErrors;

@@ -15,6 +15,7 @@ export type SavedTask = TaskState & {
   stage: Stage;
   inputIds: Record<string, string>;
   dependencies: Record<string, string>;
+  settledDependencies?: string[];
   data: Omit<TaskData, "candidates" | "referenceCandidates" | "stage" | "revision">;
   receipt?: SavedReceipt;
 };
