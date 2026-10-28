@@ -464,9 +464,9 @@ test("component review resolves evidence into readable position, tool component 
   assert.equal(result.problems[0]!.evidence[0]!.component, "tool_call: finquery 取数服务");
   assert.match(result.problems[0]!.evidence[0]!.position, /^trace_index 0 \/ message_index 2 \/ path \//u);
   assert.equal(result.problems[0]!.evidence[0]!.quote, evidence.quote);
-  assert.throws(() => registry.resolve(binding, { problems: [{ label: "tmp", definition: "tmp",
-    problem_phenomena: "tmp", reason: "tmp", evidence: [{ index: 1, reason: "tmp" }] }] }, audit),
-  (error: unknown) => error instanceof ValidationError && error.issues!.some(issue => issue.code === "placeholder_content"));
+  assert.doesNotThrow(() => registry.resolve(binding, { problems: [{ label: "错误", definition: "无法判断",
+    problem_phenomena: "无法判断", reason: "无法判断", evidence: [{ index: 1, reason: "无法判断" }] }] }, audit),
+  "legal prose is accepted without a wording-based quality gate; semantic quality is reviewed separately");
 });
 
 test("component quote validation accepts 800 chars but rejects longer exact quotes", async t => {

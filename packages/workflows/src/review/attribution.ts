@@ -218,10 +218,9 @@ export function modelMaterial(material: Record<string, unknown>, candidate: stri
   };
 }
 
-/** Both workflows adapt their public task and trace into this single Attribution contract. */
-export function bindAttributionMaterial(candidate: Candidate, original: RawInput, analysis?: TaskAnalysis,
-  options: { reference?: unknown; initialContextChars?: number; component?: string; scope?: ComponentReviewScope } = {}): AgentBinding {
-  const started = performance.now();
+/** Build shared trace facts once; task-specific views are assembled below. */
+function prepareAttributionMaterial(candidate: Candidate, original: RawInput, analysis?: TaskAnalysis,
+  options: { reference?: unknown; initialContextChars?: number; component?: string; scope?: ComponentReviewScope } = {}) {
   const raw = attributionTrace(original, candidate.input_id, candidate.final_index);
   const task_analysis: TaskAnalysis = analysis ?? { task_type: "回答评审", goal: candidate.question,
     requirements: [{ id: "r1", text: candidate.question, acceptance_rule: candidate.question, applies_to: [] }], scoring_points: [], red_flags: [] };
@@ -298,6 +297,33 @@ export function bindAttributionMaterial(candidate: Candidate, original: RawInput
   const input = { candidate_id: candidate.input_id, task_analysis, material_availability: { public_task: true, final_delivery: true, process_records: raw.messages.some((message,index)=>index!==candidate.final_index && !["user","system","developer"].includes(message.role??"") && message.type!=="private_instruction_omitted"), actual_model_inputs: answerTurnContexts(raw,candidate.final_index).length>0, call_links: catalog.some(row=>row.call_message_index!==undefined) }, ground_truth: { available: reference !== null, value: reference }, answer };
   Object.assign(answer, { norm_directory: attributionNormDirectory({ input, sources }) });
   const navigation = attributionNavigation(answer, raw, candidate.input_id);
+  return { input, sources, raw, navigation, citations, directoryMs };
+}
+
+// The key is the immutable source-owned trace array, so entries disappear with
+// their source record. This retains no historical runs or evaluation results.
+const materialCache = new WeakMap<object, {
+  inputId: string; question: string; finalIndex: number; analysis: TaskAnalysis | undefined; reference: unknown; initialContextChars: number | undefined;
+  value: ReturnType<typeof prepareAttributionMaterial>;
+}>();
+
+/** Both workflows adapt the same trace facts into a bounded component view. */
+export function bindAttributionMaterial(candidate: Candidate, original: RawInput, analysis?: TaskAnalysis,
+  options: { reference?: unknown; initialContextChars?: number; component?: string; scope?: ComponentReviewScope } = {}): AgentBinding {
+  const started = performance.now(), reference = options.reference === undefined ? candidate.reference : options.reference;
+  // Atomic workflow inputs are immutable source views. General callers may edit
+  // their in-memory material between reviews and must always rebuild it.
+  let cached = options.scope ? materialCache.get(original.messages) : undefined;
+  const reused = cached && cached.inputId === candidate.input_id && cached.finalIndex === candidate.final_index &&
+    cached.question === candidate.question && cached.analysis === analysis && cached.reference === reference && cached.initialContextChars === options.initialContextChars;
+  if (!reused) {
+    cached = { inputId: candidate.input_id, question: candidate.question, finalIndex: candidate.final_index, analysis, reference,
+      initialContextChars: options.initialContextChars, value: prepareAttributionMaterial(candidate, original, analysis, options) };
+    if (options.scope) materialCache.set(original.messages, cached);
+  }
+  const { input, sources, raw, navigation, citations } = cached!.value;
+  const { answer, task_analysis } = input;
+  const directoryMs = reused ? 0 : cached!.value.directoryMs;
   const scopedCitations = options.scope?.final_ranges ? { references: citations.references.filter(reference =>
     reference.occurrences.some(occurrence => {
       const point = parseEvidenceCoordinates(occurrence.evidence_id);

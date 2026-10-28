@@ -13,7 +13,6 @@ import sessionResultSchema from "../../../../schemas/attribution/session-result.
 import { resolveAttributionEvidence } from "./source-evidence.js";
 import { investigationMaterial } from "./investigation-material.js";
 import { numericReferenceDirectory } from "./units.js";
-import { componentContentIssues } from "./content-quality.js";
 import type { ComponentReviewResult, SessionAttributionResult, SessionProblem, TraceAttributionResult } from "./types.js";
 
 const componentTools = [
@@ -48,8 +47,6 @@ const inlineTraceResult = inline(traceResult) as any;
 inlineTraceResult.properties.problem.items = copy(bareProblem);
 sessionAttributionResultSchema.properties.turns.items = inlineTraceResult;
 sessionAttributionResultSchema.properties.session_problem.items = copy(bareProblem);
-const requiredComponentRequest = structuredClone(componentRequestSchema) as { required: string[] };
-requiredComponentRequest.required.push("component", "trace_index");
 
 function evidenceKind(message: Record<string, unknown>, path: string): "reasoning" | "tool_call" | "answer" | "question" | "material" {
   if (/tool_calls?|function_call|tool_result|function_call_output/iu.test(path)) return "tool_call";
@@ -100,8 +97,6 @@ function componentReview(request: AgentRequest, draft: unknown, audit: ToolAudit
   const component = String(request.input.component ?? "").trim();
   if (!component) throw new ValidationError([{ category: "decision", code: "component_required", path: "/component",
     message: "组件审查任务缺少固定组件。" }]);
-  const contentIssues = componentContentIssues(value.problems);
-  if (contentIssues.length) throw new ValidationError(contentIssues);
   const raw = request.sources.answer.value as { messages: Record<string, unknown>[] };
   const traceIndex = Number(request.input.trace_index);
   const problems: SessionProblem[] = value.problems.map((problem, index) => ({
@@ -136,7 +131,7 @@ function componentReview(request: AgentRequest, draft: unknown, audit: ToolAudit
 
 export const componentAttributionProfile: AgentProfile = {
   id: "component",
-  requestSchema: requiredComponentRequest,
+  requestSchema: componentRequestSchema,
   submissionSchema: componentSubmissionSchema,
   resultSchema: componentResult,
   evidenceSelections: true,

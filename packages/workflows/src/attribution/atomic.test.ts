@@ -21,8 +21,17 @@ test("model review entrypoints use message coordinates and retain public output 
   const material = JSON.stringify(binding.modelInput!.answer);
   assert(material.includes("收入为10亿元。"));
   assert(!material.includes("PRIVATE_SENTINEL"));
+  assert.deepEqual(Object.keys(binding.request.input).sort(), ["component", "review_scope", "trace_index"],
+    "a component submission must not retain the full global business-chain payload");
   const prepared = new AgentRegistry([attributionAgent]).prepare(binding);
   assert(prepared.evidenceBank.some(id => parseEvidenceCoordinates(id)?.message_index === 1));
+  const repeated = bindAttribution(task, { [candidate.input_id]: normalizeInput(raw) }, {});
+  assert.equal(repeated.request.sources.answer.value, binding.request.sources.answer.value);
+  assert.deepEqual(repeated.modelInput, binding.modelInput);
+  assert.equal(repeated.preparationTimings!.directoryMs, 0, "shared immutable trace facts are not rebuilt");
+  const isolated = bindAttribution(task, { [candidate.input_id]: normalizeInput(structuredClone(raw)) }, {});
+  assert.notEqual(isolated.request.sources.answer.value, binding.request.sources.answer.value,
+    "another loaded source object never inherits this trace's cached facts");
 });
 
 test("a mixed-media answer retains its image entrypoint after text scope splitting", () => {

@@ -20,12 +20,16 @@ export async function measureAttributionRun(run) {
     const progress = manifest.states[task.id], receipt = receipts[task.id];
     const group = stages[task.stage] ??= { planned: 0, accepted: 0, accepted_with_incomplete_dependencies: 0, statuses: {}, completed_seconds: [],
       accepted_at: [], attempts: 0, tool_calls: 0, model_seconds: 0, measured_attempts: 0,
-      attempt_statuses: {}, output_tokens: 0 };
+      attempt_statuses: {}, output_tokens: 0, first_pass_accepted: 0, accepted_after_content_repair: 0, accepted_submission_count_unknown: 0 };
     group.planned++;
     group.statuses[progress.status] = (group.statuses[progress.status] ?? 0) + 1;
     group.attempts += progress.attempts;
     if (receipt?.status === "succeeded") {
       group.accepted++; group.accepted_at.push(receipt.acceptedAt);
+      const submissions = receipt.submissionStats?.contentSubmissions;
+      if (submissions === undefined) group.accepted_submission_count_unknown++;
+      else if (submissions > 1) group.accepted_after_content_repair++;
+      else if (submissions === 1 && progress.attempts === 1) group.first_pass_accepted++;
       if (receipt.incompleteDependencies?.length) group.accepted_with_incomplete_dependencies++;
       if (progress.durationMs !== undefined) group.completed_seconds.push(progress.durationMs / 1000);
     }

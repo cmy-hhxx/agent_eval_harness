@@ -42,6 +42,8 @@ test("main attribution excludes private rules from both prompt and readable sour
     for (const secret of ["SYS_PRIVATE_SENTINEL", "DEV_PRIVATE_SENTINEL", "SKILL_PRIVATE_SENTINEL"]) assert(!text.includes(secret));
   assert(requestText.includes(fact));
   const view = attributionTrace(raw, id, 6);
+  assert(evidenceSources(view.messages[3]).filter(source => source.path === "/output" || source.kind === "json")
+    .every(source => source.quotable === false), "omitted content remains navigation, never original evidence");
   const leaf = evidenceSources(view.messages[5]).find(source => source.path === "/input_messages/1/content")!;
   const evidence = cite(id, 5, leaf, 0, leaf.text.length);
   assert.equal(resolveEvidence(raw, { evidence_id: evidence.evidence_id }, "answer", emptyAudit(), "/evidence", id).quote, fact);

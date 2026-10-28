@@ -121,8 +121,10 @@ export function bindAttribution(task: PlannedTask, inputs: Record<string, unknow
       : choice.component === data.component);
     const entrypoints = choices.slice(0, 8).map(choice => ({ component: choice.component, kind: choice.kind, message_index: choice.message_index,
         read_request: { tool: "read_responsibility_chain", arguments: { candidate: "answer", transition_index: choice.transition_index } } }));
-    return { ...binding, profile: "component", request: { ...binding.request, input: { ...binding.request.input,
-      component: data.component, trace_index: traceIndex, review_scope: data.reviewScope } }, modelInput: { ...(binding.modelInput ?? binding.request.input),
+    // Submission needs the assigned identity and original sources; the full trace
+    // graph belongs to tool navigation, not a second retained request payload.
+    return { ...binding, profile: "component", request: { sources: binding.request.sources, input: {
+      component: data.component, trace_index: traceIndex, ...(data.reviewScope ? { review_scope: data.reviewScope } : {}) } }, modelInput: { ...(binding.modelInput ?? binding.request.input),
       task_focus: { question: traceCandidate.question, review_target: { component: data.component, ...data.reviewScope } },
       component: data.component, trace_index: traceIndex, review_scope: data.reviewScope, component_entrypoints: entrypoints,
       component_entrypoints_total: choices.length } };

@@ -562,7 +562,7 @@ export class RunStore {
     try {
       const binding = this.bindings.get(spec.attemptId)!;
       evaluation = this.services.agents.resolve(binding, value.evaluation, value.audit);
-      this.services.agents.validate(binding, evaluation, value.audit,{semantic:!spec.evaluation.resolveValidatesResult});
+      this.services.agents.validate(binding, evaluation, value.audit,{rules:!spec.evaluation.resolveValidatesResult});
     } catch (error) {
       this.registerValidationReads(spec, error);
       throw error;

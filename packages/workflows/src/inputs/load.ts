@@ -1,5 +1,5 @@
 import { errorText, ValidationError, type RunManifest, type ValidationIssue } from "@eval/contracts";
-import { fileSourceReader } from "@eval/data";
+import { assertSourceRevision, fileSourceReader } from "@eval/data";
 import { adapt, candidateKey, inputSources, locateRecordStream } from "./records.js";
 import { normalizeInput } from "./normalize.js";
 import type { Candidate, EvaluationConfig } from "./types.js";
@@ -13,6 +13,9 @@ export async function loadRunInputs(
 ): Promise<Record<string, unknown>> {
   const inputs: Record<string, unknown> = {},
     errors: ValidationIssue[] = [];
+  // Consecutive atomic tasks share one immutable record. A new input replaces it;
+  // the run never accumulates the parsed bodies of its entire input catalog.
+  let last: { id: string; value: unknown } | undefined;
   const config = manifest.config as EvaluationConfig;
   const inputIds = taskIds && new Set(manifest.tasks.filter((task) => taskIds.has(task.id)).flatMap((task) => Object.values(task.inputIds)));
   const sources = inputSources((manifest.inputCatalog as Candidate[]).filter((candidate) => !inputIds || inputIds.has(candidate.input_id)));
@@ -24,7 +27,12 @@ export async function loadRunInputs(
       Object.defineProperty(found, candidate.input_id, {
         enumerable: true,
         configurable: true,
-        get: () => projectInput(JSON.parse(fileSourceReader.record(source, byteOffset, byteLength, revision))),
+        get: () => {
+          assertSourceRevision(source, revision);
+          if (last?.id !== candidate.input_id) last = { id: candidate.input_id,
+            value: projectInput(JSON.parse(fileSourceReader.record(source, byteOffset, byteLength, revision))) };
+          return last.value;
+        },
       });
     };
     try {

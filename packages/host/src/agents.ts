@@ -248,12 +248,12 @@ export class AgentRegistry {
       [...new Map(issues.map(issue => [canonical(issue), issue])).values()]), audit.evidenceBank ?? []));
     return result;
   }
-  validate(binding: AgentBinding, result: unknown, audit: ToolAudit, options?: { semantic?: boolean }): void {
+  validate(binding: AgentBinding, result: unknown, audit: ToolAudit, options?: { rules?: boolean }): void {
     audit={...audit,traceReads:[...binding.presentedReads??[],...audit.traceReads]};
     const { profile, result: resultValidator } = this.get(binding);
     if (!resultValidator(result)) throw new ValidationError(this.feedbackProjection(binding,this.feedback(profile, binding.request, result,
       schemaIssues(resultValidator.errors, result)), audit.evidenceBank ?? []));
-    if (options?.semantic === false) return;
+    if (options?.rules === false) return;
     try {
       profile.validate?.(binding.request, result, audit);
     } catch (error) {
