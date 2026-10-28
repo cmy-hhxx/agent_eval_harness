@@ -91,10 +91,7 @@ export function schemaIssues(
       path: location || "/",
       expected: error.params,
       actual: actual ?? null,
-      message:
-        "输出结构无效：" +
-        (error.message || error.keyword) +
-        (error.keyword === "required" ? "；依赖此字段的语义检查暂不可执行" : ""),
+      message: "输出结构无效：" + (error.message || error.keyword),
     };
   });
 }

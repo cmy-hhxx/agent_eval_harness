@@ -144,7 +144,7 @@ export class AgentRegistry {
         submissionNudge: profile.submissionNudge,
         requiredReads: profile.requiredReads?.(binding.request) ?? [],
         ...(binding.presentedReads ? { presentedReads: binding.presentedReads } : {}),
-        ...(binding.materialNavigation ? { materialNavigation: structuredClone(binding.materialNavigation) } : {}),
+        ...(binding.materialNavigation ? { materialNavigation: binding.materialNavigation } : {}),
         ...(profile.maxEvidenceQuoteChars !== undefined ? { maxEvidenceQuoteChars: profile.maxEvidenceQuoteChars } : {}),
         ...(Object.values(binding.request.sources).some(source => source.presentation) ? { sourcePresentations: Object.fromEntries(
           Object.entries(binding.request.sources).flatMap(([label, source]) => source.presentation ? [[label, structuredClone(source.presentation)]] : [])) } : {}),
@@ -248,12 +248,12 @@ export class AgentRegistry {
       [...new Map(issues.map(issue => [canonical(issue), issue])).values()]), audit.evidenceBank ?? []));
     return result;
   }
-  validate(binding: AgentBinding, result: unknown, audit: ToolAudit, options?: { semantic?: boolean }): void {
+  validate(binding: AgentBinding, result: unknown, audit: ToolAudit, options?: { rules?: boolean }): void {
     audit={...audit,traceReads:[...binding.presentedReads??[],...audit.traceReads]};
     const { profile, result: resultValidator } = this.get(binding);
     if (!resultValidator(result)) throw new ValidationError(this.feedbackProjection(binding,this.feedback(profile, binding.request, result,
       schemaIssues(resultValidator.errors, result)), audit.evidenceBank ?? []));
-    if (options?.semantic === false) return;
+    if (options?.rules === false) return;
     try {
       profile.validate?.(binding.request, result, audit);
     } catch (error) {

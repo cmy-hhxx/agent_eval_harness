@@ -70,7 +70,7 @@ for (const { thinking, maxThinking, expected, supportsExplicitPromptCaching } of
     assert.equal(main.length, 4);
     assert.equal(model.thinking, thinking, "the session configuration is never mutated by a tool check");
     const effort = (payload: JsonObject) => api === "openai-responses" ? object(payload.reasoning ?? {}).effort : payload.reasoning_effort;
-    for (const payload of main) assert.equal(effort(payload), thinking === "off" ? undefined : thinking,
+    for (const payload of main) assert.equal(effort(payload), thinking === "off" ? api === "openai-responses" ? "none" : undefined : thinking,
       "main analysis keeps its configured reasoning before and after failed and successful checks");
     assert.equal(checks.length, 2, "one model check per submitted draft, without hidden retries or reusing a previous verdict");
     assert.equal(results.length, 2);
@@ -83,7 +83,7 @@ for (const { thinking, maxThinking, expected, supportsExplicitPromptCaching } of
     for (const payload of checks) {
       assert.equal(payload.model, model.model);
       assert.equal(payload.tools, undefined);
-      assert.equal(effort(payload), expected === "off" ? undefined : expected);
+      assert.equal(effort(payload), expected === "off" ? api === "openai-responses" ? "none" : undefined : expected);
       assert.equal(payload[api === "openai-responses" ? "max_output_tokens" : "max_completion_tokens"], model.maxOutputTokens);
       assert.deepEqual(api === "openai-responses" ? object(object(payload.text).format).schema : object(object(payload.response_format).json_schema).schema, schema);
       assert.deepEqual(payload.prompt_cache_options, api === "openai-responses" && supportsExplicitPromptCaching ? { mode: "implicit" } : undefined);

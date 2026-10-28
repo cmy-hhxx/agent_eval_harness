@@ -8,7 +8,7 @@
 
 inputs/comparisons 不传 runId 时自动选有输入的运行中批次，其次最近批次。继续筛选、翻页或换题时沿用返回的 collectionId 和 runId，不会自动扩大范围。comparisons 的 comparisonTier、outcome 精确筛选；默认排除双方都好，outcome:"all" 包含全部结果。nextOffset 续读目录；sample 的 selection 只说明本次随机召回范围，不代表质量或总体分布。
 
-所有比例已由程序计算，单位为百分数（0–100），直接用于回答：
+返回比例的单位是百分数（0–100），直接用于回答：
 - history.stats[].winRate：wins 占 evaluated 的比例，evaluated 包含 wins、losses、both_good、both_bad；lossRate / bothGoodRate / bothBadRate 分别是负、都好、都差比例。accuracy.rate 仅覆盖 accuracy.count 个有标准答案的样本。breakdown.items[].stats 使用同一口径；日期分组的 totalCaseCount、任务/难度分组的 count 是纳入题数。
 - history.progress.battleCompletionRate / caseCompletionRate：已完成对战 / 预期对战、全部对战完成题 / 纳入题。caseCount 是至少完成一场的题数，totalCaseCount 是纳入题数。
 - summary.formalComparisonStats.tiers[].models：四类场数、comparisonCount、winRate、lossRate、bothGoodRate、bothBadRate、meetsCoreRate（核心达标率）；problemDimensions 中 establishedRate / uncertainRate 是对应问题场数占该模型参战场数的比例。同场同维度去重，维度可重叠。

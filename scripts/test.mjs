@@ -34,6 +34,7 @@ const fastFiles = [
   "dist/packages/agents/src/clustering/profile.test.js",
   "dist/packages/contracts/src/evidence-selection.test.js",
   "dist/packages/data/src/repository.test.js",
+  "dist/packages/data/src/material-pool.test.js",
   "dist/packages/data/src/run-journal.test.js",
   "dist/packages/data/src/statistics-log.test.js",
   "dist/packages/host/src/scheduling.test.js",
@@ -44,6 +45,7 @@ const fastFiles = [
   "dist/packages/tools/src/required-reading.test.js",
   "dist/packages/workflows/src/comparison/attribution-contract.test.js",
   "dist/packages/workflows/src/attribution/workflow.test.js",
+  "dist/packages/workflows/src/attribution/atomic.test.js",
   "dist/packages/workflows/src/inputs/normalize.test.js",
   "dist/packages/workflows/src/comparison/instruction-review.test.js",
   "dist/packages/workflows/src/comparison/optional-verification.test.js",
@@ -59,6 +61,7 @@ const fastFiles = [
   "scripts/extract-lost-user.test.mjs",
   "scripts/watch-lost-user.test.mjs",
   "scripts/benchmark.test.mjs",
+  "scripts/compact-progress.test.mjs",
   "data_service/dashboard.test.mjs",
 ];
 if (fast) {
@@ -91,6 +94,7 @@ const repositoryTests = [
   "scripts/watch-lost-user.test.mjs",
   "scripts/mongo-contracts.test.mjs",
   "scripts/benchmark.test.mjs",
+  "scripts/compact-progress.test.mjs",
   "scripts/publish.test.mjs",
   "scripts/apply-agent-dependency-patches.test.mjs",
   "scripts/deploy-workbench.test.mjs",

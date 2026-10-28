@@ -40,7 +40,7 @@ import { loadIdentity } from "@eval/runtime/client";
 import type { FailureContext } from "@eval/contracts";
 import { progressSnapshot } from "./progress.js";
 import { RunStore, type EvaluationServices } from "./store.js";
-import { createScopeMembership, scheduleTasks, sessionAdmissionSnapshot } from "./scheduling.js";
+import { createScopeMembership, dependencyReady, scheduleTasks, sessionAdmissionSnapshot } from "./scheduling.js";
 import { FailureGuard } from "./failure-guard.js";
 import { cumulativeAttempts, executionStopReason } from "./run-limits.js";
 import { consumeEvents, spawnWorker, createRunWorkspace } from "@eval/runtime/client";
@@ -111,6 +111,7 @@ export async function runEvaluation(options: RunOptions): Promise<Record<string,
   const owned: Awaited<ReturnType<typeof spawnWorker>>[] = [];
   const exitedWorkers = new WeakSet<(typeof owned)[number]>();
   const workerExitLogs: Promise<void>[] = [];
+  const materialIds = new WeakMap<object, string>();
   async function launchWorker(engine: Engine, directory: string, workerSlots = options.runtime.workerSlots ?? 1) {
     const worker = await spawnWorker(engine, directory, { ...options.runtime, workerSlots });
     workerExitLogs.push(worker.exited.then(async (exit) => {
@@ -141,7 +142,8 @@ export async function runEvaluation(options: RunOptions): Promise<Record<string,
     wake = resolve;
   });
   controller.signal.addEventListener("abort", () => wake(), { once: true });
-  let desiredConcurrency = options.concurrency;
+  let concurrencyOverride: number | undefined;
+  const desiredConcurrency = () => concurrencyOverride ?? options.modelRequests?.concurrency() ?? options.concurrency;
   const busy = new Set<{ url: string }>();
   try {
     const identity = options.identity || (await loadIdentity(options.engine, options.runtime.root));
@@ -196,7 +198,7 @@ export async function runEvaluation(options: RunOptions): Promise<Record<string,
     }
     for (const event of [...replayed.values()].sort((a, b) => a.seq - b.seq))
       applyRunJournalDelta(saved, event.event);
-    if (replayed.size) hot.setSequenceFloor(Math.max(...replayed.keys()));
+    hot.setSequenceFloor(Math.max(snapshotSequence, ...replayed.keys()));
     const manifest = saved.manifest;
     // Replay historical progress before recording the policy used by this execution.
     manifest.engine = identity;
@@ -236,7 +238,7 @@ export async function runEvaluation(options: RunOptions): Promise<Record<string,
     };
     const paused = (task: PlannedTask) => observesFailures(task) && guard.paused(task.stage);
     const dispatchable = (task: PlannedTask) => inScope(task) && !paused(task);
-    manifest.concurrency = desiredConcurrency;
+    manifest.concurrency = desiredConcurrency();
     workspace = await createRunWorkspace(run, manifest.debug);
     const working = workspace.directory;
     if (manifest.debug) {
@@ -285,6 +287,7 @@ export async function runEvaluation(options: RunOptions): Promise<Record<string,
       checkpoint: { ...current.checkpointMetrics }, outbox: current.outboxStatus() });
     // A task may expose a stage-specific view of its source without persisting a second input.
     const attemptSources = new Map<string, Map<string, unknown>>();
+    const materialSources = new Map<string, { value: unknown; users: number }>();
     const lock = await readJson<{ pid: number; token: string }>(layout.lockFile);
     http = await listen(async (req, res, url) => {
       const parts = url.pathname.split("/").filter(Boolean);
@@ -319,8 +322,8 @@ export async function runEvaluation(options: RunOptions): Promise<Record<string,
         const value = ((await body(req)) as { concurrency?: unknown }).concurrency;
         if (!Number.isInteger(value) || Number(value) < 1)
           throw new HttpError(400, "concurrency must be positive");
-        desiredConcurrency = Number(value);
-        manifest.concurrency = desiredConcurrency;
+        concurrencyOverride = Number(value);
+        manifest.concurrency = desiredConcurrency();
         await current.save(undefined, { manifest: true });
         wake();
         return json(res, snapshot());
@@ -337,6 +340,11 @@ export async function runEvaluation(options: RunOptions): Promise<Record<string,
         const value = attempt && attemptSources.get(safeId(attempt))?.get(safeId(parts[2]));
         if (value === undefined || value === null) throw new HttpError(404, "Unknown attempt input");
         return json(res, value);
+      }
+      if (req.method === "GET" && parts[0] === "api" && parts[1] === "materials" && parts[2]) {
+        const material = materialSources.get(safeId(parts[2]));
+        if (!material) throw new HttpError(404, "Unknown active material");
+        return json(res, material.value);
       }
       if (req.method === "POST" && parts[0] === "api" && parts[1] === "tasks" && parts[3] === "checkpoint") {
         await current.checkpoint(safeId(parts[2]), (await body(req)) as unknown as FailureContext);
@@ -361,11 +369,11 @@ export async function runEvaluation(options: RunOptions): Promise<Record<string,
     );
     let workerUrls = options.workerUrls || [];
     const running = new Map<string, Promise<void>>();
-    const taskConcurrency = () => Math.max(1, options.taskConcurrency ?? desiredConcurrency);
+    const taskConcurrency = () => Math.max(1, options.taskConcurrency ?? desiredConcurrency());
     const runnable = (task: PlannedTask) => !current.admissionPaused() && (running.size === 0 || running.size < taskConcurrency()) &&
       manifest.states[task.id].status === "pending" && !executionStopReason(manifest) && dispatchable(task) &&
       (manifest.states[task.id].nextRetryAt ?? 0) <= Date.now() &&
-      Object.values(task.dependencies).every((id) => manifest.states[id]?.status === "succeeded");
+      Object.keys(task.dependencies).every(label => dependencyReady(task, label, manifest.states, running));
     const workers = await Promise.all(
       workerUrls.map(async (url) => ({
         url,
@@ -379,15 +387,32 @@ export async function runEvaluation(options: RunOptions): Promise<Record<string,
     const deferWorker = (worker: (typeof workers)[number]) => unavailable.set(worker, {
       since: unavailable.get(worker)?.since ?? Date.now(), checkAt: Date.now() + 1000,
     });
+    const replacements = new WeakMap<(typeof owned)[number], Promise<void>>();
     async function replaceExitedWorker(worker: (typeof workers)[number]): Promise<boolean> {
       // Bind capacity to its process, not a port that another child may later reuse.
-      if (!worker.owner || !exitedWorkers.has(worker.owner)) return false;
-      const replacement = await launchWorker(identity.engine,
-        path.join(working, "workers", `${identity.engine}-${randomUUID()}`), 1);
-      owned.push(replacement);
-      worker.owner = replacement;
-      worker.url = replacement.url;
-      worker.health = await request<WorkerStatus>(`${worker.url}/api/health`);
+      const owner = worker.owner;
+      if (!owner || !exitedWorkers.has(owner)) return false;
+      let pending = replacements.get(owner);
+      if (!pending) {
+        pending = (async () => {
+          const slots = eligible.filter(slot => slot.owner === owner);
+          const replacement = await launchWorker(identity.engine,
+            path.join(working, "workers", `${identity.engine}-${randomUUID()}`), owner.urls.length);
+          owned.push(replacement);
+          try {
+            if (replacement.urls.length !== slots.length) throw new Error("Replacement Worker slot count changed");
+            const health = await Promise.all(replacement.urls.map(url => request<WorkerStatus>(url + "/api/health")));
+            if (health.some(value => canonical(value.identity) !== canonical(identity)))
+              throw new Error("Replacement Worker build changed");
+            slots.forEach((slot, index) => {
+              slot.owner = replacement; slot.url = replacement.urls[index]; slot.health = health[index];
+              unavailable.delete(slot);
+            });
+          } catch (error) { await replacement.close(); throw error; }
+        })().finally(() => { replacements.delete(owner); });
+        replacements.set(owner, pending);
+      }
+      await pending;
       return true;
     }
     for (const worker of eligible) if (worker.health.activeAttempt) deferWorker(worker);
@@ -492,10 +517,20 @@ export async function runEvaluation(options: RunOptions): Promise<Record<string,
       for (const ref of spec.inputs) {
         const source = sources[ref.name];
         if (!source || source.id !== ref.id) throw new Error(`Task source mismatch: ${ref.name}`);
+        if (source.value && typeof source.value === "object") {
+          let materialId = materialIds.get(source.value);
+          if (!materialId) materialIds.set(source.value, materialId = randomUUID());
+          ref.materialId = materialId;
+        }
         bound.set(ref.id, source.value);
       }
       attemptSources.set(spec.attemptId, bound);
       modelRequests.register(spec, task);
+      for (const ref of spec.inputs) if (ref.materialId) {
+        const material = materialSources.get(ref.materialId);
+        if (material) material.users++;
+        else materialSources.set(ref.materialId, { value: bound.get(ref.id), users: 1 });
+      }
       try {
       let lastSeq = -1;
       const activateStarted = performance.now();
@@ -885,12 +920,17 @@ export async function runEvaluation(options: RunOptions): Promise<Record<string,
       } finally {
         modelRequests.remove(spec.attemptId);
         attemptSources.delete(spec.attemptId);
+        for (const ref of spec.inputs) if (ref.materialId) {
+          const material = materialSources.get(ref.materialId)!;
+          if (--material.users === 0) materialSources.delete(ref.materialId);
+        }
       }
     }
     const runningChannels = new Map<string, string>();
     let completions = 0;
     while (true) {
       if (controller.signal.aborted) break;
+      manifest.concurrency = desiredConcurrency();
       if (options.pauseSignal?.aborted) {
         await Promise.all(running.values());
         break;
@@ -925,20 +965,21 @@ export async function runEvaluation(options: RunOptions): Promise<Record<string,
         if (!dispatchable(task)) continue;
         if (manifest.states[task.id].status !== "pending" || running.has(task.id) ||
             (manifest.states[task.id].nextRetryAt ?? 0) > Date.now()) continue;
-        const dependencies = Object.values(task.dependencies);
-        if (dependencies.some((id) => !running.has(id) && manifest.states[id]?.status &&
+        const dependencies = Object.entries(task.dependencies);
+        if (dependencies.some(([label, id]) => !dependencyReady(task, label, manifest.states, running) && !running.has(id) && manifest.states[id]?.status &&
           !["pending", "running", "succeeded"].includes(manifest.states[id].status))) {
           manifest.states[task.id].status = "blocked";
           manifest.states[task.id].reason = "Dependency did not succeed";
           blocked = true;
           continue;
         }
-        if (dependencies.some((id) => manifest.states[id]?.status !== "succeeded")) continue;
+        if (dependencies.some(([label]) => !dependencyReady(task, label, manifest.states, running))) continue;
         const sessionId = sessionAdmission?.id(task);
         if (sessionId && !admission!.admitted.has(sessionId)) continue;
         if (options.taskSource.canStart?.(task, manifest) === false) continue;
         if (running.size >= taskConcurrency()) break;
-        if (!options.workerUrls?.length && eligible.every((worker) => busy.has(worker) || unavailable.has(worker))) {
+        if (!options.workerUrls?.length && eligible.length < taskConcurrency() &&
+            eligible.every((worker) => busy.has(worker) || unavailable.has(worker))) {
           let worker: (typeof owned)[number] | undefined;
           try {
             worker = await launchWorker(identity.engine, path.join(working, "workers", `${identity.engine}-${randomUUID()}`));
@@ -966,30 +1007,43 @@ export async function runEvaluation(options: RunOptions): Promise<Record<string,
           }
         }
         if (eligible.every((worker) => busy.has(worker) || unavailable.has(worker))) break;
-        const acceptedDependencies = await current.dependencies(task);
-        const reason = options.taskSource.blockedReason?.(task, acceptedDependencies);
-        if (reason) {
-          manifest.states[task.id].status = "blocked";
-          manifest.states[task.id].reason = reason;
-          blocked = true;
+        let binding: AgentBinding, prepared: ReturnType<typeof options.agents.prepare>,
+          timing: Record<string, number>, capable: typeof eligible;
+        try {
+          const acceptedDependencies = await current.dependencies(task);
+          const reason = options.taskSource.blockedReason?.(task, acceptedDependencies);
+          if (reason) {
+            manifest.states[task.id].status = "blocked";
+            manifest.states[task.id].reason = reason;
+            blocked = true;
+            continue;
+          }
+          preparing.add(task.id);
+          options.onProgress?.(`preparing ${task.stage} ${task.id}`);
+          await yieldToIO();
+          const preparationStarted = performance.now(), cpuStarted = process.cpuUsage();
+          binding = options.taskSource.bind(task, inputs, acceptedDependencies, { tasks: manifest.tasks });
+          const bindingMs = performance.now() - preparationStarted;
+          if (paused(task)) { preparing.delete(task.id); continue; }
+          prepared = options.agents.prepare(binding);
+          const cpu = process.cpuUsage(cpuStarted);
+          timing = { queuedMs: Math.max(0, Date.now() - (manifest.states[task.id].nextRetryAt ?? manifest.startedAt)),
+            bindingMs, profileMs: performance.now() - preparationStarted - bindingMs,
+            preparationCpuMs: (cpu.user + cpu.system) / 1000, ...binding.preparationTimings };
+          capable = eligible.filter(w => prepared.evaluation.toolNames.every(name => w.health.tools.includes(name)));
+          if (!capable.length) throw new Error("Required tools not available");
+        } catch (error) {
+          preparing.delete(task.id);
+          const state = manifest.states[task.id];
+          state.status = controller.signal.aborted ? "cancelled" : "failed";
+          state.reason = "Task preparation failed: " + errorText(error);
+          delete state.nextRetryAt;
+          await current.save(task.id);
+          await options.logger?.error(error, { component: "host", event: "task_preparation_failed",
+            run_id: options.runId, task_id: task.id, stage: task.stage });
+          scheduled = true;
           continue;
         }
-        preparing.add(task.id);
-        options.onProgress?.(`preparing ${task.stage} ${task.id}`);
-        await yieldToIO();
-        const preparationStarted = performance.now(), cpuStarted = process.cpuUsage();
-        const binding = options.taskSource.bind(task, inputs, acceptedDependencies, { tasks: manifest.tasks });
-        const bindingMs = performance.now() - preparationStarted;
-        if (paused(task)) { preparing.delete(task.id); continue; }
-        const prepared = options.agents.prepare(binding);
-        const cpu = process.cpuUsage(cpuStarted);
-        const timing = { queuedMs: Math.max(0, Date.now() - (manifest.states[task.id].nextRetryAt ?? manifest.startedAt)),
-          bindingMs, profileMs: performance.now() - preparationStarted - bindingMs,
-          preparationCpuMs: (cpu.user + cpu.system) / 1000, ...binding.preparationTimings };
-        const capable = eligible.filter(
-          (w) => prepared.evaluation.toolNames.every((name) => w.health.tools.includes(name)),
-        );
-        if (!capable.length) throw new Error("Required tools not available");
         const worker = capable.find((w) => !busy.has(w) && !unavailable.has(w));
         if (!worker) { preparing.delete(task.id); continue; }
         if (options.channelConcurrency) {
@@ -1025,6 +1079,7 @@ export async function runEvaluation(options: RunOptions): Promise<Record<string,
             runningChannels.delete(task.id);
             busy.delete(worker);
             completions++;
+            wake();
           });
         running.set(task.id, promise);
         // Binding can be CPU-heavy. Let dispatched Workers, permits and checkpoints
@@ -1041,7 +1096,7 @@ export async function runEvaluation(options: RunOptions): Promise<Record<string,
           ? Math.max(0, manifest.executionLimits.stopStartingAt - Date.now()) : Infinity;
         const waitMs = Math.min(options.modelRequests ? 100 : Infinity, dispatchWait, unavailable.size ? 1000 : Infinity, ...retryDeadlines.map(at => Math.max(0, at - Date.now())));
         let timer: ReturnType<typeof setTimeout> | undefined;
-        try { await Promise.race([...running.values(), changed,
+        try { await Promise.race([changed,
           ...(Number.isFinite(waitMs) ? [new Promise(resolve => { timer = setTimeout(resolve, waitMs); })] : [])]); }
         finally { clearTimeout(timer); }
       }

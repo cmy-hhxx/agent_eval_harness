@@ -13,11 +13,10 @@ import sessionResultSchema from "../../../../schemas/attribution/session-result.
 import { resolveAttributionEvidence } from "./source-evidence.js";
 import { investigationMaterial } from "./investigation-material.js";
 import { numericReferenceDirectory } from "./units.js";
-import { componentContentIssues } from "./content-quality.js";
 import type { ComponentReviewResult, SessionAttributionResult, SessionProblem, TraceAttributionResult } from "./types.js";
 
 const componentTools = [
-  "read_execution", "read_responsibility_chain", "read_trace", "search_trace", "view_image", "calculate", "execute_code",
+  "read_trace", "search_trace", "view_image", "calculate", "execute_code",
   "read_artifact",
 ];
 const componentPrompt = agentPrompt("attribution", componentTools, { profile: "component", fileSubmission: false });
@@ -48,8 +47,6 @@ const inlineTraceResult = inline(traceResult) as any;
 inlineTraceResult.properties.problem.items = copy(bareProblem);
 sessionAttributionResultSchema.properties.turns.items = inlineTraceResult;
 sessionAttributionResultSchema.properties.session_problem.items = copy(bareProblem);
-const requiredComponentRequest = structuredClone(componentRequestSchema) as { required: string[] };
-requiredComponentRequest.required.push("component", "trace_index");
 
 function evidenceKind(message: Record<string, unknown>, path: string): "reasoning" | "tool_call" | "answer" | "question" | "material" {
   if (/tool_calls?|function_call|tool_result|function_call_output/iu.test(path)) return "tool_call";
@@ -100,8 +97,6 @@ function componentReview(request: AgentRequest, draft: unknown, audit: ToolAudit
   const component = String(request.input.component ?? "").trim();
   if (!component) throw new ValidationError([{ category: "decision", code: "component_required", path: "/component",
     message: "组件审查任务缺少固定组件。" }]);
-  const contentIssues = componentContentIssues(value.problems);
-  if (contentIssues.length) throw new ValidationError(contentIssues);
   const raw = request.sources.answer.value as { messages: Record<string, unknown>[] };
   const traceIndex = Number(request.input.trace_index);
   const problems: SessionProblem[] = value.problems.map((problem, index) => ({
@@ -136,23 +131,23 @@ function componentReview(request: AgentRequest, draft: unknown, audit: ToolAudit
 
 export const componentAttributionProfile: AgentProfile = {
   id: "component",
-  requestSchema: requiredComponentRequest,
+  requestSchema: componentRequestSchema,
   submissionSchema: componentSubmissionSchema,
   resultSchema: componentResult,
   evidenceSelections: true,
   maxEvidenceQuoteChars: 400,
   ...componentPrompt,
   renderPrompt(input, policy, failure) {
-    const analysis = input.task_analysis as { requirements: Record<string, unknown>[]; scoring_points: Record<string, unknown>[]; red_flags: Record<string, unknown>[] };
-    const answer = input.answer as Record<string, unknown>, truth = input.ground_truth as { available: boolean; value: unknown };
-    const requirements = analysis.requirements.map((item, index) => ({ ...item, requirement_index: Number(item.requirement_index ?? index) + 1 }));
-    const numeric = truth.available ? numericReferenceDirectory(truth.value) : [];
+    const analysis = input.task_analysis as { requirements: Record<string, unknown>[] } | undefined;
+    const answer = input.answer as Record<string, unknown>, truth = input.ground_truth as { available: boolean; value: unknown } | undefined;
+    const requirements = analysis?.requirements.map((item, index) => ({ ...item, requirement_index: Number(item.requirement_index ?? index) + 1 }));
+    const numeric = truth?.available ? numericReferenceDirectory(truth.value) : [];
     const tables = answer.table_check_results as { rows: unknown[] }[] | undefined;
     const images = answer.final_images as { image_count: number } | undefined;
-    const rules = attributionConditionalRules({ standardAnswer: truth.available, numeric: numeric.length > 0,
+    const rules = attributionConditionalRules({ standardAnswer: truth?.available ?? false, numeric: numeric.length > 0,
       tableDoubts: Number(answer.table_check_count ?? 0) > 0 || (tables?.some(table => table.rows.length > 0) ?? false),
       images: (images?.image_count ?? 0) > 0, captureGaps: Array.isArray(answer.capture_gaps) && answer.capture_gaps.length > 0 });
-    const shown = { ...input, component: input.component, trace_index: input.trace_index, task_analysis: { ...analysis, requirements } };
+    const shown = { ...input, ...(analysis ? { task_analysis: { ...analysis, requirements } } : {}) };
     return (rules ? rules + "\n\n" : "") + componentPrompt.renderPrompt(investigationMaterial({ ...shown,
       numeric_references: numeric.map(item => ({ ...item, reference_index: item.reference_index + 1 })) }), policy, failure);
   },
@@ -178,8 +173,10 @@ export const traceAttributionProfile: AgentProfile = {
   toolNames: [],
   resolve(request, draft) {
     const value = draft as { summary: string; is_correct: 1 | 0 | null; correct_reason: string };
+    const unreviewed = (request.input.review_coverage as { unreviewed_count: number } | undefined)?.unreviewed_count ?? 0;
     const result: TraceAttributionResult = { meta: (request.input.trace_meta ?? {}) as JsonObject,
-      summary: value.summary, problem: (request.input.problems ?? []) as SessionProblem[],
+      summary: value.summary + (unreviewed ? `（本次有 ${unreviewed} 项审查未完成，问题清单仅覆盖已完成范围。）` : ""),
+      problem: (request.input.problems ?? []) as SessionProblem[],
       is_correct: traceHasStandard(request) ? value.is_correct : null,
       correct_reason: traceHasStandard(request) ? value.correct_reason : attributionNoStandardReason };
     return result;

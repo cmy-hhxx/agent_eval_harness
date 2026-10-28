@@ -75,7 +75,14 @@ export interface CandidateTurn {
   trace_id: string | null;
   question: string;
   final_index: number | null;
-  component_names: string[];
+  component_scopes: ComponentReviewScope[];
+}
+
+/** One component's review scope for a trace goal, in original evidence coordinates. */
+export interface ComponentReviewScope {
+  component: string;
+  message_indices: number[];
+  final_ranges?: { path: string; start: number; end: number }[];
 }
 
 export interface EvaluationInputs {

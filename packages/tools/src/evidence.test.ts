@@ -8,6 +8,21 @@ import { emptyAudit } from "../../../tests/fixtures/comparison.js";
 const textSources = (message: unknown) => evidenceSources(message).filter((source) => source.kind === "text");
 const rendered = (message: unknown) => evidenceSources(message).find((source) => source.kind === "json")!.text;
 
+test("leaf evidence does not serialize a message and JSON is rendered once only when needed", () => {
+  let serializations = 0;
+  const value = { content: "可引用的原文", unused: "长材料".repeat(100000) };
+  const message = { ...value, toJSON() { serializations++; return value; } };
+  const sources = evidenceSources(message);
+  const leaf = selectEvidenceSource(sources, "/content")!;
+  assert.equal(cite(INPUT_ID, 0, leaf.source, 0, leaf.end).quote, value.content);
+  assert.equal(serializations, 0);
+  const json = sources.find(source => source.kind === "json")!;
+  assert.equal(json.quotable, undefined);
+  assert.equal(json.text, JSON.stringify(value, null, 2));
+  assert.equal(json.text, JSON.stringify(value, null, 2));
+  assert.equal(serializations, 1);
+});
+
 test("raw image observations must be strings even when independent evidence checks run before schema validation", () => {
   const raw = { messages: [{ content: [{ type: "image", mimeType: "image/png", data: "AA==" }] }] };
   const audit = { ...emptyAudit(), viewedImages: ["answer:0"] };

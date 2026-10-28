@@ -23,7 +23,7 @@ export function validateEvaluation(request: AgentRequest, result: unknown, audit
   const requiredSources = new Set<number>();
   if (value.goal !== input.question || value.task_type !== criteriaText("task_type")) errors.push({
     category: "decision", code: "criteria_summary_not_derived", path: "/goal",
-    message: "goal 必须保留题目原文，task_type 必须由程序固定，不得在概括中新增标准",
+    message: "goal 必须保留题目原文，task_type 沿用给定类型，不得在概括中新增标准",
   });
   const candidates = new Set(input.candidates.map((candidate) => candidate.candidate_id));
   if (candidates.size !== input.candidates.length) errors.push({
@@ -43,7 +43,7 @@ export function validateEvaluation(request: AgentRequest, result: unknown, audit
       const identity = criterionIdentity(criterion);
       if (generated.has(identity)) errors.push({
         category: "decision", code: "criterion_duplicate", path: location, actual: criterion.id,
-        message: "正式判据的原文、作用域与验收规则必须互不重复；来源选择由程序确定性归并。",
+        message: "正式判据的原文、作用域与验收规则不能重复；重复来源只引用一次。",
       });
       generated.add(identity);
       const sources = matchCriterionSources(input, criterion, catalogue);

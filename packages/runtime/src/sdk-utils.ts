@@ -127,8 +127,8 @@ export function transformPayload(
   } else payload.max_output_tokens = config.maxOutputTokens;
   // Navigation can request independent evidence in one model turn. Pi still
   // executes tools serially, so evidence indices and budgets cannot race.
-  payload.parallel_tool_calls = Boolean(evaluation?.toolNames.includes("read_responsibility_chain") &&
-    (activeNames ?? evaluation.toolNames).includes("read_responsibility_chain"));
+  payload.parallel_tool_calls = Boolean(evaluation?.toolNames.includes("read_trace") &&
+    (activeNames ?? evaluation.toolNames).includes("read_trace"));
   if (evaluation && Array.isArray(payload.tools)) {
     // Keep the full model-facing contract while the SDK dispatches raw submission fields to Host.
     for (const value of payload.tools) {

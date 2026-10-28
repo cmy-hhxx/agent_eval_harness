@@ -40,6 +40,27 @@ async function fixture(t: TestContext) {
   return f;
 }
 
+test("session and trace metadata pass through unchanged without entering model material", async t => {
+  const f = await fixture(t);
+  const config = { ...f.config, workflow: "attribution", inputs: { ...f.config.inputs,
+    versions: f.config.inputs.versions.slice(0, 1) } } as AttributionConfig;
+  const plan = await planAttribution(config), registry = new AgentRegistry([attributionAgent]);
+  const traceTask = plan.tasks.find(task => task.stage === "attribution-trace")!;
+  const traceBinding = bindAttribution(traceTask, plan.inputs, {});
+  assert(!Object.hasOwn(traceBinding.modelInput!, "trace_meta"));
+  const turn = registry.resolve(traceBinding, { summary: "该轮已完成。" }, emptyAudit()) as { meta: unknown };
+  assert.deepEqual(turn.meta, traceBinding.request.input.trace_meta);
+  const sessionTask = plan.tasks.find(task => task.stage === "attribution-session")!;
+  const sessionBinding = bindAttribution(sessionTask, plan.inputs, {
+    trace0: { evaluation: turn } as never, trace1: { evaluation: turn } as never,
+  });
+  assert(!Object.hasOwn(sessionBinding.modelInput!, "session_meta"));
+  assert((sessionBinding.modelInput!.turns as object[]).every(trace => !Object.hasOwn(trace, "meta")));
+  const result = registry.resolve(sessionBinding, { session_summary: "整场已完成。", session_problem: [] }, emptyAudit()) as { session_meta: unknown; turns: { meta: unknown }[] };
+  assert.deepEqual(result.session_meta, sessionBinding.request.input.session_meta);
+  assert.deepEqual(result.turns.map(trace => trace.meta), [turn.meta, turn.meta]);
+});
+
 test("same session different captured traces append unchanged and resume by trace identity", async t => {
   const capture = (caseId: string, question: string) => ({
     batch_id: "batch", case_id: caseId, has_standard_answer: false,
@@ -285,27 +306,21 @@ test("component entrypoints stay bounded while preserving every source call and 
   assert.deepEqual(plan.summary.issues, []);
   const task = plan.tasks.find(task => (task.data as AttributionTaskData).component === "finquery 取数服务")!;
   const directed = bindAttribution(task, plan.inputs, {});
-  const entries = directed.modelInput!.component_entrypoints as { component: string; message_index: number;
-    read_request: { tool: string; arguments: { candidate: string; transition_index: number } } }[];
-  assert.equal(entries.length, 8, "large sessions must not copy the whole component directory into the prompt");
-  assert.equal(directed.modelInput!.component_entrypoints_total, 10);
-  const navigation = directed.materialNavigation!.answer as { responsibility_choices: { component: string; transition_index: number }[] };
-  assert.equal(navigation.responsibility_choices.filter(choice => choice.component === "finquery 取数服务").length, 10);
-  assert(navigation.responsibility_choices.some(choice => choice.component !== "finquery 取数服务"),
-    "cross-component context remains available for causal checks");
-  assert.deepEqual((directed.request.sources.answer!.value as RawInput).messages, messages);
-  for (const entry of entries) {
-    assert.equal(entry.component, "finquery 取数服务");
-    assert.equal(entry.read_request.tool, "read_responsibility_chain");
-    assert.equal(entry.read_request.arguments.candidate, "answer");
-    assert(navigation.responsibility_choices.some(choice => choice.component === entry.component &&
-      choice.transition_index === entry.read_request.arguments.transition_index));
-  }
+  assert.equal(plan.tasks.filter(task => (task.data as AttributionTaskData).component === "finquery 取数服务").length, 1);
+  const scene = (directed.modelInput!.answer as { component_scene: { entries: { reference: { evidence_id: string } }[] } }).component_scene;
+  const scope = (task.data as AttributionTaskData).reviewScope!;
+  assert.deepEqual(scope.message_indices, Array.from({ length: 20 }, (_, index) => index + 1));
+  assert(scene.entries.length > 0);
+  assert(scene.entries.every(entry => scope.message_indices.includes(parseEvidenceCoordinates(entry.reference.evidence_id)!.message_index)));
+  assert.deepEqual((directed.request.sources.answer!.value as RawInput).messages, messages,
+    "original cross-step context remains available at its exact message coordinates");
+  assert(!Object.hasOwn(directed.materialNavigation!.answer as object, "boundaries"));
 });
 
 test("planning filters execution locators and always creates one final-generation task per trace", () => {
   const candidate = { input_id: "11111111-1111-4111-8111-111111111111", case_id: "case", turns: [{
-    trace_index: 0, trace_id: "trace", question: "问题", final_index: 1, component_names: ["llm-call-7", "span-4f26f1fabe23fc3c", "planner-search"],
+    trace_index: 0, trace_id: "trace", question: "问题", final_index: 1,
+    component_scopes: ["llm-call-7", "span-4f26f1fabe23fc3c", "planner-search"].map(component => ({ component, message_indices: [0] })),
   }] };
   const tasks = planAttributionUnit(candidate as never).tasks;
   const components = tasks.filter(task => task.stage === "attribution-component")
@@ -319,7 +334,9 @@ test("trace correctness without a standard is program-owned and survives session
   const plan = await planAttribution({ ...f.config, workflow: "attribution", inputs: { ...f.config.inputs,
     versions: f.config.inputs.versions.slice(0, 1) } });
   const task = plan.tasks.find(task => task.stage === "attribution-trace")!;
-  const binding = bindAttribution(task, plan.inputs, {}), registry = new AgentRegistry([attributionAgent]);
+  const dependencies = Object.fromEntries(Object.keys(task.dependencies).map(label =>
+    [label, { evaluation: { problems: [] } } as never]));
+  const binding = bindAttribution(task, plan.inputs, dependencies), registry = new AgentRegistry([attributionAgent]);
   assert.deepEqual(binding.request.input.ground_truth, { available: false, value: null });
   const prepared = registry.prepare(binding);
   assert.deepEqual(Object.keys(prepared.evaluation.outputSchema.properties as object), ["summary"]);
@@ -460,9 +477,9 @@ test("component review resolves evidence into readable position, tool component 
   assert.equal(result.problems[0]!.evidence[0]!.component, "tool_call: finquery 取数服务");
   assert.match(result.problems[0]!.evidence[0]!.position, /^trace_index 0 \/ message_index 2 \/ path \//u);
   assert.equal(result.problems[0]!.evidence[0]!.quote, evidence.quote);
-  assert.throws(() => registry.resolve(binding, { problems: [{ label: "tmp", definition: "tmp",
-    problem_phenomena: "tmp", reason: "tmp", evidence: [{ index: 1, reason: "tmp" }] }] }, audit),
-  (error: unknown) => error instanceof ValidationError && error.issues!.some(issue => issue.code === "placeholder_content"));
+  assert.doesNotThrow(() => registry.resolve(binding, { problems: [{ label: "错误", definition: "无法判断",
+    problem_phenomena: "无法判断", reason: "无法判断", evidence: [{ index: 1, reason: "无法判断" }] }] }, audit),
+  "legal prose is accepted without a wording-based quality gate; semantic quality is reviewed separately");
 });
 
 test("component quote validation accepts 800 chars but rejects longer exact quotes", async t => {

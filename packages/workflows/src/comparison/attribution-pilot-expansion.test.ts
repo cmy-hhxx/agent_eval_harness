@@ -33,10 +33,11 @@ test("applied expansion retains task UUIDs, attempts, receipts and results while
   assert.deepEqual(after.usage, before.usage); assert.deepEqual(after.manifest.config, before.manifest.config);
   assert.equal(await readFile(attributionFile, "utf8"), resultBefore);
   const sourceIds = new Set(result.selected_answers.map(answer => answer.task_id)), scope = new Set(after.manifest.executionScope);
-  assert.equal(after.manifest.tasks.filter(task => task.stage === "attribution" && scope.has(task.id)).length, 12);
+  assert.equal(after.manifest.tasks.filter(task => task.stage === "attribution-session" && scope.has(task.id)).length, 12);
   for (const task of after.manifest.tasks) {
-    if (task.stage === "attribution") assert.equal(scope.has(task.id), sourceIds.has(task.id));
+    if (task.stage === "attribution-session") assert.equal(scope.has(task.id), sourceIds.has(task.id));
     if (task.stage === "rewrite") assert.equal(scope.has(task.id), sourceIds.has(task.dependencies.source));
+    if (scope.has(task.id)) for (const dependency of Object.values(task.dependencies)) assert(scope.has(dependency));
   }
   for (const id of sourceIds) assert(scope.has(after.manifest.tasks.find(task => task.id === id)!.dependencies.criteria));
   assert.equal(after.manifest.preflight.pilot_answers, 12);
@@ -57,16 +58,16 @@ test("a model's shortfall and shrinking existing selection fail before any check
 
 test("accepted replacement and active reviews retain their rewrite work without rerunning a replaced failed primary", async t => {
   const fixture = await attributionPilotFixture(); t.after(() => rm(fixture.directory, { recursive: true, force: true }));
-  const state = fixture.state, primary = state.manifest.tasks.filter(task => task.stage === "attribution")[2], data = primary.data as TaskData;
+  const state = fixture.state, primary = state.manifest.tasks.filter(task => task.stage === "attribution-session")[2], data = primary.data as TaskData;
   state.manifest.states[primary.id] = { status: "failed", attempts: 4 };
   const accepted = { ...primary, id: randomUUID(), data: { ...data, reviewOf: { taskId: primary.id, round: 1, reasons: ["恢复复核"] } } };
   const active = { ...primary, id: randomUUID(), data: { ...data, reviewOf: { taskId: accepted.id, round: 2, reasons: ["定向复核"] } } };
   const rewrite = attributionRewritePlaceholder(accepted.id, { rewriteNames: { A: data.candidates.A.name },
     case: { batch_id: data.candidates.A.batch_id, case_id: data.candidates.A.case_id, question: data.candidates.A.question } });
-  const activeRewrite = attributionRewritePlaceholder(active.id, (rewrite.data as TaskData));
+  const activeRewrite = attributionRewritePlaceholder(active.id, { rewriteNames: data.rewriteNames, case: (rewrite.data as TaskData).case });
   state.manifest.tasks.push(accepted, rewrite, active, activeRewrite);
   const template = state.receipts[fixture.chosen[0].id];
-  const evaluation = attributionResult(true, "2+2=4", true, primary.inputIds.answer);
+  const evaluation = attributionResult(true, "2+2=4", true, data.candidate!.input_id);
   state.receipts[accepted.id] = { ...structuredClone(template), taskId: accepted.id, submissionId: randomUUID(), acceptedAt: 2, evaluation };
   state.receipts[rewrite.id] = { ...structuredClone(template), taskId: rewrite.id, submissionId: randomUUID(), acceptedAt: 3,
     evaluation: { rewrites: attributionSlots(evaluation).map(slot => ({ id: slot.id, text: "保留点评" })) } };
@@ -80,6 +81,9 @@ test("accepted replacement and active reviews retain their rewrite work without 
   (state.manifest.preflight.selected_answers as unknown[]).push({ task_id: primary.id, input_id: data.candidates.A.input_id,
     version: data.candidates.A.version, batch_id: data.candidates.A.batch_id, case_id: data.candidates.A.case_id });
   await createResultWriter(fixture.run, fixture.inputs)(state); await writeRunState(fixture.run, state);
+  const saved = JSON.parse(await readFile(path.join(fixture.run, "state.json"), "utf8"));
+  for (const task of [rewrite, activeRewrite]) if (saved.tasks[task.id].receipt)
+    assert.equal(saved.tasks[task.id].receipt.exported.taskId, task.id, JSON.stringify(saved.tasks[task.id]));
   const before = await readRunState(fixture.run), result = await prepareAttributionPilotExpansion(fixture.run, { answersPerModel: 3, apply: true });
   const after = await readRunState(fixture.run), scope = new Set(after.manifest.executionScope);
   assert(!scope.has(primary.id));

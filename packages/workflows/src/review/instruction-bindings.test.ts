@@ -4,16 +4,26 @@ import { canonicalEvidence } from "../../../../tests/fixtures/evidence.js";
 import test from "node:test";
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
-import { emptyUsage, type CriteriaInput, type PlannedTask, type SubmissionReceipt, type TaskAnalysis } from "@eval/contracts";
+import { emptyUsage, type AgentBinding, type CriteriaInput, type PlannedTask, type SubmissionReceipt, type TaskAnalysis } from "@eval/contracts";
 import { criteriaProfile, criteriaSources } from "@eval/agents/criteria";
 import { type AttributionNorm } from "@eval/agents/attribution";
 import { parseEvidenceCoordinates, resolveEvidence } from "@eval/tools";
+import { criterionInstructionSources } from "./instruction-bindings.js";
 import { bindTask } from "../comparison/binding.js";
 import type { Candidate, RawInput } from "../inputs/types.js";
 import type { TaskData } from "../comparison/types.js";
 import { emptyAudit } from "../../../../tests/fixtures/comparison.js";
 
 const registry = new AgentRegistry([attributionAgent]);
+function shownNorms(binding: AgentBinding, raw: RawInput, inputId: string): AttributionNorm[] {
+  const answer = binding.modelInput!.answer as { norm_directory: (Omit<AttributionNorm, "evidence"> & {
+    evidence: { reference: { evidence_id: string } }[] })[] };
+  return answer.norm_directory.map(norm => ({ ...norm, evidence: norm.evidence.map(entry => {
+    const resolved = resolveEvidence(raw, entry.reference, "answer", emptyAudit(), "/evidence", inputId);
+    return { evidence_id: entry.reference.evidence_id, message_index: resolved.message_index, quote: resolved.quote };
+  }) }));
+}
+
 const qualityChecks = (source_index: number) => ["范围与条件清楚。", "事实与数值准确。", "推导和依据支持结论。", "表述不影响结果使用。"].map(text => ({source_indices: [source_index], text}));
 const candidatesFor = (question: string, finalIndex: number, reference: unknown): Record<string, Candidate> =>
   Object.fromEntries(["A", "B"].map(label => [label, {
@@ -61,12 +71,10 @@ test("reference changes leave Criteria material unchanged and remain complete in
     const task: PlannedTask = { id: randomUUID(), stage: "attribution-component", inputIds: { answer: candidates.A.input_id },
       dependencies: { criteria: criteriaTask.id }, data: { stage: "attribution-component", candidate: candidates.A, candidates: { A: candidates.A }, reference } satisfies TaskData };
     const attribution = bindTask(task, inputs, { criteria: receipt }, { tasks: [criteriaTask, task] });
-    const material = attribution.request.input.answer as { final_message_index: number; final_answer: string;
+    const material = attribution.modelInput!.answer as { final_message_index: number; final_answer?: string;
       final_evidence: { message_index: number; quote: string }[] };
     assert.equal(material.final_message_index, finalIndex);
-    assert.equal(material.final_answer, answer);
     assert(material.final_evidence.some(evidence => evidence.message_index === finalIndex && evidence.quote === answer));
-    assert.deepEqual(attribution.request.input.ground_truth, { available: reference !== null, value: reference });
     assert.deepEqual(attribution.modelInput!.ground_truth, { available: reference !== null, value: reference });
     assert(Object.values(inputs).every(input => input.messages[finalIndex].role === "assistant"));
   }
@@ -96,8 +104,8 @@ for (const normFirst of [true, false]) test(`accepted merged Criteria retains no
     dependencies: { criteria: criteriaTask.id },
     data: { stage: "attribution-component", candidate: candidates.A!, candidates: { A: candidates.A! }, reference: null } satisfies TaskData };
   const binding = bindTask(task, inputs, { criteria: receipt }, { tasks: [criteriaTask, task] });
-  const answer = binding.request.input.answer as { norm_directory: AttributionNorm[]; criterion_instruction_sources: Record<string, {
-    message_index: number; path: string; quote: string }[]> };
+  const answer = { norm_directory: shownNorms(binding, trace, candidates.A.input_id),
+    criterion_instruction_sources: criterionInstructionSources(trace, candidates.A.final_index, rubric, candidates.A.input_id) };
   assert.deepEqual(answer.criterion_instruction_sources.r1, [{ ...canonicalEvidence(candidates.A.input_id, 0, norm), path: "/content" },
     { ...canonicalEvidence(candidates.A.input_id, 1, question), path: "/content" }]);
   assert.deepEqual(answer.norm_directory, [{ norm_index: 0, roles: ["user"], requirement_index: 0,
@@ -106,7 +114,7 @@ for (const normFirst of [true, false]) test(`accepted merged Criteria retains no
     criterion_instruction_sources: Record<string, { reference: { evidence_id: string } }[]> };
   const finalRef = shown.final_evidence[0]!.reference;
   assert.equal(resolveEvidence(inputs[candidates.A.input_id],finalRef,"answer",emptyAudit(),"/evidence",candidates.A.input_id).quote,final);
-  assert.deepEqual(Object.keys(registry.prepare(binding).evaluation.outputSchema.properties ?? {}).sort(),["Problem","summary"].sort());
+  assert.deepEqual(Object.keys(registry.prepare(binding).evaluation.outputSchema.properties ?? {}).sort(),["problems"].sort());
 });
 
 test("01868 public USER leaf closes attribution without absorbing its private joined condition", () => {
@@ -145,8 +153,8 @@ test("01868 public USER leaf closes attribution without absorbing its private jo
       candidates: { A: candidates.A! },
       reference: "-0.6个百分点" } satisfies TaskData };
   const binding = bindTask(task, inputs, { criteria: receipt }, { tasks: [criteriaTask, task] });
-  const answer = binding.request.input.answer as { norm_directory: AttributionNorm[]; criterion_instruction_sources: Record<string, {
-    message_index: number; path: string; quote: string }[]> };
+  const answer = { norm_directory: shownNorms(binding, trace, candidates.A.input_id),
+    criterion_instruction_sources: criterionInstructionSources(trace, candidates.A.final_index, rubric, candidates.A.input_id) };
   assert.deepEqual(answer.criterion_instruction_sources.r1, [{ ...canonicalEvidence(candidates.A.input_id, 0, question, "/content/0/text"), path: "/content/0/text" }]);
   assert.deepEqual(answer.criterion_instruction_sources.r2, [{ ...canonicalEvidence(candidates.A.input_id, 0, question, "/content/0/text"), path: "/content/0/text" },
     { ...canonicalEvidence(candidates.A.input_id, 0, condition, "/content/1/text"), path: "/content/1/text" }]);
@@ -165,16 +173,16 @@ test("01868 public USER leaf closes attribution without absorbing its private jo
     "already bound question and complete condition are not bundled again with unrelated USER context");
   const shown = binding.modelInput!.answer as { final_evidence: { path: string; reference: { evidence_id: string } }[];
     criterion_instruction_sources: Record<string, { quote: string; reference: { evidence_id: string } }[]> };
-  for (const id of ["r1", "r2"]) for (const entry of shown.criterion_instruction_sources[id]!)
-    assert.equal(resolveEvidence(trace, entry.reference, "answer", emptyAudit(), "/evidence", candidates.A!.input_id).quote, entry.quote);
+  for (const norm of shownNorms(binding, trace, candidates.A.input_id)) for (const entry of norm.evidence)
+    assert.equal(resolveEvidence(trace, entry, "answer", emptyAudit(), "/evidence", candidates.A.input_id).quote, entry.quote);
   const finalRef = shown.final_evidence.find(entry => {const point=parseEvidenceCoordinates(entry.reference.evidence_id);return point?.kind!=="image"&&point?.path==="/content/0/text";})!.reference;
   assert.equal(resolveEvidence(trace, finalRef, "answer", emptyAudit(), "/evidence", candidates.A!.input_id).quote, final);
   assert.equal(resolveEvidence(trace,finalRef,"answer",emptyAudit(),"/Problem/0/evidence",candidates.A.input_id).quote,final);
   const otherTask: PlannedTask = { ...task, id: randomUUID(), inputIds: { answer: candidates.B!.input_id },
-    data: { ...(task.data as TaskData), candidates: { A: candidates.B! } } };
+    data: { ...(task.data as TaskData), candidate: candidates.B!, candidates: { A: candidates.B! } } };
   const other = bindTask(otherTask, inputs, { criteria: receipt }, { tasks: [criteriaTask, otherTask] });
-  assert.equal((other.request.input.answer as { criterion_instruction_sources: Record<string, unknown> }).criterion_instruction_sources.r2, undefined);
-  const otherNorms = (other.request.input.answer as { norm_directory: AttributionNorm[] }).norm_directory;
+  assert.equal(criterionInstructionSources(inputs[candidates.B.input_id], candidates.B.final_index, rubric, candidates.B.input_id).r2, undefined);
+  const otherNorms = shownNorms(other, inputs[candidates.B.input_id], candidates.B.input_id);
   assert.deepEqual(otherNorms.map(norm => norm.requirement_index), [0]);
   assert(otherNorms.every(norm => norm.evidence.every(origin => origin.source_input_id === undefined &&
     resolveEvidence(inputs[candidates.B.input_id], { evidence_id: origin.evidence_id }, "answer", emptyAudit(), "/evidence", candidates.B.input_id).quote === question)));

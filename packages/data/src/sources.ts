@@ -19,6 +19,13 @@ async function fileRevision(source: string): Promise<string> {
   return [info.dev, info.ino, info.size, info.mtimeNs].join(":");
 }
 
+/** Validate a retained source record before reusing its parsed value. */
+export function assertSourceRevision(source: string, expected: string): void {
+  const info = statSync(source, { bigint: true });
+  if ([info.dev, info.ino, info.size, info.mtimeNs].join(":") !== expected)
+    throw new Error("读取期间输入文件发生变化，请重试：" + source);
+}
+
 /** Capture a complete input group while the caller holds its short promotion lock. */
 export async function pinInputSources(sources: readonly string[]) {
   const files = new Map<string, string>();

@@ -60,9 +60,11 @@ function textLeaves(value: unknown, prefix = ""): [string, string][] {
       : textLeaves(child, `${prefix}/${key.replaceAll("~", "~0").replaceAll("/", "~1")}`),
   );
 }
-const privateMarkers = ["private_instruction_omitted", "[内部技能规范由独立指令会话检查]", "[含内部规范的序列化输入未进入主归因]"];
+const privateMarkers = ["private_instruction_omitted", "[此处内容未提供，不能据此判断原始内容为空或执行失败。]"];
 export function evidenceSources(message: unknown): { kind: "text" | "json"; path: string; text: string; quotable?: false }[] {
-  const json = renderMessage(message);
+  // Sources are immutable during a request. Leaf reads need no serialized copy of the whole message.
+  let json: string | undefined;
+  const rendered = () => json ??= renderMessage(message);
   return [
     ...textLeaves(message).map(([path, text]) => ({
       kind: "text" as const,
@@ -70,8 +72,8 @@ export function evidenceSources(message: unknown): { kind: "text" | "json"; path
       text,
       ...(privateMarkers.some(marker => text.includes(marker)) ? { quotable: false as const } : {}),
     })),
-    { kind: "json", path: "", text: json,
-      ...(privateMarkers.some(marker => json.includes(marker)) ? { quotable: false as const } : {}) },
+    { kind: "json", path: "", get text() { return rendered(); },
+      get quotable() { return privateMarkers.some(marker => rendered().includes(marker)) ? false as const : undefined; } },
   ];
 }
 

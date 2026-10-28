@@ -49,7 +49,7 @@ function validateScoreBody(request:AgentRequest,value:ScoreResult|ScoreException
     if(row.status==='not_applicable'){if(final||row.score!==null||row.score_range!==null||row.grade!=='不适用')bad(path,'不适用分数和区间为空，总分不能不适用。');return;}
     if((row.score===null)===(row.score_range===null))bad(path,'单点与区间必须且只能选一种。');
     if(row.score_range){const[a,b]=row.score_range;if(a>=b||a<0||b>limit||row.grade!=='待核'||row.status==='met'||row.status==='violated'&&b===limit)bad(path,'区间需有宽度；已确认违反的上界不能包含满分。');}
-    else if(!Number.isInteger(row.score)||row.score!<0||row.score!>limit||row.status==='unverified'||row.status==='met'&&row.score!==limit||row.status==='violated'&&row.score===limit||row.grade!==(final?directory.final_grades:directory.core_grades)[String(row.score)])bad(path,'状态、整数分数和档位须符合原skill契约；程序不代选分数。');
+    else if(!Number.isInteger(row.score)||row.score!<0||row.score!>limit||row.status==='unverified'||row.status==='met'&&row.score!==limit||row.status==='violated'&&row.score===limit||row.grade!==(final?directory.final_grades:directory.core_grades)[String(row.score)])bad(path,'状态、整数分数和档位须符合给定评分规则。');
   };
   const app=(row:Judgment&{applicability:Applicability},path:string,always:boolean)=>{
     if((row.status==='met'||row.status==='violated'||always)&&!known.has(row.applicability)||row.status==='not_applicable'&&row.applicability!=='not_triggered'||row.status==='unverified'&&row.applicability==='not_triggered'||row.applicability==='undetermined'&&row.status!=='unverified')issues.push({

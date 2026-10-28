@@ -35,6 +35,17 @@ channels = openai, evaluation-gateway
 SEARCH_API_KEY = "search=key#;"
 `;
 
+test("standalone attribution accepts one input model while comparison still requires two", async t => {
+  const directory = await mkdtemp(path.join(tmpdir(), "attribution-config-"));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  const file = path.join(directory, "single.json"), base = path.join(ROOT, "configs/host.json");
+  const input = { versions: [{ id: "only", name: "Only", adapter: "a", sources: [{ kind: "file", path: "/data/one.jsonl" }] }] };
+  await writeFile(file, JSON.stringify({ workflow: "attribution", inputs: input }));
+  assert.equal((await loadConfig([base, file], parseSettings(ini))).workflow, "attribution");
+  await writeFile(file, JSON.stringify({ workflow: "comparison", inputs: input }));
+  await assert.rejects(loadConfig([base, file], parseSettings(ini)), /至少配置两个输入版本/);
+});
+
 test("INI channels preserve literal secrets, reject ambiguous input and never quote secret-bearing lines in errors", () => {
   const config = parseSettings("\uFEFF" + ini.replaceAll("\n", "\r\n"));
   assert.equal(config.environment[config.channels.openai.apiKeyEnv], "second=key#;");
@@ -97,9 +108,12 @@ base_url=http://catalog.invalid/v1
 api_key=proxy-fixture
 [environment]
 http_proxy=http://127.0.0.1:${(proxy.address() as { port: number }).port}
-no_proxy=localhost,127.0.0.1,::1
+no_proxy=internal.example
+NO_PROXY=legacy.example
 `);
     applySettings(settings);
+    assert.deepEqual(new Set(process.env.no_proxy!.split(",")), new Set(["internal.example", "legacy.example", "localhost", "127.0.0.1", "::1"]));
+    assert.equal(process.env.NO_PROXY, process.env.no_proxy);
     assert.equal((await discoverAssistantModels(settings.channels["proxy-test"]))[0].id, "shared-model");
     assert.deepEqual(await (await fetch(local.url)).json(), { ok: true });
     assert.deepEqual(requests, ["catalog.invalid:80"]);
@@ -155,7 +169,7 @@ test("evaluation profiles cannot override channel protocol or capabilities", asy
 });
 
 test("evaluation routing enforces explicit model and effort catalogs before inference", async () => {
-  const settings = parseSettings(ini.replace("model = shared-model", "model = shared-model\nmodels = shared-model\nefforts = off, medium, high"));
+  const settings = parseSettings(ini.replace("model = shared-model", "model = shared-model\nmodels = shared-model\nefforts = off, low, medium, high"));
   const host = await loadConfig(path.join(ROOT, "configs/host.json"), settings);
   const resolve = createModelResolver(host.models);
   assert.equal(resolve("comparison").model, "shared-model");

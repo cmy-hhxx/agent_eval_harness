@@ -1,4 +1,5 @@
 export * from "./files.js";
+export * from "./material-pool.js";
 export * from "./run-layout.js";
 export * from "./run-overview.js";
 export * from "./problem-library-store.js";

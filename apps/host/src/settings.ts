@@ -131,6 +131,11 @@ export function applySettings(settings: ApplicationSettings): void {
 let proxySettings: string | undefined;
 let restoreProxy: (() => void) | undefined;
 function configureProxy(): void {
+  // Host/Worker control traffic is always local, independent of the entry point.
+  const bypass = [...new Set([process.env.no_proxy, process.env.NO_PROXY, "localhost", "127.0.0.1", "::1"]
+    .flatMap(value => value?.split(",").map(item => item.trim()).filter(Boolean) ?? []))].join(",");
+  process.env.no_proxy = bypass;
+  process.env.NO_PROXY = bypass;
   const current = JSON.stringify([process.env.http_proxy || process.env.HTTP_PROXY,
     process.env.https_proxy || process.env.HTTPS_PROXY, process.env.no_proxy || process.env.NO_PROXY]);
   if (current === proxySettings) return;

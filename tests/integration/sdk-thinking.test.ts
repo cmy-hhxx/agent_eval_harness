@@ -9,7 +9,8 @@ import { piBackend } from "@eval/runtime/pi";
 import { fakeIdentity } from "../fixtures/comparison.js";
 
 for (const api of ["openai-completions", "openai-responses"] as const)
-    test(`pi: ${api} sends the explicitly configured max reasoning effort`, { timeout: 30000 }, async () => {
+  for (const thinking of ["low", "max"] as const)
+    test(`pi: ${api} sends the explicitly configured ${thinking} reasoning effort`, { timeout: 30000 }, async () => {
       const directory = await mkdtemp(path.join(tmpdir(), "sdk-max-thinking-"));
       const requests: Record<string, unknown>[] = [];
       const gateway = await listen(async (request, response) => {
@@ -43,8 +44,8 @@ for (const api of ["openai-completions", "openai-responses"] as const)
           engine: identity, evidenceBank: [], inputs: [], policy: DEFAULT_POLICY,
           evaluation: { id: "fixture", profile: "default", systemPrompt: "Follow the supplied evaluation contract.", outputSchema: { type: "object" },
             toolNames: [], fileSubmission: false, toolDescriptions: {}, submissionNudge: "Submit." },
-          model: { provider: "fixture", baseUrl: gateway.url + "/v1", api, apiKeyEnv: key,
-            model: "analysis-model", thinking: "max", supportsDeveloperRole: false, contextWindow: 10000, maxOutputTokens: 1000 },
+          model: { provider: "evaluation-gateway", baseUrl: gateway.url + "/v1", api, apiKeyEnv: key,
+            model: "deepseek-v4.1-flash", thinking, supportsDeveloperRole: false, contextWindow: 10000, maxOutputTokens: 1000 },
           prompt: "Respond with done.", hostUrl: gateway.url, deadline: Date.now() + 15000,
         };
         const errors: string[] = [];
@@ -60,8 +61,8 @@ for (const api of ["openai-completions", "openai-responses"] as const)
         try { await session.run(spec.prompt); } finally { await session.dispose(); }
         assert.deepEqual(errors, []);
         assert.equal(requests.length, 1);
-        assert.equal(api === "openai-completions" ? requests[0]!.reasoning_effort : object(requests[0]!.reasoning).effort, "max",
-          "the SDK must send max rather than silently clamp to high");
+        assert.equal(api === "openai-completions" ? requests[0]!.reasoning_effort : object(requests[0]!.reasoning).effort, thinking,
+          "the SDK must send the configured effort without silently changing it");
         const messages = (api === "openai-completions" ? requests[0]!.messages : requests[0]!.input) as Record<string, unknown>[];
         assert(!messages.some(message => message.role === "developer"));
         assert(messages.some(message => message.role === "system" && JSON.stringify(message.content).includes(spec.evaluation.systemPrompt)),

@@ -3,7 +3,6 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { Ajv2020 } from "ajv/dist/2020.js";
 import type { ModelConfig, ToolResult } from "@eval/contracts";
-import type { ComparisonSubmission } from "@eval/agents/comparison";
 import type { ClusteringSubmission } from "@eval/agents/clustering";
 import { activeToolNames, contentToolName, inlineToolSchema, providerConfig, transformPayload } from "./sdk-utils.js";
 
@@ -99,13 +98,13 @@ test("tool schema references preserve sibling constraints through conjunction an
 // These payloads exercise the model-facing schema transport; Agent tests own business validation.
 const submissions = {
   comparison: {
-    assessments: [{candidate:"A",meets_core:true,summary:"已完成。",core_failure_refs:[]},{candidate:"B",meets_core:true,summary:"已完成。",core_failure_refs:[]}], quality_winner: null, relative_preference: "A",
+    a_core: true, a_core_refs: [], a_summary: "已完成。",
+    b_core: true, b_core_refs: [], b_summary: "已完成。", quality_winner: null, relative_preference: "A",
     tradeoff: "双方均完成核心要求。",
-    comparisons: [{slot_index:0,kind:"criterion",importance:"high",better_candidate:null,assessments:[
-      {candidate:"A",summary:"已完成。",finding_indices:[],status:"met",evidence_status:"已确认"},
-      {candidate:"B",summary:"已完成。",finding_indices:[],status:"met",evidence_status:"已确认"}]},
-      {slot_index:1,kind:"resource",importance:"low"}],
-  } satisfies ComparisonSubmission,
+    comparisons: [{ slot_index: 0, importance: "high", better_candidate: null,
+      a_status: "met", a_summary: "已完成。", a_findings: [],
+      b_status: "met", b_summary: "已完成。", b_findings: [] }],
+  },
   rewrite: { rewrites: [{ id: "summary", text: "双方均完成核心要求。" }] },
   clustering: {
     assignments: [{ item_id: "O1", class_label: "算术错误" }, { item_id: "O2", new_class_index: 0 }],
@@ -187,10 +186,10 @@ test("provider capabilities preserve explicit max reasoning and opt-out of devel
 });
 const evaluation = (toolNames: string[]) => ({ systemPrompt: "Exact rules", toolNames, outputSchema: { type: "object" }, fileSubmission: false });
 test("navigation reads may share a model turn while exhausted and submission-only requests cannot", () => {
-  const contract = evaluation(["read_responsibility_chain", "read_trace"]);
+  const contract = evaluation(["search_trace", "read_trace"]);
   for (const api of ["openai-completions", "openai-responses"] as const) {
     const tool = (name: string) => api === "openai-completions" ? { type: "function", function: { name } } : { type: "function", name };
-    const payload = { tools: [tool("read_responsibility_chain"), tool("read_trace"), tool("submit_evaluation")],
+    const payload = { tools: [tool("search_trace"), tool("read_trace"), tool("submit_evaluation")],
       reasoning: { effort: "low" }, input: [{ role: "user", content: "完整原文与坐标" }] };
     const original = structuredClone(payload);
     const result = transformPayload(payload, { ...model, api }, contract) as Record<string, unknown>;

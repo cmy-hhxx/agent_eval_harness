@@ -2,6 +2,7 @@ import type { RunState, WorkflowDefinition } from "@eval/contracts";
 import type { TaskData } from "./types.js";
 import { planAttributionRewriteGroups } from "./attribution-rewrite-planning.js";
 import { attributionWorkflow } from "@eval/workflows/attribution";
+import { dimensionAttributionFollowup } from "../review/dimensions.js";
 
 /** Turning the opt-in off releases unfinished consumers back to their original accepted sources. */
 export function configureStandardReview(state: RunState, enabled: boolean): void {
@@ -14,7 +15,6 @@ export const advanceReview: NonNullable<WorkflowDefinition["advance"]> = (task, 
   const canonical = task.stage.startsWith("attribution-")
     ? attributionWorkflow.advance!(task, receipt, state, inputs) : { tasks: [] };
   const grouped = planAttributionRewriteGroups(task, receipt, state);
-  return { tasks: [...canonical.tasks, ...grouped.tasks, ...instructionReviewFollowup(task, state)],
+  return { tasks: [...canonical.tasks, ...grouped.tasks, ...dimensionAttributionFollowup(task, state)],
     ...((canonical.replace?.length || grouped.replace?.length) ? { replace: [...canonical.replace ?? [], ...grouped.replace ?? []] } : {}) };
 };
-import { instructionReviewFollowup } from "./instruction-review.js";

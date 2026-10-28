@@ -8,7 +8,7 @@ import {
   type AttemptRecord,
   type AttemptStatus,
 } from "@eval/contracts";
-import { ArtifactStore, exists, readJson } from "@eval/data";
+import { ArtifactStore, exists, readJson, MaterialPool } from "@eval/data";
 import { HttpError, canonical, errorText, redact } from "@eval/contracts";
 import { createRegistry, type ToolRegistry } from "@eval/tools";
 import { AttemptEventLog, readAttemptEvents, replayEventStream } from "./attempt-events.js";
@@ -31,6 +31,7 @@ export async function startWorker(
   registry: ToolRegistry = createRegistry(),
   port = 0,
   execution?: { python: string },
+  materials = new MaterialPool(path.join(directory, "materials")),
 ) {
   await mkdir(directory, { recursive: true });
   const attempts = new Map<string, Running>();
@@ -80,6 +81,7 @@ export async function startWorker(
         backend,
         registry,
         execution,
+        materials,
         stop,
         onSettled(attemptId) {
           if (active === attemptId) active = null;
@@ -158,9 +160,10 @@ export async function startWorkerPool(backend: AgentBackend, directory: string, 
   if (!Number.isSafeInteger(port) || port < 0 || port > 65535 || port > 0 && port + slots - 1 > 65535)
     throw new Error("Invalid Worker pool port range");
   const workers: Awaited<ReturnType<typeof startWorker>>[] = [];
+  const materials = new MaterialPool(path.join(directory, "materials"));
   try {
     for (let index = 0; index < slots; index++) workers.push(await startWorker(backend,
-      slots === 1 ? directory : path.join(directory, `slot-${index}`), undefined, port ? port + index : 0, execution));
+      slots === 1 ? directory : path.join(directory, `slot-${index}`), undefined, port ? port + index : 0, execution, materials));
   } catch (error) {
     await Promise.allSettled(workers.map(worker => worker.close()));
     throw error;

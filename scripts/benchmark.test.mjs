@@ -2,10 +2,102 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { mkdtemp, mkdir, writeFile, rm } from "node:fs/promises";
 import { spawnSync } from "node:child_process";
+import { Worker } from "node:worker_threads";
+import { once } from "node:events";
+import { gzipSync } from "node:zlib";
 import os from "node:os";
 import path from "node:path";
 import { pairSamples, compareSamples, summarizeSamples, goldTemplate, calibrateSamples } from "./benchmark-analysis.mjs";
 import { rejectedEvaluationDrafts } from "./benchmark-fixtures.mjs";
+import { processTreePids, sampleProcessTree } from "./process-tree-usage.mjs";
+import { summarizeAttemptCosts, countModelRounds, summarizeSubmissionLatency } from "./attribution-throughput.mjs";
+
+test("submission latency counts failures and late acceptance without treating early cancellation as an SLA failure", () => {
+  const report = summarizeSubmissionLatency([
+    { startedAt: 1000, acceptedAt: 601000, observedUntil: 602000, status: "succeeded" },
+    { startedAt: 1000, acceptedAt: 901000, observedUntil: 902000, status: "succeeded" },
+    { startedAt: 1000, acceptedAt: 301000, observedUntil: 302000, partial: true, status: "succeeded" },
+    { startedAt: 1000, observedUntil: 2000, status: "failed" },
+    { startedAt: 1000, observedUntil: 901000, status: "timed_out" },
+    { startedAt: 1000, observedUntil: 101000, status: "cancelled" },
+    { startedAt: 1000, observedUntil: 701000, status: "cancelled" },
+    { observedUntil: 901000, status: "pending" },
+    { observedUntil: 901000, status: "failed" }, // Preparation failed before a Worker attempt existed.
+  ]);
+  assert.equal(report.valid_within_ten_minutes, 1);
+  assert.equal(report.ten_minute_observed_tasks, 7);
+  assert.equal(report.valid_within_ten_minutes_rate, 1 / 7);
+  assert.equal(report.interrupted_or_running_under_ten_minutes, 1);
+  assert.equal(report.valid_submission_p95_seconds, 900);
+  assert.equal(report.fault_rate, 3 / 6);
+});
+
+test("attribution cost includes failed and retry attempts and refuses an incomplete success denominator", () => {
+  const metrics = { usage: { input: 10, output: 20, cacheRead: 30, cacheWrite: 40, totalTokens: 100 }, timings: { modelMs: 1000 } };
+  const attempts = [{ attempt: 1, status: "timed_out", metrics, modelRounds: 3, contentSubmissions: 0 },
+    { attempt: 2, status: "succeeded", metrics, modelRounds: 4, contentSubmissions: 2 }];
+  const report = summarizeAttemptCosts(attempts, 2, 1);
+  assert.equal(report.cost_per_complete_result.usage.totalTokens, 200);
+  assert.equal(report.cost_per_complete_result.model_seconds, 2);
+  assert.equal(report.cost_per_complete_result.model_turns, 7);
+  assert.equal(report.unsuccessful.usage.totalTokens, 100);
+  assert.equal(report.timed_out.attempts, 1);
+  assert.equal(report.retries.attempts, 1);
+  assert.equal(report.attempts_with_content_repair.attempts, 1);
+  assert.equal(summarizeAttemptCosts(attempts, 3, 1).cost_per_complete_result, null);
+  assert.equal(summarizeAttemptCosts(attempts, 2, 0).cost_per_complete_result, null);
+  assert.equal(summarizeAttemptCosts([{ metrics: {} }], 1, 1).cost_per_complete_result.usage.totalTokens, null);
+});
+
+test("model cost counts SDK turns when archived message starts omit roles", async t => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), "model-rounds-"));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  const file = path.join(directory, "events.jsonl");
+  assert.equal(await countModelRounds(file), undefined);
+  const events = [
+    { type: "model", data: { type: "turn_start" } },
+    { type: "model", data: { type: "message_start" } },
+    { type: "tool_start", data: { name: "turn_start" } },
+    { type: "model", data: { type: "message_end", message: { role: "assistant" } } },
+    { type: "model", data: { type: "turn_start" } },
+    { type: "model", data: { type: "message_start" } },
+  ].map(event => JSON.stringify(event)).join("\n") + "\n";
+  await writeFile(file, events);
+  assert.equal(await countModelRounds(file), 2);
+  await writeFile(file + ".gz", gzipSync(events));
+  await rm(file);
+  assert.equal(await countModelRounds(file), 2);
+});
+
+test("resource sampling selects the complete process tree without task/PID/children", () => {
+  assert.deepEqual(processTreePids(10, " 1 0\n 10 1\n 30 20\n 20 10\n 40 10\n 50 1\n"), [10, 20, 40, 30]);
+});
+
+test("Linux resource sampling reports nonzero root memory and IO counters", { skip: process.platform !== "linux" }, async () => {
+  const sample = await sampleProcessTree(process.pid);
+  assert(sample.rss > 0);
+  assert(sample.processes >= 1);
+  assert(sample.host.rss_bytes > 0);
+  assert.equal(sample.rss, sample.host.rss_bytes + sample.workers.rss_bytes);
+  assert.equal(sample.workers.count, sample.processes - 1);
+  assert(sample.system.cached_bytes >= 0);
+  assert(sample.counters.some(row => row.id.startsWith(process.pid + ":") && row.rchar > 0));
+  assert.equal(sample.failures, 0);
+});
+
+test("Linux benchmark sampler reports the Host from a persistent thread and closes cleanly", { skip: process.platform !== "linux", timeout: 10000 }, async t => {
+  const worker = new Worker(new URL("./process-tree-usage.mjs", import.meta.url), { workerData: { processTreeRoot: process.pid } });
+  t.after(() => worker.terminate());
+  const closed = once(worker, "exit");
+  for (let round = 0; round < 2; round++) {
+    const [{ sample, error }] = await once(worker, "message");
+    assert.equal(error, undefined);
+    assert(sample.host.rss_bytes > 0);
+    assert(sample.counters.some(row => row.id.startsWith(process.pid + ":")));
+  }
+  worker.postMessage("stop");
+  assert.deepEqual(await closed, [0]);
+});
 
 test("draft collection uses loaded JSON for either current submission mode and skips non-evaluation calls", async () => {
   const direct = { summary: "direct" }, file = { summary: "loaded before the path was overwritten" };

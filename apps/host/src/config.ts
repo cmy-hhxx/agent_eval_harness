@@ -7,6 +7,7 @@ import { DEFAULT_FAILURE_GUARD, validateFailureGuard } from "@eval/host";
 import type { EvalConfig } from "@eval/workflows/comparison";
 import { assertComparableGroups, selectComparisonGroups } from "@eval/workflows/comparison";
 import { inputAdapterIds } from "@eval/workflows/inputs";
+import { attributionDimensions } from "@eval/workflows/review";
 import {
   THINKING_LEVELS,
   DEFAULT_THINKING,
@@ -153,7 +154,9 @@ function buildEvaluationBase(source: ConfigObject): EvaluationConfig {
     if (new Set(coordinates).size !== coordinates.length) throw new Error("Duplicate cleaning coordinates");
   }
   const versions = config.inputs?.versions;
-  if (!Array.isArray(versions) || versions.length < (config.inputs.workbench ? 1 : 2)) throw new Error("至少配置两个输入版本");
+  const minimumVersions = source.workflow === "attribution" || config.inputs.workbench ? 1 : 2;
+  if (!Array.isArray(versions) || versions.length < minimumVersions)
+    throw new Error(minimumVersions === 1 ? "至少配置一个输入版本" : "至少配置两个输入版本");
   for (const item of versions) {
     if (!/^[a-z0-9][a-z0-9_.-]{0,180}$/.test(item.id) || item.id.includes("..") || !inputAdapterIds.includes(item.adapter))
       throw new Error("Invalid input version");
@@ -356,7 +359,7 @@ function buildModels(source: ConfigObject, configuration: ApplicationSettings): 
   return { models, bindings, channels: configuration.channels };
 }
 
-const DASHBOARD_STAGES = ["criteria", "score", "attribution", "instruction-review", "comparison", "rewrite", "clustering"] as const;
+const DASHBOARD_STAGES = ["criteria", "score", "attribution", ...Object.keys(attributionDimensions), "comparison", "rewrite", "clustering"];
 const DASHBOARD_EXECUTION = ["concurrency", "sessionWindow", "timeoutSeconds", "maxToolCalls", "retries", "repairAttempts", "maxTaskAttempts", "retryDelaySeconds"] as const;
 const DASHBOARD_BINDING = ["channel", "model", "thinking"] as const;
 

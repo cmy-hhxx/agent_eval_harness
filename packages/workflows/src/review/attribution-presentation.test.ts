@@ -123,8 +123,9 @@ test("canonical component table views use own full-directory ordinals while trus
   const task: PlannedTask = { id: randomUUID(), stage: "attribution-component", dependencies: { criteria: criteriaTask.id },
     inputIds: { answer: candidates.A.input_id },
     data: { stage: "attribution-component", candidate: candidates.A, candidates: { A: candidates.A }, reference: null } satisfies TaskData };
-  const before = structuredClone(inputs), binding = bindTask(task, inputs, { criteria: receipt }, { tasks: [criteriaTask, task] });
-  const own = binding.request.input.answer as any;
+  const before = structuredClone(inputs);
+  bindTask(task, inputs, { criteria: receipt }, { tasks: [criteriaTask, task] });
+  const own = { table_check_results: attributionTableChecks(traces.A, candidates.A.input_id, candidates.A.final_index) };
   const shown = { answer: { table_check_results: tableChecksPresentation(own.table_check_results, traces.A, candidates.A.input_id) } };
   assert.equal(shown.answer.table_check_results[0].answer_table_index, 2);
   assert.equal(shown.answer.table_check_results[0].rows[0].sources[0].table_index, 1);

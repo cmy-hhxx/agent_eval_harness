@@ -196,7 +196,8 @@ export async function prepareAttributionJob(
     cases.set(caseKey, (cases.get(caseKey) ?? 0) + 1);
   }
   const selectedIds = new Set(selected.map(answer => answer.task.id));
-  selected.forEach(answer => selectedIds.add(answer.task.dependencies.criteria!));
+  const byTask = new Map(tasks.map(task => [task.id, task]));
+  for (const id of selectedIds) Object.values(byTask.get(id)!.dependencies).forEach(dependency => selectedIds.add(dependency));
   tasks.filter(task => task.stage === "rewrite" && selectedIds.has(task.dependencies.source!)).forEach(task => selectedIds.add(task.id));
   const executionScope = options.pilotAnswers === undefined ? undefined : tasks.filter(task => selectedIds.has(task.id)).map(task => task.id);
   const summary = { workflow: "attribution-job", source_runs: runs, from_batch: options.fromBatch ?? null,

@@ -11,6 +11,28 @@ import { emptyAudit } from "../../../tests/fixtures/comparison.js";
 const inputId = "296439d0-d228-45fc-8c5e-35f42990547e";
 const presentation: SourcePresentation = { redactions: [{ text: "Model-A", replacement: "匿名候选一" }], omitMessageKeys: ["model", "provider"] };
 
+test("targeted evidence reads and searches leave unrelated messages and whole-message JSON untouched", async t => {
+  const workdir = await mkdtemp(path.join(os.tmpdir(), "evidence-targeted-read-"));
+  t.after(() => rm(workdir, { recursive: true, force: true }));
+  let serializations = 0;
+  const selected = { content: "局部原文", toJSON() { serializations++; return { content: this.content }; } };
+  const messages = [selected, selected];
+  Object.defineProperty(messages, 0, { get() { throw new Error("unrelated message was accessed"); } });
+  const context: ToolContext = { attemptId: "targeted-read", workdir, inputs: new Map([["A", { messages }]]),
+    inputIds: new Map([["A", inputId]]), audit: emptyAudit(), policy: DEFAULT_POLICY,
+    artifacts: new ArtifactStore(path.join(workdir, "artifacts")) };
+  const runtime = new ToolRuntime(context, createRegistry().select(["read_trace", "search_trace"]));
+  for (const [tool, args] of [["read_trace", { candidate: "A", message_index: 1, path: "/content" }],
+    ["search_trace", { candidate: "A", message_index: 1, path: "/content", query: "原文" }]] as const) {
+    const result = await runtime.execute(tool, args, new AbortController().signal);
+    assert.equal(result.isError, undefined, JSON.stringify(result));
+  }
+  assert.equal(serializations, 0);
+  assert(context.audit.evidenceBank!.length > 0);
+  for (const id of context.audit.evidenceBank!)
+    assert.equal(resolveEvidence({ messages: [null, selected] }, { evidence_id: id }, "A", context.audit, "/evidence", inputId).message_index, 1);
+});
+
 test("source display rules preserve coordinates and binary bytes while omitting message provenance", () => {
   const image = "data:image/png;base64,Model-A";
   const raw = { messages: [{ role: "assistant", model: "Model-A", content: "Model-A 的结果", image }],

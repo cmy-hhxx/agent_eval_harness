@@ -1,1 +1,0 @@
-一次返回某条责任边界的请求、原始返回、实际生成输入和生成输出，并在返回中给出可直接引用的 evidence_index。用 transition_index 选择边界；request 是实际请求参数，request_context 保留调用前上下文；同一链及多链汇合的执行、传递和生成会一起返回，避免分别调用 read_execution 与 read_trace。返回内容受 max_chars 限制，截断项标 truncated，只有实际展示的字符登记为可引用编号；未展示项按 next_read_request 补读。该工具只整理已采集材料，不判断责任；正常传递不是责任主体。 如 omitted_entries 非零或责任选项尚未显示完，按 continuation 进入完整边界目录继续读取；这些省略项不能视为已经核查。

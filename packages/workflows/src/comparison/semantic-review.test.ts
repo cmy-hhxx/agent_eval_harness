@@ -14,14 +14,14 @@ test("explicit semantic questions target one business case equally without becom
   fixture.config.reviewQuestions = [{ batch_id: "b1", case_id: "checked", questions }];
   try {
     const plan = await buildPlan(fixture.config);
-    const targets = plan.tasks.filter(task => task.stage === "attribution");
+    const targets = plan.tasks.filter(task => task.stage === "attribution-component");
     assert.equal(targets.length, 4);
     for (const task of targets) {
       const data = task.data as TaskData;
       const selected = data.candidates.A.case_id === "checked";
       assert.deepEqual(data.reviewQuestions, selected ? questions : undefined);
       const binding = bindTask(task, plan.inputs, {}, { tasks: plan.tasks });
-      assert.deepEqual(binding.request.input.review_context, selected ? { reasons: questions } : undefined);
+      assert.equal(binding.request.input.review_context, undefined, "workflow notes do not alter evidence validation input");
       const material = binding.modelInput!;
       assert.deepEqual(material.review_context, selected ? { reasons: questions, kind: "unverified_concerns" } : undefined);
       assert.equal(componentAttributionProfile.renderPrompt!(material).includes(questions[0]), selected);
@@ -31,7 +31,7 @@ test("explicit semantic questions target one business case equally without becom
     fixture.config.reviewQuestions = [{ batch_id: "other-batch", case_id: "checked", questions }];
     const unmatched = await buildPlan(fixture.config);
     assert((unmatched.summary.issues as { reason: string }[]).some(issue => issue.reason === "review_case_unavailable"));
-    assert(unmatched.tasks.filter(task => task.stage === "attribution").every(task => !(task.data as TaskData).reviewQuestions));
+    assert(unmatched.tasks.filter(task => task.stage === "attribution-component").every(task => !(task.data as TaskData).reviewQuestions));
     fixture.config.comparisons = [];
     const maintenance = await buildPlan(fixture.config);
     assert(!(maintenance.summary.issues as { reason: string }[]).some(issue => issue.reason === "review_case_unavailable"),

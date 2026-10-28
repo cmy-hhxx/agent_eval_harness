@@ -1292,7 +1292,8 @@ test("terminal archival drains the actual worker event sequence before compressi
     for await (const event of readJsonl(path.join(attempt, "events.jsonl.gz"))) events.push(event as { seq: number; type: string });
     assert.equal(events.at(-1)?.seq, record.status!.lastSeq, "terminal archive must reach its authoritative worker lastSeq");
     assert.equal(events.at(-1)?.type, "finished");
-    assert.deepEqual(await readdir(path.join(directory, "worker")), [], "release requires the complete durable archive");
+    assert.deepEqual(await readdir(path.join(directory, "worker")), ["materials"], "release requires the complete durable archive");
+    assert.deepEqual(await readdir(path.join(directory, "worker/materials")), [], "finished sessions retain no shared material");
   } finally {
     await worker.close(); await rm(directory, { recursive: true, force: true });
   }
@@ -1344,7 +1345,8 @@ test("incomplete terminal SSE preserves the worker and reports a missing archive
     const state = await readRunState(run);
     assert.equal(state.manifest.states[task.id]!.status, "succeeded", "accepted evaluation survives a missing debug archive");
     assert.equal(state.manifest.states[task.id]!.artifactStatus?.status, "missing");
-    assert.deepEqual(await readdir(path.join(directory, "worker")), [record.spec.attemptId]);
+    assert.deepEqual((await readdir(path.join(directory, "worker"))).sort(), [record.spec.attemptId, "materials"].sort());
+    assert.deepEqual(await readdir(path.join(directory, "worker/materials")), [], "archive retention does not retain shared material");
     assert.match(await readFile(path.join(directory, "log/runtime.log"), "utf8"), /event_archive_incomplete/);
     await runEvaluation(options); assert.equal(calls.get(task.id), 1, "resume may add pending workflow tasks but must not reevaluate the committed task to repair debug output");
   } finally {

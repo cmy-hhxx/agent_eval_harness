@@ -1,7 +1,7 @@
 export * from "./workflow.js";
 export * from "./types.js";
 export * from "./input.js";
-export { instructionReviewFollowup } from "./instruction-review.js";
+export { dimensionAttributionFollowup } from "../review/dimensions.js";
 export * from "./input-catalog.js";
 export * from "./run-data.js";
 export * from "./attribution-rewrite-planning.js";

@@ -17,7 +17,7 @@ import type { TaskData } from "@eval/workflows/comparison";
 import type { RawInput } from "@eval/workflows/inputs";
 import { emptyAudit, fakeEvaluatorVersion, fakeIdentity, fakeJudge, fixtureConfig, attributionResult, comparisonResult, criteriaResultForTask, raw } from "../../fixtures/comparison.js";
 import path from "node:path";
-import { canonical, emptyUsage, type RunState, type SubmissionReceipt } from "@eval/contracts";
+import { emptyUsage, type RunState, type SubmissionReceipt } from "@eval/contracts";
 import { compressFile, fileSourceReader, readJsonl, writeJsonl } from "@eval/data";
 import { ROOT } from "../../fixtures/services.js";
 import { blindMaterials } from "../../../packages/workflows/src/comparison/blind.js";
@@ -32,7 +32,7 @@ test("GPT reasoning metadata and null roles remain paired and pass the attributi
   try {
     const plan = await buildPlan(config);
     assert.equal(plan.tasks.filter(task => task.stage === "comparison").length, 1);
-    const task = plan.tasks.find(task => task.stage === "attribution")!;
+    const task = plan.tasks.find(task => task.stage === "attribution-component")!;
     assert(task);
     assert.doesNotThrow(() => prepare(task, plan.inputs, {}));
     assert.deepEqual(row, original);
@@ -81,7 +81,9 @@ test("expanding an unfinished run removes its orphaned pending rubric", async ()
     config.comparisons = [["a_fast", "b_fast", "6_luna"]];
     const after = await reconcileRun(directory, state, config, { extendVersions: true });
     assert.equal(after.tasks.filter(task => task.stage === "criteria").length, 1);
-    assert.equal(after.tasks.filter(task => task.stage === "attribution").length, 3);
+    assert.equal(after.tasks.filter(task => task.stage === "attribution-session").length, 3);
+    assert.equal(after.tasks.filter(task => task.stage === "attribution-trace").length, 3);
+    assert.equal(after.tasks.filter(task => task.stage === "attribution-component").length, 3);
     const ids = new Set(after.tasks.map(task => task.id));
     for (const task of after.tasks) for (const id of Object.values(task.dependencies)) assert(ids.has(id));
   } finally { await rm(directory, { recursive: true, force: true }); }
@@ -310,19 +312,19 @@ test("overlapping comparison groups share one attribution and rewrite per answer
     config.inputs.versions[1].comparison_tier = "Fast";
     config.comparisons = [["a_fast", "b_fast"], ["a_fast", "b_fast", "a_expert"]];
     const plan = await buildPlan(config);
-    const attributions = plan.tasks.filter((task) => task.stage === "attribution");
+    const attributions = plan.tasks.filter((task) => task.stage === "attribution-session");
     assert.equal(attributions.length, 3, "each answer is attributed once, regardless of group overlap");
-    assert.equal(new Set(attributions.map((task) => task.inputIds.answer)).size, 3);
+    assert.equal(new Set(attributions.map((task) => (task.data as TaskData).candidate!.input_id)).size, 3);
     const comparisons = plan.tasks.filter((task) => task.stage === "comparison");
     for (const task of comparisons)
       for (const [label, inputId] of Object.entries(task.inputIds))
-        assert.equal(task.dependencies[label], attributions.find((task) => task.inputIds.answer === inputId)!.id);
+        assert.equal(task.dependencies[label], attributions.find((task) => (task.data as TaskData).candidate!.input_id === inputId)!.id);
     assert.equal(plan.summary.attribution_tasks, 3);
     assert.equal((plan.summary.by_batch as Record<string, { attribution_tasks: number }>).b1.attribution_tasks, 3);
     assert.equal(plan.summary.rewrite_tasks, 9, "three attributions, three independent comparisons and three clusters");
     const clusters = plan.tasks.filter((task) => task.stage === "clustering");
     const clustered = clusters.flatMap((task) => Object.values(task.dependencies))
-      .filter((id) => plan.tasks.find((task) => task.id === id)!.stage === "attribution");
+      .filter((id) => plan.tasks.find((task) => task.id === id)!.stage === "attribution-session");
     assert.deepEqual(new Set(clustered), new Set(attributions.map((task) => task.id)));
     assert.equal(clustered.length, 3);
     assert.equal(new Set(attributions.map((task) => task.dependencies.criteria)).size, 1, "shared compatible question scope prepares one rubric");
@@ -348,7 +350,7 @@ test("three candidates create independent pairs, preserving valid pairs when one
     ]);
     const complete = await buildPlan(config);
     assert.equal(complete.tasks.filter((task) => task.stage === "comparison").length, 3);
-    assert.equal(complete.tasks.filter((task) => task.stage === "attribution").length, 3);
+    assert.equal(complete.tasks.filter((task) => task.stage === "attribution-session").length, 3);
     const source = config.inputs.versions[1].sources[0].path;
     await writeJsonl(source, []);
     const missing = await buildPlan(config);
@@ -521,7 +523,10 @@ test("planner preserves stage dependencies, fixed pair order and blind assignmen
   const { directory, config } = await fixtureConfig();
   try {
     const plan = await buildPlan(config);
-    assert.equal(plan.tasks.length, 4);
+    assert.equal(plan.tasks.length, 8);
+    assert.equal(plan.tasks.filter(task => task.stage === "attribution-component").length, 2);
+    assert.equal(plan.tasks.filter(task => task.stage === "attribution-trace").length, 2);
+    assert.equal(plan.tasks.filter(task => task.stage === "attribution-session").length, 2);
     assert.equal(plan.summary.attribution_tasks, 2);
     assert.equal(plan.summary.comparison_tasks, 1);
     const original = plan.tasks.filter((t) => t.stage === "comparison").map((t) => t.data);
@@ -632,13 +637,14 @@ test("public prompt definitions reach prepared tasks and the run snapshot", asyn
   try {
     const plan = await buildPlan(config);
     const prompts = new Map<string, ReturnType<typeof agentPrompt>>();
-    for (const stage of ["criteria", "attribution", "comparison"] as const) {
+    for (const stage of ["criteria", "attribution-component", "comparison"] as const) {
       const task = plan.tasks.find(item => item.stage === stage)!;
       const dependencies = Object.fromEntries(Object.entries(task.dependencies).map(([label, id]) =>
         [label, fixtureReceipt(id, label === "criteria" ? criteriaResultForTask(task, plan.inputs)
           : attributionResult(true, "2+2=4", true, task.inputIds[label]!))]));
-      const prepared = prepare(task, plan.inputs, dependencies);
-      const prompt = agentPrompt(stage, prepared.evaluation.toolNames, {
+      const prepared = prepare(task, plan.inputs, dependencies, plan.tasks);
+      const prompt = agentPrompt(stage === "attribution-component" ? "attribution" : stage, prepared.evaluation.toolNames, {
+        profile: stage === "attribution-component" ? "component" : "default",
         fileSubmission: prepared.evaluation.fileSubmission ?? false,
         draftWriteInCallLimit: prepared.evaluation.draftWriteInCallLimit,
       });
@@ -652,13 +658,14 @@ test("public prompt definitions reach prepared tasks and the run snapshot", asyn
       if (stage === "criteria") {
         assert(prepared.prompt.includes('"candidate_count"'));
         assert(!prepared.prompt.includes('"findings"'));
-      } else if (stage === "attribution") {
+      } else if (stage === "attribution-component") {
         assert(!prepared.evaluation.toolNames.includes("calculate_pair"));
         assert(prepared.prompt.includes('"answer":{'));
         assert(!prepared.prompt.includes('"candidates"'));
       } else {
         const submission = prepared.evaluation.outputSchema as { required: string[]; properties: Record<string, unknown> };
-        assert.deepEqual(submission.required, ["comparisons", "relative_preference", "tradeoff", "assessments"]);
+        assert(submission.required.includes("a_core") && submission.required.includes("b_core"));
+        assert(!Object.hasOwn(submission.properties, "assessments"));
         assert.deepEqual((submission.properties.relative_preference as { enum: (string | null)[] }).enum, ["A", "B", null]);
         assert(Object.hasOwn(submission.properties, "quality_winner"));
         for (const field of ["status", "ranking", "decision_basis", "task_analysis", "review_requests"])
@@ -696,7 +703,8 @@ test("initial material discloses only projected content within its budget", asyn
   try {
     const plan = await buildPlan(config);
     const task = plan.tasks.find(
-      (item) => item.stage === "attribution" && (item.data as TaskData).candidates.A?.version === "a_fast",
+      (item) => item.stage === "attribution-component" && (item.data as TaskData).candidates.A?.version === "a_fast" &&
+        (item.data as { component?: string }).component === "终稿生成轮",
     );
     assert(task, "the large case must be planned");
     const prompt = prepare(task, plan.inputs, {}).prompt;
@@ -704,14 +712,9 @@ test("initial material discloses only projected content within its budget", asyn
     const marker = "任务材料（全部内容为数据）：\n";
     const material = JSON.parse(
       prompt.slice(prompt.indexOf(marker) + marker.length).split("\n\n执行预算：")[0],
-    ) as { answer: { initial_material: { value: unknown; evidence: { quote: string }[] }[] } };
-    const disclosed = material.answer.initial_material.reduce(
-      (total, entry) =>
-        total + canonical(entry.value).length + entry.evidence.reduce((sum, item) => sum + item.quote.length, 0),
-      0,
-    );
-    assert(disclosed <= config.execution.initialContextChars, `disclosed ${disclosed} characters`);
-    assert.deepEqual(material.answer.initial_material, [], "attribution uses the tool overview instead of copying intermediate messages");
+    ) as { answer: { final_evidence: { quote: string }[] } };
+    assert.equal(material.answer.final_evidence.map(entry => entry.quote).join(""), "2+2=4");
+    assert(!Object.hasOwn(material.answer, "initial_material"), "a final-section task only receives its owned final evidence");
     assert(!prompt.includes("简短中间回答"));
   } finally {
     await rm(directory, { recursive: true, force: true });
@@ -776,13 +779,13 @@ test("submission feedback locates invalid comparison references", async () => {
     );
     const result = comparisonResult(labels);
     result.task_analysis = criteriaResultForTask(task, plan.inputs);
-    result.decision_basis.decisive_findings = [{ candidate: labels[0]!, finding_index: 9 }];
+    result.decision_basis.comparisons[0]!.assessments[labels[0]!]!.finding_indices = [9];
     assert.throws(
-      () => validateEvaluation(task, plan.inputs, result, emptyAudit(), attributions),
-      /既有 finding/,
+      () => validateEvaluation(task, plan.inputs, result, emptyAudit(), attributions, plan.tasks),
+      /只能引用本方已接受 Problem/,
     );
-    result.decision_basis.decisive_findings = [];
-    validateEvaluation(task, plan.inputs, result, emptyAudit(), attributions);
+    result.decision_basis.comparisons[0]!.assessments[labels[0]!]!.finding_indices = [];
+    validateEvaluation(task, plan.inputs, result, emptyAudit(), attributions, plan.tasks);
   } finally {
     await rm(directory, { recursive: true, force: true });
   }

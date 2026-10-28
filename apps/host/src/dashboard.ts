@@ -37,6 +37,7 @@ interface CheckpointTask {
   stage?: string;
   status?: string;
   failure?: { draft?: unknown; errors?: { category?: string }[] };
+  receipt?: { incompleteDependencies?: string[] };
 }
 
 interface DashboardCheckpoint {
@@ -85,6 +86,7 @@ function modelReadiness(source: Record<string, unknown>, configuration?: Applica
 function fallbackProgress(checkpoint: DashboardCheckpoint) {
   const tasks = Object.values(checkpoint.tasks || {});
   const accepted = tasks.filter((task) => task.status === "succeeded").length;
+  const partial = tasks.filter(task => task.status === "succeeded" && task.receipt?.incompleteDependencies?.length).length;
   const running = tasks.filter((task) => task.status === "running");
   const failures: Record<string, number> = {};
   for (const task of tasks)
@@ -96,6 +98,8 @@ function fallbackProgress(checkpoint: DashboardCheckpoint) {
     queued: tasks.filter((task) => task.status === "pending").length,
     running: running.length,
     accepted,
+    complete: accepted - partial,
+    partial,
     repairing: running.filter((task) => task.failure?.draft !== undefined).length,
     failures,
     blocked: tasks.filter((task) => task.status === "blocked").length,

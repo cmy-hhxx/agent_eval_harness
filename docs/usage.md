@@ -30,7 +30,7 @@ api = openai-responses
 
 评测入口只接受 `openai-responses`，不自动降级协议。URL 保留网关要求的路径；`models = model-a,model-b` 声明静态目录，适合没有 `/models` 的自部署服务。未声明时才发现远程目录；一个渠道发现失败不隐藏其他渠道，错误在看板按渠道呈现。重复或未知字段报错，支持整行注释和引号字符串，不支持行尾注释或变量插值。完整字段以模板和 [settings.ts](../apps/host/src/settings.ts) 为准。
 
-`[environment]` 保存搜索、Mongo、代理等服务端变量，覆盖同名进程变量。代理配置须让 localhost、127.0.0.1、::1 直连。评测和服务器 Eris 均不读取本机 .env，Eris 独立配置见 [Agent 配置](../agent/README.md#模型与设置)。测试或独立部署可用 `EVAL_CONFIG_FILE` 指定 INI。
+`[environment]` 保存搜索、Mongo、代理等服务端变量，覆盖同名进程变量。统一网络初始化合并 `NO_PROXY/no_proxy`，始终让 localhost、127.0.0.1、::1 直连；其他地址保留配置的代理规则。评测和服务器 Eris 均不读取本机 .env，Eris 独立配置见 [Agent 配置](../agent/README.md#模型与设置)。测试或独立部署可用 `EVAL_CONFIG_FILE` 指定 INI。
 
 JSON 配置的 `models.<profile>.channel` 引用渠道。`--config` 可重复，按顺序深度合并；数组整体覆盖，相对路径按各自文件目录解析。共享配置在 [host.json](../configs/host.json)，本机模型填入 `configs/local/models.json`。
 
@@ -216,9 +216,11 @@ npm run eval -- run --test-eval --run-id pilot-001 --discover-inputs \
 
 Worker 启动或任务准备期间若有任务完成，Host 会重新排序可执行任务，让刚就绪的下游及时共享槽位，不等待旧的上游派发队列走完。
 
+运行进度的总计与各阶段同时提供 `accepted / complete / partial`：已接受总数等于完整结果与部分结果之和。`partial` 表示结果仍有未完成依赖，缺口沿流水线传递；暂停留下的 `cancelled` 单列，不计作原始执行失败。
+
 中断报告只呈现正式 session 归因和 comparison；组件、trace 收据保留在恢复状态中，不当作 comparison 导出。
 
-问财优先执行所选范围的标准、归因与比较；主评测仍有待执行或在途任务时，后置指令复核和改写不占用执行槽位。主评测收尾后完成独立指令检查与全部改写，成功收据在同 run 续跑中保留。指令复核的来源目录按消息字段和规范标题提供原文读取坐标，完整输入快照仍可按需读取。
+问财优先执行所选范围的标准、归因与比较；主评测仍有待执行或在途任务时，后置指令遵循归因和改写不占用执行槽位。主评测收尾后完成独立指令遵循归因与全部改写，成功收据在同 run 续跑中保留。指令遵循归因的来源目录按消息字段和规范标题提供原文读取坐标，完整输入快照仍可按需读取。
 
 ### 清洗批次运行
 
@@ -281,7 +283,7 @@ npm run eval -- validate-stability --run-id stability-001 \
 
 独立审阅结果写入实验根目录 `semantic-review.json` 数组：每项包含 `task_id`、`submission_id`、`reviewer: {kind: "agent" | "human", name}`、`result: "passed" | "failed"` 和 `rationale`。只绑定当前已接受的改写收据；重复、过期或未知引用会报错。未记录的改写保持未审，整链中的改写也进入覆盖分母。重建报告保留已记录的语义失败，不改写原判词。
 
-按[三层验收](quality.md#三层验收)填写审阅：保真硬错误为 failed；仅有非决定性措辞缺陷可为 passed，并在 rationale 留下缺陷与不影响原意的依据。Comparison 的 needs_review 表示已停下等待来源或关键口径复核，单列在未裁决数量中，不等于执行失败，也不冒充胜负或平局。
+按[归因执行边界](quality.md#归因执行边界)填写审阅：保真硬错误为 failed；仅有非决定性措辞缺陷可为 passed，并在 rationale 留下缺陷与不影响原意的依据。Comparison 的 needs_review 表示已停下等待来源或关键口径复核，单列在未裁决数量中，不等于执行失败，也不冒充胜负或平局。
 
 停止实验 Host 后，用 `npm run eval -- report --run /mnt/fin_bench/eval_data/0_wencai/eval_output/test_eval/stability-001` 重新生成实验报告，不调用模型。
 
@@ -364,7 +366,7 @@ npm run eval -- rewrite-comparisons --run /mnt/fin_bench/eval_data/0_wencai/eval
 | 文件 | 用途 |
 |---|---|
 | state.json | 周期性派生快照：任务状态、来源索引、收据引用和累计用量；不保存完整修复/复核现场 |
-| progress.jsonl | 已投影的追加式状态事件，按序号配合 state.json 恢复；不复制正式结果正文 |
+| progress.jsonl | 检查点之后的增量状态与收据；检查点成功落盘后压缩已覆盖事件，保留序号边界 |
 | overview.json | 运行目录与预计算统计：正式战绩、比例和结果引用，不保存正文 |
 | results/criteria.jsonl | 共同标准 |
 | results/attribution.jsonl | 单回答归因与证据 |
@@ -382,6 +384,10 @@ npm run eval -- rewrite-comparisons --run /mnt/fin_bench/eval_data/0_wencai/eval
 恢复时，同序号的 progress 投影只允许为热日志 receipt 补充尚未存在的 `exported`；判词、审计、状态或已有结果引用不一致仍拒绝恢复。重放完成后才应用本次配置与评测器标记，已接受 receipt 保留原评测器标记，保证续跑策略记录与实际执行一致。
 
 `state.json` 仅周期写入，并对错误消息、错误数量和 receipt 审计做固定压缩；draft、completion candidate、inspection、evidence bank 与完整 review 上下文不进入检查点。热日志和 outbox 路径由 `EVAL_HOT_STATE_ROOT` 控制，默认位于 `~/.cache/eval-agent-harness/hot`；生产应放在本机 SSD，不放在 Ceph。
+
+Host 每次成功保存检查点后，原子替换 `progress.jsonl`，仅保留检查点之后的事件和一个序号边界。运行结束并保存成功后通常只剩边界；检查点写入失败时保留原事件。追加与压缩共用同一写入队列；读取遇到检查点切换会重新读取快照，不能跳过缺失增量。该文件不承担完整历史审计。
+
+既有停止运行的目录可执行 `node scripts/compact-progress.mjs <run目录>`，使用已有检查点压缩历史进度，并输出压缩前后字节数。命令持有同一把 run 锁，会拒绝正在运行的 Host；不改原始输入、正式结果或检查点。
 
 Worker 健康检查暂时失败时，Host 暂缓使用该槽位并重查，不终止仍存活的进程，也不增加任务尝试次数。托管槽位绑定具体子进程，确认进程退出后才重建，避免端口复用误认其他 Worker。
 

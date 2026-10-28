@@ -1,11 +1,10 @@
 import { ValidationError, HttpError, canonical, safeId, evidenceSources, requiredReadCallLimit, mergeRequiredReadRanges, extendRequiredReadRanges, toolBudgetMetadataChars, validationRequiredReads, validateEvidenceBank, validateEvidenceBankSources, type EvidenceBankUpdate, type EvidenceBank } from "@eval/contracts";
 import {
   appendProgressJournal,
-  internalPath,
+  compactProgressJournal,
   RunHotStore,
   runJournalIdentity,
   type RunJournalDelta,
-  writeJson,
 } from "@eval/data";
 import type {
   AttemptSpec,
@@ -29,6 +28,7 @@ import type {
 import { AgentRegistry } from "./agents.js";
 import { checkpointSnapshot } from "./checkpoint.js";
 import { cumulativeAttempts, executionStopReason } from "./run-limits.js";
+import { dependencyReady } from "./scheduling.js";
 
 /** Mandatory calls must be backed by distinct pages advancing declared material. */
 function availableRequiredReadCalls(reads: TraceRead[], required: { target: TraceRead; text: string }[]): number {
@@ -162,7 +162,7 @@ export class RunStore {
     this.services = services;
     this.directMode = !journal;
     this.journal = journal ?? new RunHotStore(":memory:", runJournalIdentity(state));
-    this.lastDeliveredSequence = this.journal.lastDeliveredSequence();
+    this.lastDeliveredSequence = Math.max(state.manifest.journalSequence ?? 0, this.journal.lastDeliveredSequence());
     this.writeResults = services.repository.createResultWriter(run, inputs);
   }
   /** Persist a compact local delta. Ceph projection runs through the outbox. */
@@ -275,6 +275,7 @@ export class RunStore {
     const writeStarted = performance.now();
     await this.writeResults(snapshot);
     await this.services.repository.writeRun(this.run, snapshot);
+    await compactProgressJournal(this.run, snapshot.manifest.journalSequence ?? 0);
     for (const [id, receipt] of Object.entries(snapshot.receipts))
       if (this.state.receipts[id]?.submissionId === receipt.submissionId && receipt.exported)
         this.state.receipts[id].exported = receipt.exported;
@@ -316,7 +317,10 @@ export class RunStore {
     const dependencies: Record<string, SubmissionReceipt> = {};
     for (const [label, id] of Object.entries(task.dependencies)) {
       const receipt = await this.receipt(id);
-      if (!receipt) throw new Error(`Dependency missing: ${id}`);
+      if (!receipt) {
+        if (dependencyReady(task, label, this.manifest.states) && this.manifest.states[id]?.status !== "succeeded") continue;
+        throw new Error(`Dependency missing: ${id}`);
+      }
       dependencies[label] = receipt;
     }
     return dependencies;
@@ -369,17 +373,6 @@ export class RunStore {
     this.evidenceSources.set(spec.attemptId, sources);
     this.attempts.set(spec.attemptId, spec);
     this.bindings.set(spec.attemptId, binding);
-    if (this.manifest.debug)
-      await writeJson(
-        internalPath(
-          this.run,
-          "tasks",
-          spec.taskId,
-          `attempt-${state.attempts.toString().padStart(3, "0")}`,
-          "attempt.json",
-        ),
-        { spec },
-      );
     await this.save(spec.taskId);
     return true;
   }
@@ -558,7 +551,7 @@ export class RunStore {
     try {
       const binding = this.bindings.get(spec.attemptId)!;
       evaluation = this.services.agents.resolve(binding, value.evaluation, value.audit);
-      this.services.agents.validate(binding, evaluation, value.audit,{semantic:!spec.evaluation.resolveValidatesResult});
+      this.services.agents.validate(binding, evaluation, value.audit,{rules:!spec.evaluation.resolveValidatesResult});
     } catch (error) {
       this.registerValidationReads(spec, error);
       throw error;
@@ -569,6 +562,8 @@ export class RunStore {
         message: value.submissionId,
         validationMs: performance.now() - validationStarted, validationCpuMs: (cpu.user + cpu.system) / 1000 });
     }
+    const incompleteDependencies = [...new Set(Object.values(task.dependencies).flatMap(id =>
+      this.committedReceipts[id] ? this.committedReceipts[id].incompleteDependencies ?? [] : [id]))];
     const receipt: SubmissionReceipt = {
       ...value,
       evaluation,
@@ -577,6 +572,7 @@ export class RunStore {
       judge: spec.model.model,
       status: "succeeded",
       acceptedAt: Date.now(),
+      ...(incompleteDependencies.length ? { incompleteDependencies } : {}),
     };
     const failure = state.failure,
       repeatedErrors = state.repeatedErrors;

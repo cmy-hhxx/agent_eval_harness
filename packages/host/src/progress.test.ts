@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { emptyUsage, type PlannedTask, type RunState, type TaskState } from "@eval/contracts";
+import { emptyUsage, type PlannedTask, type RunState, type SubmissionReceipt, type TaskState } from "@eval/contracts";
 import { attributionScheduling } from "@eval/workflows/attribution";
 import { progressSnapshot } from "./progress.js";
 
@@ -50,6 +50,24 @@ test("progress separates execution failures from dependency blocks and cancellat
   assert.equal(preparing.preparing, 1);
   assert.equal(preparing.running + preparing.repairing + preparing.queued, 0);
   assert.equal(preparing.updated_at, '1970-01-01T00:00:01.000Z');
+  const receipt: SubmissionReceipt = { taskId: 'complete', attemptId: 'a', submissionId: 's', evaluatorVersion: 'test',
+    judge: 'test', status: 'succeeded', acceptedAt: 500, evaluation: {},
+    audit: { calls: 0, requiredReadCalls: 0, traceReads: [], viewedImages: [], calculations: [], artifacts: [] }, usage: emptyUsage() };
+  for (const id of ['complete', 'partial']) {
+    state.manifest.tasks.push({ id, stage: 'summary', inputIds: {}, dependencies: {}, data: {} });
+    state.manifest.states[id] = { status: 'succeeded', attempts: 1 };
+    state.receipts[id] = { ...receipt, taskId: id, ...(id === 'partial' ? { incompleteDependencies: ['timed_out'] } : {}) };
+  }
+  for (const [id, source, settled] of [['soft', 'timed_out', true], ['strict', 'timed_out', false], ['paused', 'cancelled', true]] as const) {
+    state.manifest.tasks.push({ id, stage: 'summary', inputIds: {}, dependencies: { source },
+      ...(settled ? { settledDependencies: ['source'] } : {}), data: {} });
+    state.manifest.states[id] = { status: 'pending', attempts: 0 };
+  }
+  const counted = progressSnapshot(state, 1000);
+  assert.deepEqual([counted.accepted, counted.complete, counted.partial], [2, 1, 1]);
+  assert.deepEqual([counted.stages.summary!.accepted, counted.stages.summary!.complete, counted.stages.summary!.partial], [2, 1, 1]);
+  assert.equal(counted.stages.summary!.ready, 1, 'only a terminal failure can release a settled dependency');
+  assert.equal(progressSnapshot(state, 1000, new Set(['timed_out'])).stages.summary!.ready, 0);
 });
 
 test("attribution progress reports business session states instead of internal task acceptance", () => {

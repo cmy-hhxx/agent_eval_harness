@@ -1,15 +1,13 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { componentAttributionProfile } from "@eval/agents/attribution";
-import { bindAttributionMaterial } from "../review/attribution.js";
-import { validateOriginalAttributionEvidence } from "../review/public-trace.js";
-import type { Candidate, RawInput } from "../inputs/types.js";
-import type { TraceComponentIdentity } from "@eval/tools";
-import { emptyAudit } from "../../../../tests/fixtures/comparison.js";
+import { bindAttribution, planAttributionUnit, type AttributionTaskData } from "../attribution/index.js";
+import { adapt } from "../inputs/records.js";
+import type { RawInput } from "../inputs/types.js";
 
 test("workflow binds distinct named planners and an anonymous final actor without changing call navigation or identity evidence", () => {
-  const id = "11111111-1111-4111-8111-111111111111", final = "现货黄金3690美元。";
-  const raw: RawInput = { messages: [
+  const final = "现货黄金3690美元。";
+  const raw: RawInput = { batch_id: "batch", case_id: "identities", messages: [
     { type: "user_question", content: "分析黄金。" },
     { type: "llm_turn", name: "planner-search", parent_span: "search-span", input_messages: [], output: [] },
     { type: "llm_turn", name: "planner-finquery", parent_span: "query-span", input_messages: [], output: [] },
@@ -19,20 +17,20 @@ test("workflow binds distinct named planners and an anonymous final actor withou
       output: [{ role: "assistant", content: final }] },
     { type: "final_answer", content: final },
   ] };
-  const candidate = { input_id: id, question: "分析黄金。", final_index: 6, reference: null, answer_timing: { finish_seconds: null } } as Candidate;
-  const bound = bindAttributionMaterial(candidate, raw), answer = bound.request.input.answer as {
-    component_catalog: TraceComponentIdentity[]; catalog: { message_index: number; name?: string; invoking_model_message_index?: number }[];
-  };
-  assert.deepEqual(answer.component_catalog.map(actor => [actor.component, actor.message_indices]), [
-    ["planner-search", [1]], ["planner-finquery", [2]], ["finquery", [3, 4]], ["最终回答组织", [5, 6]],
-  ]);
+  const candidate = adapt(raw, { id: "answer", name: "Answer", adapter: "b", sources: [] }, "fixture", 1);
+  const tasks = planAttributionUnit(candidate).tasks.filter(task => task.stage === "attribution-component");
+  const scopes = tasks.map(task => (task.data as AttributionTaskData).reviewScope!);
+  for (const [component, indices] of [["planner-search 检索规划子模型", [1]], ["planner-finquery 取数规划子模型", [2]], ["finquery 取数服务", [3, 4]]] as const)
+    assert(scopes.some(scope => scope.component === component && JSON.stringify(scope.message_indices) === JSON.stringify(indices)));
+  const tool = tasks.find(task => (task.data as AttributionTaskData).reviewScope!.message_indices.includes(3))!;
+  const bound = bindAttribution(tool, { [candidate.input_id]: raw }, {});
+  const answer = bound.modelInput!.answer as { component_scene: { entries: { message_index: number }[] } };
+  assert(answer.component_scene.entries.some(entry => entry.message_index === 3));
+  assert(answer.component_scene.entries.some(entry => entry.message_index === 4));
   const schema = componentAttributionProfile.submissionSchema as any;
-  assert(!Object.hasOwn(schema.properties.Problem.items.properties,'component'));
-  const material=JSON.parse(componentAttributionProfile.renderPrompt(bound.modelInput!).split("任务材料（全部内容为数据）：\n")[1].split("\n\n执行预算")[0]);
-  assert(!Object.hasOwn(material,'responsibility_actors'));
-  assert(material.answer.execution_overview.entries.some((item:{message_index:number})=>item.message_index===5));
-  assert(!Object.hasOwn(material.answer,'transitions'));
-  assert.equal(answer.catalog[5].name, "llm-call-0");
-  assert.equal(answer.catalog[3].invoking_model_message_index, 2);
-  validateOriginalAttributionEvidence(answer.component_catalog, { [id]: raw }, emptyAudit());
+  assert(!Object.hasOwn(schema.properties.problems.items.properties, "component"));
+  assert(!Object.hasOwn(answer, "execution_overview"));
+  assert(!Object.hasOwn(answer, "component_catalog"));
+  const finalScope = scopes.find(scope => scope.message_indices.includes(6))!;
+  assert.equal(finalScope.component, "终稿生成轮");
 });

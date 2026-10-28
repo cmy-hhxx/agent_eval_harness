@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { emptyUsage, type RunState } from "@eval/contracts";
@@ -8,6 +8,8 @@ import {
   applyRunJournalDelta,
   isRunJournalProjection,
   appendProgressJournal,
+  compactProgressJournal,
+  CheckpointAdvancedError,
   readProgressJournal,
   runProgressFile,
   RunHotStore,
@@ -105,4 +107,40 @@ test("checkpoint replay seeks backward across large UTF-8 rows without parsing c
   assert.deepEqual(await readProgressJournal(root, 3), []);
   await appendProgressJournal(root, [{ seq: 4, event: { at: 4 } }]);
   assert.deepEqual((await readProgressJournal(root, 2)).map(row => row.seq), [3, 4]);
+});
+
+test("checkpoint compaction keeps concurrent appends, rejects stale readers and leaves a small boundary at completion", async t => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "eval-progress-compact-"));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const events = Array.from({ length: 30 }, (_, index) => ({ seq: index + 1, event: {
+    at: index + 1, manifest: { config: { text: "完整恢复信息".repeat(index < 10 ? 10000 : 1) } },
+  } }));
+  await appendProgressJournal(root, events.slice(0, 10));
+  const before = (await stat(runProgressFile(root))).size;
+  await Promise.all([
+    appendProgressJournal(root, events.slice(10, 20)),
+    compactProgressJournal(root, 10),
+    appendProgressJournal(root, events.slice(20)),
+  ]);
+  assert.deepEqual(await readProgressJournal(root, 10), events.slice(10));
+  assert((await stat(runProgressFile(root))).size < before / 100);
+  await assert.rejects(readProgressJournal(root, 9), CheckpointAdvancedError);
+  await compactProgressJournal(root, 30);
+  assert.deepEqual(await readProgressJournal(root, 30), []);
+  assert((await stat(runProgressFile(root))).size < 100);
+  const boundary = JSON.parse(await readFile(runProgressFile(root), "utf8"));
+  assert.equal(boundary.seq, 30);
+  assert.equal(boundary.event.checkpoint, true);
+  await appendProgressJournal(root, [...events, { seq: 31, event: { at: 31 } }]);
+  assert.deepEqual(await readProgressJournal(root, 30), [{ seq: 31, event: { at: 31 } }]);
+});
+
+test("compaction reads only the uncovered tail of an old large journal", async t => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "eval-progress-compact-tail-"));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  await writeFile(runProgressFile(root), "covered bytes that must not be parsed\n".repeat(100000) +
+    JSON.stringify({ seq: 100, event: { at: 100 } }) + "\n" + JSON.stringify({ seq: 101, event: { at: 101 } }) + "\n");
+  await compactProgressJournal(root, 100);
+  assert.deepEqual(await readProgressJournal(root, 100), [{ seq: 101, event: { at: 101 } }]);
+  assert((await stat(runProgressFile(root))).size < 200);
 });

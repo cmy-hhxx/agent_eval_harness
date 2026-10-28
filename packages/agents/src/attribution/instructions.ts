@@ -30,7 +30,7 @@ export function instructionEvidenceContext(request: AgentRequest) {
       if (!source || !original || !paragraphs(original.text).includes(value.quote)) {
         bindingIssues.push({ category: "evidence", code: "instruction_source_binding_invalid",
           path: `/answer/criterion_instruction_sources/${id.replaceAll("~", "~0").replaceAll("/", "~1")}/${index}`,
-          message: "程序指令关联必须指向本回答真实指令上下文中的完整原始规范块，保留标题对应正文、条件与例外，不能使用模型改写、另一候选、规划器或工具内部提示。",
+          message: "指令关联必须指向本回答实际收到的完整原始规范段落，保留标题对应正文、条件与例外，不能使用模型改写、另一候选、规划器或工具内部提示。",
           actual: entry });
         return;
       }
@@ -42,7 +42,7 @@ export function instructionEvidenceContext(request: AgentRequest) {
           origin.path === coordinates.path && origin.start === coordinates.start && origin.end === coordinates.end && origin.quote === value.quote))) {
         bindingIssues.push({ category: "evidence", code: "instruction_source_binding_invalid",
           path: `/answer/criterion_instruction_sources/${id.replaceAll("~", "~0").replaceAll("/", "~1")}/${index}`,
-          message: "规范关联必须保留程序原始完整段落的精确 evidence_id，不能按引文反查、截断条件或替换重复位置。", actual: entry });
+          message: "规范关联必须引用完整原始段落的精确 evidence_id，不能按引文反查、截断条件或替换重复位置。", actual: entry });
         return;
       }
       evidence.push(cite(request.sources.answer.id, source.message_index, original, coordinates.start, coordinates.end));

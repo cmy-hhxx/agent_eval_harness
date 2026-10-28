@@ -23,6 +23,23 @@ async function context() {
   };
   return ctx;
 }
+test("source tool schemas expose only this session's material names without changing other sessions", async () => {
+  const registry = createRegistry(), names = ["read_trace", "search_trace", "view_image"];
+  const original = structuredClone(registry.select(names).map(tool => tool.inputSchema));
+  for (const candidates of [["answer"], ["A", "B"]]) {
+    const definitions = registry.select(names, candidates);
+    assert(definitions.every(tool => JSON.stringify((tool.inputSchema.properties as any).candidate.enum) === JSON.stringify(candidates)));
+  }
+  assert.deepEqual(registry.select(names).map(tool => tool.inputSchema), original);
+  const ctx = await context();
+  try {
+    const runtime = new ToolRuntime(ctx, registry.select(["read_trace"], [...ctx.inputs.keys()]));
+    const result = await runtime.execute("read_trace", { candidate: "run-name", message_index: 0 }, new AbortController().signal);
+    assert.equal(result.isError, true);
+    assert.match(JSON.stringify(result), /allowedValues.*A/);
+    assert.equal(ctx.audit.traceReads.length, 0);
+  } finally { await rm(ctx.workdir, { recursive: true, force: true }); }
+});
 test("JSON drafting retains earlier rows and exact literals through investigation and closing", async () => {
   const ctx = await context();
   try {
@@ -446,7 +463,7 @@ test("bounded context rereads retain a complete rule after fragmented exposure w
   } finally { await rm(ctx.workdir, { recursive: true, force: true }); }
 });
 
-test("repeated long reads reuse evidence with a compact preview, while new ranges remain readable", async () => {
+test("repeated reads retain full requested context without duplicating proof or budget", async () => {
   const ctx = await context();
   try {
     ctx.policy.maxToolCalls = 4;
@@ -459,8 +476,8 @@ test("repeated long reads reuse evidence with a compact preview, while new range
     assert.equal(first.evidence[0].quote, text.slice(0, 3000));
     for (const page of [repeat, subset]) {
       assert.equal(page.already_read, true);
-      assert.equal(page.evidence[0].quote, undefined);
-      assert.equal(page.evidence[0].quote_preview.length, 200);
+      assert.equal(page.evidence[0].quote, text.slice(page.offset, page.next_offset));
+      assert.equal(page.evidence[0].quote_preview, undefined);
       const ref = resolveEvidenceSelection(ctx.audit.evidenceBank!, page.evidence[0].reference, "/reference");
       assert.equal(resolveEvidence(source, ref, "A", ctx.audit, "/evidence", INPUT_ID).quote, text.slice(page.offset, page.next_offset));
     }
@@ -485,7 +502,7 @@ test("a complete JSON read reuses its text leaf but not matching text at another
     await read("/output/0");
     const reused = await read("/output/0/text");
     assert.equal(reused.already_read, true);
-    assert.equal(reused.evidence[0].quote, undefined);
+    assert.equal(reused.evidence[0].quote, text);
     assert.equal(ctx.audit.traceReads.length, 1, "reuse does not fabricate a second actual read");
     assert.equal((await read("/output/1/text")).already_read, undefined, "equal values at distinct locations remain distinct");
     ctx.audit.traceReads = [];
@@ -515,6 +532,35 @@ test("expanding a read returns only missing spans with reusable references for t
     assert(traceReadCoverage(ctx.audit, { candidate: "A", message_index: 0, kind: "text", path: "/output", start: 0, end: text.length }).covered);
   } finally { await rm(ctx.workdir, { recursive: true, force: true }); }
 });
+test("component search defaults to its review object but honors explicit cross-step source scopes", async () => {
+  const ctx = await context();
+  try {
+    ctx.policy.maxToolCalls = 4;
+    ctx.inputs.set("A", { messages: [
+      { role: "user", content: "Check revenue" },
+      { role: "assistant", content: "I will retrieve revenue" },
+      { role: "tool", content: "revenue = 42" },
+      { role: "assistant", content: "The result says revenue = 42" },
+    ] });
+    ctx.materialNavigation = { A: { review_scope: { message_indices: [1] }, final_message_index: 3 } };
+    const runtime = new ToolRuntime(ctx, createRegistry().select(["search_trace"]));
+    const search = async (scope: object) => (await runtime.execute("search_trace", {
+      candidate: "A", query: "revenue = 42", ...scope,
+    }, new AbortController().signal)).details as any;
+    const local = await search({});
+    assert.equal(local.total, 0);
+    assert.deepEqual(local.searched_message_indices, [1]);
+    const all = await search({ scope: "all" });
+    assert.equal(all.total, 2, "an explicit cross-step query must reach the actual source and its later use");
+    const returns = await search({ scope: "tool_returns" });
+    assert.equal(returns.total, 1);
+    assert.equal(returns.matches[0].evidence.message_index, 2);
+    const targeted = await search({ scope: "all", message_index: 2 });
+    assert.equal(targeted.total, 1);
+    assert.deepEqual(targeted.matches.map((match: any) => match.evidence.message_index), [2], "an explicit message remains the narrowest scope");
+  } finally { await rm(ctx.workdir, { recursive: true, force: true }); }
+});
+
 test("structured searches prefer real text fields over their serialized mirrors", async () => {
   const ctx = await context();
   try {

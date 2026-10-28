@@ -9,7 +9,7 @@
 | [score/](score/) | 原skill单题0–10总分、12项0–4及24诊断输出 |
 | [criteria/](criteria/) | 共同验收基准 |
 | [attribution/](attribution/) | 单回答归因的最小提交、问题证据责任及六字段正式结果 |
-| [instruction-review/](instruction-review/) | 后置独立指令检查、证据与核验账本 |
+| [instruction-review/](instruction-review/) | 后置独立指令遵循归因、证据与核验账本 |
 | [comparison/](comparison/) | 普通对比、可选核验及首查检查点 |
 | [rewrite/](rewrite/) | 文本槽位改写 |
 | [clustering/](clustering/) | 归类、问题库、待观察引用和来源复核 |

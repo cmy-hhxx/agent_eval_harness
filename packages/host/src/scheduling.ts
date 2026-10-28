@@ -1,5 +1,11 @@
 import type { PlannedTask, RunManifest, WorkflowScheduling } from "@eval/contracts";
 
+export function dependencyReady(task: PlannedTask, label: string, states: RunManifest["states"], active?: { has(id: string): boolean }): boolean {
+  const id = task.dependencies[label], status = states[id]?.status;
+  return status === "succeeded" || !!task.settledDependencies?.includes(label) &&
+    !active?.has(id) && (status === "failed" || status === "timed_out");
+}
+
 /** Scopes are replaced or extended by accepted follow-up tasks. Index each revision once. */
 export function createScopeMembership(manifest: Pick<RunManifest, "executionScope">): (id: string) => boolean {
   let scope: string[] | undefined, length = -1, selected = new Set<string>();
@@ -87,7 +93,7 @@ export function scheduleTasks(tasks: PlannedTask[], states: RunManifest["states"
     if (!stage) stages.set(task.stage, stage = { tasks: [], next: 0, running: 0 });
     const status = states[task.id]?.status;
     if (status === "running") stage.running++;
-    if (status === "pending" && Object.values(task.dependencies).every((id) => states[id]?.status === "succeeded"))
+    if (status === "pending" && Object.keys(task.dependencies).every(label => dependencyReady(task, label, states)))
       stage.tasks.push(task);
     else waiting.push(task);
   }

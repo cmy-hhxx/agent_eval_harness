@@ -137,7 +137,7 @@ test("public judgment bindings keep global indices and separate blind originals 
     const before = structuredClone({ task, inputs, dependencies });
     const binding = comparisonWorkflow.bind(task, inputs, dependencies, { tasks: contextTasks });
     assert(!Object.hasOwn(binding.request.input, "task_focus"));
-    assert.deepEqual(binding.request.input.task_analysis, analysis);
+    if (mode !== "attribution") assert.deepEqual(binding.request.input.task_analysis, analysis);
     const shown = binding.modelInput!;
     if (mode === "verification") {
       assert.equal(binding.profile, "verification");
@@ -156,15 +156,15 @@ test("public judgment bindings keep global indices and separate blind originals 
         analysis.requirements.filter((_, index) => index !== 1), "full common conditions and acceptance rules precede upstream conclusions");
       for (const label of ["A", "B"]) {
         const answer = sections[0].materials!.find(material => material.kind === "answer" && material.candidate === label)!;
-        assert.equal(answer.final_answer, `${label} 完整最终回答。`);
+        assert.equal(answer.final_answer, `A1: ${label} 完整最终回答。`);
         assert.equal(answer.original_user_timestamp, "2026-09-24T22:07:25.270Z");
         assert.equal(answer.original_user_timestamp_utc, "2026-09-24T22:07:25.270Z");
         const refs = answer.final_evidence as { reference: { evidence_id: string } }[];
         assert(refs.length > 0);
         for (const item of refs) {
           assert.equal(parseEvidenceCoordinates(item.reference.evidence_id)!.input_id, candidates[label].input_id);
-          assert.equal(resolveEvidence(inputs[candidates[label].input_id], item.reference, label, emptyAudit(), "/evidence", candidates[label].input_id).quote,
-            `${label} 完整最终回答。`);
+          assert.equal(resolveEvidence(binding.request.sources[label].value as { messages: unknown[] }, item.reference, label, emptyAudit(), "/evidence", candidates[label].input_id).quote,
+            `A1: ${label} 完整最终回答。`);
         }
       }
       assert.equal(sections[1].requirement_catalog!.A.find(item => item.criterion_id === "r2")!.requirement_index, 1);
@@ -183,10 +183,11 @@ test("public judgment bindings keep global indices and separate blind originals 
     const focus = shown.task_focus as ReturnType<typeof taskFocus> | undefined;
     assert.deepEqual((shown.task_analysis as ReturnType<typeof taskAnalysisPresentation>).requirements.map(item => item.requirement_index), [0, 1, 2, 3]);
     const answer = shown.answer as { question: string; final_evidence: { quote: string }[] } | undefined;
-    const finalAnswer = mode === "attribution" ? answer!.final_evidence.map(item => item.quote).join("") : focus!.answers.A!.final_answer;
+    const finalAnswer = mode === "attribution" ? answer!.final_evidence.map(item => item.quote).join("")
+      : (shown.candidates as Record<string, { final_answer: string }>).A.final_answer;
     const question = mode === "attribution" ? answer!.question : focus!.question;
-    assert.equal(finalAnswer, "A 完整最终回答。");
-    if (mode === "attribution") assert(!Object.hasOwn(shown, "task_focus"));
+    assert.equal(finalAnswer, mode === "attribution" ? "A 完整最终回答。" : "A1: A 完整最终回答。");
+    if (mode === "attribution") assert.deepEqual((shown.task_focus as { question: string }).question, question);
     else {
       assert(!Object.hasOwn(focus!, "goal"));
       assert(!Object.hasOwn(focus!, "common_requirements"));

@@ -31,7 +31,7 @@ export const DEFAULT_POLICY: Policy = {
   maxOutputChars: 16000,
 };
 export interface EvaluationSpec {
-  /** Program-owned navigation for tools; never rendered into the model prompt. */
+  /** Immutable navigation shared by prepared tasks; tools only read it. Never rendered into the model prompt. */
   materialNavigation?: JsonObject;
   id: string;
   profile: string;
@@ -65,6 +65,8 @@ export interface EvaluationSpec {
 export interface InputRef {
   id: string;
   name: string;
+  /** Host-owned immutable material identity, independent of the evidence/source identity. */
+  materialId?: string;
 }
 export function submissionToolNames(fileSubmission: boolean): string[] {
   return fileSubmission ? ["submit_evaluation_file"] : ["submit_evaluation"];
@@ -170,6 +172,8 @@ export const emptyUsage = (): Usage => ({
 export interface ResultReference {
   file?: string;
   id: string;
+  /** One-based row in a result file whose public rows contain no internal identity. */
+  line?: number;
 }
 /** Where a run writes its ledger, results and reports. */
 export interface OutputTarget {
@@ -314,6 +318,8 @@ export interface SubmissionReceipt extends Submission {
   evaluatorVersion: string;
   /** Resolved judge model ID used by the accepted attempt (no endpoint configuration). */
   judge: string;
+  /** Unaccepted upstream task IDs at acceptance, propagated without inventing evaluations. */
+  incompleteDependencies?: string[];
   submitted?: unknown;
   exported?: ResultReference & { row: JsonObject; auxiliary?: boolean };
 }
@@ -417,6 +423,8 @@ export interface PlannedTask {
   id: string;
   stage: string;
   dependencies: Record<string, string>;
+  /** These dependency labels may finish unsuccessfully; pending/running/cancelled still wait. */
+  settledDependencies?: string[];
   inputIds: Record<string, string>;
   data: unknown;
 }
@@ -481,7 +489,7 @@ export interface AgentDefinition {
 export interface AgentBinding {
   /** Measured once during this assembly; never exposed as model fields. */
   preparationTimings?: Record<string, number>;
-  /** Workflow-owned navigation passed to tools without entering modelInput or evidence registration. */
+  /** Immutable workflow-owned navigation shared with tools without entering modelInput or evidence registration. */
   materialNavigation?: JsonObject;
   agent: string;
   profile: string;

@@ -1,0 +1,91 @@
+{
+  "inputs": {
+    "timing_unit": "ms",
+    "versions": [
+      {
+        "id": "aime_fast",
+        "name": "aime_fast",
+        "display_name": "AIME Fast",
+        "adapter": "a",
+        "sources": [
+          {
+            "kind": "file",
+            "path": "/mnt/fin_bench/eval_data/1_aime/4_daily_eval_input_clean_slim/aime_fast/2026-10-19.jsonl"
+          },
+          {
+            "kind": "file",
+            "path": "/mnt/fin_bench/eval_data/1_aime/4_daily_eval_input_clean_slim/aime_fast/2026-10-21.jsonl"
+          },
+          {
+            "kind": "file",
+            "path": "/mnt/fin_bench/eval_data/1_aime/4_daily_eval_input_clean_slim/aime_fast/2026-10-26.jsonl"
+          },
+          {
+            "kind": "file",
+            "path": "/mnt/fin_bench/eval_data/1_aime/4_daily_eval_input_clean_slim/aime_fast/2026-10-20.jsonl"
+          }
+        ]
+      }
+    ],
+    "batches": [],
+    "case_ids": [
+      "thread_5034b9574a4247a8b36f6cb1aa41f39f",
+      "thread_c4ab4b58f4ac4c319514251b960f9caf",
+      "thread_6632c2f9647646feb5454a3053fb1ba2",
+      "thread_b7577f0304b54825a85a262c898f9ba4"
+    ]
+  },
+  "comparisons": [],
+  "rewrite": {
+    "comparison": true,
+    "attribution": true,
+    "clustering": true,
+    "comparisonItems": true
+  },
+  "clustering": {
+    "enabled": false
+  },
+  "output": {
+    "kind": "directory",
+    "path": "/mnt/fin_bench/eval_data/1_aime/eval_output/test_eval"
+  },
+  "execution": {
+    "concurrency": 20,
+    "sessionWindow": 16,
+    "retries": 1,
+    "timeoutSeconds": 900
+  },
+  "models": {
+    "judge": {
+      "model": "deepseek-v4.1-flash",
+      "thinking": "low"
+    }
+  },
+  "bindings": {
+    "criteria": {
+      "profile": "judge",
+      "thinking": "low"
+    },
+    "attribution": {
+      "profile": "judge",
+      "thinking": "low"
+    },
+    "comparison": {
+      "profile": "judge",
+      "thinking": "low"
+    },
+    "rewrite": {
+      "profile": "judge",
+      "thinking": "low"
+    },
+    "clustering": {
+      "profile": "judge",
+      "thinking": "low"
+    },
+    "instruction-review": {
+      "profile": "judge",
+      "thinking": "low"
+    }
+  },
+  "workflow": "attribution"
+}

@@ -11,7 +11,6 @@ import { cite, displayEvidence, evidenceId, evidenceSources, overlapsImagePlaceh
 import { compareTraceTableRows, parseTraceTables, type TableCheckRequest } from "./table-correspondence.js";
 import { calculate } from "./decimal.js";
 import { fitStringPage } from "./pagination.js";
-import { countNavigationPage, readExecutionTool, readResponsibilityChainTool } from "./execution-navigation.js";
 import { RequiredReadBudget } from "./required-reading.js";
 import { traceReadCoverage } from "./trace-audit.js";
 import { reviewTools,scoreTools } from "./review.js";
@@ -208,8 +207,6 @@ export async function executeCode(ctx: Pick<ToolContext, "workdir" | "execution"
 export type ExecutableTool = Omit<ToolDefinition, "description">;
 
 export const builtinTools: ExecutableTool[] = [
-  readExecutionTool,
-  readResponsibilityChainTool,
   ...reviewTools,
   ...scoreTools,
   {
@@ -405,31 +402,36 @@ export const builtinTools: ExecutableTool[] = [
         max_chars?: number;
         source_offset?: number;
       };
-      const responsibilityChoices = (object(ctx.materialNavigation?.[args.candidate] ?? {}).responsibility_choices as {message_index:number}[] | undefined)
-        ?.filter(choice=>choice.message_index===args.message_index);
+      const navigation = object(ctx.materialNavigation?.[args.candidate] ?? {});
       const sources = evidenceSources(message(ctx, args.candidate, args.message_index));
-      const path = args.path;
+      const scope = navigation.review_scope as { message_indices: number[]; final_ranges?: { path: string; start: number; end: number }[] } | undefined;
+      const reviewRange = args.offset === undefined && args.message_index === navigation.final_message_index
+        ? scope?.final_ranges?.find(range => args.path === undefined || args.path === range.path) : undefined;
+      const path = args.path ?? reviewRange?.path;
       const selected = selectEvidenceSource(sources, path);
       if (!selected) throw new Error(tracePathHint(sources));
-      const { source, start, end: selectionEnd } = selected;
+      const { source, start } = selected, selectionEnd = reviewRange ? Math.min(selected.end, reviewRange.end) : selected.end;
       // A fully displayed serialized leaf also covers its decoded text. Partial JSON
       // and equal values at other paths do not establish that physical coverage.
       const requiredSource = ctx.requiredReads?.some(read => read.candidate === args.candidate &&
         read.message_index === args.message_index && read.kind === source.kind && read.path === source.path);
-      const jsonLeaf = source.kind === "text" && !requiredSource
+      const shownAudit = presentedAudit(ctx);
+      const hasJsonRead = shownAudit.traceReads.some(read => read.candidate === args.candidate &&
+        read.message_index === args.message_index && read.kind === "json");
+      const jsonLeaf = source.kind === "text" && !requiredSource && hasJsonRead
         ? selectEvidenceSource(sources.filter(item => item.kind === "json"), source.path) : undefined;
-      const readInJson = jsonLeaf && traceReadCoverage(presentedAudit(ctx), { candidate: args.candidate, message_index: args.message_index,
+      const readInJson = jsonLeaf && traceReadCoverage(shownAudit, { candidate: args.candidate, message_index: args.message_index,
         kind: "json", path: jsonLeaf.source.path, start: jsonLeaf.start, end: jsonLeaf.end }).covered;
       const totalChars = selectionEnd - start;
       if (path !== undefined && (args.source_offset ?? 0) > 0) throw new Error("非零 source_offset 仅用于整条消息的文本路径目录，读取具体路径时使用正文 offset");
-      const offset = args.offset ?? 0;
+      const offset = args.offset ?? (reviewRange ? reviewRange.start - start : 0);
       if (offset > totalChars) throw new Error(`offset 超出当前来源长度 ${totalChars}，请使用上次返回的 next_offset`);
       const paths = sources.filter((item) => item.kind === "text" && item.quotable !== false);
       const sourceOffset = args.source_offset ?? 0;
       if (sourceOffset > paths.length) throw new Error("source_offset 超出文本路径目录范围");
       const showDirectory = path === undefined || source.quotable === false;
       const shownPaths = showDirectory ? paths.slice(sourceOffset, sourceOffset + 16).map((item) => ({ path: item.path, chars: item.text.length })) : [];
-      const coverage = (end: number) => readInJson ? { covered: true, missing: [] } : traceReadCoverage(requiredSource ? ctx.audit : presentedAudit(ctx), {
+      const coverage = (end: number) => readInJson ? { covered: true, missing: [] } : traceReadCoverage(requiredSource ? ctx.audit : shownAudit, {
         candidate: args.candidate, message_index: args.message_index, kind: source.kind, path: source.path,
         start: start + offset, end: start + end,
       });
@@ -458,7 +460,7 @@ export const builtinTools: ExecutableTool[] = [
         if (cursor < start + end) reused.push({ start: cursor, end: start + end });
         return {
           source: { kind: source.kind, path: source.path },
-          ...(responsibilityChoices?.length ? { responsibility_choices: responsibilityChoices } : {}),
+          ...(reviewRange ? { review_range: reviewRange } : {}),
           ...(path !== undefined ? { selection_path: path } : {}),
           ...(alreadyRead ? { already_read: true } : {}),
           evidence: !quotable ? [] : wholeContext || alreadyRead ? citations(start + offset, start + end)
@@ -524,8 +526,15 @@ export const builtinTools: ExecutableTool[] = [
       const matches: (Excerpt & { context: Excerpt[]; has_more: boolean })[] = [];
       let total = 0;
       if (args.message_index != null) message(ctx, args.candidate, args.message_index);
-      const messages = record(ctx, args.candidate).messages.map((message, index) => ({ message, index }))
-        .filter(item => args.message_index == null || item.index === args.message_index);
+      const navigation = object(ctx.materialNavigation?.[args.candidate] ?? {});
+      const reviewScope = navigation.review_scope as
+        { message_indices: number[]; final_ranges?: unknown[] } | undefined;
+      const localMessages = args.message_index == null && args.scope === undefined && reviewScope && !reviewScope.message_indices.includes(Number(navigation.final_message_index))
+        ? reviewScope.message_indices : undefined;
+      const rawMessages = record(ctx, args.candidate).messages;
+      const indices = args.message_index != null ? [args.message_index] : localMessages;
+      const messages = indices ? indices.map(index => ({ message: rawMessages[index], index }))
+        : rawMessages.map((message, index) => ({ message, index }));
       const selected = args.scope === "tool_returns" ? messages.filter(({ message }) => {
         const value = object(message);
         return value.role === "tool" || ["function_call_output", "tool_result"].includes(String(value.type));
@@ -621,6 +630,7 @@ export const builtinTools: ExecutableTool[] = [
         });
         return textResult({
           matches: displayed, new_source_chars: newChars,
+          ...(localMessages ? { searched_message_indices: localMessages } : {}),
           total, next_offset: offset + shown.length, has_more: offset + shown.length < total,
         });
       };
@@ -773,10 +783,14 @@ export class ToolRegistry {
   names(): string[] {
     return [...this.tools.keys()];
   }
-  select(names: string[]): ExecutableTool[] {
+  select(names: string[], candidates?: readonly string[]): ExecutableTool[] {
     return names.map((name) => {
       const tool = this.tools.get(name);
       if (!tool) throw new Error(`Tool unavailable: ${name}`);
+      const properties = tool.inputSchema.properties as Record<string, JsonSchema> | undefined;
+      if (candidates?.length && properties?.candidate)
+        return { ...tool, inputSchema: { ...tool.inputSchema, properties: { ...properties,
+          candidate: { ...properties.candidate, enum: [...candidates] } } } };
       return tool;
     });
   }
@@ -925,7 +939,7 @@ export class ToolRuntime {
       }
       // Register only the committed page after pagination; source text is carried as strings.
       // Delegated tools and arbitrary artifacts are excluded because their objects are not generated evidence envelopes.
-      if (!result.isError && ["read_execution", "read_responsibility_chain", "read_trace", "search_trace", "view_image", "check_table"].includes(name)) {
+      if (!result.isError && ["read_trace", "search_trace", "view_image", "check_table"].includes(name)) {
         const bank = this.context.audit.evidenceBank!;
         for (const content of result.content) if (content.type === "text" && content.text)
           content.text = JSON.stringify(projectEvidenceReferences(JSON.parse(content.text), bank, this.context.maxEvidenceQuoteChars));
@@ -934,7 +948,7 @@ export class ToolRuntime {
         this.persistQueue = write.then(() => undefined, () => undefined);
         await write;
       }
-      if (!result.isError && ["read_execution", "read_responsibility_chain", "read_trace", "search_trace", "view_image", "check_table"].includes(name)) {
+      if (!result.isError && ["read_trace", "search_trace", "view_image", "check_table"].includes(name)) {
         const candidate = (args as { candidate?: string }).candidate;
         const presentation = candidate && this.context.sourcePresentations?.get(candidate);
         if (presentation) {
@@ -942,11 +956,6 @@ export class ToolRuntime {
             content.text = JSON.stringify(presentSource(JSON.parse(content.text), presentation));
           if (result.details !== undefined) result.details = presentSource(result.details, presentation);
         }
-      }
-      if (!result.isError && name === "read_execution") {
-        const page = object(result.details);
-        countNavigationPage(page);
-        result.content = [{ type: "text", text: JSON.stringify(page) }];
       }
       await this.present(result, outputChars);
       if (cacheable && !result.isError) this.reads.set(key, structuredClone(result));

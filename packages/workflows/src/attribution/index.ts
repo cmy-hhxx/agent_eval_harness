@@ -4,7 +4,7 @@ import { Ajv2020 } from "ajv/dist/2020.js";
 import { canonical, resolveEvidenceSelection, type AgentBinding, type JsonObject, type PlannedTask, type RunManifest, type RunState, type SubmissionReceipt, type TaskAnalysis, type WorkflowDefinition, type WorkflowScheduling } from "@eval/contracts";
 import { createRunRepository, readJson, type RunCodec } from "@eval/data";
 import { attributionComponentLabel, type ComponentReviewResult, type TraceAttributionResult } from "@eval/agents/attribution";
-import { collectInputs, contentText, loadRunInputs, normalizeInput, normalizeTraceInput, type Candidate, type EvaluationConfig } from "@eval/workflows/inputs";
+import { collectInputs, contentText, loadRunInputs, normalizeInput, normalizeTraceInput, type Candidate, type ComponentReviewScope, type EvaluationConfig } from "@eval/workflows/inputs";
 import { bindAttributionMaterial, validateOriginalAttributionEvidence } from "@eval/workflows/review";
 import problemSchema from "../../../../schemas/attribution/problem.schema.json" with { type: "json" };
 import traceResultSchema from "../../../../schemas/attribution/trace-result.schema.json" with { type: "json" };
@@ -14,6 +14,7 @@ export interface AttributionConfig extends EvaluationConfig { workflow: "attribu
 export type AttributionStage = "attribution-component" | "attribution-trace" | "attribution-session";
 export interface AttributionTaskData {
   stage: AttributionStage; candidate: Candidate; traceIndex?: number; traceCount?: number; component?: string;
+  reviewScope?: ComponentReviewScope;
 }
 export interface AttributionUnitOptions {
   /** Workflow-owned data copied onto every task in this answer's attribution unit. */
@@ -30,33 +31,55 @@ const validateSession = new Ajv2020({ allErrors: true, strict: false })
 
 function turns(candidate: Candidate) {
   return candidate.turns ?? [{ trace_index: 0, trace_id: candidate.trace_id, question: candidate.question,
-    final_index: candidate.final_index, component_names: [] }];
+    final_index: candidate.final_index, component_scopes: [] }];
 }
 
-function unitTaskKey(candidate: Candidate, stage: AttributionStage, traceIndex?: number, component?: string, identity?: string): string {
-  return canonical([candidate.input_id, stage, traceIndex ?? null, component ?? null, identity ?? null]);
+function unitTaskKey(candidate: Candidate, stage: AttributionStage, traceIndex?: number, scope?: ComponentReviewScope, identity?: string): string {
+  return canonical([candidate.input_id, stage, traceIndex ?? null, scope ?? null, identity ?? null]);
 }
 
 /** Build one answer's canonical component -> trace -> session unit. */
 export function planAttributionUnit(candidate: Candidate, options: AttributionUnitOptions = {}) {
+  // A persisted unit is already the run's recovery boundary. Reuse its complete DAG,
+  // including accepted work, rather than expanding it again after a code change.
+  const retained = (options.previousTasks ?? []).filter(task => task.stage.startsWith("attribution-") &&
+    (task.data as AttributionTaskData).candidate.input_id === candidate.input_id &&
+    (task.data as Record<string, unknown>).attributionIdentity === options.identity);
+  const retainedSession = retained.find(task => task.stage === "attribution-session");
+  if (retainedSession) {
+    const tasks = retained.map(task => ({ ...task,
+      ...(task.stage === "attribution-trace" ? { settledDependencies: Object.keys(task.dependencies).filter(label => label.startsWith("component")) } : {}),
+      data: { ...(task.data as AttributionTaskData), candidate } }));
+    return { tasks, session: tasks.find(task => task.id === retainedSession.id)! };
+  }
   const traceList = turns(candidate), previous = new Map((options.previousTasks ?? [])
     .filter(task => task.stage.startsWith("attribution-") &&
       (task.data as AttributionTaskData).candidate.input_id === candidate.input_id)
     .map(task => [unitTaskKey((task.data as AttributionTaskData).candidate, task.stage as AttributionStage,
-      (task.data as AttributionTaskData).traceIndex, (task.data as AttributionTaskData).component,
+      (task.data as AttributionTaskData).traceIndex, (task.data as AttributionTaskData).reviewScope,
       (task.data as Record<string, unknown>).attributionIdentity as string | undefined), task]));
-  const id = (stage: AttributionStage, traceIndex?: number, component?: string) =>
-    previous.get(unitTaskKey(candidate, stage, traceIndex, component, options.identity))?.id ?? randomUUID();
+  const id = (stage: AttributionStage, traceIndex?: number, scope?: ComponentReviewScope) =>
+    previous.get(unitTaskKey(candidate, stage, traceIndex, scope, options.identity))?.id ?? randomUUID();
   const base = { ...options.data, ...(options.identity ? { attributionIdentity: options.identity } : {}) },
     upstream = options.dependencies ?? {}, tasks: PlannedTask[] = [], traceTasks: PlannedTask[] = [];
   for (const trace of traceList) {
-    const components = [...new Set([...trace.component_names.map(attributionComponentLabel), "终稿生成轮"].filter(Boolean))];
-    const componentTasks = components.map(component => ({ id: id("attribution-component", trace.trace_index, component),
+    const byComponent = new Map<string, ComponentReviewScope>();
+    for (const scope of trace.component_scopes) {
+      const component = attributionComponentLabel(scope.component), previous = byComponent.get(component);
+      if (previous) previous.message_indices.push(...scope.message_indices);
+      else byComponent.set(component, { ...scope, component, message_indices: [...scope.message_indices] });
+    }
+    const scopes = [...byComponent.values()].map(scope => ({ ...scope,
+      message_indices: [...new Set(scope.message_indices)].sort((a, b) => a - b) }));
+    if (!scopes.some(scope => scope.component === "终稿生成轮")) scopes.push({ component: "终稿生成轮",
+      message_indices: [trace.final_index ?? candidate.final_index] });
+    const componentTasks = scopes.map(scope => ({ id: id("attribution-component", trace.trace_index, scope),
       stage: "attribution-component", inputIds: { answer: candidate.input_id }, dependencies: upstream,
       data: { ...base, stage: "attribution-component", candidate, traceIndex: trace.trace_index,
-        traceCount: traceList.length, component } satisfies AttributionTaskData }));
+        traceCount: traceList.length, component: scope.component, reviewScope: scope } satisfies AttributionTaskData }));
     tasks.push(...componentTasks);
     const traceTask: PlannedTask = { id: id("attribution-trace", trace.trace_index), stage: "attribution-trace",
+      settledDependencies: componentTasks.map((_, index) => `component${index}`),
       inputIds: {}, dependencies: { ...upstream,
         ...Object.fromEntries(componentTasks.map((task, index) => [`component${index}`, task.id])) },
       data: { ...base, stage: "attribution-trace", candidate, traceIndex: trace.trace_index,
@@ -88,52 +111,48 @@ export async function planAttribution(config: AttributionConfig) {
     session_tasks: tasks.filter(task => task.stage === "attribution-session").length, issues: indexed.issues } };
 }
 
-const componentMaterials = new WeakMap<Record<string, unknown>, Map<string, {
-  source: unknown; analysis: TaskAnalysis | undefined; binding: AgentBinding;
-}>>();
-
-export function bindAttribution(task: PlannedTask, inputs: Record<string, unknown>, dependencies: Record<string, SubmissionReceipt | undefined>): AgentBinding {
+export function bindAttribution(task: PlannedTask, inputs: Record<string, unknown>, dependencies: Record<string, SubmissionReceipt | undefined>,
+  options: { reference?: unknown } = {}): AgentBinding {
   const data = task.data as AttributionTaskData;
   const session = normalizeInput(inputs[data.candidate.input_id]), analysis = dependencies.criteria?.status === "succeeded"
     ? dependencies.criteria.evaluation as TaskAnalysis : undefined;
   const traceIndex = data.traceIndex ?? 0, traceRaw = normalizeTraceInput(session, traceIndex), trace = turns(data.candidate)[traceIndex];
   const traceCandidate = trace ? { ...data.candidate, trace_id: trace.trace_id, question: trace.question,
     final_index: trace.final_index ?? data.candidate.final_index } : data.candidate;
+  const reference = options.reference === undefined ? traceCandidate.reference : options.reference;
   if (task.stage === "attribution-component") {
-    let materials = componentMaterials.get(inputs);
-    if (!materials) { materials = new Map(); componentMaterials.set(inputs, materials); }
-    const key = canonical([data.candidate.input_id, traceIndex]), previous = materials.get(key);
-    const prepared = previous && previous.source === inputs[data.candidate.input_id] && previous.analysis === analysis ? previous.binding : undefined;
-    const binding = bindAttributionMaterial(traceCandidate, traceRaw, analysis, { component: data.component, prepared });
-    if (!prepared) materials.set(key, { source: inputs[data.candidate.input_id], analysis, binding });
-    const navigation = binding.materialNavigation!.answer as { responsibility_choices: {
-      component: string; kind: string; message_index: number | null; transition_index: number;
-    }[] };
-    const choices = navigation.responsibility_choices.filter(choice => choice.component === data.component);
-    const entrypoints = choices.slice(0, 8).map(choice => ({ component: choice.component, kind: choice.kind, message_index: choice.message_index,
-        read_request: { tool: "read_responsibility_chain", arguments: { candidate: "answer", transition_index: choice.transition_index } } }));
-    return { ...binding, profile: "component", request: { ...binding.request, input: { ...binding.request.input,
-      component: data.component, trace_index: traceIndex } }, modelInput: { ...(binding.modelInput ?? binding.request.input),
-      component: data.component, trace_index: traceIndex, component_entrypoints: entrypoints,
-      component_entrypoints_total: choices.length } };
+    const binding = bindAttributionMaterial(traceCandidate, traceRaw, analysis, { component: data.component, scope: data.reviewScope, reference });
+    return { ...binding, request: { ...binding.request, input: { ...binding.request.input, trace_index: traceIndex } },
+      modelInput: { ...binding.modelInput!, task_focus: { question: traceCandidate.question,
+        review_target: { component: data.component, ...data.reviewScope } } } };
   }
+
   if (task.stage === "attribution-trace") {
-    return { agent: "attribution", profile: "trace", request: { sources: {}, input: {
+    const unreviewed = Object.entries(task.dependencies).filter(([label]) => label.startsWith("component") && !dependencies[label])
+      .map(([, id]) => id);
+    const input = {
       ...(analysis ? { task_analysis: analysis } : {}),
       trace_meta: session.turns?.[traceIndex]?.meta ?? traceRaw.meta ?? {}, trace_index: traceIndex,
-      ground_truth: { available: traceCandidate.reference !== null, value: traceCandidate.reference },
+      ground_truth: { available: reference !== null, value: reference },
       question: traceCandidate.question, answer: contentText(traceRaw.messages[traceCandidate.final_index]?.content),
+      review_coverage: { complete: !unreviewed.length, unreviewed_count: unreviewed.length },
       problems: Object.entries(dependencies).filter(([label]) => label.startsWith("component"))
-        .flatMap(([, receipt]) => (receipt?.evaluation as ComponentReviewResult | undefined)?.problems ?? []) } } };
+        .flatMap(([, receipt]) => (receipt?.evaluation as ComponentReviewResult | undefined)?.problems ?? [])
+        .map((problem, index) => ({ ...problem, problem_id: `p${index + 1}` })) };
+    const { trace_meta: _meta, ...modelInput } = input;
+    return { agent: "attribution", profile: "trace", request: { sources: {}, input }, modelInput };
   }
   if (task.stage === "attribution-session") {
-    return { agent: "attribution", profile: "session", request: { sources: {}, input: {
+    const input = {
       ...(analysis ? { task_analysis: analysis } : {}),
       session_meta: session.session_meta ?? session.meta ?? {},
       qa: turns(data.candidate).map((trace, index) => ({ trace_index: index, question: trace.question,
         answer: contentText(normalizeTraceInput(session, index).messages[trace.final_index ?? 0]?.content) })),
       turns: Object.entries(dependencies).filter(([label]) => label.startsWith("trace"))
-        .map(([, receipt]) => receipt!.evaluation as TraceAttributionResult) } } };
+        .map(([, receipt]) => receipt!.evaluation as TraceAttributionResult) };
+    const { session_meta: _meta, turns: traces, ...material } = input;
+    return { agent: "attribution", profile: "session", request: { sources: {}, input },
+      modelInput: { ...material, turns: traces.map(({ meta: _traceMeta, ...trace }) => trace) } };
   }
   throw new Error("未知 Attribution 任务阶段：" + task.stage);
 }
@@ -155,7 +174,7 @@ export const attributionScheduling: WorkflowScheduling = {
 export const attributionWorkflow: WorkflowDefinition = {
   id: "attribution",
   plan: config => planAttribution(config as AttributionConfig),
-  bind: bindAttribution,
+  bind: (task, inputs, dependencies) => bindAttribution(task, inputs, dependencies),
   observesFailures: () => true,
   scheduling: attributionScheduling,
   advance(task, receipt, _state, inputs) {
@@ -178,7 +197,10 @@ export const attributionWorkflow: WorkflowDefinition = {
     const records = new Map<string, Candidate>();
     const inputs = await loadRunInputs(manifest, undefined, undefined, records, source => normalizeInput(source));
     const catalog = (manifest.inputCatalog as Candidate[]).map(candidate => ({ ...records.get(candidate.input_id)!, input_id: candidate.input_id }));
-    for (const task of manifest.tasks) (task.data as AttributionTaskData).candidate = catalog.find(candidate => candidate.input_id === (task.data as AttributionTaskData).candidate.input_id)!;
+    for (const task of manifest.tasks) {
+      (task.data as AttributionTaskData).candidate = catalog.find(candidate => candidate.input_id === (task.data as AttributionTaskData).candidate.input_id)!;
+      if (task.stage === "attribution-trace") task.settledDependencies = Object.keys(task.dependencies).filter(label => label.startsWith("component"));
+    }
     manifest.inputCatalog = catalog;
     return { tasks: manifest.tasks, inputs, catalog, summary: manifest.preflight };
   },

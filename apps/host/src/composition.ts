@@ -1,5 +1,5 @@
 import { scoreAgent } from "@eval/agents/score";
-import { instructionReviewAgent } from "@eval/agents/instruction-review";
+import { attributionDimensions } from "@eval/workflows/review";
 import { configurationSecrets } from "./settings.js";
 import { AgentRegistry } from "@eval/host";
 import { comparisonAgent, comparisonProfile } from "@eval/agents/comparison";
@@ -16,7 +16,8 @@ export const logger = createFileLogger({
   lockDirectory: path.resolve(process.env.EVAL_LOG_LOCK_DIR || path.join(ROOT, ".runtime/log-writer")),
   secrets: configurationSecrets(),
 });
-export const agents = new AgentRegistry([scoreAgent, instructionReviewAgent, criteriaAgent, comparisonAgent, attributionAgent, rewriteAgent, clusteringAgent]);
+export const agents = new AgentRegistry([scoreAgent, ...Object.values(attributionDimensions).map(dimension => dimension.agent),
+  criteriaAgent, comparisonAgent, attributionAgent, rewriteAgent, clusteringAgent]);
 export const services = {
   logger,
   agents,
@@ -30,6 +31,7 @@ export const services = {
       id: "comparison",
       profiles: Object.fromEntries(
         Object.entries({
+          ...Object.fromEntries(Object.entries(attributionDimensions).map(([stage, dimension]) => [stage, dimension.agent.profiles.default])),
           criteria: criteriaProfile,
           "attribution-component": componentAttributionProfile,
           "attribution-trace": traceAttributionProfile,

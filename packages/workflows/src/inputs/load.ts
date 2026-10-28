@@ -1,5 +1,5 @@
 import { errorText, ValidationError, type RunManifest, type ValidationIssue } from "@eval/contracts";
-import { fileSourceReader } from "@eval/data";
+import { assertSourceRevision, fileSourceReader } from "@eval/data";
 import { adapt, candidateKey, inputSources, locateRecordStream } from "./records.js";
 import { normalizeInput } from "./normalize.js";
 import type { Candidate, EvaluationConfig } from "./types.js";
@@ -14,6 +14,11 @@ export async function loadRunInputs(
   const inputs: Record<string, unknown> = {},
     errors: ValidationIssue[] = [];
   const config = manifest.config as EvaluationConfig;
+  // Interleaved tasks share immutable records within the admitted session window.
+  // Bound retained bodies by the window and the widest task's input set, never the catalog.
+  const cacheLimit = config.execution.sessionWindow * manifest.tasks.reduce((max, task) => Math.max(max, Object.keys(task.inputIds).length), 1);
+  if (!Number.isSafeInteger(cacheLimit) || cacheLimit < 1) throw new Error("输入读取需要有效的 sessionWindow");
+  const cache = new Map<string, unknown>();
   const inputIds = taskIds && new Set(manifest.tasks.filter((task) => taskIds.has(task.id)).flatMap((task) => Object.values(task.inputIds)));
   const sources = inputSources((manifest.inputCatalog as Candidate[]).filter((candidate) => !inputIds || inputIds.has(candidate.input_id)));
   for (const [source, candidates] of sources) {
@@ -24,7 +29,15 @@ export async function loadRunInputs(
       Object.defineProperty(found, candidate.input_id, {
         enumerable: true,
         configurable: true,
-        get: () => projectInput(JSON.parse(fileSourceReader.record(source, byteOffset, byteLength, revision))),
+        get: () => {
+          assertSourceRevision(source, revision);
+          const value = cache.has(candidate.input_id) ? cache.get(candidate.input_id)
+            : projectInput(JSON.parse(fileSourceReader.record(source, byteOffset, byteLength, revision)));
+          cache.delete(candidate.input_id);
+          cache.set(candidate.input_id, value);
+          if (cache.size > cacheLimit) cache.delete(cache.keys().next().value!);
+          return value;
+        },
       });
     };
     try {

@@ -3,9 +3,11 @@ import assert from "node:assert/strict";
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+import { writeFileSync } from "node:fs";
 import { emptyUsage, type ResultReference, type RunState } from "@eval/contracts";
 import { createRunRepository, type RunCodec } from "./repository.js";
 import { readRunOverviews } from "./run-overview.js";
+import { runProgressFile } from "./run-journal.js";
 
 const state: RunState = {
   manifest: {
@@ -15,6 +17,56 @@ const state: RunState = {
   },
   receipts: {}, usage: emptyUsage(), recordedAttempts: 0,
 };
+
+test("concurrent checkpoint and outbox projections retain distinct row references and recover after a write failure", async t => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), "eval-projection-race-"));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  const tasks = ["one", "two", "three", "four"].map(id => ({ id, stage: "result", inputIds: {}, dependencies: {}, data: {} }));
+  const receipts = Object.fromEntries(tasks.map(task => [task.id, { taskId: task.id, attemptId: task.id,
+    submissionId: task.id, status: "succeeded" as const, acceptedAt: 1, evaluatorVersion: "test", judge: "test",
+    evaluation: { identity: task.id }, usage: emptyUsage(),
+    audit: { calls: 0, requiredReadCalls: 0, traceReads: [], viewedImages: [], calculations: [], artifacts: [] } }]));
+  const snapshot = (ids: string[]): RunState => ({ ...state, manifest: { ...state.manifest, tasks,
+    states: Object.fromEntries(tasks.map(task => [task.id, { status: "succeeded", attempts: 1 }])) },
+    receipts: structuredClone(Object.fromEntries(ids.map(id => [id, receipts[id]]))) });
+  const codec: RunCodec<RunState> = { encode: value => value, resultId: () => "unused",
+    references: value => Object.values(value.receipts).map(receipt => receipt.exported!),
+    decode(value, read) {
+      for (const receipt of Object.values(value.receipts)) receipt.evaluation = read(receipt.exported!);
+      return value;
+    } };
+  let entered!: () => void;
+  const started = new Promise<void>(resolve => { entered = resolve; });
+  let fail = false;
+  const repository = createRunRepository(codec, (task, value) => {
+    if (fail) throw new Error("fixture encoder failure");
+    entered();
+    return { id: task.id, file: "results.jsonl", row: value.receipts[task.id]!.evaluation as { identity: string } };
+  }, { indexedFiles: ["results.jsonl"] });
+  const write = repository.createResultWriter(directory, {}), first = snapshot(["one"]), latest = snapshot(["one", "two"]);
+  const checkpoint = write(first);
+  await started; // The first projection is awaiting its actual file write.
+  await Promise.all([checkpoint, write(latest)]);
+  assert.deepEqual(Object.values(latest.receipts).map(receipt => receipt.exported!.line), [1, 2]);
+  assert.deepEqual((await readFile(path.join(directory, "results/results.jsonl"), "utf8")).trim().split("\n").map(line => JSON.parse(line)),
+    [{ identity: "one" }, { identity: "two" }]);
+  // A previously captured snapshot can omit an already projected receipt.
+  const stale = snapshot(["one", "three"]);
+  await write(stale);
+  const complete = snapshot(["one", "two", "three", "four"]);
+  fail = true;
+  await assert.rejects(write(complete), /fixture encoder failure/);
+  fail = false;
+  await write(complete);
+  await write(stale);
+  for (let round = 0; round < 2; round++) {
+    await repository.writeRun(directory, complete);
+    const restored = await repository.readRun(directory);
+    assert.deepEqual(Object.values(restored.receipts).map(receipt => receipt.exported!.line), [1, 2, 3, 4]);
+    assert.deepEqual(Object.values(restored.receipts).map(receipt => receipt.evaluation),
+      [{ identity: "one" }, { identity: "two" }, { identity: "three" }, { identity: "four" }]);
+  }
+});
 
 test("repository checkpoint saves refresh the overview through running, finished and resumed states", async t => {
   const directory = await mkdtemp(path.join(os.tmpdir(), "eval-overview-save-")), run = path.join(directory, "run");
@@ -31,7 +83,28 @@ test("repository checkpoint saves refresh the overview through running, finished
   }
 });
 
-async function fixture(t: test.TestContext, references: ResultReference[]) {
+test("a reader racing journal compaction reloads the new checkpoint instead of dropping covered events", async t => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "eval-checkpoint-race-"));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const latest = { ...state, manifest: { ...state.manifest, journalSequence: 10 }, recordedAttempts: 10 };
+  let reads = 0;
+  const codec: RunCodec<RunState> = { encode: value => value, references: () => [], resultId: () => "", decode(value) {
+    if (++reads === 1) {
+      writeFileSync(path.join(root, "state.json"), JSON.stringify(latest));
+      writeFileSync(runProgressFile(root), JSON.stringify({ seq: 10, event: { at: 10, checkpoint: true } }) + "\n" +
+        JSON.stringify({ seq: 11, event: { at: 11, recordedAttempts: 11 } }) + "\n");
+    }
+    return value;
+  } };
+  const repository = createRunRepository(codec, () => null);
+  await repository.writeRun(root, state);
+  const restored = await repository.readRun(root);
+  assert.equal(reads, 2);
+  assert.equal(restored.manifest.journalSequence, 10);
+  assert.equal(restored.recordedAttempts, 11);
+});
+
+async function fixture(t: test.TestContext, references: ResultReference[], indexedFiles?: string[]) {
   const directory = await mkdtemp(path.join(os.tmpdir(), "eval-repository-"));
   t.after(() => rm(directory, { recursive: true, force: true }));
   const codec: RunCodec<ResultReference[]> = {
@@ -42,11 +115,25 @@ async function fixture(t: test.TestContext, references: ResultReference[]) {
       ...state, manifest: { ...state.manifest, config: saved.filter((ref) => !ids || ids.has(ref.id)).map(row) },
     }),
   };
-  const repository = createRunRepository(codec, () => { throw new Error("Read-only test"); });
+  const repository = createRunRepository(codec, () => { throw new Error("Read-only test"); }, { indexedFiles });
   await repository.writeRun(directory, state);
   await mkdir(path.join(directory, "results"));
   return { directory, repository };
 }
+
+test("checkpoint row references select identical public rows by identity and reject missing or conflicting coordinates", async t => {
+  const refs = [{ file: "attribution.jsonl", id: "first", line: 1 }, { file: "attribution.jsonl", id: "second", line: 2 }];
+  const { directory, repository } = await fixture(t, refs, ["attribution.jsonl"]);
+  const row = { session_meta: {}, turns: [], session_summary: "same", session_problem: [] };
+  await writeFile(path.join(directory, "results/attribution.jsonl"), (JSON.stringify(row) + "\n").repeat(2));
+  assert.deepEqual((await repository.readRun(directory)).manifest.config, [row, row]);
+  assert.deepEqual((await repository.readTasks(directory, ["second"])).manifest.config, [row]);
+  for (const [line, error] of [[0, /结果行引用无效/], [1, /被多个身份引用/], [3, /结果文件缺失/]] as const) {
+    refs[1]!.line = line;
+    await repository.writeRun(directory, state);
+    await assert.rejects(repository.readRun(directory), error);
+  }
+});
 
 test("full and selected result reads share file-scoped identities, duplicate checks and interrupted-tail recovery", async (t) => {
   const { directory, repository } = await fixture(t, [

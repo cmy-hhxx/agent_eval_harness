@@ -1,4 +1,5 @@
 import { isDeepStrictEqual } from "node:util";
+import { attributionDimension } from "../review/dimensions.js";
 import type { JsonObject, RunState, SubmissionReceipt } from "@eval/contracts";
 import { canonical, type ResultReference } from "@eval/contracts";
 import type { RunCodec } from "@eval/data";
@@ -107,6 +108,7 @@ function encodeState(state: RunState): Checkpoint {
         stage: task.stage as Stage,
         inputIds: task.inputIds,
         dependencies: task.dependencies,
+        ...(task.settledDependencies ? { settledDependencies: task.settledDependencies } : {}),
         data,
       };
       const receipt = state.receipts[task.id];
@@ -117,6 +119,7 @@ function encodeState(state: RunState): Checkpoint {
         const reference = exported && {
           ...(task.stage === "comparison" && !(task.data as TaskData).verificationAudit && exported.file !== "comparison-review.jsonl" ? { comparisonId: exported.id } : { taskId: exported.id }),
           ...(exported.file ? { file: exported.file } : {}),
+          ...(exported.line !== undefined ? { line: exported.line } : {}),
         };
         const evaluationPatch = exported
           ? evaluationDifference(task.data as TaskData, exported.row, evaluation, rewriteIds)
@@ -177,7 +180,8 @@ function evaluationFromRow(data: TaskData, row: JsonObject): ComparisonResult {
 }
 
 function resultEvaluation(data: TaskData, row: JsonObject, rewriteIds?: string[]): unknown {
-  if (data.stage === "instruction-review") return row.instruction_review;
+  const dimension = attributionDimension(data.stage);
+  if (dimension) return row[dimension.resultKey];
   if (data.stage === "rewrite") {
     const rewrites = (stageRewritten(data.rewriteOf!.stage,row) as { rewrites: { id: string; text: string }[] }).rewrites;
     return { rewrites: rewriteIds ? rewriteIds.map((id) => {
@@ -223,6 +227,7 @@ function decodeState(
       stage: t.stage,
       inputIds: t.inputIds,
       dependencies: t.dependencies,
+      ...(t.settledDependencies ? { settledDependencies: t.settledDependencies } : {}),
       data: {
         ...t.data,
         stage: t.stage,
@@ -235,7 +240,7 @@ function decodeState(
         candidates: attribution ? { A: attribution } : Object.fromEntries(
           Object.entries(t.inputIds).map(([label, id]) => {
             if (!candidates[id]) throw new Error("输入引用缺失：" + id);
-            return [t.stage === "instruction-review" ? "A" : label, candidates[id]];
+            return [attributionDimension(t.stage) ? "A" : label, candidates[id]];
           }),
         ),
         ...(attribution ? { candidate: attribution } : {}),
@@ -269,6 +274,7 @@ function decodeState(
       stage: _stage,
       inputIds: _inputIds,
       dependencies: _dependencies,
+      settledDependencies: _settledDependencies,
       data: _data,
       ...status
     } = saved;
@@ -285,22 +291,24 @@ function decodeState(
     }
     const data = task.data as TaskData;
     if (data.stage === "attribution-session") {
-      if ((receipt.exported.file ?? "attribution.jsonl") !== "attribution.jsonl")
+      if (receipt.exported.taskId !== task.id || receipt.exported.file !== "attribution.jsonl")
         throw new Error("归因 session 结果引用与任务不一致：" + task.id);
-      const row = resultRow(receipt, { id: receipt.exported.taskId!, file: "attribution.jsonl" });
+      const reference = { id: task.id, file: "attribution.jsonl", line: receipt.exported.line };
+      const row = resultRow(receipt, reference);
       const evaluation = restore(row, evaluationPatch || []);
       state.receipts[task.id] = { ...value, evaluation,
         ...(submittedPatch ? { submitted: restore(evaluation, submittedPatch) } : {}),
-        exported: { id: receipt.exported.taskId!, file: "attribution.jsonl", row } };
+        exported: { ...reference, row } };
       continue;
     }
-    if (data.stage === "instruction-review") {
-      const row = resultRow(receipt, { id: task.id, file: "instruction_review.jsonl" });
-      if (row.task_id !== task.id || row.source_attribution_task_id !== task.dependencies.source || row.evaluation_type !== "instruction_review")
-        throw new Error("指令检查结果与归因来源不一致：" + task.id);
-      const evaluation = restore(row.instruction_review, evaluationPatch || []);
+    const dimension = attributionDimension(data.stage);
+    if (dimension) {
+      const file = resultFile(data.stage), row = resultRow(receipt, { id: task.id, file });
+      if (row.task_id !== task.id || row.source_attribution_task_id !== task.dependencies.source || row.evaluation_type !== dimension.resultKey)
+        throw new Error("维度归因结果与归因来源不一致：" + task.id);
+      const evaluation = restore(row[dimension.resultKey], evaluationPatch || []);
       state.receipts[task.id] = { ...value, evaluation, ...(submittedPatch ? { submitted: restore(evaluation, submittedPatch) } : {}),
-        exported: { id: task.id, file: "instruction_review.jsonl", row } };
+        exported: { id: task.id, file, row } };
       continue;
     }
     if (data.stage === "criteria" || data.verificationAudit || receipt.exported.file === "comparison-review.jsonl") {
@@ -367,7 +375,7 @@ function decodeState(
         evaluation,
         ...(submittedPatch ? { submitted: restore(evaluation, submittedPatch) } : {}),
         exported: {
-          id: source.resultId,
+          id: source.stage === "attribution" ? task.id : source.resultId,
           auxiliary: true,
           ...(receipt.exported.file ? { file: receipt.exported.file } : {}),
           row,
@@ -408,8 +416,11 @@ export const comparisonCodec: RunCodec<Checkpoint> = {
   encode: encodeState,
   overview: analysisRunOverview,
   decode: decodeState,
-  resultId: (row) => String(row.session_meta ? (row.session_meta as JsonObject).session_id ?? (row.session_meta as JsonObject).case_id
-    : row.task_id ?? row.comparison_id),
+  resultId: (row) => {
+    const id = row.task_id ?? row.comparison_id;
+    if (typeof id !== "string" || !id) throw new Error("结果缺少内部身份；归因结果必须通过检查点行引用读取");
+    return id;
+  },
   references(checkpoint, taskIds) {
     if (checkpoint.format !== "evaluation-run") throw new Error("不支持此运行格式；只支持 evaluation-run。");
     return Object.entries(checkpoint.tasks).flatMap(([id, task]) => {
@@ -420,6 +431,7 @@ export const comparisonCodec: RunCodec<Checkpoint> = {
             {
               id: ref.taskId ?? ref.comparisonId!,
               file: ref.file || resultFile(task.stage),
+              ...(ref.line !== undefined ? { line: ref.line } : {}),
             },
           ]
         : [];
