@@ -1,0 +1,106 @@
+import { execFileSync } from "node:child_process";
+import { readFile, mkdir } from "node:fs/promises";
+import path from "node:path";
+import { monitorEventLoopDelay } from "node:perf_hooks";
+import { loadConfig, createModelResolver } from "@eval/host-app/config";
+import { services } from "@eval/host-app/composition";
+import { createChannelRequests, runEvaluation } from "@eval/host";
+import { attributionRepository, attributionWorkflow, planAttribution } from "@eval/workflows/attribution";
+import { writeJson } from "@eval/data";
+import { measureAttributionRun } from "./attribution-throughput.mjs";
+
+// Complete Pi sessions and independent Worker processes, with exactly 20 provider permits.
+// Run alone: this process cannot limit unrelated Hosts sharing the model gateway.
+const [configFile, countText, runId] = process.argv.slice(2), count = Number(countText);
+if (!configFile || !Number.isSafeInteger(count) || count < 1 || count > 200 || !/^[a-z0-9][a-z0-9-]+$/u.test(runId ?? ""))
+  throw new Error("node scripts/attribution-live-benchmark.mjs CONFIG 1..200 NEW_RUN_ID");
+if (process.platform !== "linux") throw new Error("Process-tree measurements require Linux /proc.");
+const revision = execFileSync("git", ["rev-parse", "HEAD"], { encoding: "utf8" }).trim();
+const host = await loadConfig(["configs/host.json", configFile]);
+if (host.workflow !== "attribution" || host.evaluation.output.kind !== "directory" ||
+    !/^\/mnt\/fin_bench\/eval_data\/[^/]+\/eval_output\/test_eval(?:\/|$)/u.test(path.resolve(host.evaluation.output.path)))
+  throw new Error("Use an attribution configuration in the source test_eval directory.");
+const config = { ...host.evaluation, execution: { ...host.evaluation.execution, concurrency: 20,
+  taskConcurrency: count, sessionWindow: Math.max(count, host.evaluation.execution.sessionWindow) } };
+const plan = await planAttribution(config), modelForStage = createModelResolver(host.models);
+if (plan.summary.issues.length || plan.tasks.filter(task => task.stage === "attribution-component").length < count)
+  throw new Error("The fixed sample must contain enough valid distinct component tasks.");
+const channels = new Set(plan.tasks.map(task => modelForStage(task.stage).provider));
+if (channels.size !== 1) throw new Error("This experiment requires one model channel with a total limit of 20.");
+const run = path.join(config.output.path, runId);
+await mkdir(run); // New run only; measurements must not silently merge independent trials.
+const gate = createChannelRequests({ [[...channels][0]]: 20 }, { default: 1 },
+  context => attributionWorkflow.scheduling.stagePriority(context.stage));
+const requests = new Map();
+let peakRequests = 0, requestCount = 0, peakRequestSessions = 0, activeRequests = 0;
+const modelRequests = { concurrency: gate.concurrency, async acquire(context, signal) {
+  requests.set(context.callId, context.taskId);
+  peakRequestSessions = Math.max(peakRequestSessions, new Set(requests.values()).size);
+  let release;
+  try { release = await gate.acquire(context, signal); }
+  catch (error) { requests.delete(context.callId); throw error; }
+  requestCount++; activeRequests++; peakRequests = Math.max(peakRequests, activeRequests);
+  let released = false;
+  return () => { if (released) return; released = true; activeRequests--; requests.delete(context.callId); release(); };
+} };
+const loop = monitorEventLoopDelay({ resolution: 20 }), controller = new AbortController();
+const stop = () => controller.abort(new Error("Experiment interrupted"));
+process.once("SIGINT", stop); process.once("SIGTERM", stop);
+let sampling, samplePending, samples = 0, sampleFailures = 0, peakRss = 0, peakProcesses = 0, progress;
+const processUsage = new Map();
+async function sampleTree(pid) {
+  try {
+    const root = `/proc/${pid}`;
+    const [status, io, stat, children] = await Promise.all(["status", "io", "stat", `task/${pid}/children`]
+      .map(file => readFile(`${root}/${file}`, "utf8")));
+    const numbers = text => Object.fromEntries([...text.matchAll(/^(\w+):\s+(\d+)/gmu)].map(match => [match[1], Number(match[2])]));
+    const fields = stat.slice(stat.lastIndexOf(")") + 2).split(" "), memory = numbers(status), counters = numbers(io);
+    processUsage.set(`${pid}:${fields[19]}`, { cpu_ticks: Number(fields[11]) + Number(fields[12]),
+      read_bytes: counters.read_bytes, write_bytes: counters.write_bytes, rchar: counters.rchar, wchar: counters.wchar });
+    const descendants = await Promise.all(children.trim().split(/\s+/u).filter(Boolean).map(sampleTree));
+    return { rss: (memory.VmRSS ?? 0) * 1024 + descendants.reduce((sum, child) => sum + child.rss, 0),
+      processes: 1 + descendants.reduce((sum, child) => sum + child.processes, 0) };
+  } catch (error) {
+    if (!['ENOENT', 'ESRCH'].includes(error.code)) sampleFailures++;
+    return { rss: 0, processes: 0 };
+  }
+}
+const before = process.resourceUsage(), startedAt = Date.now();
+const report = result => ({ kind: "pi-live-sessions", git_revision: revision,
+  evaluator_version: host.evaluatorVersion, run_id: runId, elapsed_seconds: (Date.now() - startedAt) / 1000,
+  task_slots: count, worker_slots_per_process: 8, model_concurrency_limit: 20, peak_model_requests: peakRequests,
+  provider_requests: requestCount, peak_sessions_with_active_or_queued_model_request: peakRequestSessions,
+  process_samples: samples, process_sample_failures: sampleFailures, peak_process_tree_rss_bytes: peakRss,
+  peak_process_count: peakProcesses, host_memory: process.memoryUsage(), host_resource_usage: process.resourceUsage(),
+  initial_host_resource_usage: before, observed_process_io_and_cpu: [...processUsage.values()].reduce((total, counters) => {
+    for (const [key, value] of Object.entries(counters)) total[key] = (total[key] ?? 0) + value; return total;
+  }, {}), event_loop_max_ms: loop.max / 1e6, event_loop_p95_ms: loop.percentile(95) / 1e6,
+  progress, result, limits: "Linux process-tree RSS sums shared pages and samples every second; short-lived processes may be missed. Queued/active model requests prove SDK sessions exist, but omit sessions between requests. No semantic effect review." });
+let result, error;
+try {
+  loop.enable();
+  sampling = setInterval(() => {
+    if (samplePending) return;
+    samplePending = sampleTree(process.pid).then(async sample => {
+      samples++; peakRss = Math.max(peakRss, sample.rss); peakProcesses = Math.max(peakProcesses, sample.processes);
+      if (samples % 30 === 0) await writeJson(path.join(run, "infrastructure-observation.json"), report());
+    }).catch(() => { sampleFailures++; }).finally(() => { samplePending = undefined; });
+  }, 1000);
+  const { report: _report, ...baseServices } = services;
+  result = await runEvaluation({ ...baseServices, taskSource: attributionWorkflow, repository: attributionRepository,
+    runtime: { ...services.runtime, workerSlots: 8 }, runId, output: config.output, engine: "pi",
+    evaluatorVersion: host.evaluatorVersion, config, plan, policy: config.execution, modelForStage, modelRequests,
+    concurrency: 20, taskConcurrency: count, retries: config.execution.retries, retryDelaySeconds: config.execution.retryDelaySeconds,
+    failureGuard: config.execution.failureGuard, signal: controller.signal, debug: true,
+    onProgress(message) { if (message.startsWith("progress ")) progress = JSON.parse(message.slice(9)); } });
+} catch (caught) { error = caught; }
+finally {
+  clearInterval(sampling); await samplePending; loop.disable();
+  process.off("SIGINT", stop); process.off("SIGTERM", stop);
+  await writeJson(path.join(run, "infrastructure-observation.json"), { ...report(result), failed: Boolean(error) });
+}
+if (error) throw error;
+await writeJson(path.join(run, "throughput-observation.json"), await measureAttributionRun(run));
+console.log(JSON.stringify(report(result)));
+if (peakRequests > 20 || peakRequestSessions < count || controller.signal.aborted ||
+    Object.entries(result.execution_task_statuses).some(([status, amount]) => status !== "succeeded" && amount)) process.exitCode = 1;
