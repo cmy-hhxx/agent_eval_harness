@@ -3,13 +3,13 @@ import { mkdir, stat, readFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { monitorEventLoopDelay } from "node:perf_hooks";
+import { Worker } from "node:worker_threads";
 import { loadConfig, createModelResolver } from "@eval/host-app/config";
 import { services } from "@eval/host-app/composition";
 import { createChannelRequests, runEvaluation } from "@eval/host";
 import { attributionRepository, attributionWorkflow, planAttribution } from "@eval/workflows/attribution";
 import { writeJson, runHotFile } from "@eval/data";
 import { measureAttributionRun } from "./attribution-throughput.mjs";
-import { sampleProcessTree } from "./process-tree-usage.mjs";
 
 // Complete Pi sessions and independent Worker processes, with exactly 20 provider permits.
 // Run alone: this process cannot limit unrelated Hosts sharing the model gateway.
@@ -57,7 +57,7 @@ const modelRequests = { concurrency: gate.concurrency, async acquire(context, si
 const loop = monitorEventLoopDelay({ resolution: 20 }), controller = new AbortController();
 const stop = () => controller.abort(new Error("Experiment interrupted"));
 process.once("SIGINT", stop); process.once("SIGTERM", stop);
-let sampling, samplePending, samples = 0, sampleFailures = 0, peakRss = 0, peakProcesses = 0, progress;
+let sampling, samplingClosed, samplePending, samples = 0, sampleFailures = 0, peakRss = 0, peakProcesses = 0, progress;
 const processUsage = new Map();
 const peakMemory = { host: {}, workers: {} }, outboxPeak = { count: 0, bytes: 0, age_ms: 0 };
 let systemMemory, survivingProcesses = [];
@@ -88,9 +88,13 @@ const report = result => ({ kind: "pi-live-sessions", git_revision: revision,
 let result, error, failed;
 try {
   loop.enable();
-  sampling = setInterval(() => {
+  sampling = new Worker(new URL("./process-tree-usage.mjs", import.meta.url), { workerData: { processTreeRoot: process.pid } });
+  samplingClosed = new Promise(resolve => sampling.once("exit", resolve));
+  sampling.on("error", () => { sampleFailures++; });
+  sampling.on("message", ({ sample, error }) => {
+    if (error) { sampleFailures++; return; }
     if (samplePending) return;
-    samplePending = sampleProcessTree(process.pid).then(async sample => {
+    samplePending = (async () => {
       sampleFailures += sample.failures;
       for (const { id, ...counters } of sample.counters) processUsage.set(id, counters);
       samples++; peakRss = Math.max(peakRss, sample.rss); peakProcesses = Math.max(peakProcesses, sample.processes);
@@ -98,8 +102,8 @@ try {
         if (value !== null) peakMemory[group][key] = Math.max(peakMemory[group][key] ?? 0, value);
       systemMemory = sample.system;
       if (samples % 30 === 0) { updateQuotaTime(); await sampleFiles(); await writeJson(path.join(run, "infrastructure-observation.json"), report()); }
-    }).catch(() => { sampleFailures++; }).finally(() => { samplePending = undefined; });
-  }, 1000);
+    })().catch(() => { sampleFailures++; }).finally(() => { samplePending = undefined; });
+  });
   const { report: _report, ...baseServices } = services;
   result = await runEvaluation({ ...baseServices, taskSource: attributionWorkflow, repository: attributionRepository,
     runtime: { ...services.runtime, workerSlots: 8 }, runId, output: config.output, engine: "pi",
@@ -116,7 +120,7 @@ try {
     } } });
 } catch (caught) { error = caught; }
 finally {
-  clearInterval(sampling); await samplePending; loop.disable();
+  sampling?.postMessage("stop"); await samplingClosed; await samplePending; loop.disable();
   updateQuotaTime(); await sampleFiles();
   survivingProcesses = (await Promise.all([...processUsage.keys()].map(async id => {
     const [pid, started] = id.split(":");

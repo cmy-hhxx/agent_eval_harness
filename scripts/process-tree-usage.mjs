@@ -1,6 +1,7 @@
 import { execFile } from "node:child_process";
 import { readFile } from "node:fs/promises";
 import { promisify } from "node:util";
+import { parentPort, workerData } from "node:worker_threads";
 
 const execute = promisify(execFile);
 
@@ -48,4 +49,24 @@ export async function sampleProcessTree(root) {
     workers: { count: workers.length, rss_bytes: sum("rss"), anonymous_bytes: sum("anonymous_bytes"), file_bytes: sum("file_bytes") },
     system: { cached_bytes: system.Cached * 1024, buffers_bytes: system.Buffers * 1024, scope: "machine-wide, not attributable to this run" },
     counters: processes.map(({ id, counters }) => ({ id, ...counters })), failures };
+}
+
+// ps has a synchronous spawn phase even through execFile. Keep it off the
+// measured Host event loop; one small sampling thread lives for the whole trial.
+if (parentPort && workerData?.processTreeRoot) {
+  let timer, pending, stopped = false;
+  const sample = () => {
+    pending = sampleProcessTree(workerData.processTreeRoot)
+      .then(value => parentPort.postMessage({ sample: value }), error => parentPort.postMessage({ error: String(error) }))
+      .finally(() => {
+        pending = undefined;
+        if (stopped) parentPort.close();
+        else timer = setTimeout(sample, 1000);
+      });
+  };
+  parentPort.once("message", () => {
+    stopped = true; clearTimeout(timer);
+    if (!pending) parentPort.close();
+  });
+  sample();
 }
