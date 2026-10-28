@@ -51,6 +51,11 @@ export function createNightDispatcher(state, { save, record, run, canOverlap = a
   const lane = source => [...active.keys()].filter(job => job.source === source);
   const overlapping = () => new Set([...active.keys()].map(job => job.source)).size < active.size;
   return {
+    pauseSource(source) {
+      for (const [job, entry] of active) {
+        if (job.source === source) entry.pause.abort(new Error("Night source paused: " + source));
+      }
+    },
     pause() {
       paused = true;
       for (const entry of active.values()) entry.pause.abort(new Error("Night pipeline stopping"));
@@ -104,6 +109,26 @@ export function createNightDispatcher(state, { save, record, run, canOverlap = a
       return true;
     },
   };
+}
+
+/** Reload only source selection; retain every live run and the single request gate. */
+export function installNightSourceControl(configFile, config, dispatcher, record) {
+  const step = dispatcher.step.bind(dispatcher);
+  dispatcher.step = source => config.activeSources.includes(source) ? step(source) : Promise.resolve(false);
+  let pending = Promise.resolve();
+  const reload = () => {
+    pending = pending.catch(() => {}).then(async () => {
+      const next = resolveNightConfig(await readJson(configFile), configFile);
+      config.activeSources = next.activeSources;
+      for (const source of priority) if (!config.activeSources.includes(source)) dispatcher.pauseSource(source);
+      await record("source_selection_updated", { activeSources: config.activeSources });
+      return { activeSources: config.activeSources };
+    });
+    return pending;
+  };
+  const onReload = () => { void reload().catch(error => record("source_selection_failed", { error: error.message })); };
+  process.on("SIGUSR2", onReload);
+  return { reload, close: () => process.off("SIGUSR2", onReload) };
 }
 
 export function resolveNightConfig(value, configFile) {
@@ -203,7 +228,7 @@ export async function main(argv) {
   const logger = createFileLogger({ directory: process.env.EVAL_LOG_DIR, lockDirectory: process.env.EVAL_LOG_LOCK_DIR,
     secrets: configurationSecrets() });
   const abort = new AbortController(), sleepAbort = new AbortController();
-  let stopping = false, dispatcher, requestTimer;
+  let stopping = false, dispatcher, requestTimer, sourceControl;
   const stop = () => { stopping = true; sleepAbort.abort(); dispatcher?.pause(); };
   process.on("SIGINT", stop); process.on("SIGTERM", stop);
   const wait = ms => delay(ms, undefined, { signal: sleepAbort.signal }).catch(error => { if (!stopping) throw error; });
@@ -273,6 +298,7 @@ export async function main(argv) {
         acquire: (context, signal) => requests.acquire({ ...context, trafficGroup: job.source }, signal) },
       signal: abort.signal, pauseSignal,
     }) });
+    sourceControl = installNightSourceControl(values.config, config, dispatcher, record);
     let dataReady = false;
     const prepare = async () => {
       do {
@@ -306,7 +332,7 @@ export async function main(argv) {
       }
     };
     const guard = task => task.catch(error => { stop(); abort.abort(error); throw error; });
-    const outcomes = await Promise.allSettled([guard(prepare()), ...config.activeSources.map(source => guard(evaluate(source)))]);
+    const outcomes = await Promise.allSettled([guard(prepare()), ...priority.map(source => guard(evaluate(source)))]);
     await dispatcher.settle();
     for (const outcome of outcomes) if (outcome.status === "rejected") throw outcome.reason;
     await save();
@@ -317,6 +343,7 @@ export async function main(argv) {
     try { await dispatcher?.settle(); }
     finally {
       clearInterval(requestTimer);
+      sourceControl?.close();
       process.off("SIGINT", stop); process.off("SIGTERM", stop);
       await releaseInput?.();
       await release();

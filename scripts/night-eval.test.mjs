@@ -239,12 +239,13 @@ test("incremental admission survives restart and honors the two-hour interval", 
 });
 
 test("tail overlap admits only one extra batch globally and drains on pause", async () => {
-  const sources = ["wencai", "lost", "aime"], drains = [];
+  const sources = ["wencai", "lost", "aime"], drains = [], signals = new Map();
   const state = { deliveries: [0, 1].map(index => ({ file: "/lost" + index, date: "2026-10-12" })),
     jobs: sources.flatMap(source => [0, 1].map(index =>
       ({ source, runId: source + index, status: "queued", revisions: { ["/lost" + index]: "r" } }))) };
   const dispatch = createNightDispatcher(state, { save: async () => {}, record: async () => {},
-    canOverlap: async () => true, run: async () => {
+    canOverlap: async () => true, run: async (job, signal) => {
+      signals.set(job.runId, signal);
       await new Promise(resolve => drains.push(resolve));
       return { complete: true };
     } });
@@ -254,6 +255,11 @@ test("tail overlap admits only one extra batch globally and drains on pause", as
   assert.equal(await dispatch.step("lost"), false);
   assert.equal(state.jobs.filter(job => job.status === "running").length, 4);
   await new Promise(resolve => setImmediate(resolve));
+  dispatch.pauseSource("aime");
+  assert.equal(signals.get("aime0").aborted, true);
+  assert.equal(signals.get("aime1").aborted, true);
+  assert.equal(signals.get("lost0").aborted, false);
+  assert.equal(signals.get("wencai0").aborted, false);
   dispatch.pause();
   assert.equal(await dispatch.step("lost"), false);
   drains.forEach(resolve => resolve());
