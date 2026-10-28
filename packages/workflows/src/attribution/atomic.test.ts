@@ -36,6 +36,8 @@ test("model review entrypoints use message coordinates and retain public output 
   assert(JSON.stringify(binding.modelInput).includes("context_sources"));
   const material = JSON.stringify(binding.modelInput!.answer);
   assert(material.includes("收入为10亿元。"));
+  assert(material.includes("核对收入。"));
+  assert(!Object.hasOwn(binding.modelInput!.answer as object, "final_message_index"), "a local transformation does not direct the reviewer to the final answer");
   assert(!material.includes("PRIVATE_SENTINEL"));
   assert.deepEqual(Object.keys(binding.request.input).sort(), ["component", "review_scope", "trace_index"],
     "a component submission must not retain the full global business-chain payload");
@@ -49,6 +51,33 @@ test("model review entrypoints use message coordinates and retain public output 
   const isolated = bindAttribution(task, { [candidate.input_id]: normalizeInput(structuredClone(raw)) }, {});
   assert.notEqual(isolated.request.sources.answer.value, binding.request.sources.answer.value,
     "another loaded source object never inherits this trace's cached facts");
+});
+
+test("a model turn receives its actual public input once with exact continuation beyond the local budget", () => {
+  const context = "原始上下文。".repeat(3000);
+  const raw = { batch_id: "batch", case_id: "local-context", messages: [
+    { type: "user_question", content: "核对本次处理。" },
+    { type: "llm_turn", name: "planner", input_messages: [{ role: "system", content: "PRIVATE_INPUT" },
+      { role: "user", content: context }, { role: "user", content: "" }], output: [{ role: "assistant", content: "处理结果。" }] },
+    { type: "final_answer", content: "最终回答。" },
+  ] };
+  const candidate = adapt(raw, { id: "answer", name: "Answer", adapter: "b", sources: [] }, "fixture.jsonl", 1);
+  const task = planAttributionUnit(candidate).tasks.find(task => task.stage === "attribution-component" &&
+    (task.data as AttributionTaskData).reviewScope!.message_indices.includes(1))!;
+  const binding = bindAttribution(task, { [candidate.input_id]: normalizeInput(raw) }, {});
+  const answer = binding.modelInput!.answer as { component_scene: { entries: { part: string; quote: string; reference: { evidence_id: string } }[];
+    context_sources: { path: string; read_request?: { offset: number; max_chars: number } }[] } };
+  const entries = answer.component_scene.entries.filter(entry => entry.part === "input_messages");
+  assert(entries.length > 1);
+  const shown = entries.map(entry => entry.quote).join("");
+  assert(context.startsWith(shown));
+  assert.equal(answer.component_scene.entries.reduce((sum, entry) => sum + entry.quote.length, 0), 12000);
+  assert.equal(answer.component_scene.context_sources.find(source => source.path === "/input_messages/1/content")!.read_request!.offset, shown.length);
+  assert(!JSON.stringify(binding.modelInput).includes("PRIVATE_INPUT"));
+  assert(!JSON.stringify(binding.modelInput).includes("最终回答。"));
+  validateReadRequests(binding.modelInput!.answer);
+  const prepared = new AgentRegistry([attributionAgent]).prepare(binding);
+  validateEvidenceBankSources(prepared.evidenceBank, new Map([[candidate.input_id, normalizeInput(raw)]]));
 });
 
 test("a mixed-media answer retains its image entrypoint after text scope splitting", () => {

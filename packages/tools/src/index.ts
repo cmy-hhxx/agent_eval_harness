@@ -403,8 +403,6 @@ export const builtinTools: ExecutableTool[] = [
         source_offset?: number;
       };
       const navigation = object(ctx.materialNavigation?.[args.candidate] ?? {});
-      const responsibilityChoices = (navigation.responsibility_choices as {message_index:number}[] | undefined)
-        ?.filter(choice=>choice.message_index===args.message_index);
       const sources = evidenceSources(message(ctx, args.candidate, args.message_index));
       const scope = navigation.review_scope as { message_indices: number[]; final_ranges?: { path: string; start: number; end: number }[] } | undefined;
       const reviewRange = args.offset === undefined && args.message_index === navigation.final_message_index
@@ -460,7 +458,6 @@ export const builtinTools: ExecutableTool[] = [
         return {
           source: { kind: source.kind, path: source.path },
           ...(reviewRange ? { review_range: reviewRange } : {}),
-          ...(responsibilityChoices?.length ? { responsibility_choices: responsibilityChoices } : {}),
           ...(path !== undefined ? { selection_path: path } : {}),
           ...(alreadyRead ? { already_read: true } : {}),
           evidence: !quotable ? [] : wholeContext || alreadyRead ? citations(start + offset, start + end)
