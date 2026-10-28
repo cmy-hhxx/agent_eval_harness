@@ -7,10 +7,10 @@ Eris 是部署在评测服务器的小团队只读分析助手。浏览器入口
 ## 启动与配置
 
 ```bash
-bash agent/run.sh --config /mnt/aigc_team/user_workspace/chenmingyang/eval_harness/runtime/config/eris.json
+bash agent/run.sh --config /mnt/fin_bench/sync_datasets/code/1_eval_harnes/runtime/config/eris.json
 ```
 
-[配置 Schema](../schemas/eris/server.schema.json)指定监听地址、外部来源、产物清单文件 `collectionsFile`、外置运行目录和模型 INI，[配置示例](../configs/eris.example.json)提供完整字段。产物清单用 `id / path / test` 显式登记目录，见[清单示例](../configs/collections.example.json)；相对路径按各自配置文件解析。来源与物理目录可任意命名，不在代码中维护来源列表或拼接固定输出目录。端口占用或实例锁冲突直接失败，不终止其他进程，不自动打开浏览器。代码在独立 `eris-code` checkout，启动进程在 `eris` tmux 中前台运行。
+[配置 Schema](../schemas/eris/server.schema.json)指定监听地址、外部来源、产物清单文件 `collectionsFile`、外置运行目录和模型 INI，[配置示例](../configs/eris.example.json)提供完整字段。产物清单用 `id / path / test` 显式登记目录，见[清单示例](../configs/collections.example.json)；相对路径按各自配置文件解析。来源与物理目录可任意命名，不在代码中维护来源列表或拼接固定输出目录。端口占用或实例锁冲突直接失败，不终止其他进程，不自动打开浏览器。代码在 `/mnt/fin_bench/sync_datasets/code/1_eval_harnes/eris-code` 独立 checkout，启动进程在 `eris` tmux 中前台运行。
 
 ## 模型与设置
 

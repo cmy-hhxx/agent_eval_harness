@@ -3,16 +3,22 @@ import { spawn } from "node:child_process";
 import { parseArgs } from "node:util";
 import path from "node:path";
 
+const deploymentRoot = "/mnt/fin_bench/sync_datasets/code/1_eval_harnes";
 const { values } = parseArgs({ options: {
   config: { type: "string", default: ".servers.conf" }, branch: { type: "string", default: "main" },
-  "code-path": { type: "string" },
-  "runtime-root": { type: "string" },
+  "code-path": { type: "string", default: `${deploymentRoot}/eris-code` },
+  "runtime-root": { type: "string", default: `${deploymentRoot}/runtime` },
   "collections-file": { type: "string" },
   "source-ini": { type: "string" },
   start: { type: "boolean", default: false },
 } });
 for (const key of ["code-path", "runtime-root", "collections-file", "source-ini"])
   if (!values[key] || !path.isAbsolute(values[key])) throw new Error(`Provide an absolute --${key} on the server`);
+const codePath = path.posix.normalize(values["code-path"]), runtimeRoot = path.posix.normalize(values["runtime-root"]);
+if (!codePath.startsWith(`${deploymentRoot}/`) || codePath === `${deploymentRoot}/runtime` || codePath.startsWith(`${deploymentRoot}/runtime/`))
+  throw new Error(`Deploy code in a checkout below ${deploymentRoot}, outside runtime/`);
+if (runtimeRoot !== `${deploymentRoot}/runtime`)
+  throw new Error(`Use --runtime-root ${deploymentRoot}/runtime`);
 const configFile = path.resolve(values.config), entries = new Map(); let section = "";
 for (const raw of (await readFile(configFile, "utf8")).split(/\r?\n/)) {
   const line = raw.trim(), header = /^\[([^\]]+)\]$/.exec(line), pair = /^([^=]+)=(.*)$/.exec(line);
@@ -23,8 +29,8 @@ if (required("auth") !== "key") throw new Error("eval_agent_server must use auth
 const key = path.resolve(path.dirname(configFile), required("key").replace(/^~(?=\/)/, process.env.HOME));
 const quote = value => `'${String(value).replaceAll("'", `'"'"'`)}'`;
 const script = `set -euo pipefail
-CODE=${quote(values["code-path"])}
-RUNTIME=${quote(values["runtime-root"])}
+CODE=${quote(codePath)}
+RUNTIME=${quote(runtimeRoot)}
 BRANCH=${quote(values.branch)}
 COLLECTIONS=${quote(values["collections-file"])}
 SOURCE_INI=${quote(values["source-ini"])}
@@ -33,6 +39,9 @@ export GIT_TERMINAL_PROMPT=0
 export NO_PROXY="\${NO_PROXY:-},interactive-n01laf763gwn,interactive-s4lvy0mmvu32,localhost,127.0.0.1"
 export no_proxy="$NO_PROXY"
 if tmux has-session -t '=eris' 2>/dev/null; then echo 'Stop the eris tmux service before deploying' >&2; exit 1; fi
+test "$(realpath -m "$CODE")" = "$CODE" || { echo 'Code path must not traverse symlinks' >&2; exit 1; }
+test "$(realpath -m "$RUNTIME")" = "$RUNTIME" || { echo 'Runtime path must not traverse symlinks' >&2; exit 1; }
+mkdir -p "$(dirname "$CODE")" "$RUNTIME"
 credential="store --file=$RUNTIME/secrets/git-credentials"
 if [ ! -d "$CODE/.git" ]; then
   git -c credential.helper="$credential" -c http.proxy= clone --branch "$BRANCH" "$ORIGIN" "$CODE"

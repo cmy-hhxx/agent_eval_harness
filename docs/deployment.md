@@ -56,8 +56,10 @@ Eris 的 `collectionsFile` 指向独立 JSON 清单，格式见[清单示例](..
 
 | 内容 | 路径 |
 |---|---|
-| Git checkout | `/mnt/aigc_team/user_workspace/chenmingyang/eval_harness/code` |
-| 外部运行目录 | `/mnt/aigc_team/user_workspace/chenmingyang/eval_harness/runtime` |
+| 代码部署根目录 | `/mnt/fin_bench/sync_datasets/code/1_eval_harnes/` |
+| main checkout | `/mnt/fin_bench/sync_datasets/code/1_eval_harnes/main` |
+| Eris checkout | `/mnt/fin_bench/sync_datasets/code/1_eval_harnes/eris-code` |
+| 外部运行目录 | `/mnt/fin_bench/sync_datasets/code/1_eval_harnes/runtime` |
 | 数据源 | `/mnt/fin_bench/eval_data` |
 | 日常评测产物 | `/mnt/fin_bench/eval_data/{source}/3_eval_output/0_daily_eval/` |
 | 专项评测产物 | `/mnt/fin_bench/eval_data/{source}/3_eval_output/1_task_eval/<任务>/` |
@@ -67,6 +69,8 @@ Eris 的 `collectionsFile` 指向独立 JSON 清单，格式见[清单示例](..
 | 日志 | `runtime/log/runtime.log`、`runtime/log/evaluation.log` |
 
 `source` 使用实际来源目录，例如 `0_wencai`、`1_aime`、`2_ifind`。配置、输入、账号和结果独立于 checkout。正式结果与恢复状态随 run 存在对应输出目录，不另存到 checkout 或 `runtime/data/runs`。
+
+所有分支、提交或专项用途的代码均部署在上述代码根目录的独立子目录，目录名由操作者按用途指定；`runtime/` 专用于持久配置、密钥、账号、聊天、状态和日志，不存放 checkout。停止使用 `user_workspace` 下的代码和运行目录，不保留指向旧位置的软链接。不同 checkout 共用外部配置时仍须遵守实例锁，更新代码不会自动启动评测或调度任务。
 
 ## 评测 Host
 
@@ -86,27 +90,28 @@ Host 热状态默认写入 `~/.cache/eval-agent-harness/hot`，可通过 `EVAL_H
 
 ## 更新代码
 
-先停止对应 Host 或 Eris 进程并等待保存完成，再在服务器 checkout 执行 `git pull --ff-only`。依赖、vendor 或工具链有变化时重新执行 `npm run bootstrap`，随后 `npm run build`、`npm run doctor`。更新完成后手动启动所需入口。
+先停止对应 Host 或 Eris 进程并等待保存完成，再在服务器对应 checkout（主线为 `/mnt/fin_bench/sync_datasets/code/1_eval_harnes/main`）执行 `git pull --ff-only`。依赖、vendor 或工具链有变化时重新执行 `npm run bootstrap`，随后 `npm run build`、`npm run doctor`。更新完成后手动启动所需入口。
 
 代码由服务器通过 Git 获取，凭据保存在 checkout 外，权限 `600`；密钥不进入 origin、命令参数或 Git。服务器配置继续保存在外部运行目录。
 
 ## Eris 只读分析助手
 
-Eris 使用独立代码目录 `/mnt/aigc_team/user_workspace/chenmingyang/eval_harness/eris-code`，持久目录仍为既有 `runtime/`；评测与分析使用各自的启动入口。
+Eris 使用独立代码目录 `/mnt/fin_bench/sync_datasets/code/1_eval_harnes/eris-code`，持久目录为同一部署根目录下的 `runtime/`；评测与分析使用各自的启动入口。
 
-使用[服务配置示例](../configs/eris.example.json)准备服务器外置配置和产物清单。部署命令必须显式提供服务器代码目录、运行目录、渠道配置和产物清单路径：
+使用[服务配置示例](../configs/eris.example.json)准备服务器外置配置和产物清单。部署脚本默认使用上述 Eris checkout 与运行目录，必须显式提供渠道配置和产物清单路径：
 
 ```bash
 read -rs ERIS_ADMIN_PASSWORD
 export ERIS_ADMIN_PASSWORD
 npm run deploy:eris -- --config <连接配置.servers.conf> --branch main \
-  --code-path /absolute/server/eris-code --runtime-root /absolute/server/runtime \
-  --source-ini /absolute/server/runtime/config/models.ini \
-  --collections-file /absolute/server/runtime/config/collections.json --start
+  --source-ini /mnt/fin_bench/sync_datasets/code/1_eval_harnes/runtime/config/config.ini \
+  --collections-file /mnt/fin_bench/sync_datasets/code/1_eval_harnes/runtime/config/collections.json --start
 unset ERIS_ADMIN_PASSWORD
 ```
 
 密码应通过私密环境输入提供，不写入命令历史。部署脚本通过 SSH stdin 传递初始化密码，代码由服务器从集群 Git 读取；复用既有只读 Git 凭据，不传输本机输入、结果、聊天或 checkout。
+
+需要部署其他分支时显式传入 `--branch` 和 `--code-path /mnt/fin_bench/sync_datasets/code/1_eval_harnes/<用途>`。脚本拒绝根目录之外、`runtime/` 内或经软链接跳转的代码路径；`--runtime-root` 只接受固定的外部运行目录。
 
 部署优先使用 mise；服务器已通过系统路径安装同一组锁定版本时直接复用，启动和部署均校验 Node/npm/Python/uv 的精确版本，不允许版本降级。
 

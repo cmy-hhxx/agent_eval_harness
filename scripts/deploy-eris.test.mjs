@@ -8,6 +8,8 @@ import { root } from "./lib.mjs";
 import { parseSettings } from "../dist/apps/host/src/settings.js";
 import { assistantModelConfiguration } from "../dist/apps/host/src/assistant-models.js";
 
+const deploymentRoot = "/mnt/fin_bench/sync_datasets/code/1_eval_harnes";
+
 test("Eris initializes only its own configuration with the DeepSeek V4.1 supported reasoning levels", async t => {
   const directory = await mkdtemp(path.join(tmpdir(), "eris-init-")); t.after(() => rm(directory, { recursive: true, force: true }));
   const sourceFile = path.join(directory, "source.ini"), runtime = path.join(directory, "runtime"), collectionsFile = path.join(directory, "collections.json");
@@ -37,7 +39,7 @@ test("Eris deployment sends secrets only through stdin and distributes isolated 
   const config = path.join(directory, "servers.conf");
   await writeFile(config, "[eval_agent_server]\nhost=fixture\nport=3929\nuser=root\nauth=key\nkey=/fixture/key\n");
   const child = spawn(process.execPath, [path.join(root, "scripts/deploy-eris.mjs"), "--config", config, "--branch", "codex/test", "--start",
-    "--code-path", "/custom/eris-code", "--runtime-root", "/custom/runtime", "--source-ini", "/custom/models.ini", "--collections-file", "/custom/collections.json"], {
+    "--source-ini", "/custom/models.ini", "--collections-file", "/custom/collections.json"], {
     env: { ...process.env, PATH: bin + ":" + process.env.PATH, ERIS_ADMIN_PASSWORD: "fixture-secret", ERIS_CAPTURE: captured, ERIS_ARGUMENTS: argumentsFile }, stdio: ["ignore", "pipe", "pipe"],
   });
   let output = ""; for (const stream of [child.stdout, child.stderr]) stream.on("data", chunk => { output += chunk; });
@@ -47,9 +49,28 @@ test("Eris deployment sends secrets only through stdin and distributes isolated 
   assert(!args.includes("fixture-secret")); assert(!output.includes("fixture-secret"));
   assert(script.includes("export ERIS_ADMIN_PASSWORD='fixture-secret'"));
   assert(script.indexOf("npm run build") < script.indexOf("export ERIS_ADMIN_PASSWORD="));
-  assert(script.includes("eris-code")); assert(script.includes("BRANCH='codex/test'"));
+  assert(script.includes(`CODE='${deploymentRoot}/eris-code'`)); assert(script.includes("BRANCH='codex/test'"));
+  assert(script.includes(`RUNTIME='${deploymentRoot}/runtime'`));
   assert(script.includes("COLLECTIONS='/custom/collections.json'"));
   assert(script.includes('--source-ini "$SOURCE_INI" --collections-file "$COLLECTIONS"'));
   assert(script.includes("git -c credential.helper=")); assert(script.includes("tmux new-session -d -s eris"));
   assert(!/rsync|scp |git bundle|kill |aime-auto/.test(script));
+});
+
+test("Eris deployment rejects code outside the deployment root and a separate runtime before SSH", async () => {
+  for (const args of [
+    ["--code-path", "/mnt/aigc_team/user_workspace/chenmingyang/eval_harness/eris-code"],
+    ["--code-path", `${deploymentRoot}/../other/eris-code`],
+    ["--code-path", deploymentRoot],
+    ["--code-path", `${deploymentRoot}/runtime/checkout`],
+    ["--runtime-root", "/custom/runtime"],
+  ]) {
+    const child = spawn(process.execPath, [path.join(root, "scripts/deploy-eris.mjs"),
+      "--source-ini", "/custom/models.ini", "--collections-file", "/custom/collections.json", ...args], { stdio: ["ignore", "pipe", "pipe"] });
+    let output = ""; for (const stream of [child.stdout, child.stderr]) stream.on("data", chunk => { output += chunk; });
+    const code = await new Promise((resolve, reject) => { child.once("error", reject); child.once("exit", resolve); });
+    assert.notEqual(code, 0);
+    assert.match(output, /Deploy code in a checkout below|Use --runtime-root/);
+    assert(!output.includes("ENOENT"));
+  }
 });
