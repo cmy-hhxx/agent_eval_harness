@@ -5,7 +5,7 @@ import os from "node:os";
 import path from "node:path";
 import {
   DEFAULT_POLICY, emptyUsage, type AgentBinding, type AgentProfile, type AttemptSpec,
-  type RunRepository, type RunState, type Submission,
+  type FailureContext, type RunRepository, type RunState, type Submission,
 } from "@eval/contracts";
 import { AgentRegistry } from "./agents.js";
 import { RunStore } from "./store.js";
@@ -66,6 +66,38 @@ for (const debug of [false, true]) test(`two hundred independent activations and
   const p95 = acceptanceLatencies[Math.ceil(acceptanceLatencies.length * 0.95) - 1]!;
   t.diagnostic(`200 accepts: p50=${acceptanceLatencies[99]!.toFixed(1)}ms p95=${p95.toFixed(1)}ms max=${acceptanceLatencies.at(-1)!.toFixed(1)}ms`);
   assert(p95 < 1000, `acceptance p95 must stay below one second, received ${p95.toFixed(1)}ms`);
+});
+
+test("two cold restores retain unfinished drafts and inspection proof after journal compaction", async t => {
+  const run = await mkdtemp(path.join(os.tmpdir(), "eval-recovery-checkpoint-"));
+  t.after(() => rm(run, { recursive: true, force: true }));
+  const failure: FailureContext = {
+    errors: [{ category: "decision", code: "missing", path: "/label", message: "补齐字段", expected: "label" }],
+    draft: { summary: "已有草稿", evidence: [0] }, evidenceBank: ["source:0:text:/content:0:2"],
+    inspection: { id: "inspection", value: { checked: true }, proof: {
+      traceReads: [{ candidate: "answer", message_index: 0, path: "/content", kind: "text", start: 0, end: 2 }], viewedImages: [] } },
+    review: { quotes: [], sources: [{ id: "source", content: "原文", record: {} }], actions: [], viewed: [], searches: [] },
+    contentSubmissions: 1, fileErrors: 2, repeatedErrors: 0, stopped: false, attemptId: "attempt" };
+  let state: RunState = { manifest: { format: "evaluation-run", debug: false, runId: "cold", status: "interrupted",
+    engine: { engine: "pi", version: "test", commit: "test", buildId: "test" }, evaluatorVersion: "test",
+    config: {}, tasks: [{ id: "task", stage: "review", inputIds: {}, dependencies: {}, data: {} }], inputs: {},
+    states: { task: { status: "cancelled", attempts: 1, failure } }, preflight: {}, startedAt: 1 },
+    receipts: {}, usage: emptyUsage(), recordedAttempts: 0 };
+  const repository = createRunRepository<RunState>({ encode: value => value, decode: value => value,
+    references: () => [], resultId: () => "" }, () => null);
+  for (let round = 0; round < 2; round++) {
+    const store = new RunStore(run, state, {}, { repository, agents: new AgentRegistry([]),
+      taskSource: { id: "fixture", bind(): never { throw new Error("No material should be prepared to restore state"); } } },
+      undefined, new RunHotStore(":memory:", runJournalIdentity(state)));
+    store.startOutbox();
+    await store.save("task");
+    await store.persistCheckpoint();
+    await store.close(); // The local hot store is gone; only the checkpoint and compacted progress remain.
+    state = await repository.readRun(run);
+    assert.deepEqual(state.manifest.states.task!.failure, failure);
+    assert.deepEqual(await readProgressJournal(run, state.manifest.journalSequence), []);
+    assert.equal(state.manifest.states.task!.attempts, 1);
+  }
 });
 
 test("only a durable checkpoint compacts progress and a fresh hot store retains the covered sequence", async t => {

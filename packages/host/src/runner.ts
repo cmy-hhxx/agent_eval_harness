@@ -968,30 +968,43 @@ export async function runEvaluation(options: RunOptions): Promise<Record<string,
           }
         }
         if (eligible.every((worker) => busy.has(worker) || unavailable.has(worker))) break;
-        const acceptedDependencies = await current.dependencies(task);
-        const reason = options.taskSource.blockedReason?.(task, acceptedDependencies);
-        if (reason) {
-          manifest.states[task.id].status = "blocked";
-          manifest.states[task.id].reason = reason;
-          blocked = true;
+        let binding: AgentBinding, prepared: ReturnType<typeof options.agents.prepare>,
+          timing: Record<string, number>, capable: typeof eligible;
+        try {
+          const acceptedDependencies = await current.dependencies(task);
+          const reason = options.taskSource.blockedReason?.(task, acceptedDependencies);
+          if (reason) {
+            manifest.states[task.id].status = "blocked";
+            manifest.states[task.id].reason = reason;
+            blocked = true;
+            continue;
+          }
+          preparing.add(task.id);
+          options.onProgress?.(`preparing ${task.stage} ${task.id}`);
+          await yieldToIO();
+          const preparationStarted = performance.now(), cpuStarted = process.cpuUsage();
+          binding = options.taskSource.bind(task, inputs, acceptedDependencies, { tasks: manifest.tasks });
+          const bindingMs = performance.now() - preparationStarted;
+          if (paused(task)) { preparing.delete(task.id); continue; }
+          prepared = options.agents.prepare(binding);
+          const cpu = process.cpuUsage(cpuStarted);
+          timing = { queuedMs: Math.max(0, Date.now() - (manifest.states[task.id].nextRetryAt ?? manifest.startedAt)),
+            bindingMs, profileMs: performance.now() - preparationStarted - bindingMs,
+            preparationCpuMs: (cpu.user + cpu.system) / 1000, ...binding.preparationTimings };
+          capable = eligible.filter(w => prepared.evaluation.toolNames.every(name => w.health.tools.includes(name)));
+          if (!capable.length) throw new Error("Required tools not available");
+        } catch (error) {
+          preparing.delete(task.id);
+          const state = manifest.states[task.id];
+          state.status = controller.signal.aborted ? "cancelled" : "failed";
+          state.reason = "Task preparation failed: " + errorText(error);
+          delete state.nextRetryAt;
+          await current.save(task.id);
+          await options.logger?.error(error, { component: "host", event: "task_preparation_failed",
+            run_id: options.runId, task_id: task.id, stage: task.stage });
+          scheduled = true;
           continue;
         }
-        preparing.add(task.id);
-        options.onProgress?.(`preparing ${task.stage} ${task.id}`);
-        await yieldToIO();
-        const preparationStarted = performance.now(), cpuStarted = process.cpuUsage();
-        const binding = options.taskSource.bind(task, inputs, acceptedDependencies, { tasks: manifest.tasks });
-        const bindingMs = performance.now() - preparationStarted;
-        if (paused(task)) { preparing.delete(task.id); continue; }
-        const prepared = options.agents.prepare(binding);
-        const cpu = process.cpuUsage(cpuStarted);
-        const timing = { queuedMs: Math.max(0, Date.now() - (manifest.states[task.id].nextRetryAt ?? manifest.startedAt)),
-          bindingMs, profileMs: performance.now() - preparationStarted - bindingMs,
-          preparationCpuMs: (cpu.user + cpu.system) / 1000, ...binding.preparationTimings };
-        const capable = eligible.filter(
-          (w) => prepared.evaluation.toolNames.every((name) => w.health.tools.includes(name)),
-        );
-        if (!capable.length) throw new Error("Required tools not available");
         const worker = capable.find((w) => !busy.has(w) && !unavailable.has(w));
         if (!worker) { preparing.delete(task.id); continue; }
         if (options.channelConcurrency) {

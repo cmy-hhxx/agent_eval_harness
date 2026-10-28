@@ -18,6 +18,56 @@ const state: RunState = {
   receipts: {}, usage: emptyUsage(), recordedAttempts: 0,
 };
 
+test("concurrent checkpoint and outbox projections retain distinct row references and recover after a write failure", async t => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), "eval-projection-race-"));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  const tasks = ["one", "two", "three", "four"].map(id => ({ id, stage: "result", inputIds: {}, dependencies: {}, data: {} }));
+  const receipts = Object.fromEntries(tasks.map(task => [task.id, { taskId: task.id, attemptId: task.id,
+    submissionId: task.id, status: "succeeded" as const, acceptedAt: 1, evaluatorVersion: "test", judge: "test",
+    evaluation: { identity: task.id }, usage: emptyUsage(),
+    audit: { calls: 0, requiredReadCalls: 0, traceReads: [], viewedImages: [], calculations: [], artifacts: [] } }]));
+  const snapshot = (ids: string[]): RunState => ({ ...state, manifest: { ...state.manifest, tasks,
+    states: Object.fromEntries(tasks.map(task => [task.id, { status: "succeeded", attempts: 1 }])) },
+    receipts: structuredClone(Object.fromEntries(ids.map(id => [id, receipts[id]]))) });
+  const codec: RunCodec<RunState> = { encode: value => value, resultId: () => "unused",
+    references: value => Object.values(value.receipts).map(receipt => receipt.exported!),
+    decode(value, read) {
+      for (const receipt of Object.values(value.receipts)) receipt.evaluation = read(receipt.exported!);
+      return value;
+    } };
+  let entered!: () => void;
+  const started = new Promise<void>(resolve => { entered = resolve; });
+  let fail = false;
+  const repository = createRunRepository(codec, (task, value) => {
+    if (fail) throw new Error("fixture encoder failure");
+    entered();
+    return { id: task.id, file: "results.jsonl", row: value.receipts[task.id]!.evaluation as { identity: string } };
+  }, { indexedFiles: ["results.jsonl"] });
+  const write = repository.createResultWriter(directory, {}), first = snapshot(["one"]), latest = snapshot(["one", "two"]);
+  const checkpoint = write(first);
+  await started; // The first projection is awaiting its actual file write.
+  await Promise.all([checkpoint, write(latest)]);
+  assert.deepEqual(Object.values(latest.receipts).map(receipt => receipt.exported!.line), [1, 2]);
+  assert.deepEqual((await readFile(path.join(directory, "results/results.jsonl"), "utf8")).trim().split("\n").map(line => JSON.parse(line)),
+    [{ identity: "one" }, { identity: "two" }]);
+  // A previously captured snapshot can omit an already projected receipt.
+  const stale = snapshot(["one", "three"]);
+  await write(stale);
+  const complete = snapshot(["one", "two", "three", "four"]);
+  fail = true;
+  await assert.rejects(write(complete), /fixture encoder failure/);
+  fail = false;
+  await write(complete);
+  await write(stale);
+  for (let round = 0; round < 2; round++) {
+    await repository.writeRun(directory, complete);
+    const restored = await repository.readRun(directory);
+    assert.deepEqual(Object.values(restored.receipts).map(receipt => receipt.exported!.line), [1, 2, 3, 4]);
+    assert.deepEqual(Object.values(restored.receipts).map(receipt => receipt.evaluation),
+      [{ identity: "one" }, { identity: "two" }, { identity: "three" }, { identity: "four" }]);
+  }
+});
+
 test("repository checkpoint saves refresh the overview through running, finished and resumed states", async t => {
   const directory = await mkdtemp(path.join(os.tmpdir(), "eval-overview-save-")), run = path.join(directory, "run");
   t.after(() => rm(directory, { recursive: true, force: true }));

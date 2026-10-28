@@ -27,11 +27,11 @@ function compactFailure(failure: FailureContext | undefined): FailureContext | u
   } as FailureContext;
 }
 
-function compactTaskState(state: TaskState): TaskState {
+function compactTaskState(state: TaskState, accepted: boolean): TaskState {
   return {
     ...state,
     ...(state.reason === undefined ? {} : { reason: shortText(state.reason) }),
-    ...(state.failure === undefined ? {} : { failure: compactFailure(state.failure) }),
+    ...(state.failure === undefined ? {} : { failure: accepted ? compactFailure(state.failure) : state.failure }),
     ...(state.artifactStatus?.error === undefined ? {} : {
       artifactStatus: { ...state.artifactStatus, error: shortText(state.artifactStatus.error) },
     }),
@@ -39,14 +39,14 @@ function compactTaskState(state: TaskState): TaskState {
 }
 
 /**
- * Durable checkpoints are summaries. Full repair context belongs to the hot journal;
- * these bounds prevent large validation/review payloads from recurring in every save.
+ * A checkpoint replaces its covered journal prefix. Unfinished work must retain
+ * all recovery state; only accepted tasks can discard their repair context.
  */
 export function compactCheckpointState(state: RunState, clone = structuredClone): RunState {
   const { receipts, ...progress } = state;
   const snapshot = clone(progress) as RunState;
   snapshot.manifest.states = Object.fromEntries(
-    Object.entries(snapshot.manifest.states).map(([id, taskState]) => [id, compactTaskState(taskState)]),
+    Object.entries(snapshot.manifest.states).map(([id, taskState]) => [id, compactTaskState(taskState, Boolean(receipts[id]))]),
   );
   return {
     ...snapshot,

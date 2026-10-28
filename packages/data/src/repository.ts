@@ -111,7 +111,7 @@ export function createRunRepository<Checkpoint>(
       const lineCounts = new Map<string, number>();
       let existingRows: Map<string, JsonObject> | undefined;
       let initialized = false;
-      return async (state) => {
+      const write = async (state: RunState) => {
         const { manifest, receipts } = state;
         try {
           if (!existingRows) {
@@ -197,7 +197,7 @@ export function createRunRepository<Checkpoint>(
             for (const [id, row] of rows) existingRows.set(file + "\u0000" + id, row);
           }
           for (const [id, exported] of exports) {
-            receipts[id].exported = exported;
+            if (receipts[id]) receipts[id].exported = exported;
             written.set(id, exported);
           }
           initialized = true;
@@ -210,6 +210,14 @@ export function createRunRepository<Checkpoint>(
           initialized = false;
           throw error;
         }
+      };
+      // Outbox projections and checkpoint snapshots share this writer's row index.
+      // Serialize the complete transaction, including reference assignment.
+      let pending = Promise.resolve();
+      return (state) => {
+        const next = pending.then(() => write(state));
+        pending = next.catch(() => {});
+        return next;
       };
     },
   };

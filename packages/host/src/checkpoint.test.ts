@@ -1,9 +1,9 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { emptyUsage, type RunState } from "@eval/contracts";
+import { emptyUsage, type FailureContext, type RunState } from "@eval/contracts";
 import { compactCheckpointState } from "@eval/data";
 
-test("checkpoint snapshots drop bulky review context and keep bounded diagnostics", () => {
+test("checkpoint snapshots drop only accepted repair context and keep bounded diagnostics", () => {
   const huge = "里".repeat(5_000_000);
   const state: RunState = {
     manifest: {
@@ -43,3 +43,19 @@ test("checkpoint snapshots drop bulky review context and keep bounded diagnostic
   assert.equal(snapshot.receipts.task!.audit.review, undefined);
   assert.equal(state.manifest.states.task!.failure!.errors.length, 8, "live recovery context is not mutated");
 });
+
+for (const status of ["pending", "running", "cancelled", "failed", "timed_out"] as const)
+  test(`checkpoint retains the complete recovery state of an unfinished ${status} task`, () => {
+    const failure: FailureContext = { errors: [{ category: "decision", code: "missing", path: "/label", message: "缺少字段", expected: "label" }],
+      draft: { summary: "已完成取证，等待提交。" },
+      inspection: { id: "inspection", value: { checked: true }, proof: { traceReads: [], viewedImages: [] } },
+      evidenceBank: [], review: { quotes: [], sources: [{ id: "source", content: "证据", record: {} }], actions: [], viewed: [], searches: [] },
+      contentSubmissions: 1, fileErrors: 1, repeatedErrors: 0, stopped: false, attemptId: "attempt" };
+    const state: RunState = { manifest: { format: "evaluation-run", debug: false, runId: "resume", status: "interrupted",
+      engine: { engine: "pi", version: "test", commit: "test", buildId: "test" }, evaluatorVersion: "test",
+      config: {}, tasks: [], inputs: {}, states: { task: { status, attempts: 1, failure } }, preflight: {}, startedAt: 1 },
+      receipts: {}, usage: emptyUsage(), recordedAttempts: 0 };
+    const snapshot = compactCheckpointState(state);
+    assert.deepEqual(snapshot.manifest.states.task!.failure, failure);
+    assert.notEqual(snapshot.manifest.states.task!.failure, failure);
+  });
