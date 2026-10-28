@@ -1,8 +1,6 @@
-import { spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { mkdir, readdir, stat, unlink } from "node:fs/promises";
 import path from "node:path";
-import { fileURLToPath } from "node:url";
 import { isDeepStrictEqual } from "node:util";
 import { exists, fileSourceReader, readJson, writeJsonl } from "@eval/data";
 import { extract, readState } from "./extract-lost-user.mjs";
@@ -10,21 +8,8 @@ import { packageDay } from "./watch-lost-user.mjs";
 import { scanInbox, signature } from "./auto-renew.mjs";
 import { slimRecord, expandRecord } from "./aime-slim.mjs";
 
-const helperFile = fileURLToPath(new URL("../data_service/lost_user_pipeline.py", import.meta.url));
-export function lostHelper(python, request) {
-  return new Promise((resolve, reject) => {
-    const child = spawn(python, [helperFile], { stdio: ["pipe", "pipe", "pipe"] });
-    let output = "", error = "";
-    child.stdout.setEncoding("utf8").on("data", value => { output += value; });
-    child.stderr.setEncoding("utf8").on("data", value => { error = (error + value).slice(-8000); });
-    child.on("error", reject);
-    child.stdin.on("error", reject);
-    child.on("close", code => {
-      if (code !== 0) reject(new Error(`Lost-user adapter (${code}): ${error}`));
-      else { try { resolve(JSON.parse(output)); } catch (failure) { reject(failure); } }
-    });
-    child.stdin.end(JSON.stringify(request));
-  });
+export async function lostHelper(python, request) {
+  return (await import("./night-lost-helper.mjs")).lostHelper(python, request);
 }
 
 /** Strict incremental mode: never rebuild, rename a conflicting upload, or swallow bad state. */
