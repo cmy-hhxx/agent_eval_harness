@@ -7,6 +7,23 @@ import path from "node:path";
 import { pairSamples, compareSamples, summarizeSamples, goldTemplate, calibrateSamples } from "./benchmark-analysis.mjs";
 import { rejectedEvaluationDrafts } from "./benchmark-fixtures.mjs";
 import { processTreePids, sampleProcessTree } from "./process-tree-usage.mjs";
+import { summarizeAttemptCosts } from "./attribution-throughput.mjs";
+
+test("attribution cost includes failed and retry attempts and refuses an incomplete success denominator", () => {
+  const metrics = { usage: { input: 10, output: 20, cacheRead: 30, cacheWrite: 40, totalTokens: 100 }, timings: { modelMs: 1000 } };
+  const attempts = [{ attempt: 1, status: "timed_out", metrics, contentSubmissions: 0 },
+    { attempt: 2, status: "succeeded", metrics, contentSubmissions: 2 }];
+  const report = summarizeAttemptCosts(attempts, 2, 1);
+  assert.equal(report.cost_per_complete_result.usage.totalTokens, 200);
+  assert.equal(report.cost_per_complete_result.model_seconds, 2);
+  assert.equal(report.unsuccessful.usage.totalTokens, 100);
+  assert.equal(report.timed_out.attempts, 1);
+  assert.equal(report.retries.attempts, 1);
+  assert.equal(report.attempts_with_content_repair.attempts, 1);
+  assert.equal(summarizeAttemptCosts(attempts, 3, 1).cost_per_complete_result, null);
+  assert.equal(summarizeAttemptCosts(attempts, 2, 0).cost_per_complete_result, null);
+  assert.equal(summarizeAttemptCosts([{ metrics: {} }], 1, 1).cost_per_complete_result.usage.totalTokens, null);
+});
 
 test("resource sampling selects the complete process tree without task/PID/children", () => {
   assert.deepEqual(processTreePids(10, " 1 0\n 10 1\n 30 20\n 20 10\n 40 10\n 50 1\n"), [10, 20, 40, 30]);
@@ -16,6 +33,10 @@ test("Linux resource sampling reports nonzero root memory and IO counters", { sk
   const sample = await sampleProcessTree(process.pid);
   assert(sample.rss > 0);
   assert(sample.processes >= 1);
+  assert(sample.host.rss_bytes > 0);
+  assert.equal(sample.rss, sample.host.rss_bytes + sample.workers.rss_bytes);
+  assert.equal(sample.workers.count, sample.processes - 1);
+  assert(sample.system.cached_bytes >= 0);
   assert(sample.counters.some(row => row.id.startsWith(process.pid + ":") && row.rchar > 0));
   assert.equal(sample.failures, 0);
 });

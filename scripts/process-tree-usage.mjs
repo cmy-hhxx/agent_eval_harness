@@ -27,7 +27,9 @@ export async function sampleProcessTree(root) {
       const [status, io, stat] = await Promise.all(["status", "io", "stat"].map(file => readFile(`/proc/${pid}/${file}`, "utf8")));
       const fields = stat.slice(stat.lastIndexOf(")") + 2).split(" "), memory = numbers(status), counters = numbers(io);
       if (!Number.isFinite(memory.VmRSS)) return null; // A process that exited between ps and /proc can be a zombie.
-      return { id: `${pid}:${fields[19]}`, rss: memory.VmRSS * 1024,
+      return { id: `${pid}:${fields[19]}`, pid, rss: memory.VmRSS * 1024,
+        anonymous_bytes: memory.RssAnon === undefined ? null : memory.RssAnon * 1024,
+        file_bytes: memory.RssFile === undefined ? null : memory.RssFile * 1024,
         counters: { cpu_ticks: Number(fields[11]) + Number(fields[12]), read_bytes: counters.read_bytes,
           write_bytes: counters.write_bytes, rchar: counters.rchar, wchar: counters.wchar } };
     } catch (error) {
@@ -38,6 +40,12 @@ export async function sampleProcessTree(root) {
   }));
   const processes = rows.filter(Boolean);
   if (!processes.some(row => row.id.startsWith(root + ":"))) throw new Error("Root process has no readable memory sample");
+  const host = processes.find(row => row.pid === root), workers = processes.filter(row => row.pid !== root);
+  const sum = key => workers.some(row => row[key] === null) ? null : workers.reduce((total, row) => total + row[key], 0);
+  const system = numbers(await readFile("/proc/meminfo", "utf8"));
   return { rss: processes.reduce((total, row) => total + row.rss, 0), processes: processes.length,
+    host: { rss_bytes: host.rss, anonymous_bytes: host.anonymous_bytes, file_bytes: host.file_bytes },
+    workers: { count: workers.length, rss_bytes: sum("rss"), anonymous_bytes: sum("anonymous_bytes"), file_bytes: sum("file_bytes") },
+    system: { cached_bytes: system.Cached * 1024, buffers_bytes: system.Buffers * 1024, scope: "machine-wide, not attributable to this run" },
     counters: processes.map(({ id, counters }) => ({ id, ...counters })), failures };
 }
