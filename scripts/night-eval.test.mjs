@@ -205,7 +205,8 @@ test("changed, duplicate, or removed delivered identities fail instead of silent
 
 test("three sources dispatch concurrently without duplicating an active batch", async () => {
   const sources = ["wencai", "lost", "aime"];
-  const state = { jobs: sources.map(source => ({ source, runId: source, status: "queued" })) };
+  const state = { deliveries: [{ file: "/lost", date: "2026-10-12" }],
+    jobs: sources.map(source => ({ source, runId: source, status: "queued", revisions: { "/lost": "r" } })) };
   const runs = [];
   let drain, started;
   const barrier = new Promise(resolve => { drain = resolve; });
@@ -239,8 +240,9 @@ test("incremental admission survives restart and honors the two-hour interval", 
 
 test("tail overlap admits only one extra batch globally and drains on pause", async () => {
   const sources = ["wencai", "lost", "aime"], drains = [];
-  const state = { jobs: sources.flatMap(source => [0, 1].map(index =>
-    ({ source, runId: source + index, status: "queued" }))) };
+  const state = { deliveries: [0, 1].map(index => ({ file: "/lost" + index, date: "2026-10-12" })),
+    jobs: sources.flatMap(source => [0, 1].map(index =>
+      ({ source, runId: source + index, status: "queued", revisions: { ["/lost" + index]: "r" } }))) };
   const dispatch = createNightDispatcher(state, { save: async () => {}, record: async () => {},
     canOverlap: async () => true, run: async () => {
       await new Promise(resolve => drains.push(resolve));
@@ -280,6 +282,32 @@ test("failed batches remain failed while later work continues, including after r
   assert.deepEqual(runs, ["w", "next"]);
   assert.equal(failed.status, "failed");
   assert.equal(nextJob(JSON.parse(JSON.stringify(state)), "wencai"), undefined);
+});
+
+test("lost business dates preempt later admission, drain in flight, and skip failed batches", async () => {
+  const dates = ["2026-10-12", "2026-09-19", "2026-09-18", "2026-09-17", "2026-09-17"];
+  const state = { deliveries: dates.map((date, i) => ({ date, file: "/slim/" + i })),
+    jobs: dates.map((date, i) => ({ source: "lost", runId: String(i), status: i === 0 ? "queued" : "failed",
+      revisions: { ["/slim/" + i]: "r" } })) };
+  let finish, signal;
+  const dispatch = createNightDispatcher(state, { save: async () => {}, record: async () => {},
+    run: async (_job, pause) => { signal = pause; await new Promise(resolve => { finish = resolve; }); return { complete: false }; } });
+  await dispatch.step("lost");
+  await new Promise(resolve => setImmediate(resolve));
+  state.jobs.slice(1).forEach(job => { job.status = "queued"; });
+  state.jobs[3].status = "failed";
+  assert.equal(nextJob(state, "lost"), state.jobs[4]);
+  assert.equal(await dispatch.step("lost"), false);
+  assert.equal(signal.aborted, true);
+  assert.equal(state.jobs[0].status, "running");
+  finish(); await dispatch.settle();
+  assert.equal(state.jobs[0].status, "queued");
+  for (const index of [4, 2, 1, 0]) {
+    assert.equal(nextJob(state, "lost"), state.jobs[index]);
+    state.jobs[index].status = "completed";
+  }
+  assert.equal(nextJob(JSON.parse(JSON.stringify(state)), "lost"), undefined);
+  assert.equal(state.jobs[3].status, "failed");
 });
 
 test("stable archive is extracted once, archived, and resumes an interrupted hard-link move", async t => {

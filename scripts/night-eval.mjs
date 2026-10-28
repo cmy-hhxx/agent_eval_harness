@@ -11,7 +11,17 @@ import { lostHelper, prepareLost, registerPreparedLost } from "./night-data.mjs"
 
 const root = fileURLToPath(new URL("../", import.meta.url));
 const priority = ["wencai", "lost", "aime"];
-export const nextJob = (state, source) => state.jobs.find(job => job.source === source && job.status === "queued");
+const lostJobDate = (state, job) => {
+  const dates = state.deliveries.filter(item => Object.hasOwn(job.revisions, item.file)).map(item => item.date);
+  if (dates.length !== 1 || !/^\d{4}-\d{2}-\d{2}$/.test(dates[0])) throw new Error("流失批次缺少唯一业务日期：" + job.runId);
+  return dates[0];
+};
+
+export const nextJob = (state, source) => {
+  const jobs = state.jobs.filter(job => job.source === source && job.status === "queued");
+  if (source !== "lost") return jobs[0];
+  return jobs.reduce((first, job) => !first || lostJobDate(state, job) < lostJobDate(state, first) ? job : first, undefined);
+};
 
 export function dailyJobs(source, frozen, output) {
   const dates = [...new Set(frozen.inputs.records.map(row => row.batch_id))].sort();
@@ -53,6 +63,14 @@ export function createNightDispatcher(state, { save, record, run, canOverlap = a
       if (failure) throw failure;
       if (paused || !nextJob(state, source)) return false;
       const current = lane(source);
+      if (source === "lost") {
+        const next = nextJob(state, source);
+        for (const job of current) {
+          if (lostJobDate(state, next) < lostJobDate(state, job))
+            active.get(job).pause.abort(new Error("Earlier lost-user business date ready"));
+        }
+        if (current.some(job => active.get(job).pause.signal.aborted)) return false;
+      }
       if (current.length >= 2 || current.length && overlapping()) return false;
       if (current.length && !await canOverlap(current[0])) return false;
       // Progress reads yield; another lane may have claimed the single extra batch.
