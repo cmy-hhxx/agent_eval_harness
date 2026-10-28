@@ -48,3 +48,25 @@ test("repeated tool invocations and independent final sections do not share an u
     }
   }
 });
+
+test("nested answer headings split independently and large chart resources have explicit unread continuations", () => {
+  const prose = "## 总结\n结论。\n\n### 公司一\n" + "收入需核查。".repeat(200) +
+    "\n\n### 公司二\n" + "利润需核查。".repeat(200);
+  const chart = JSON.stringify({ data: [{ name: "收入", x: Array.from({ length: 2000 }, (_, i) => i) }], layout: {} });
+  const raw = { batch_id: "batch", case_id: "chart", messages: [
+    { type: "user_question", content: "分析收入利润。" },
+    { type: "final_answer", content: [{ type: "text", text: prose }, { type: "text", text: chart }] },
+  ] };
+  const candidate = adapt(raw, { id: "b_fast", name: "B Fast", adapter: "b", sources: [] }, "fixture.jsonl", 1);
+  const tasks = planAttributionUnit(candidate).tasks.filter(task => task.stage === "attribution-component");
+  assert(tasks.filter(task => (task.data as AttributionTaskData).reviewScope!.final_ranges!
+    .some(range => range.path === "/content/0/text")).length >= 2);
+  const chartTask = tasks.find(task => (task.data as AttributionTaskData).reviewScope!.final_ranges!
+    .some(range => range.path === "/content/1/text"))!;
+  const binding = bindAttribution(chartTask, { [candidate.input_id]: normalizeInput(raw) }, {});
+  const answer = binding.modelInput!.answer as { final_evidence: { quote: string }[];
+    final_context: { continuations: { end_offset: number; read_request: { offset: number } }[] } };
+  assert.equal(answer.final_evidence.map(entry => entry.quote).join(""), chart.slice(0, 1600));
+  assert.equal(answer.final_context.continuations[0]!.read_request.offset, 1600);
+  assert.equal(answer.final_context.continuations[0]!.end_offset, chart.length);
+});

@@ -51,7 +51,9 @@ export function initialAttributionMaterial(answer: JsonObject, raw: RawInput, na
     if (!source || range.start < 0 || range.end > source.text.length || range.end <= range.start)
       throw new Error("归因原子任务的终稿范围与原文不一致");
     const entries = [];
-    for (let start = range.start; start < range.end; start += 400)
+    // A chart resource may contain tens of thousands of encoded data/style bytes.
+    // Keep its ownership intact, but defer the tail instead of flooding the first prompt.
+    for (let start = range.start; start < Math.min(range.end, range.start + 1600); start += 400)
       entries.push(cite(inputId, finalIndex, source, start, Math.min(range.end, start + 400)));
     return entries;
   }) : answer.final_evidence as { evidence_id: string; message_index: number; quote: string }[];
@@ -61,6 +63,10 @@ export function initialAttributionMaterial(answer: JsonObject, raw: RawInput, na
     final_evidence: finalEvidence.map(displayEvidence),
     ...(scope?.final_ranges ? { final_context: {
       partial: true,
+      continuations: scope.final_ranges.filter(range => range.end - range.start > 1600).map(range => ({
+        end_offset: range.end, read_request: { candidate, message_index: finalIndex, path: range.path,
+          offset: range.start + 1600, max_chars: Math.min(16000, range.end - range.start - 1600) },
+      })),
       sources: evidenceSources(raw.messages[finalIndex]).filter(source => source.kind === "text" && source.path.startsWith("/content"))
         .map(source => ({ path: source.path, total_chars: source.text.length,
           read_request: { candidate, message_index: finalIndex, path: source.path, offset: 0, max_chars: 16000 } })),

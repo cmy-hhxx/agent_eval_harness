@@ -35,7 +35,7 @@ export async function measureAttributionRun(run) {
       const record = await readJson(path.join(directory, attempt, "attempt.json"));
       if (!record.metrics) continue;
       group.measured_attempts++;
-      group.attempt_statuses[record.status] = (group.attempt_statuses[record.status] ?? 0) + 1;
+      group.attempt_statuses[record.status.state] = (group.attempt_statuses[record.status.state] ?? 0) + 1;
       group.tool_calls += record.metrics.audit.calls;
       group.model_seconds += record.metrics.timings.modelMs / 1000;
       group.output_tokens += record.metrics.usage.output;
