@@ -1,0 +1,300 @@
+{
+  "inputs": {
+    "timing_unit": "ms",
+    "versions": [
+      {
+        "id": "aime_fast",
+        "name": "aime_fast",
+        "display_name": "AIME Fast",
+        "adapter": "a",
+        "sources": [
+          {
+            "kind": "file",
+            "path": "/mnt/fin_bench/eval_data/1_aime/4_daily_eval_input_clean_slim/aime_fast/2026-10-26.jsonl"
+          }
+        ]
+      },
+      {
+        "id": "aime_expert",
+        "name": "aime_expert",
+        "display_name": "AIME Expert",
+        "adapter": "a",
+        "sources": [
+          {
+            "kind": "file",
+            "path": "/mnt/fin_bench/eval_data/1_aime/4_daily_eval_input_clean_slim/aime_expert/2026-10-26.jsonl"
+          }
+        ]
+      }
+    ],
+    "batches": [
+      "2026-10-26"
+    ],
+    "case_ids": [],
+    "records": [
+      {
+        "model": "aime_fast",
+        "batch_id": "2026-10-26",
+        "case_id": "thread_29baea426dd04473b6089bb4444137c7",
+        "input_file": "/mnt/fin_bench/eval_data/1_aime/4_daily_eval_input_clean_slim/aime_fast/2026-10-26.jsonl",
+        "input_index": 0
+      },
+      {
+        "model": "aime_expert",
+        "batch_id": "2026-10-26",
+        "case_id": "thread_8233b14fec4847319fcbc511742e7f49",
+        "input_file": "/mnt/fin_bench/eval_data/1_aime/4_daily_eval_input_clean_slim/aime_expert/2026-10-26.jsonl",
+        "input_index": 0
+      },
+      {
+        "model": "aime_fast",
+        "batch_id": "2026-10-26",
+        "case_id": "thread_00006b3afedd4ce784d248a141906325",
+        "input_file": "/mnt/fin_bench/eval_data/1_aime/4_daily_eval_input_clean_slim/aime_fast/2026-10-26.jsonl",
+        "input_index": 1
+      },
+      {
+        "model": "aime_expert",
+        "batch_id": "2026-10-26",
+        "case_id": "thread_539b727379a84ecfa4ca798cda82f8d1",
+        "input_file": "/mnt/fin_bench/eval_data/1_aime/4_daily_eval_input_clean_slim/aime_expert/2026-10-26.jsonl",
+        "input_index": 1
+      },
+      {
+        "model": "aime_fast",
+        "batch_id": "2026-10-26",
+        "case_id": "thread_4d98dcc142c24bdcaaaf31cfbd0f287f",
+        "input_file": "/mnt/fin_bench/eval_data/1_aime/4_daily_eval_input_clean_slim/aime_fast/2026-10-26.jsonl",
+        "input_index": 2
+      },
+      {
+        "model": "aime_expert",
+        "batch_id": "2026-10-26",
+        "case_id": "thread_7772fa2e93dc4b618ba533912fc5f409",
+        "input_file": "/mnt/fin_bench/eval_data/1_aime/4_daily_eval_input_clean_slim/aime_expert/2026-10-26.jsonl",
+        "input_index": 2
+      },
+      {
+        "model": "aime_fast",
+        "batch_id": "2026-10-26",
+        "case_id": "thread_6632c2f9647646feb5454a3053fb1ba2",
+        "input_file": "/mnt/fin_bench/eval_data/1_aime/4_daily_eval_input_clean_slim/aime_fast/2026-10-26.jsonl",
+        "input_index": 3
+      },
+      {
+        "model": "aime_expert",
+        "batch_id": "2026-10-26",
+        "case_id": "thread_2d01f70ddcb6418f916e74939592d6eb",
+        "input_file": "/mnt/fin_bench/eval_data/1_aime/4_daily_eval_input_clean_slim/aime_expert/2026-10-26.jsonl",
+        "input_index": 3
+      },
+      {
+        "model": "aime_fast",
+        "batch_id": "2026-10-26",
+        "case_id": "thread_11c525514d7048f39fd60fa5f999d0a3",
+        "input_file": "/mnt/fin_bench/eval_data/1_aime/4_daily_eval_input_clean_slim/aime_fast/2026-10-26.jsonl",
+        "input_index": 4
+      },
+      {
+        "model": "aime_expert",
+        "batch_id": "2026-10-26",
+        "case_id": "thread_f0b4ebafee1f4f83bae0f16201c0ff55",
+        "input_file": "/mnt/fin_bench/eval_data/1_aime/4_daily_eval_input_clean_slim/aime_expert/2026-10-26.jsonl",
+        "input_index": 5
+      },
+      {
+        "model": "aime_fast",
+        "batch_id": "2026-10-26",
+        "case_id": "thread_6d5c483f80d944df9c96c3f1c084d32a",
+        "input_file": "/mnt/fin_bench/eval_data/1_aime/4_daily_eval_input_clean_slim/aime_fast/2026-10-26.jsonl",
+        "input_index": 7
+      },
+      {
+        "model": "aime_expert",
+        "batch_id": "2026-10-26",
+        "case_id": "thread_af588a2ada1f42059a81e5acc4b8cad8",
+        "input_file": "/mnt/fin_bench/eval_data/1_aime/4_daily_eval_input_clean_slim/aime_expert/2026-10-26.jsonl",
+        "input_index": 6
+      },
+      {
+        "model": "aime_fast",
+        "batch_id": "2026-10-26",
+        "case_id": "thread_37e9f1f2b2b1485dbd6eccccb5ef14aa",
+        "input_file": "/mnt/fin_bench/eval_data/1_aime/4_daily_eval_input_clean_slim/aime_fast/2026-10-26.jsonl",
+        "input_index": 8
+      },
+      {
+        "model": "aime_expert",
+        "batch_id": "2026-10-26",
+        "case_id": "thread_e2919d48ddb648d19e2141a9bce5db48",
+        "input_file": "/mnt/fin_bench/eval_data/1_aime/4_daily_eval_input_clean_slim/aime_expert/2026-10-26.jsonl",
+        "input_index": 7
+      },
+      {
+        "model": "aime_fast",
+        "batch_id": "2026-10-26",
+        "case_id": "thread_71fda5bda2e24e0899e37949b52fac32",
+        "input_file": "/mnt/fin_bench/eval_data/1_aime/4_daily_eval_input_clean_slim/aime_fast/2026-10-26.jsonl",
+        "input_index": 9
+      },
+      {
+        "model": "aime_expert",
+        "batch_id": "2026-10-26",
+        "case_id": "thread_4bfae8aaa567415889f2cf8103f5a98d",
+        "input_file": "/mnt/fin_bench/eval_data/1_aime/4_daily_eval_input_clean_slim/aime_expert/2026-10-26.jsonl",
+        "input_index": 8
+      },
+      {
+        "model": "aime_fast",
+        "batch_id": "2026-10-26",
+        "case_id": "thread_ec6d7f6329424e2b80446e86b6fe5f12",
+        "input_file": "/mnt/fin_bench/eval_data/1_aime/4_daily_eval_input_clean_slim/aime_fast/2026-10-26.jsonl",
+        "input_index": 11
+      },
+      {
+        "model": "aime_expert",
+        "batch_id": "2026-10-26",
+        "case_id": "thread_050567e818394abaa02c2fea2b0bc6b3",
+        "input_file": "/mnt/fin_bench/eval_data/1_aime/4_daily_eval_input_clean_slim/aime_expert/2026-10-26.jsonl",
+        "input_index": 10
+      },
+      {
+        "model": "aime_fast",
+        "batch_id": "2026-10-26",
+        "case_id": "thread_8d5a2285dea541fbb02cd79435a8a8b9",
+        "input_file": "/mnt/fin_bench/eval_data/1_aime/4_daily_eval_input_clean_slim/aime_fast/2026-10-26.jsonl",
+        "input_index": 12
+      },
+      {
+        "model": "aime_expert",
+        "batch_id": "2026-10-26",
+        "case_id": "thread_2c9104f45d6d44dfa82937a02b0c4ab8",
+        "input_file": "/mnt/fin_bench/eval_data/1_aime/4_daily_eval_input_clean_slim/aime_expert/2026-10-26.jsonl",
+        "input_index": 11
+      },
+      {
+        "model": "aime_fast",
+        "batch_id": "2026-10-26",
+        "case_id": "thread_435e08941fae481babe960d066604c6b",
+        "input_file": "/mnt/fin_bench/eval_data/1_aime/4_daily_eval_input_clean_slim/aime_fast/2026-10-26.jsonl",
+        "input_index": 13
+      },
+      {
+        "model": "aime_expert",
+        "batch_id": "2026-10-26",
+        "case_id": "thread_6293f0064d944400a0269f8259b784c1",
+        "input_file": "/mnt/fin_bench/eval_data/1_aime/4_daily_eval_input_clean_slim/aime_expert/2026-10-26.jsonl",
+        "input_index": 12
+      },
+      {
+        "model": "aime_fast",
+        "batch_id": "2026-10-26",
+        "case_id": "thread_fd2c8d0ecb27420db6824390f31b1316",
+        "input_file": "/mnt/fin_bench/eval_data/1_aime/4_daily_eval_input_clean_slim/aime_fast/2026-10-26.jsonl",
+        "input_index": 14
+      },
+      {
+        "model": "aime_expert",
+        "batch_id": "2026-10-26",
+        "case_id": "thread_61e4c47c079a4b1d9b63cee646d33abd",
+        "input_file": "/mnt/fin_bench/eval_data/1_aime/4_daily_eval_input_clean_slim/aime_expert/2026-10-26.jsonl",
+        "input_index": 13
+      },
+      {
+        "model": "aime_expert",
+        "batch_id": "2026-10-26",
+        "case_id": "thread_fff1baa548c14864816979ca1d569e80",
+        "input_file": "/mnt/fin_bench/eval_data/1_aime/4_daily_eval_input_clean_slim/aime_expert/2026-10-26.jsonl",
+        "input_index": 14
+      },
+      {
+        "model": "aime_expert",
+        "batch_id": "2026-10-26",
+        "case_id": "thread_bd5b0808a92d4821a843e3d225e442a4",
+        "input_file": "/mnt/fin_bench/eval_data/1_aime/4_daily_eval_input_clean_slim/aime_expert/2026-10-26.jsonl",
+        "input_index": 16
+      },
+      {
+        "model": "aime_expert",
+        "batch_id": "2026-10-26",
+        "case_id": "thread_d531da174ed94ad1ba283caac863ae33",
+        "input_file": "/mnt/fin_bench/eval_data/1_aime/4_daily_eval_input_clean_slim/aime_expert/2026-10-26.jsonl",
+        "input_index": 17
+      },
+      {
+        "model": "aime_expert",
+        "batch_id": "2026-10-26",
+        "case_id": "thread_82f8e97cda8d40de8406d28a65c0a89a",
+        "input_file": "/mnt/fin_bench/eval_data/1_aime/4_daily_eval_input_clean_slim/aime_expert/2026-10-26.jsonl",
+        "input_index": 18
+      },
+      {
+        "model": "aime_expert",
+        "batch_id": "2026-10-26",
+        "case_id": "thread_23cbe9e4eb6b408cb4e4e6088ac56710",
+        "input_file": "/mnt/fin_bench/eval_data/1_aime/4_daily_eval_input_clean_slim/aime_expert/2026-10-26.jsonl",
+        "input_index": 19
+      },
+      {
+        "model": "aime_expert",
+        "batch_id": "2026-10-26",
+        "case_id": "thread_1141a9d81c114005b4fb5388f0dc2424",
+        "input_file": "/mnt/fin_bench/eval_data/1_aime/4_daily_eval_input_clean_slim/aime_expert/2026-10-26.jsonl",
+        "input_index": 20
+      }
+    ]
+  },
+  "comparisons": [],
+  "rewrite": {
+    "comparison": true,
+    "attribution": true,
+    "clustering": true,
+    "comparisonItems": true
+  },
+  "clustering": {
+    "enabled": false
+  },
+  "output": {
+    "kind": "directory",
+    "path": "/mnt/fin_bench/eval_data/1_aime/eval_output/test_eval"
+  },
+  "execution": {
+    "concurrency": 20,
+    "sessionWindow": 16,
+    "retries": 1,
+    "timeoutSeconds": 900
+  },
+  "models": {
+    "judge": {
+      "model": "deepseek-v4.1-flash",
+      "thinking": "low"
+    }
+  },
+  "bindings": {
+    "criteria": {
+      "profile": "judge",
+      "thinking": "low"
+    },
+    "attribution": {
+      "profile": "judge",
+      "thinking": "low"
+    },
+    "comparison": {
+      "profile": "judge",
+      "thinking": "low"
+    },
+    "rewrite": {
+      "profile": "judge",
+      "thinking": "low"
+    },
+    "clustering": {
+      "profile": "judge",
+      "thinking": "low"
+    },
+    "instruction-review": {
+      "profile": "judge",
+      "thinking": "low"
+    }
+  },
+  "workflow": "attribution"
+}
