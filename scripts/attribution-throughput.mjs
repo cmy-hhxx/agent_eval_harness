@@ -10,6 +10,23 @@ const percentile = (values, fraction) => {
   return ordered[Math.ceil(fraction * ordered.length) - 1];
 };
 
+/** Interrupted tasks observed for less than ten minutes have no SLA verdict yet. */
+export function summarizeSubmissionLatency(tasks) {
+  const started = tasks.filter(task => Number.isFinite(task.startedAt));
+  const accepted = started.filter(task => task.acceptedAt !== undefined && !task.partial);
+  const seconds = accepted.map(task => (task.acceptedAt - task.startedAt) / 1000);
+  const resolved = started.filter(task => task.acceptedAt !== undefined || ["failed", "timed_out"].includes(task.status) ||
+    task.observedUntil - task.startedAt >= 600000);
+  const within = seconds.filter(seconds => seconds <= 600).length;
+  const faults = started.filter(task => ["failed", "timed_out"].includes(task.status)).length;
+  const settled = started.filter(task => task.acceptedAt !== undefined || ["failed", "timed_out"].includes(task.status)).length;
+  return { started_tasks: started.length, valid_within_ten_minutes: within, ten_minute_observed_tasks: resolved.length,
+    interrupted_or_running_under_ten_minutes: started.length - resolved.length,
+    valid_within_ten_minutes_rate: resolved.length ? within / resolved.length : null,
+    valid_submission_p50_seconds: percentile(seconds, .5), valid_submission_p95_seconds: percentile(seconds, .95),
+    fault_tasks: faults, settled_tasks: settled, fault_rate: settled ? faults / settled : null };
+}
+
 /** Attempt categories overlap; repair-attempt cost is not repair-only cost. */
 export function summarizeAttemptCosts(attempts, expected, complete) {
   const fields = ["input", "output", "cacheRead", "cacheWrite", "totalTokens"];
@@ -63,7 +80,7 @@ export async function measureAttributionRun(run) {
     const group = stages[task.stage] ??= { planned: 0, accepted: 0, accepted_with_incomplete_dependencies: 0, statuses: {}, completed_seconds: [],
       accepted_at: [], attempts: 0, tool_calls: 0, model_seconds: 0, measured_attempts: 0,
       attempt_statuses: {}, output_tokens: 0, first_pass_accepted: 0, accepted_after_content_repair: 0, accepted_submission_count_unknown: 0,
-      attempt_costs: [] };
+      attempt_costs: [], task_latencies: [] };
     group.planned++;
     group.statuses[progress.status] = (group.statuses[progress.status] ?? 0) + 1;
     group.attempts += progress.attempts;
@@ -76,6 +93,12 @@ export async function measureAttributionRun(run) {
       if (receipt.incompleteDependencies?.length) group.accepted_with_incomplete_dependencies++;
       if (progress.durationMs !== undefined) group.completed_seconds.push(progress.durationMs / 1000);
     }
+    const latency = { status: progress.status, startedAt: progress.startedAt,
+      acceptedAt: receipt?.status === "succeeded" ? receipt.acceptedAt : undefined,
+      partial: Boolean(receipt?.incompleteDependencies?.length),
+      observedUntil: progress.startedAt !== undefined && progress.durationMs !== undefined
+        ? progress.startedAt + progress.durationMs : end };
+    group.task_latencies.push(latency);
     const directory = path.join(run, "_internal/tasks", task.id);
     if (!await exists(directory)) continue;
     for (const attempt of await readdir(directory)) {
@@ -83,6 +106,8 @@ export async function measureAttributionRun(run) {
       const file = path.join(directory, attempt, "attempt.json");
       if (!await exists(file)) continue;
       const record = await readJson(file);
+      const startedAt = record.spec?.deadline - record.spec?.policy?.timeoutSeconds * 1000;
+      if (Number.isFinite(startedAt)) latency.startedAt = Math.min(latency.startedAt ?? Infinity, startedAt);
       const attemptNumber = Number(attempt.slice("attempt-".length));
       group.attempt_costs.push({ attempt: attemptNumber, status: record.status?.state,
         modelRounds: await countModelRounds(path.join(directory, attempt, "events.jsonl")),
@@ -107,8 +132,9 @@ export async function measureAttributionRun(run) {
       attribution.reduce((total, [, group]) => total + group.attempts, 0), complete),
     cost_limits: "Primary attribution includes criteria/component/trace/session attempts, including failures and retries; dimensions/comparison are separate stages. Repair category includes whole attempts with cumulative content submissions > 1, not repair-only cost, and overlaps retries/failures. SDK model time includes quota waits; it is not provider compute time. Model turns count archived SDK turn_start events, including turns cancelled while queued; hidden HTTP retries and tool calls are not model turns. Missing metrics or event archives are unknown. Tokens are provider-reported; no monetary price is inferred.",
     stages: Object.fromEntries(Object.entries(stages).map(([stage, group]) => {
-      const { completed_seconds, accepted_at, attempt_costs, ...counts } = group;
+      const { completed_seconds, accepted_at, attempt_costs, task_latencies, ...counts } = group;
       return [stage, { ...counts, coverage: group.accepted / group.planned,
+        submission_latency: summarizeSubmissionLatency(task_latencies),
         attempt_cost: summarizeAttemptCosts(attempt_costs, group.attempts, group.accepted - group.accepted_with_incomplete_dependencies),
         accepted_per_minute: group.accepted / (elapsed / 60),
         complete_review_per_minute: (group.accepted - group.accepted_with_incomplete_dependencies) / (elapsed / 60),

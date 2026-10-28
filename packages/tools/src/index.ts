@@ -529,7 +529,7 @@ export const builtinTools: ExecutableTool[] = [
       const navigation = object(ctx.materialNavigation?.[args.candidate] ?? {});
       const reviewScope = navigation.review_scope as
         { message_indices: number[]; final_ranges?: unknown[] } | undefined;
-      const localMessages = args.message_index == null && reviewScope && !reviewScope.message_indices.includes(Number(navigation.final_message_index))
+      const localMessages = args.message_index == null && args.scope === undefined && reviewScope && !reviewScope.message_indices.includes(Number(navigation.final_message_index))
         ? reviewScope.message_indices : undefined;
       const rawMessages = record(ctx, args.candidate).messages;
       const indices = args.message_index != null ? [args.message_index] : localMessages;

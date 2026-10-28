@@ -532,6 +532,35 @@ test("expanding a read returns only missing spans with reusable references for t
     assert(traceReadCoverage(ctx.audit, { candidate: "A", message_index: 0, kind: "text", path: "/output", start: 0, end: text.length }).covered);
   } finally { await rm(ctx.workdir, { recursive: true, force: true }); }
 });
+test("component search defaults to its review object but honors explicit cross-step source scopes", async () => {
+  const ctx = await context();
+  try {
+    ctx.policy.maxToolCalls = 4;
+    ctx.inputs.set("A", { messages: [
+      { role: "user", content: "Check revenue" },
+      { role: "assistant", content: "I will retrieve revenue" },
+      { role: "tool", content: "revenue = 42" },
+      { role: "assistant", content: "The result says revenue = 42" },
+    ] });
+    ctx.materialNavigation = { A: { review_scope: { message_indices: [1] }, final_message_index: 3 } };
+    const runtime = new ToolRuntime(ctx, createRegistry().select(["search_trace"]));
+    const search = async (scope: object) => (await runtime.execute("search_trace", {
+      candidate: "A", query: "revenue = 42", ...scope,
+    }, new AbortController().signal)).details as any;
+    const local = await search({});
+    assert.equal(local.total, 0);
+    assert.deepEqual(local.searched_message_indices, [1]);
+    const all = await search({ scope: "all" });
+    assert.equal(all.total, 2, "an explicit cross-step query must reach the actual source and its later use");
+    const returns = await search({ scope: "tool_returns" });
+    assert.equal(returns.total, 1);
+    assert.equal(returns.matches[0].evidence.message_index, 2);
+    const targeted = await search({ scope: "all", message_index: 2 });
+    assert.equal(targeted.total, 1);
+    assert.deepEqual(targeted.matches.map((match: any) => match.evidence.message_index), [2], "an explicit message remains the narrowest scope");
+  } finally { await rm(ctx.workdir, { recursive: true, force: true }); }
+});
+
 test("structured searches prefer real text fields over their serialized mirrors", async () => {
   const ctx = await context();
   try {

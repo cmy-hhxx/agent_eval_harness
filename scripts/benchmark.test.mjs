@@ -10,7 +10,26 @@ import path from "node:path";
 import { pairSamples, compareSamples, summarizeSamples, goldTemplate, calibrateSamples } from "./benchmark-analysis.mjs";
 import { rejectedEvaluationDrafts } from "./benchmark-fixtures.mjs";
 import { processTreePids, sampleProcessTree } from "./process-tree-usage.mjs";
-import { summarizeAttemptCosts, countModelRounds } from "./attribution-throughput.mjs";
+import { summarizeAttemptCosts, countModelRounds, summarizeSubmissionLatency } from "./attribution-throughput.mjs";
+
+test("submission latency counts failures and late acceptance without treating early cancellation as an SLA failure", () => {
+  const report = summarizeSubmissionLatency([
+    { startedAt: 1000, acceptedAt: 601000, observedUntil: 602000, status: "succeeded" },
+    { startedAt: 1000, acceptedAt: 901000, observedUntil: 902000, status: "succeeded" },
+    { startedAt: 1000, acceptedAt: 301000, observedUntil: 302000, partial: true, status: "succeeded" },
+    { startedAt: 1000, observedUntil: 2000, status: "failed" },
+    { startedAt: 1000, observedUntil: 901000, status: "timed_out" },
+    { startedAt: 1000, observedUntil: 101000, status: "cancelled" },
+    { startedAt: 1000, observedUntil: 701000, status: "cancelled" },
+    { observedUntil: 901000, status: "pending" },
+  ]);
+  assert.equal(report.valid_within_ten_minutes, 1);
+  assert.equal(report.ten_minute_observed_tasks, 6);
+  assert.equal(report.valid_within_ten_minutes_rate, 1 / 6);
+  assert.equal(report.interrupted_or_running_under_ten_minutes, 1);
+  assert.equal(report.valid_submission_p95_seconds, 900);
+  assert.equal(report.fault_rate, 2 / 5);
+});
 
 test("attribution cost includes failed and retry attempts and refuses an incomplete success denominator", () => {
   const metrics = { usage: { input: 10, output: 20, cacheRead: 30, cacheWrite: 40, totalTokens: 100 }, timings: { modelMs: 1000 } };
