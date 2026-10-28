@@ -146,6 +146,24 @@ test("trace captures preserve the original session count and evaluate only the c
     meta: { ...source.traces[0]!.meta, n_messages: 3 } }] }), /n_messages/);
 });
 
+test("structured user questions retain the complete payload without changing raw content or answer validation", () => {
+  const contents = [
+    { datajson: '{"task":{"entity_code":"000001"}}', contentConfigComefrom: "174", query: "查看业绩" },
+    [{ header: "错误类型", selected: ["参数分隔符错误"] }, { header: "粘贴条件", selected: ["合并单元格"] }],
+  ];
+  for (const content of contents) {
+    const source = raw(), before = structuredClone(content);
+    source.messages[0]!.content = content;
+    const record = adapt(source, version, "fixture", 1);
+    assert.equal(record.question, JSON.stringify(content));
+    assert.deepEqual(normalizeInput(source).messages[0]!.content, before);
+    source.messages[1]!.content = content;
+    assert.throws(() => adapt(source, version, "fixture", 1), /完整最终回答/);
+  }
+  const unknown = raw(); unknown.messages[0]!.content = { unsupported: "不能猜测问题" };
+  assert.throws(() => adapt(unknown, version, "fixture", 1), /用户问题为空/);
+});
+
 test("type-only question and final markers preserve governing context, timestamps and exact evidence", () => {
   const source = sessionRaw(), timestamp = "2026-10-14T10:00:00+08:00";
   const messages = [

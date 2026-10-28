@@ -1,6 +1,6 @@
 import { fileSourceReader } from "@eval/data";
 import { randomUUID } from "node:crypto";
-import { canonical, object, ValidationError, type ValidationIssue } from "@eval/contracts";
+import { canonical, evidenceSources, object, ValidationError, type ValidationIssue } from "@eval/contracts";
 import { traceComponentScopes } from "./component-scopes.js";
 import { inputAdapters, resolveAdapter } from "./adapters.js";
 import { normalizeInput } from "./normalize.js";
@@ -15,6 +15,20 @@ export function contentText(value: unknown): string {
       .join("\n");
   if (value && typeof value === "object") return String((value as { text?: unknown }).text ?? "");
   return "";
+}
+
+/** Published query payloads and form selections stay intact; citations use their original string leaves. */
+export function structuredQuestion(content: unknown) {
+  const node = content && typeof content === "object" && !Array.isArray(content)
+    ? content as Record<string, unknown> : undefined;
+  const query = node && typeof node.query === "string" && node.query.trim() &&
+    typeof node.datajson === "string" && typeof node.contentConfigComefrom === "string";
+  const selections = Array.isArray(content) && content.length > 0 && content.every(item =>
+    item && typeof item === "object" && !Array.isArray(item) && typeof item.header === "string" &&
+    Array.isArray(item.selected) && item.selected.every((value: unknown) => typeof value === "string"));
+  if (!query && !selections) return undefined;
+  return { text: JSON.stringify(content), sources: evidenceSources({ content })
+    .filter(source => source.kind === "text" && source.text.length > 0 && source.quotable !== false) };
 }
 
 export function strings(value: unknown, prefix = ""): [string, string][] {
@@ -107,7 +121,7 @@ export function adapt(
     );
     if (final < 0) throw new Error(`trace ${trace_index} 没有完整最终回答`);
     const content = messages[lastUser].content;
-    const question = contentText(Array.isArray(content) ? content.slice(0, 1) : content).trim();
+    const question = (structuredQuestion(content)?.text ?? contentText(Array.isArray(content) ? content.slice(0, 1) : content)).trim();
     if (!question) throw new Error(`trace ${trace_index} 用户问题为空`);
     const traceCandidate: CandidateTurn = {
       trace_index,

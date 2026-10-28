@@ -69,6 +69,8 @@ Attribution 每条输入记录导出一行，包含 `session_meta`、`turns[]`�
 
 原始消息中的 `role: null` 表示未记录角色；生成 Agent 请求的 catalog 时省略该可选字段，保留原始输入及证据坐标，不推断或补造角色。
 
+用户 `content` 支持完整查询参数对象（字符串 `query / datajson / contentConfigComefrom`）及表单选择数组（每项含字符串 `header` 和字符串数组 `selected`）。题目展示保留整个内容的 JSON 文本，不只提取 `query` 或第一组选项；原始消息不变，Session 引用仍定位原始字符串叶子及其消息坐标。普通文本块的对局题目继续使用首块，Session 保留完整 QA；未知结构不猜测为用户问题，结构化用户输入也不代替有效最终回答。
+
 原始输入只保留在数据源。运行、索引、续跑及文件变化处理见[使用指南](usage.md#输入治理)。
 
 ## 对比组

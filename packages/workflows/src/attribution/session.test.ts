@@ -79,3 +79,36 @@ test("session evidence covers long QA without truncating or rewriting the origin
   const points = prepared.evidenceBank.map(parseEvidenceCoordinates).filter(point => point?.message_index === 3);
   assert.deepEqual(points.map(point => point && point.kind !== "image" ? [point.start, point.end] : null), [[0, 400], [400, 800], [800, 1000]]);
 });
+
+for (const [shape, content, path, quote] of [
+  ["form", [{ header: "错误类型", selected: ["分隔符错误"] }, { header: "粘贴条件", selected: ["合并单元格"] }], "/content/1/selected/0", "合并单元格"],
+  ["query", { datajson: '{"task":{"entity_code":"000001"}}', contentConfigComefrom: "174", query: "查看业绩" }, "/content/query", "查看业绩"],
+] as const) test(`structured ${shape} session question exposes original values at unchanged leaf coordinates`, () => {
+  const raw = { batch_id: "batch", case_id: "form", messages: [
+    { role: "user", content }, { role: "assistant", content: "按这两项条件检查。" },
+  ] }, original = structuredClone(raw);
+  const candidate = adapt(raw, { id: "answer", name: "Answer", adapter: "a", sources: [] }, "fixture", 1);
+  const turn: TraceAttributionResult = { meta: {}, summary: "已审查。", problem: [], is_correct: null, correct_reason: "无标准。" };
+  const binding = bindAttribution(planAttributionUnit(candidate).session, { [candidate.input_id]: raw }, { trace0: { evaluation: turn } as never });
+  const registry = new AgentRegistry([attributionAgent]), prepared = registry.prepare(binding);
+  assert.equal((binding.modelInput!.qa as {question:string}[])[0]!.question, JSON.stringify(content));
+  assert.deepEqual(raw, original);
+  const index = prepared.evidenceBank.findIndex(id => {
+    const point = parseEvidenceCoordinates(id);
+    return point?.kind === "text" && point.message_index === 0 && point.path === path;
+  }) + 1;
+  assert(index > 0, "structured values must be selectable original evidence");
+  assert(prepared.prompt.includes("000001") || prepared.prompt.includes("分隔符错误"), "complete parameters and both form groups remain visible");
+  const draft = { session_summary: "依据完整选择条件。", session_problem: [{ label: "条件遗漏", definition: "跨轮丢失已确认条件。",
+    problem_phenomena: "后续忽略合并单元格。", reason: "用户已选择该条件。", evidence: [{ index, reason: "原始选择。" }] }] };
+  const audit = { ...emptyAudit(), evidenceBank: prepared.evidenceBank };
+  const result = registry.resolve(binding, draft, audit) as SessionAttributionResult;
+  registry.validate(binding, result, audit);
+  assert.equal(result.session_problem[0]!.evidence[0]!.quote, quote);
+  assert.equal(result.session_problem[0]!.evidence[0]!.position, `trace_index 0 / message_index 0 / path ${path}`);
+  const forged = [...prepared.evidenceBank];
+  forged[index - 1] = evidenceId(candidate.input_id, 0, "text", path, 0, 9999);
+  assert.throws(() => registry.resolve(binding, draft, { ...audit, evidenceBank: forged }), ValidationError);
+  draft.session_problem[0]!.evidence[0]!.index = prepared.evidenceBank.length + 1;
+  assert.throws(() => registry.resolve(binding, draft, audit), ValidationError);
+});

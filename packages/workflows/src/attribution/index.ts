@@ -5,7 +5,7 @@ import { canonical, projectEvidenceReferences, resolveEvidenceSelection, type Ag
 import { cite, messageContentSources, parseEvidenceCoordinates } from "@eval/tools";
 import { createRunRepository, readJson, type RunCodec } from "@eval/data";
 import { attributionComponentLabel, type ComponentReviewResult, type TraceAttributionResult } from "@eval/agents/attribution";
-import { collectInputs, contentText, loadRunInputs, normalizeInput, normalizeTraceInput, type Candidate, type ComponentReviewScope, type EvaluationConfig } from "@eval/workflows/inputs";
+import { collectInputs, contentText, structuredQuestion, loadRunInputs, normalizeInput, normalizeTraceInput, type Candidate, type ComponentReviewScope, type EvaluationConfig } from "@eval/workflows/inputs";
 import { bindAttributionMaterial, validateOriginalAttributionEvidence } from "@eval/workflows/review";
 import problemSchema from "../../../../schemas/attribution/problem.schema.json" with { type: "json" };
 import traceResultSchema from "../../../../schemas/attribution/trace-result.schema.json" with { type: "json" };
@@ -150,11 +150,13 @@ export function bindAttribution(task: PlannedTask, inputs: Record<string, unknow
       const raw = normalizeTraceInput(session, trace_index), final = trace.final_index ?? data.candidate.final_index;
       const question = raw.messages.findLastIndex((message, index) => index < final &&
         (message.role === "user" || message.role === undefined && message.type === "user_question"));
+      const structured = structuredQuestion(raw.messages[question]!.content);
       const evidence = [question, final].flatMap(message_index => {
         const message = raw.messages[message_index]!, sourceIndex = messages.length;
         messages.push(message);
         qa_positions.push({ trace_index, message_index });
-        return messageContentSources(message).flatMap(source => {
+        const sources = message_index === question && structured ? structured.sources : messageContentSources(message);
+        return sources.flatMap(source => {
           const excerpts = [];
           for (let start = 0; start < source.text.length; start += 400) {
             const { evidence_id, quote } = cite(data.candidate.input_id, sourceIndex, source, start, Math.min(start + 400, source.text.length));
@@ -163,7 +165,7 @@ export function bindAttribution(task: PlannedTask, inputs: Record<string, unknow
           return excerpts;
         });
       });
-      return { trace_index, question: contentText(raw.messages[question]!.content), answer: contentText(raw.messages[final]!.content), evidence };
+      return { trace_index, question: structured?.text ?? contentText(raw.messages[question]!.content), answer: contentText(raw.messages[final]!.content), evidence };
     });
     const input = {
       session_meta: session.session_meta ?? session.meta ?? {},
