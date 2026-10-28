@@ -96,6 +96,13 @@ Host 热状态默认写入 `~/.cache/eval-agent-harness/hot`，可通过 `EVAL_H
 
 代码由服务器通过 Git 获取，凭据保存在 checkout 外，权限 `600`；密钥不进入 origin、命令参数或 Git。服务器配置继续保存在外部运行目录。
 
+手动更新主线时，从 `main/` checkout 显式使用外置凭据文件：
+
+```bash
+git -c credential.helper='store --file=/mnt/fin_bench/sync_datasets/code/1_eval_harnes/runtime/secrets/git-credentials' \
+  -c http.proxy= pull --ff-only origin main
+```
+
 ## Eris 只读分析助手
 
 Eris 使用独立代码目录 `/mnt/fin_bench/sync_datasets/code/1_eval_harnes/eris-code`，持久目录为同一部署根目录下的 `runtime/`；评测与分析使用各自的启动入口。
