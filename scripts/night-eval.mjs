@@ -88,7 +88,7 @@ export function createNightDispatcher(state, { save, record, run, canOverlap = a
         await record("evaluation_started", { source: job.source, runId: job.runId, tailOf: current[0]?.runId });
         try {
           const result = await run(job, pause.signal);
-          const resumable = pause.signal.aborted && ["pending", "running"]
+          const resumable = !result.complete && pause.signal.aborted && ["pending", "running"]
             .some(status => result.result.execution_task_statuses[status]);
           job.status = result.complete ? "completed" : resumable ? "queued" : "failed";
           job.result = result.result;
