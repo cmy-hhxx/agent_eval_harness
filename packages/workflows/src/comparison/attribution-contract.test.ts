@@ -32,6 +32,18 @@ test("canonical session attribution is the only exported attribution contract", 
   assert.equal(encodeResult(task, state, {})!.id, task.id);
 });
 
+test("formal turn and session problems require severity without filling missing values", () => {
+  const validate = new Ajv2020({ strict: false }).compile(sessionAttributionResultSchema);
+  const { value } = fixture();
+  value.session_problem = [{ ...structuredClone(value.turns[0]!.problem[0]!), problem_id: "s-p1" }];
+  assert(validate(value));
+  for (const scope of ["turn", "session"]) for (const field of ["severity", "severity_reason"]) {
+    const invalid = structuredClone(value), problem = scope === "turn" ? invalid.turns[0]!.problem[0]! : invalid.session_problem[0]!;
+    delete (problem as unknown as Record<string, unknown>)[field];
+    assert(!validate(invalid), `${scope} problem requires ${field}`);
+  }
+});
+
 test("rewrite slots address canonical turn and session problems", () => {
   const { value } = fixture(), problems = sessionProblems(value);
   assert.equal(problems.length, 1);
@@ -41,6 +53,8 @@ test("rewrite slots address canonical turn and session problems", () => {
   const polished = polishAttribution(value, { "turns.0.problem.0.reason": "有效改写。" });
   assert.equal(sessionProblems(polished)[0]!.reason, "有效改写。");
   assert.deepEqual(sessionProblems(polished)[0]!.evidence, problems[0]!.evidence);
+  assert.equal(sessionProblems(polished)[0]!.severity, problems[0]!.severity);
+  assert.equal(sessionProblems(polished)[0]!.severity_reason, problems[0]!.severity_reason);
 });
 
 test("comparison projection maps canonical session problems without private responsibility fields", () => {
@@ -49,14 +63,19 @@ test("comparison projection maps canonical session problems without private resp
   assert.equal(projection.Problem[0]!.text, "2+2 应得 4，实际回答给出了不同结果。");
   assert.deepEqual(Object.keys(projection).sort(), ["Problem", "correct_reason", "has_standard_answer", "is_correct", "summary"]);
   assert(!Object.hasOwn(projection.Problem[0]!, "responsibility_boundary"));
+  value.turns[0]!.problem[0]!.severity = "P3";
+  value.turns[0]!.problem[0]!.severity_reason = "仅有轻微影响。";
+  assert.deepEqual(comparisonAttribution(value), projection, "severity annotations do not change comparison material");
 });
 
 test("clustering consumes canonical problem label, definition and phenomenon", () => {
   const { value } = fixture(), problem = sessionProblems(value)[0]!;
   const rows = groupObservations([{ input_id: String(value.session_meta.input_id), case_id: "q1", source: { file: "source", line: 1 },
-    problems: [problem] }]);
+    problems: [problem] }, { input_id: "second-input", case_id: "q2", source: { file: "source", line: 2 },
+    problems: [{ ...problem, severity: "P3", severity_reason: "仅有轻微影响。" }] }]);
   assert.equal(rows.length, 1);
   assert.equal(rows[0]!.label, problem.label);
   assert.equal(rows[0]!.definition, problem.definition);
   assert.equal(rows[0]!.refs[0]!.finding_id, "p1");
+  assert.equal(rows[0]!.refs.length, 2, "different severity does not split the same problem class");
 });

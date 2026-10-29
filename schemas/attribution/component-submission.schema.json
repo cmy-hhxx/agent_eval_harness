@@ -9,12 +9,14 @@
       "items": {
         "type": "object",
         "additionalProperties": false,
-        "required": ["label", "definition", "problem_phenomena", "reason", "evidence"],
+        "required": ["label", "definition", "problem_phenomena", "reason", "severity", "severity_reason", "evidence"],
         "properties": {
           "label": { "type": "string", "minLength": 1 },
           "definition": { "type": "string", "minLength": 1 },
           "problem_phenomena": { "type": "string", "minLength": 1 },
           "reason": { "type": "string", "minLength": 1 },
+          "severity": { "enum": ["P0", "P1", "P2", "P3"] },
+          "severity_reason": { "type": "string", "minLength": 1 },
           "evidence": {
             "type": "array",
             "minItems": 1,

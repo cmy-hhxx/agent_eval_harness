@@ -21,7 +21,7 @@
 
 业务链路目录遇到含图片的工具返回时，使用容器下原始文本叶子的坐标登记文本证据，保持原有摘录预算；图片展示占位符不能进入文本证据目录，也不能替代图片读取。
 
-Attribution 每条输入记录导出一行，包含 `session_meta`、`turns[]`、`session_summary`、`session_problem`；按 trace 抓取时允许多条记录共享会话身份，记录身份及去重规则见 [Session 归因](attribution.md)。每个 turn 使用 `meta/summary/problem/is_correct/correct_reason`，turn 与 session 的 Problem 同形：`problem_id/component/label/definition/problem_phenomena/reason/evidence/calculations`。`is_correct` 为 1、0 或 null；不再使用 `has_standard_answer`。`evidence.position` 必须同时包含 trace_index、message_index 和 path；`quote` 最多 400 字且必须精确连续。
+Attribution 每条输入记录导出一行，包含 `session_meta`、`turns[]`、`session_summary`、`session_problem`；按 trace 抓取时允许多条记录共享会话身份，记录身份及去重规则见 [Session 归因](attribution.md)。每个 turn 使用 `meta/summary/problem/is_correct/correct_reason`，turn 与 session 的 Problem 同形：`problem_id/component/label/definition/problem_phenomena/reason/severity/severity_reason/evidence/calculations`。严重程度与理由均为必填，语义见[正式契约](attribution.md#正式契约)。`is_correct` 为 1、0 或 null；不再使用 `has_standard_answer`。`evidence.position` 必须同时包含 trace_index、message_index 和 path；`quote` 最多 400 字且必须精确连续。
 
 收据保存接受时的评测器标识和实际判官模型 `judge`；正式行的 `evaluator_version` 必须与收据一致。改写另存 `rewritten.evaluator_version`，统计汇总 `evaluator_versions` 与 `judge_models`。同 run 可混合版本：已接受结果不变，未完成任务使用当前配置。
 

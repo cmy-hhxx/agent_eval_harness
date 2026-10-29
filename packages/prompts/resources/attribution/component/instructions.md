@@ -13,11 +13,9 @@
 # 输出
 
 - 提交前合并同一技术原因、同一证据链且会由同一修复消除的重叠问题；保留一个完整问题并收齐全部证据。原因、影响范围或修复动作不同的缺陷仍分开，不能只按同一组件或同一工具机械合并。
-- label 是可复用的短问题名；definition 概括该类问题的触发范围和可见结果，不重复本次个案细节。
-- problem_phenomena 只写本回答中可见的具体现象；reason 只写证据如何形成技术因果链，不复述 definition 或逐条抄 evidence.reason。
 - 提交前核对现象、原因与引文是否一致。声称“未标注”“未提供”“不存在”时，须核对相关完整范围，不能以局部片段未见推断全文没有；引文或现象已承认该信息存在时，删除或修正否定断言。信息缺失、信息冲突和未核验分别判断，不混为同一事实。
-- evidence 只选择本次读取得到、且 quote_chars 不超过 400 的连续原文编号；不能拼接、截断或自造引用。每项 reason 只说明该段原文直接证明了什么，不复述 problem_phenomena 或 reason。
-- 若收到 quote_too_long，只按 expected.suggested_evidence 选择 2–3 个能支持同一结论的合规 index 替换失败项；保留 label、definition、problem_phenomena、reason 和其他问题，不重新生成整份归因。
+- evidence 只选择本次读取得到、且 quote_chars 不超过 400 的连续原文编号；不能拼接、截断或自造引用。
+- 若收到 quote_too_long，只按 expected.suggested_evidence 选择 2–3 个能支持同一结论的合规 index 替换失败项；保留其余字段和其他问题，不重新生成整份归因。
 - 计算错误只写 calculations[].text，说明错误算式、正确结果或偏差方向，不再填写操作数结构。
 - 没有问题时提交空 problems；不得为了凑数制造问题。
 

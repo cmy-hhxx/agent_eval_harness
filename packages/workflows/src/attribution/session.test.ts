@@ -39,7 +39,7 @@ test("session model material contains complete ordered QA and is independent of 
   assert(prepared.prompt.indexOf("按10%仓位分析") < prepared.prompt.indexOf("仍然保持10%仓位"));
   f.turns[0]!.summary = "完全相反的新评语";
   f.turns[0]!.problem = [{ problem_id: "p1", component: "评测器", label: "评语矛盾", definition: "评语冲突",
-    problem_phenomena: "评语互相矛盾", reason: "评测意见，不是原始回答", evidence: [] }];
+    problem_phenomena: "评语互相矛盾", reason: "评测意见，不是原始回答", severity: "P2", severity_reason: "局部评语冲突。", evidence: [] }];
   f.turns[1]!.is_correct = 0;
   const after = f.bind();
   assert.deepEqual(after.modelInput, before.modelInput);
@@ -55,10 +55,13 @@ test("session evidence resolves cross-QA contradictions directly to original tex
   const indices = [1, 3].map(message => prepared.evidenceBank.findIndex(id => parseEvidenceCoordinates(id)?.message_index === message) + 1);
   const draft = { session_summary: "对同一仓位前后矛盾。", session_problem: [{ label: "仓位前后矛盾", definition: "无条件更新却改变仓位。",
     problem_phenomena: "先称10%，后称70%。", reason: "用户明确说明仓位未变。",
+    severity: "P1", severity_reason: "仓位前后矛盾，需重新确认后才能使用相关分析。",
     evidence: indices.map(index => ({ index, reason: "原始回答的仓位陈述。" })) }] };
   const audit = { ...emptyAudit(), evidenceBank: prepared.evidenceBank };
   const result = f.registry.resolve(binding, draft, audit) as SessionAttributionResult;
   f.registry.validate(binding, result, audit);
+  assert.equal(result.session_problem[0]!.severity, draft.session_problem[0]!.severity);
+  assert.equal(result.session_problem[0]!.severity_reason, draft.session_problem[0]!.severity_reason);
   assert.deepEqual(result.session_problem[0]!.evidence.map(item => item.quote), ["按10%仓位分析。", "你的仓位是70%。"]);
   assert.deepEqual(result.session_problem[0]!.evidence.map(item => item.position), [
     "trace_index 0 / message_index 2 / path /content", "trace_index 1 / message_index 2 / path /content",
@@ -100,7 +103,8 @@ for (const [shape, content, path, quote] of [
   assert(index > 0, "structured values must be selectable original evidence");
   assert(prepared.prompt.includes("000001") || prepared.prompt.includes("分隔符错误"), "complete parameters and both form groups remain visible");
   const draft = { session_summary: "依据完整选择条件。", session_problem: [{ label: "条件遗漏", definition: "跨轮丢失已确认条件。",
-    problem_phenomena: "后续忽略合并单元格。", reason: "用户已选择该条件。", evidence: [{ index, reason: "原始选择。" }] }] };
+    problem_phenomena: "后续忽略合并单元格。", reason: "用户已选择该条件。",
+    severity: "P2", severity_reason: "遗漏一项选择条件，需要补充检查。", evidence: [{ index, reason: "原始选择。" }] }] };
   const audit = { ...emptyAudit(), evidenceBank: prepared.evidenceBank };
   const result = registry.resolve(binding, draft, audit) as SessionAttributionResult;
   registry.validate(binding, result, audit);

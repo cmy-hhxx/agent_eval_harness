@@ -158,6 +158,7 @@ test("pi: component attribution submits and repairs original evidence without a 
       assert(++requests <= 2);
       const args = { problems: [{ label: "基本算术计算错误", definition: "基本运算的最终结果与正确数值不符。",
         problem_phenomena: "回答把2加2写成5。", reason: "2加2等于4，最终给出的5错误。",
+        severity: "P0", severity_reason: "核心计算结果错误，回答不可采信。",
         evidence: [{ index: requests === 1 ? 99999 : 1, reason: "原文直接给出错误算式。" }] }] };
       const call = { type: "function_call", id: `fc_${requests}`, call_id: `call_${requests}`,
         name: "submit_evaluation", arguments: JSON.stringify(args) };
@@ -186,6 +187,9 @@ test("pi: component attribution submits and repairs original evidence without a 
     assert.equal(receipt.submissionStats?.contentSubmissions, 2);
     assert.equal(receipt.submissionStats?.fileErrors, 0);
     assert.equal(receipt.audit.calls, 0, "submission needs neither code execution nor a draft file");
+    const problem = (receipt.evaluation as { problems: { severity: string; severity_reason: string }[] }).problems[0];
+    assert.equal(problem.severity, "P0");
+    assert.equal(problem.severity_reason, "核心计算结果错误，回答不可采信。");
     assert.equal((receipt.evaluation as { problems: { evidence: { quote: string }[] }[] }).problems[0].evidence[0].quote, "2+2=5。");
   } finally {
     if (previous === undefined) delete process.env[keyName]; else process.env[keyName] = previous;

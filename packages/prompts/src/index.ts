@@ -73,7 +73,8 @@ export function agentPrompt(stage: PromptStage, toolNames: string[], options: Ag
   const { profile = "default", fileSubmission, draftWriteInCallLimit = false } = options;
   if (!/^[a-z][a-z0-9_-]*$/.test(profile)) throw new Error(`Invalid prompt profile: ${profile}`);
   const resourceProfile=profile;
-  const instructions = resource(`${stage}/${resourceProfile}/instructions.md`) + (stage === "score" ? '\n\n'+scoreRules(profile) : "");
+  const instructions = resource(`${stage}/${resourceProfile}/instructions.md`) + (stage === "score" ? '\n\n'+scoreRules(profile) : "") +
+    (stage === "attribution" && ["component", "session"].includes(profile) ? "\n\n" + resource("attribution/problem-output.md") : "");
   const evidenceGuide = stage !== "attribution" && toolNames.some(name => ["read_trace", "search_trace", "view_image", "check_table"].includes(name))
     ? `\n${evidence}\n` : "";
   const systemPrompt = resource(`${stage}/${resourceProfile}/system.md`) + "\n\n" + (["score", "attribution"].includes(stage) ? "" : commentary + "\n\n") + instructions + evidenceGuide;

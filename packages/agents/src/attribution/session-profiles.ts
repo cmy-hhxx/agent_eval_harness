@@ -93,6 +93,7 @@ function componentReview(request: AgentRequest, draft: unknown, audit: ToolAudit
   const issues = componentSchema(draft) ? [] : schemaIssues(componentSchema.errors, draft);
   if (issues.length) throw new ValidationError(issues);
   const value = draft as { problems: { label: string; definition: string; problem_phenomena: string; reason: string;
+    severity: SessionProblem["severity"]; severity_reason: string;
     evidence: { index: number; reason: string }[]; calculations?: { text: string }[] }[] };
   const component = String(request.input.component ?? "").trim();
   if (!component) throw new ValidationError([{ category: "decision", code: "component_required", path: "/component",
@@ -106,6 +107,8 @@ function componentReview(request: AgentRequest, draft: unknown, audit: ToolAudit
     definition: problem.definition,
     problem_phenomena: problem.problem_phenomena,
     reason: problem.reason,
+    severity: problem.severity,
+    severity_reason: problem.severity_reason,
     evidence: problem.evidence.map((selection, evidenceIndex) => {
       const path = `/problems/${index}/evidence/${evidenceIndex}`;
       const reference = resolveEvidenceSelection(audit.evidenceBank ?? [], { evidence_index: selection.index }, path);
@@ -195,6 +198,7 @@ export const sessionAttributionProfile: AgentProfile = {
   resolve(request, draft, audit) {
     const value = draft as { session_summary: string; session_problem: { label: string; definition: string;
       problem_phenomena: string; reason: string; evidence: { index: number; reason: string }[];
+      severity: SessionProblem["severity"]; severity_reason: string;
       calculations?: { text: string }[] }[] };
     const traces = (request.input.turns ?? []) as TraceAttributionResult[];
     const session_problem: SessionProblem[] = value.session_problem.map((problem, index) => {
@@ -214,7 +218,8 @@ export const sessionAttributionProfile: AgentProfile = {
       });
       return { problem_id: `s-p${index + 1}`, component: "终稿生成轮",
         label: problem.label, definition: problem.definition, problem_phenomena: problem.problem_phenomena,
-        reason: problem.reason, evidence, ...(problem.calculations?.length ? { calculations: problem.calculations } : {}) };
+        reason: problem.reason, severity: problem.severity, severity_reason: problem.severity_reason,
+        evidence, ...(problem.calculations?.length ? { calculations: problem.calculations } : {}) };
     });
     return { session_meta: (request.input.session_meta ?? {}) as JsonObject, turns: traces,
       session_summary: value.session_summary, session_problem } satisfies SessionAttributionResult;

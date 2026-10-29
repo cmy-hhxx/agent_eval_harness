@@ -9,6 +9,8 @@ export interface SessionProblem {
   definition: string;
   problem_phenomena: string;
   reason: string;
+  severity: "P0" | "P1" | "P2" | "P3";
+  severity_reason: string;
   evidence: {
     position: string;
     component: string;
