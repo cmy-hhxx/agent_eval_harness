@@ -75,6 +75,8 @@ session input
   "definition": "应返回数据的查询返回零行，后续仍据此形成事实结论。",
   "problem_phenomena": "第一问把零行取数结果当成有数据支持。",
   "reason": "工具请求查询 X，原始返回为零行，下一轮仍给出肯定结论。",
+  "severity": "P1",
+  "severity_reason": "重要结论缺少数据支持，需要重新取数核对后才能使用。",
   "evidence": [
     {
       "position": "trace_index 0 / message_index 3 / path /output/0/text",
@@ -90,6 +92,8 @@ session input
 ```
 
 `quote` 推荐不超过 400 字；工具只暴露 ≤400 字的可提交编号，校验宽容到 800 字。引文必须是精确连续原文，不能拼接或由程序截断。`evidence.component` 明确区分 `reasoning:`、`tool_call:`、`answer:` 等证据位置及具体组件。`calculations` 只保留文字点评，不再嵌套操作数和复算元数据。
+
+每条 Problem 必填 `severity`（P0/P1/P2/P3，P0 最严重）和 `severity_reason`，按本次对最终交付的已确认影响判定；已补救的问题按残余影响分级。同类问题在不同回答中可以有不同等级，不按等级拆类，也不改变 Comparison 的判胜规则。分级口径与点评表达统一维护在[问题表达规则](../packages/prompts/resources/attribution/problem-output.md)。Component 与 Session 各自填写本阶段产生的问题，Trace 汇总和正式导出原样保留。
 
 Component 提交只校验 Schema、字段范围、证据身份、原文坐标及读取证明；不靠占位词黑名单、相似措辞或语义重复判断触发返工。证据工具只暴露可解析且不超过 400 字的推荐引用；校验接受到 800 字，超过时反馈真实原文片段的新编号，要求只替换 evidence。校验不会改写或截断 quote，正式证据仍按原坐标解析。
 

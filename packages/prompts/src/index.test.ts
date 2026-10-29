@@ -21,7 +21,8 @@ test("all stage texts come from one resource tree; tool descriptions are complet
       assert.equal(prompt[key === "system" ? "systemPrompt" : key], readFileSync(new URL(`${stage}/${profile}/${key}.md`, resources), "utf8").trim() +
         (key === "system" ? stage === "attribution" ? "\n\n" + prompt.instructions :
           "\n\n" + readFileSync(new URL("shared/commentary.md", resources), "utf8").trim() +
-          "\n\n" + prompt.instructions + "\n" + readFileSync(new URL("shared/evidence.md", resources), "utf8").trim() + "\n" : ""));
+          "\n\n" + prompt.instructions + "\n" + readFileSync(new URL("shared/evidence.md", resources), "utf8").trim() + "\n" :
+          stage === "attribution" ? "\n\n" + readFileSync(new URL("attribution/problem-output.md", resources), "utf8").trim() : ""));
     assert.deepEqual(Object.keys(prompt.toolDescriptions).sort(), tools.filter(name => name !== (prompt.fileSubmission ? "submit_evaluation" : "submit_evaluation_file")).sort());
     for (const [name, text] of Object.entries(prompt.toolDescriptions))
       assert.equal(text, readFileSync(new URL(stage === "attribution" && name === "execute_code"
@@ -190,6 +191,8 @@ test("session attribution profiles are independently addressable and never expos
   }
   assert.match(component.instructions, /材料足够时直接提交/u);
   assert.match(component.instructions, /合并同一技术原因/u);
-  assert.match(component.instructions, /evidence.*只说明该段原文直接证明了什么/u);
+  const problemOutput = readFileSync(new URL("../resources/attribution/problem-output.md", import.meta.url), "utf8").trim();
+  for (const prompt of [component, session]) assert(prompt.instructions.endsWith(problemOutput));
+  assert(!trace.instructions.includes(problemOutput), "trace summaries preserve component problems without grading them again");
   assert.match(session.instructions, /session_problem/u);
 });

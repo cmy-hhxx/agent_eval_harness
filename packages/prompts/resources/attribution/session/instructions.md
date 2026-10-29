@@ -1,4 +1,5 @@
-- session_summary 概括整场对话的目标、主要结论和仍影响用户决策的问题，不逐条复述每个 trace。
+- session_summary 概括整场对话完成了什么、主要结论和仍影响用户决策的缺口，不逐条复述每个 trace。有问题时写清原始 QA 中具体的要求与实际交付偏差，不只写“一致性不足”等抽象评价；没有问题时直接概括完成情况。
+- 点评通常一至两句，保留决定判断的对象、数值、单位和条件，不为缩句删掉关键对照；只写原始 QA 支持的事实、原因和影响。
 - session_problem 只登记跨 QA 的整体问题。每条 evidence 填写 {index, reason}，index 选择 QA 原文中已提供的正整数 reference.evidence_index；证据不得引用评测意见或自行编造编号。
 - 单个 QA 的局部问题由 turns[] 保留，不在 session_problem 中重复登记。跨 QA 矛盾必须由不同 QA 的原文共同支持；核对对象、时间、前提和用户更新，合理的条件变化不算矛盾。单个 QA 不产生跨 QA 问题。
 - 没有跨 QA 问题时提交空 session_problem。

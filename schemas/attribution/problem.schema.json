@@ -10,6 +10,8 @@
     "definition",
     "problem_phenomena",
     "reason",
+    "severity",
+    "severity_reason",
     "evidence"
   ],
   "properties": {
@@ -20,9 +22,11 @@
       "description": "程序按 taxonomy 和实际调用填写的具体组件，例如 finquery 取数服务。"
     },
     "label": { "type": "string", "minLength": 1, "description": "可复用的短问题名称。" },
-    "definition": { "type": "string", "minLength": 1, "description": "该类问题的行为、触发范围与可见结果。" },
-    "problem_phenomena": { "type": "string", "minLength": 1, "description": "本回答中具体可见的问题现象。" },
-    "reason": { "type": "string", "minLength": 1, "description": "证据如何证明该现象及其技术原因。" },
+    "definition": { "type": "string", "minLength": 1, "description": "可复用的问题定义，写清同类偏差及适用条件。" },
+    "problem_phenomena": { "type": "string", "minLength": 1, "description": "可独立读懂的个案说明：具体对象、应有情况与实际表现的偏差。" },
+    "reason": { "type": "string", "minLength": 1, "description": "认定该偏差的依据，以及证据能确认的原因。" },
+    "severity": { "enum": ["P0", "P1", "P2", "P3"], "description": "本次问题对最终交付的影响等级，P0 最严重。" },
+    "severity_reason": { "type": "string", "minLength": 1, "description": "具体影响及其为何属于该等级；只写证据支持的影响。" },
     "evidence": {
       "type": "array",
       "minItems": 1,

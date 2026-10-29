@@ -10,6 +10,7 @@
 |---|---|
 | `resources/score/skill/` | 原skill评分规则、分档、校准与固定目录 |
 | `resources/attribution/taxonomy.json` | 责任技术域、功能组件、出错环节与八步业务调查的唯一目录 |
+| `resources/attribution/problem-output.md` | Component、Session 共用的问题表达、字段分工与严重程度口径 |
 | `resources/instruction-review/default/` | 后置独立内部指令核验 |
 | `resources/<stage>/default/` | Criteria、Attribution、Comparison、Rewrite、Clustering 规则 |
 | `resources/comparison/verification/` | 独立首查与揭示后核验 |

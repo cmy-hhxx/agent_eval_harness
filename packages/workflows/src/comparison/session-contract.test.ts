@@ -11,6 +11,7 @@ const result: SessionAttributionResult = {
     { meta: { trace_id: "t1" }, summary: "第一轮错误。", is_correct: 0, correct_reason: "与标准不符。",
       problem: [{ problem_id: "p1", component: "finquery 取数服务", label: "零行", definition: "查询应返回数据但为空。",
         problem_phenomena: "第一问把零行当成有数据。", reason: "工具实际返回零行。",
+        severity: "P1", severity_reason: "重要结论缺少数据支持，需要重新取数核对。",
         evidence: [{ position: "message 2 / output/0/text", component: "tool_call: finquery 取数服务",
           quote: "为您找到0条数据", reason: "证明零行。" }] }] },
     { meta: { trace_id: "t2" }, summary: "第二轮正常。", is_correct: null, correct_reason: "无标准。", problem: [] },

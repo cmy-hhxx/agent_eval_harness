@@ -429,7 +429,8 @@ export async function reportRun(run: string, options: { details?: boolean } = {}
       );
       for (const finding of sessionProblems(review)) {
         markdown.push(
-          `- **问题｜${finding.problem_phenomena}**：${finding.reason}`,
+          `- **${finding.severity}｜${finding.problem_phenomena}**：${finding.reason}`,
+          `  严重程度依据：${finding.severity_reason}`,
           "",
         );
         for (const evidence of finding.evidence)

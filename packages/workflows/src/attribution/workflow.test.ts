@@ -188,6 +188,7 @@ for (const workflow of [attributionWorkflow, comparisonWorkflow] as WorkflowDefi
         await store.registerEvidenceBank({ taskId: task.id, attemptId: spec.attemptId, evidenceBank: bank });
         const problem = { label: "最终回答缺少可核查结论", definition: "最终回答只给出简短答复，缺少支持其结论的数据。",
           problem_phenomena: "当前问答没有展示结论依据。", reason: "原文只包含简短答复，无法核对数据与推导过程。",
+          severity: "P1", severity_reason: "重要结论缺少可核对依据，需要补充数据才能使用。",
           evidence: [{ index: bank.indexOf(evidence.evidence_id) + 1, reason: "直接定位本轮最终回答。" }] };
         const submission = { taskId: task.id, attemptId: spec.attemptId, submissionId: `submission-${task.id}`,
           evaluation: { problems: [problem] }, audit: { ...emptyAudit(), evidenceBank: bank }, usage: emptyUsage() };
@@ -479,13 +480,18 @@ test("component review resolves evidence into readable position, tool component 
   const audit = { ...emptyAudit(), evidenceBank: [evidence.evidence_id] };
   const result = registry.resolve(binding, { problems: [{ label: "零行结果未识别", definition: "应返回数据的查询返回空结果。",
     problem_phenomena: "第一问把零行结果当成有数据。", reason: "工具实际返回空结果。",
+    severity: "P1", severity_reason: "重要结论缺少数据支持，需要重新取数核对。",
     evidence: [{ index: 1, reason: "证明工具返回零行。" }] }] }, audit) as { problems: {
+      severity: string; severity_reason: string;
       evidence: { position: string; component: string; quote: string }[] }[] };
+  assert.equal(result.problems[0]!.severity, "P1");
+  assert.equal(result.problems[0]!.severity_reason, "重要结论缺少数据支持，需要重新取数核对。");
   assert.equal(result.problems[0]!.evidence[0]!.component, "tool_call: finquery 取数服务");
   assert.match(result.problems[0]!.evidence[0]!.position, /^trace_index 0 \/ message_index 2 \/ path \//u);
   assert.equal(result.problems[0]!.evidence[0]!.quote, evidence.quote);
   assert.doesNotThrow(() => registry.resolve(binding, { problems: [{ label: "错误", definition: "无法判断",
-    problem_phenomena: "无法判断", reason: "无法判断", evidence: [{ index: 1, reason: "无法判断" }] }] }, audit),
+    problem_phenomena: "无法判断", reason: "无法判断", severity: "P3", severity_reason: "无法判断",
+    evidence: [{ index: 1, reason: "无法判断" }] }] }, audit),
   "legal prose is accepted without a wording-based quality gate; semantic quality is reviewed separately");
 });
 
@@ -500,6 +506,7 @@ test("component quote validation accepts 800 chars but rejects longer exact quot
   const output = raw.messages[2] as Record<string, unknown>;
   const draft = { problems: [{ label: "长证据仍可精确核验", definition: "工具返回包含需要直接核对的长段原文。",
     problem_phenomena: "下游使用了该长段中的结论。", reason: "长段原文完整保留并可由坐标复核。",
+    severity: "P2", severity_reason: "局部结论需要核对，未改变主要结论。",
     evidence: [{ index: 1, reason: "证明工具返回了该段原文。" }] }] };
   const resolveLength = (length: number) => {
     output.output = { rows: [], payload: "证".repeat(length) };

@@ -147,7 +147,8 @@ export async function fixtureConfig(
 export function attributionResult(correct=true,answer='2+2=4',available=true,inputId='7c4e3ba8-8f7c-46cc-b8fb-3016e10ea2dd'):SessionAttributionResult{
   const problem: SessionProblem[] = correct ? [] : [{ problem_id: 'p1', component: '模型自身推理', label: '加法结果错误',
     definition: '最终回答与给定加法结果不一致。', problem_phenomena: '2+2 应得 4，实际回答给出了不同结果。',
-    reason: '最终回答中的计算结果错误。', evidence: [{ position: 'trace_index 0 / message_index 1 / path /content',
+    reason: '最终回答中的计算结果错误。', severity: 'P0', severity_reason: '加法结果是本题的核心交付，数值错误使回答不可采信。',
+    evidence: [{ position: 'trace_index 0 / message_index 1 / path /content',
       component: 'answer: 终稿生成轮', quote: answer, reason: '证明最终回答给出的结果。' }] }];
   const turn = { meta: { trace_id: `trace-${inputId}` }, summary: correct?'正确给出结果。':'加法结果错误。', problem,
     is_correct: available ? (correct ? 1 as const : 0 as const) : null,
@@ -164,6 +165,7 @@ export function taskResult(spec: Pick<AttemptSpec, "evaluation" | "prompt" | "in
     const result = spec.inputs.length ? attributionResult(false) : attributionResult(true);
     return { problems: sessionProblems(result).map(problem => ({ label: problem.label, definition: problem.definition,
       problem_phenomena: problem.problem_phenomena, reason: problem.reason,
+      severity: problem.severity, severity_reason: problem.severity_reason,
       evidence: problem.evidence.map(() => ({ index: 1, reason: "fixture evidence" })),
       ...(problem.calculations ? { calculations: problem.calculations } : {}) })) };
   }

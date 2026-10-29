@@ -8,7 +8,7 @@ Attribution workflow 使用三个独立 profile，共用 `attribution/taxonomy.j
 
 - 工具报错、空结果、零行、截断、缺返回和调用无结果必须作为问题候选。
 - 首屏只展示有界材料；后续通过搜索原文和精确字段读取补齐必要证据，不以固定续读次数截断取证。
-- 输出 `label`、`definition`、`problem_phenomena`、`reason`、证据引用和可选计算文字。
+- 输出 `label`、`definition`、`problem_phenomena`、`reason`、`severity`、`severity_reason`、证据引用和可选计算文字。
 - 不填写 `problem_id`、`component`、`position`、`quote`；这些由程序从任务和证据解析。
 
 ## Trace
@@ -23,6 +23,7 @@ Attribution workflow 使用三个独立 profile，共用 `attribution/taxonomy.j
 
 ## 程序边界
 
+- Component 与 Session 共用[问题表达与严重程度规则](../packages/prompts/resources/attribution/problem-output.md)：现象须独立说明具体偏差，定义可复用，理由说明证据支持的判断，严重程度理由说明已确认影响。Trace 与 Session 总结分别由各自提示词约束，不增加润色调用。
 - 组件目录统一读取真实消息身份：明确命名的 planner/tool 保留名称；匿名 locator 归一成语义角色，`llm-call-*` 默认“中间推理处理”，其他无法识别 locator 归入“流程处理”，`final_answer` 才是“终稿生成轮”。相同最终内容不能证明某个匿名模型调用生成了终稿。
 - 组件名称按 taxonomy 映射，未知工具保留真实名称。
 - 证据 `position` 和 `component` 由原始坐标、消息类型、路径和固定组件生成，例如 `tool_call: finquery 取数服务` 或 `reasoning: 终稿生成轮`。
