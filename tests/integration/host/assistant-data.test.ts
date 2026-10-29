@@ -3,6 +3,8 @@ import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
 import path from "node:path";
 import fs from "node:fs/promises";
+import streams from "node:fs";
+import { Readable } from "node:stream";
 import { syncBuiltinESMExports } from "node:module";
 import { rm } from "node:fs/promises";
 import { emptyUsage, object, type JsonObject, type RunState, type SubmissionReceipt, type TaskPlan } from "@eval/contracts";
@@ -38,8 +40,8 @@ test("statistics include finished runs without opening individual run checkpoint
   const fixture = await fixtureConfig();
   try {
     const source = await register(fixture.config, async state => { state.manifest.status = "finished"; });
-    const read = fs.readFile;
-    const probe = t.mock.method(fs, "readFile", (...args: Parameters<typeof fs.readFile>) => {
+    const read = streams.createReadStream;
+    const probe = t.mock.method(streams, "createReadStream", (...args: Parameters<typeof streams.createReadStream>) => {
       assert(!String(args[0]).endsWith("/state.json"), "overview must not scan full run checkpoints");
       return read(...args);
     });
@@ -142,8 +144,8 @@ test("live statistics are saved with results and repeated overviews never reopen
   assert.equal(stored.value.summary.attributionCompletionRate, 50, "unreviewed inputs remain in the completion denominator");
   assert.equal(stored.value.summary.battleCompletionRate, 100);
   assert.equal(JSON.stringify(stored).includes('"records"'), false);
-  const original = fs.readFile;
-  const probe = t.mock.method(fs, "readFile", (...args: Parameters<typeof fs.readFile>) => {
+  const original = streams.createReadStream;
+  const probe = t.mock.method(streams, "createReadStream", (...args: Parameters<typeof streams.createReadStream>) => {
     assert(!String(args[0]).endsWith("/state.json") && !String(args[0]).includes("/results/"), "summary reads use only the persisted projection");
     return original(...args);
   });
@@ -165,12 +167,13 @@ test("a normal run save between checkpoint and statistics reads is retried insid
   const next = await comparisonRepository.readRun(run);
   next.manifest.status = "finished";
   next.manifest.finishedAt = 1000;
-  const release = await runLock(run), original = fs.readFile;
+  const release = await runLock(run), original = streams.createReadStream;
   let overviewReads = 0;
-  const probe = t.mock.method(fs, "readFile", async (...args: Parameters<typeof fs.readFile>) => {
-    if (String(args[0]).endsWith("/overview.json") && ++overviewReads === 1) await comparisonRepository.writeRun(run, next);
-    return original(...args);
-  });
+  const probe = t.mock.method(streams, "createReadStream", (...args: Parameters<typeof streams.createReadStream>) =>
+    Readable.from((async function* () {
+      if (String(args[0]).endsWith("/overview.json") && ++overviewReads === 1) await comparisonRepository.writeRun(run, next);
+      yield* original(...args);
+    })()) as ReturnType<typeof streams.createReadStream>);
   syncBuiltinESMExports();
   try {
     const result = await source.list({ runId: "source" });

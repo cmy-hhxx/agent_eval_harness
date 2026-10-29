@@ -1,6 +1,8 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import fs, { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import streams from "node:fs";
+import { Readable } from "node:stream";
 import { syncBuiltinESMExports } from "node:module";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -66,16 +68,17 @@ test("an unchanged checkpoint remains readable after its volume device number ch
 
 test("a checkpoint and overview replaced during a read cannot be combined into one snapshot", async t => {
   const { directory, run } = await fixture(t);
-  const originalRead = fs.readFile;
+  const originalRead = streams.createReadStream;
   let replaced = false;
-  const probe = t.mock.method(fs, "readFile", async (...args: Parameters<typeof fs.readFile>) => {
-    if (!replaced && String(args[0]).endsWith("/overview.json")) {
-      replaced = true;
-      await writeJson(path.join(run, "state.json"), { count: 2 });
-      await writeRunOverview(run, { count: 2 });
-    }
-    return originalRead(...args);
-  });
+  const probe = t.mock.method(streams, "createReadStream", (...args: Parameters<typeof streams.createReadStream>) =>
+    Readable.from((async function* () {
+      if (!replaced && String(args[0]).endsWith("/overview.json")) {
+        replaced = true;
+        await writeJson(path.join(run, "state.json"), { count: 2 });
+        await writeRunOverview(run, { count: 2 });
+      }
+      yield* originalRead(...args);
+    })()) as ReturnType<typeof streams.createReadStream>);
   syncBuiltinESMExports();
   try { assert.match((await readRunOverviews(directory))[0].error!, /过期/); }
   finally { probe.mock.restore(); syncBuiltinESMExports(); }

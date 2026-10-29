@@ -2,8 +2,11 @@ import { randomUUID } from "node:crypto";
 import { createReadStream } from "node:fs";
 import { chmod, link, lstat, mkdir, open, readFile, readdir, rename, rm, stat, writeFile } from "node:fs/promises";
 import { Readable } from "node:stream";
+import { pipeline } from "node:stream/promises";
 import { createGunzip, createGzip } from "node:zlib";
 import path from "node:path";
+import jsonParser from "stream-json/parser.js";
+import Assembler from "stream-json/assembler.js";
 import { safeId, type Artifact, type JsonObject } from "@eval/contracts";
 
 /** Local filesystem operations used by report and offline maintenance callers. */
@@ -25,7 +28,26 @@ export function exists(file: string): Promise<boolean> {
 }
 
 export async function readJson<T = JsonObject>(file: string): Promise<T> {
-  return JSON.parse(await readFile(file, "utf8")) as T;
+  // Checkpoints can exceed V8's string limit while each individual value remains small.
+  const assembler = new Assembler<T>();
+  async function* chunks() {
+    let first = true;
+    for await (const chunk of createReadStream(file, { encoding: "utf8" })) {
+      if (first && chunk.charCodeAt(0) === 0xfeff) throw new SyntaxError("Unexpected BOM in JSON input");
+      first = false;
+      yield chunk;
+    }
+  }
+  try {
+    await pipeline(chunks(), jsonParser.asStream({ streamValues: false }), async (tokens) => {
+      for await (const token of tokens) assembler.consume(token);
+    });
+  } catch (error) {
+    if (error instanceof Error && error.message.startsWith("Parser "))
+      throw new SyntaxError("Invalid JSON: " + error.message, { cause: error });
+    throw error;
+  }
+  return assembler.current as T;
 }
 
 export async function atomicWrite(

@@ -1,14 +1,62 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, open, readFile, rm, writeFile } from "node:fs/promises";
 import filesystem from "node:fs/promises";
+import { constants } from "node:buffer";
 import { syncBuiltinESMExports } from "node:module";
 import os from "node:os";
 import path from "node:path";
 import { gzipSync } from "node:zlib";
-import { exists, hasLiveRunOwner, readJsonl, readJsonlText, runLock, writeJson, writeCheckpointJson } from "./files.js";
+import { exists, hasLiveRunOwner, readJson, readJsonl, readJsonlText, runLock, writeJson, writeCheckpointJson } from "./files.js";
 
 const deadOwner = { pid: 2147483647, token: "dead-owner" };
+
+test("JSON reads preserve nested values, escaped strings, Unicode and own object keys", async t => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), "eval-json-read-"));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  const file = path.join(directory, "state.json");
+  const nested = JSON.parse('{"__proto__":{"value":1},"constructor":2,"items":[null,true,false,-0,1.25e10]}');
+  const text = JSON.stringify({ nested, text: "x".repeat(65530) + "中文😀\u2028\u2029" + "\\\"\n\ud800".repeat(1000) });
+  await writeFile(file, text);
+  assert.deepEqual(await readJson(file), JSON.parse(text));
+  for (const value of [null, true, false, 17, "中文", []]) {
+    await writeFile(file, JSON.stringify(value));
+    assert.deepEqual(await readJson(file), value);
+  }
+  for (const text of ['-0', '1e400', '{"duplicate":1,"duplicate":2}', '"\\ud800\\udc00\\ud800x\\udc00"',
+    '{"\ufeffkey":"\ufeffvalue"}', '"' + "x".repeat(65534) + '😀汉"']) {
+    await writeFile(file, text);
+    assert.deepEqual(await readJson(file), JSON.parse(text));
+  }
+  const malformedUtf8 = Buffer.from([34, 0xc0, 0xaf, 34]);
+  await writeFile(file, malformedUtf8);
+  assert.deepEqual(await readJson(file), JSON.parse(malformedUtf8.toString("utf8")));
+  await assert.rejects(readJson(path.join(directory, "missing.json")), { code: "ENOENT" });
+});
+
+test("JSON reads reject incomplete documents, trailing values and invalid JSON", async t => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), "eval-json-invalid-"));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  const file = path.join(directory, "state.json");
+  for (const text of ["", " ", '{"missing":', '[]{}', "true false", '"unfinished',
+    '{"number":01}', "[1,]", '{"a":1,}', '"\\uZZZZ"', '"\u0001"', "NaN", "Infinity", "\ufeff{}", '"\\\ufeff"']) {
+    await writeFile(file, text);
+    await assert.rejects(readJson(file), SyntaxError, JSON.stringify(text));
+  }
+});
+
+test("JSON checkpoints larger than the maximum string length remain readable", async t => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), "eval-json-large-"));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  const file = path.join(directory, "state.json"), handle = await open(file, "w");
+  try {
+    await handle.writeFile('{"head":true,"items":{"one":1,');
+    const chunk = Buffer.alloc(8 * 1024 * 1024, 32);
+    for (let bytes = 0; bytes <= constants.MAX_STRING_LENGTH; bytes += chunk.length) await handle.write(chunk);
+    await handle.writeFile('"two":2},"tail":true}');
+  } finally { await handle.close(); }
+  assert.deepEqual(await readJson(file), { head: true, items: { one: 1, two: 2 }, tail: true });
+});
 
 test("JSONL preserves long records, split UTF-8, blank lines and the trailing-line policy", async (t) => {
   async function collect<T>(source: AsyncIterable<T>) {

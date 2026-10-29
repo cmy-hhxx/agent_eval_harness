@@ -399,7 +399,7 @@ npm run eval -- rewrite-comparisons --run /mnt/fin_bench/eval_data/0_wencai/3_ev
 
 恢复时，同序号的 progress 投影只允许为热日志 receipt 补充尚未存在的 `exported`；判词、审计、状态或已有结果引用不一致仍拒绝恢复。重放完成后才应用本次配置与评测器标记，已接受 receipt 保留原评测器标记，保证续跑策略记录与实际执行一致。
 
-`state.json` 周期性分块原子写入，字节数统计来自实际写入，不序列化整份原始 RunState。Attribution 任务只保存 input_id，共享一次 candidate 索引；已接受正文引用正式 JSONL。仅已接受任务压缩诊断；未完成任务完整保留 draft、inspection、evidence bank、review 和累计预算，热库丢失或进度日志压缩后仍可恢复。快照复用不可变已接受正文，只拷贝可变恢复状态，避免重复全量 clone。热日志和 outbox 路径由 `EVAL_HOT_STATE_ROOT` 控制，默认位于 `~/.cache/eval-agent-harness/hot`；生产应放在本机 SSD，不放在 Ceph。
+`state.json` 周期性分块原子写入，读取按流解析，避免整份快照超过运行时单字符串上限；字节数统计来自实际写入，不序列化整份原始 RunState。Attribution 任务只保存 input_id，共享一次 candidate 索引；已接受正文引用正式 JSONL。仅已接受任务压缩诊断；未完成任务完整保留 draft、inspection、evidence bank、review 和累计预算，热库丢失或进度日志压缩后仍可恢复。快照复用不可变已接受正文，只拷贝可变恢复状态，避免重复全量 clone。热日志和 outbox 路径由 `EVAL_HOT_STATE_ROOT` 控制，默认位于 `~/.cache/eval-agent-harness/hot`；生产应放在本机 SSD，不放在 Ceph。
 
 Host 每次成功保存检查点后，原子替换 `progress.jsonl`，仅保留检查点之后的事件和一个序号边界。运行结束并保存成功后通常只剩边界；检查点写入失败时保留原事件。追加与压缩共用同一写入队列；读取遇到检查点切换会重新读取快照，不能跳过缺失增量。该文件不承担完整历史审计。
 

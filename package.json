@@ -70,6 +70,7 @@
     "react-dom": "18.3.1",
     "shiki": "4.4.3",
     "simple-icons": "16.31.0",
+    "stream-json": "3.8.0",
     "undici": "7.30.0",
     "use-sync-external-store": "1.6.0",
     "ws": "8.22.0",
