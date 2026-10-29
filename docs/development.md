@@ -34,6 +34,45 @@
 
 类型检查包含未使用局部变量与参数；删除导出前还须检查公开入口、动态调用和测试引用。`test-clean` 在临时 checkout 独立安装与构建，不复用已安装依赖、构建或虚拟环境；npm 缓存独立，仅共享 Python 下载缓存。它只清理自身临时 checkout，`--debug` 可保留诊断。
 
+## Git 提交与推送
+
+远程地址、主副仓库角色、任务 ID 与提交信息格式统一由[仓库规则](../AGENTS.md#git-提交与双仓库推送)维护。GitCC 的提交信息校验在服务端钩子中执行；`git push --dry-run` 成功或 `Everything up-to-date` 只说明预检或当前引用状态，不能证明新提交会通过钩子。
+
+### 提交前
+
+1. 用 `git status --short --branch`、`git remote -v` 和差异确认当前分支、待提交文件与用户指定的推送目标。
+2. 完成上面的[验证](#验证)，只暂存本次变更，检查 `git diff --cached --check` 与暂存差异。
+3. 从创建提交时就使用约定格式，例如：
+
+   ```bash
+   git commit -m "dsw-98885 docs(git): document commit and push policy"
+   ```
+
+### 推送前与双边同步
+
+对每个目标远程获取最新分支，检查它是本地 HEAD 的祖先，再逐条检查该目标尚未接收的提交信息。以下命令中的 `<远程>` 使用用户指定的远程名：
+
+```bash
+git fetch <远程> main
+git merge-base --is-ancestor <远程>/main HEAD
+git log --format='%h %s' <远程>/main..HEAD
+```
+
+发现分叉或不符合格式的提交时先处理原因。提交已经被任一远程接收后，历史改写按仓库规则单独授权。
+
+用户明确要求两边同步时，完成两个目标的检查后依次执行：
+
+```bash
+git push origin main
+git push gitcc main
+```
+
+两次推送之间保持同一个 HEAD；仅推一个目标时只执行对应命令。若某一边被拒绝，保留已有成功状态并报告拒绝原因与两端提交，不能将双边同步标为完成。
+
+### 推送后验收
+
+用 `git rev-parse HEAD` 取得本地提交，再对每个目标执行 `git ls-remote --heads <远程> main`；远端提交必须与本地一致。用 `git branch -vv` 确认 `main` 仍跟踪 `origin/main`，并通过 `git status --short --branch` 报告剩余工作区变更。
+
 ## 构建与依赖
 
 安装和完整构建见 [README](../README.md#本地开发)。`build:pi` 可单独构建底座；版本与来源分别由 [mise.toml](../mise.toml)、[vendor/upstream.json](../vendor/upstream.json)维护。
