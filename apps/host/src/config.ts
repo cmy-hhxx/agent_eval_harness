@@ -178,6 +178,12 @@ function buildEvaluationBase(source: ConfigObject): EvaluationConfig {
     if (!Number.isInteger(config.execution[key]) || config.execution[key] < 0)
       throw new Error(`Invalid execution.${key}`);
   optionalPositiveInteger(config.execution.maxTaskAttempts, "execution.maxTaskAttempts");
+  for (const key of ["firstResponseTimeoutSeconds", "streamIdleTimeoutSeconds", "toolTimeoutSeconds", "submissionTimeoutSeconds", "cleanupTimeoutSeconds", "workerSlots", "taskConcurrency"] as const)
+    optionalPositiveInteger(config.execution[key], `execution.${key}`);
+  if ((config.execution.workerSlots ?? 1) > 200) throw new Error("execution.workerSlots must not exceed 200");
+  if (config.execution.modelRequestLimits !== undefined && (!isObject(config.execution.modelRequestLimits) ||
+    !Object.keys(config.execution.modelRequestLimits).length || Object.values(config.execution.modelRequestLimits)
+      .some(limit => !Number.isSafeInteger(limit) || Number(limit) < 1))) throw new Error("Invalid execution.modelRequestLimits");
   if (config.execution.stageRepairAttempts !== undefined &&
     (!isObject(config.execution.stageRepairAttempts) || Object.entries(config.execution.stageRepairAttempts)
       .some(([stage,limit])=>!stage.trim()||!Number.isInteger(limit)||limit<0)))

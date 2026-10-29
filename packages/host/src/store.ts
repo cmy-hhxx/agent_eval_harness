@@ -133,7 +133,8 @@ export class RunStore {
   readonly services: EvaluationServices;
   readonly attempts = new Map<string, AttemptSpec>();
   private readonly bindings = new Map<string, AgentBinding>();
-  readonly checkpointMetrics = { count: 0, snapshotMs: 0, writeMs: 0, bytes: 0, savedAt: 0 };
+  readonly checkpointMetrics = { count: 0, snapshotMs: 0, writeMs: 0, bytes: 0, savedAt: 0,
+    failures: 0, failedSince: 0, lastError: undefined as string | undefined };
   readonly outboxMetrics = { delivered: 0, failures: 0, lastError: undefined as string | undefined };
   private readonly evidenceSources = new Map<string, ReadonlyMap<string, unknown>>();
   private readonly submissions = new Map<string, Promise<void>>();
@@ -200,7 +201,9 @@ export class RunStore {
     void this.flushOutbox();
   }
 
-  admissionPaused(): boolean { return this.admissionBlocked; }
+  admissionPaused(): boolean {
+    return this.admissionBlocked || !!this.checkpointMetrics.failedSince && Date.now() - this.checkpointMetrics.failedSince >= 5 * 60_000;
+  }
 
   outboxStatus() { return { ...this.journal.outboxStats(), admissionPaused: this.admissionBlocked, ...this.outboxMetrics }; }
 
@@ -258,7 +261,12 @@ export class RunStore {
   }
 
   persistCheckpoint(): Promise<void> {
-    const next = (this.checkpointRun ?? Promise.resolve()).then(() => this.checkpointNow());
+    const next = (this.checkpointRun ?? Promise.resolve()).catch(() => {}).then(() => this.checkpointNow()).catch(error => {
+      this.checkpointMetrics.failures++;
+      this.checkpointMetrics.failedSince ||= Date.now();
+      this.checkpointMetrics.lastError = error instanceof Error ? error.message : String(error);
+      throw error;
+    });
     this.checkpointRun = next;
     void next.then(() => { if (this.checkpointRun === next) this.checkpointRun = undefined; },
       () => { if (this.checkpointRun === next) this.checkpointRun = undefined; });
@@ -270,11 +278,11 @@ export class RunStore {
     const snapshotStarted = performance.now();
     this.manifest.journalSequence = this.lastDeliveredSequence;
     const snapshot = checkpointSnapshot(this.state);
-    this.checkpointMetrics.bytes = Buffer.byteLength(JSON.stringify(snapshot));
     this.checkpointMetrics.snapshotMs += performance.now() - snapshotStarted;
     const writeStarted = performance.now();
     await this.writeResults(snapshot);
-    await this.services.repository.writeRun(this.run, snapshot);
+    const bytes = await this.services.repository.writeRun(this.run, snapshot);
+    if (typeof bytes === "number") this.checkpointMetrics.bytes = bytes;
     await compactProgressJournal(this.run, snapshot.manifest.journalSequence ?? 0);
     for (const [id, receipt] of Object.entries(snapshot.receipts))
       if (this.state.receipts[id]?.submissionId === receipt.submissionId && receipt.exported)
@@ -282,16 +290,21 @@ export class RunStore {
     this.checkpointMetrics.writeMs += performance.now() - writeStarted;
     this.checkpointMetrics.count++;
     this.checkpointMetrics.savedAt = Date.now();
+    this.checkpointMetrics.failedSince = 0;
+    this.checkpointMetrics.lastError = undefined;
   }
 
   async close(): Promise<void> {
     if (this.outboxTimer) clearInterval(this.outboxTimer);
-    if (this.outboxStarted) await this.flushOutbox(true);
-    await this.fallbackSave;
-    await this.checkpointRun;
-    await this.receiptLogs;
-    this.outboxTimer = undefined;
-    this.journal.close();
+    try {
+      if (this.outboxStarted) await this.flushOutbox(true);
+      await this.fallbackSave;
+      await this.checkpointRun;
+      await this.receiptLogs;
+    } finally {
+      this.outboxTimer = undefined;
+      this.journal.close();
+    }
   }
 
   private resultView(): RunState {
@@ -364,6 +377,8 @@ export class RunStore {
     if (state.attemptId) { this.attempts.delete(state.attemptId); this.evidenceSources.delete(state.attemptId); this.bindings.delete(state.attemptId); }
     state.startedAt = state.lastProgressAt = Date.now();
     state.status = "running";
+    delete state.phase;
+    delete state.timeoutPhase;
     state.attemptId = spec.attemptId;
     this.manifest.cumulativeAttempts = cumulativeAttempts(this.manifest) + 1;
     state.attempts++;

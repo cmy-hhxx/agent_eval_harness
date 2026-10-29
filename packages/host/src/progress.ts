@@ -1,5 +1,22 @@
-import type { RunState, WorkflowScheduling } from "@eval/contracts";
+import type { JsonObject, RunState, WorkflowScheduling } from "@eval/contracts";
 import { dependencyReady, sessionAdmissionSnapshot } from "./scheduling.js";
+
+export function inputDiagnostics(summary: JsonObject) {
+  const issues = Array.isArray(summary.issues) ? summary.issues : [];
+  const records = new Set<string>();
+  for (const value of issues) {
+    if (!value || typeof value !== "object") continue;
+    const issue = value as JsonObject;
+    const locations = Array.isArray(issue.sources) && issue.sources.length ? issue.sources : [issue];
+    for (const value of locations) {
+      if (!value || typeof value !== "object") continue;
+      const location = value as JsonObject;
+      if (typeof location.source === "string" && Number.isSafeInteger(location.line))
+        records.add(JSON.stringify([location.source, location.line, location.version ?? issue.version ?? null]));
+    }
+  }
+  return { input_rejected: records.size, input_issue_count: issues.length };
+}
 
 export function progressSnapshot(state: RunState, now = Date.now(), preparing: ReadonlySet<string> = new Set(),
   sessionAdmission?: WorkflowScheduling["sessionAdmission"]) {
@@ -59,6 +76,18 @@ export function progressSnapshot(state: RunState, now = Date.now(), preparing: R
     (a, b) => (a.lastProgressAt || a.startedAt || now) - (b.lastProgressAt || b.startedAt || now),
   )[0];
   const sessions = sessionAdmission ? sessionAdmissionSnapshot(state.manifest.tasks, state.manifest.states, sessionAdmission, state.manifest) : undefined;
+  const formalRows = new Map<string, Set<string>>();
+  for (const receipt of Object.values(state.receipts)) {
+    const ref = receipt.exported;
+    if (!ref?.file || ref.auxiliary) continue;
+    const rows = formalRows.get(ref.file) ?? new Set<string>();
+    rows.add(JSON.stringify([ref.id, ref.line ?? null])); formalRows.set(ref.file, rows);
+  }
+  const timeoutPhases: Record<string, number> = {}, activePhases: Record<string, number> = {};
+  for (const task of tasks) {
+    if (task.status === "running" && task.phase) activePhases[task.phase] = (activePhases[task.phase] ?? 0) + 1;
+    if (task.timeoutPhase) timeoutPhases[task.timeoutPhase] = (timeoutPhases[task.timeoutPhase] ?? 0) + 1;
+  }
   return {
     updated_at: new Date(now).toISOString(),
     usage: { archived_tokens: state.usage.totalTokens, archived_attempts: state.recordedAttempts,
@@ -78,7 +107,11 @@ export function progressSnapshot(state: RunState, now = Date.now(), preparing: R
     failures,
     blocked: tasks.filter((task) => task.status === "blocked").length,
     cancelled: tasks.filter((task) => task.status === "cancelled").length,
-    concurrency,
+    model_request_allocation: concurrency,
+    ...inputDiagnostics(state.manifest.preflight),
+    formal_result_count: [...formalRows.values()].reduce((sum, rows) => sum + rows.size, 0),
+    formal_results_by_file: Object.fromEntries([...formalRows].map(([file, rows]) => [file, rows.size])),
+    active_phases: activePhases, timeout_phases: timeoutPhases,
     recent_completed_per_minute: Object.values(state.receipts).filter((r) => r.acceptedAt >= now - 60000)
       .length,
     longest_without_progress: longest

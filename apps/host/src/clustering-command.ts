@@ -3,9 +3,9 @@ import { canonical, safeId } from "@eval/contracts";
 import { exists, readJson, runLayout } from "@eval/data";
 import { runEvaluation } from "@eval/host";
 import { createClusteringJobRepository, createClusteringJobWorkflow, prepareFrozenClusteringJob, prepareClusteringJob, readRunTasks, reportClusteringJob, type ClusteringJobConfig } from "@eval/workflows/comparison";
-import { createModelResolver, type HostConfig } from "./config.js";
+import { type HostConfig } from "./config.js";
 import { services } from "./composition.js";
-import { createBalancedModels } from "./balanced-models.js";
+import { evaluationRouting } from "./evaluation-routing.js";
 const readClusteringSource = readRunTasks;
 
 const clusteringJobRepository = createClusteringJobRepository(readClusteringSource);
@@ -40,7 +40,7 @@ export async function runClusteringCommand(host: HostConfig, options: {
       states: saved.manifest.states } : prepared!.plan.summary, null, 2));
     return 0;
   }
-  const routing = options.balanceChannels ? createBalancedModels(host.models) : { modelForStage: createModelResolver(host.models) };
+  const routing = evaluationRouting(host, options.balanceChannels);
   const { modelForStage } = routing;
   const pending = saved ? saved.manifest.tasks.filter(task => !saved.receipts[task.id] &&
     (!saved.manifest.executionScope || saved.manifest.executionScope.includes(task.id))) : prepared!.plan.tasks;
@@ -51,7 +51,8 @@ export async function runClusteringCommand(host: HostConfig, options: {
   const controller = new AbortController(), interrupt = () => controller.abort(new Error("User interrupted"));
   process.once("SIGINT", interrupt); process.once("SIGTERM", interrupt);
   try {
-    const result = await runEvaluation({ ...services, ...routing, taskSource: clusteringJobWorkflow, repository: clusteringJobRepository,
+    const result = await runEvaluation({ ...services, ...routing,
+      runtime: { ...services.runtime, workerSlots: config.execution.workerSlots ?? 4 }, taskConcurrency: config.execution.taskConcurrency, taskSource: clusteringJobWorkflow, repository: clusteringJobRepository,
       report: run => reportClusteringJob(run, readClusteringSource), snapshots: {}, runId: options.runId!, output, engine: "pi",
       evaluatorVersion: host.evaluatorVersion, config,
       plan: prepared?.plan ?? { tasks: [], inputs: {}, summary: {} },
@@ -61,7 +62,7 @@ export async function runClusteringCommand(host: HostConfig, options: {
       workerUrls: options.workers, signal: controller.signal, debug: options.debug, onProgress: console.log,
     });
     console.log(JSON.stringify(result, null, 2));
-    return controller.signal.aborted ? 130 : result.paused_stages.length ||
+    return controller.signal.aborted ? 130 : result.outcome === "partial" || result.input_issue_count || result.input_rejected || result.resource_pause || result.paused_stages.length ||
       ["failed", "blocked", "timed_out", "cancelled", "pending", "running"].some(status => result.execution_task_statuses[status]) ? 2 : 0;
   } finally { process.off("SIGINT", interrupt); process.off("SIGTERM", interrupt); }
 }

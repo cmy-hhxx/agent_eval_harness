@@ -5,7 +5,7 @@ import { rm } from "node:fs/promises";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { emptyUsage, type RunState } from "@eval/contracts";
-import { writeJson } from "@eval/data";
+import { writeJson, readJson } from "@eval/data";
 import { attributionRepository, planAttribution, type AttributionConfig } from "@eval/workflows/attribution";
 import { fakeEvaluatorVersion, fakeIdentity, fixtureConfig, raw } from "../../fixtures/comparison.js";
 
@@ -24,6 +24,10 @@ test("attribution CLI skip-failed clears the requested pause without retrying fa
       category: "interruption", code: "attempt_interrupted", path: "/", taskIds: [], at: 1 }] },
     receipts: {}, usage: emptyUsage(), recordedAttempts: 0 };
   await attributionRepository.writeRun(run, state);
+  const checkpoint = await readJson<{ inputs: Record<string, unknown>; tasks: Record<string, { data: Record<string, unknown> }> }>(path.join(run, "state.json"));
+  assert(Object.keys(checkpoint.inputs).length > 0);
+  assert(Object.values(checkpoint.tasks).every(task => !Object.hasOwn(task.data, "candidate") && typeof task.data.input_id === "string"),
+    "each task stores only its candidate coordinate, rather than repeating the full candidate");
   const configFile = path.join(f.directory, "host.json");
   await writeJson(configFile, { ...config, evaluatorVersion: fakeEvaluatorVersion,
     models: { judge: { channel: "evaluation-gateway", model: "fixture", thinking: "off" } },

@@ -1,7 +1,8 @@
 import type { RunState } from "@eval/contracts";
+import { compactCheckpointState } from "@eval/data";
 
 export function checkpointSnapshot(state: RunState, clone = structuredClone): RunState {
-  const { receipts, ...progress } = state;
+  const { receipts, ...progress } = compactCheckpointState(state);
   return {
     ...clone(progress),
     // Accepted bodies are immutable. Writers replace exported references on the

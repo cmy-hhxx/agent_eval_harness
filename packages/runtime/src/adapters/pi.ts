@@ -11,6 +11,7 @@ export function piBackend(identity: EngineIdentity): AgentBackend {
     async createSession(options) {
       const { spec, workdir } = options,
         agentDir = path.join(workdir, ".agent");
+      let requestModel = spec.model;
       const names = options.tools.map((tool) => tool.name);
       let nextTool = contentToolName(spec.evaluation, Boolean(spec.recovery?.inspection));
       let activeNames = activeToolNames({ content: [] }, names, nextTool);
@@ -44,7 +45,7 @@ export function piBackend(identity: EngineIdentity): AgentBackend {
         systemPrompt: spec.evaluation.systemPrompt,
         extensionFactories: [
           (api) => {
-            api.on("before_provider_request", (event) => transformPayload(event.payload, spec.model, spec.evaluation, activeNames));
+            api.on("before_provider_request", (event) => transformPayload(event.payload, requestModel, spec.evaluation, activeNames));
             if (spec.debug && spec.model.api === "openai-responses") api.on("provider_stream_event", (event) => {
               if (event.api !== "openai-responses") return;
               if (!event.data || typeof event.data !== "object" || Array.isArray(event.data)) return;
@@ -107,10 +108,25 @@ export function piBackend(identity: EngineIdentity): AgentBackend {
       });
       await session.bindExtensions({ mode: "rpc" });
       const providerStream = session.agent.streamFunction;
-      session.agent.streamFunction = (model, context, streamOptions) =>
-        providerStream(model, context, { ...streamOptions, fetch: providerFetch });
+      session.agent.streamFunction = (_model, context, streamOptions) => {
+        const routed = runtime.getModel(requestModel.provider, requestModel.model);
+        if (!routed) throw new Error("Granted model unavailable");
+        return providerStream(routed, context, { ...streamOptions, fetch: providerFetch,
+          apiKey: process.env[requestModel.apiKeyEnv] });
+      };
       if (options.modelRequest)
-        session.agent.streamFunction = controlledModelStream(session.agent.streamFunction, options.modelRequest, (_model, _context, options) => options?.signal);
+        session.agent.streamFunction = controlledModelStream(session.agent.streamFunction, async signal => {
+          const permit = await options.modelRequest!(signal);
+          try {
+            requestModel = permit.model;
+            const key = process.env[requestModel.apiKeyEnv];
+            if (!key) throw new Error(`Missing ${requestModel.apiKeyEnv}`);
+            runtime.registerProvider(requestModel.provider, providerConfig(requestModel));
+            await runtime.setRuntimeApiKey(requestModel.provider, key);
+            options.onEvent({ type: "model_route", channel: requestModel.provider, model: requestModel.model });
+            return permit.release;
+          } catch (error) { await permit.release(); throw error; }
+        }, (_model, _context, options) => options?.signal);
       const unsubscribe = session.subscribe(options.onEvent);
       return {
         run: (prompt) => session.prompt(prompt),

@@ -31,7 +31,7 @@ function compactTaskState(state: TaskState, accepted: boolean): TaskState {
   return {
     ...state,
     ...(state.reason === undefined ? {} : { reason: shortText(state.reason) }),
-    ...(state.failure === undefined ? {} : { failure: accepted ? compactFailure(state.failure) : state.failure }),
+    ...(state.failure === undefined ? {} : { failure: accepted ? compactFailure(state.failure) : { ...state.failure } }),
     ...(state.artifactStatus?.error === undefined ? {} : {
       artifactStatus: { ...state.artifactStatus, error: shortText(state.artifactStatus.error) },
     }),
@@ -42,14 +42,14 @@ function compactTaskState(state: TaskState, accepted: boolean): TaskState {
  * A checkpoint replaces its covered journal prefix. Unfinished work must retain
  * all recovery state; only accepted tasks can discard their repair context.
  */
-export function compactCheckpointState(state: RunState, clone = structuredClone): RunState {
+export function compactCheckpointState(state: RunState, clone = <T>(value: T): T => value): RunState {
   const { receipts, ...progress } = state;
   const snapshot = clone(progress) as RunState;
-  snapshot.manifest.states = Object.fromEntries(
-    Object.entries(snapshot.manifest.states).map(([id, taskState]) => [id, compactTaskState(taskState, Boolean(receipts[id]))]),
-  );
   return {
     ...snapshot,
+    manifest: { ...snapshot.manifest, states: Object.fromEntries(
+      Object.entries(snapshot.manifest.states).map(([id, taskState]) => [id, compactTaskState(taskState, Boolean(receipts[id]))]),
+    ) },
     receipts: Object.fromEntries(Object.entries(receipts).map(([id, receipt]) => [id, {
       ...receipt,
       audit: { ...receipt.audit, review: undefined, inspection: undefined },

@@ -1,4 +1,4 @@
-import type { ModelConfig, PlannedTask } from "@eval/contracts";
+import { canonical, type ModelConfig, type PlannedTask } from "@eval/contracts";
 import { createModelResolver, type ModelCatalog } from "./models.js";
 
 /** Share whole tasks by channel weights; ordinary retries keep their route. */
@@ -18,6 +18,7 @@ export function createBalancedModels(catalog: ModelCatalog,
     return [channel, resolve] as const;
   }));
   const assignments = new Map<string, string>();
+  const alternatives = new Map<string, ModelConfig[]>();
   const credits = new Map(channels.map(channel => [channel, 0]));
   const weights = new Map(channels.map(channel => {
     const weight = catalog.channels[channel].trafficWeight ?? 1;
@@ -51,6 +52,17 @@ export function createBalancedModels(catalog: ModelCatalog,
   };
   return {
     modelForStage, modelForTask,
+    modelRoutesForTask(task: Pick<PlannedTask, "stage">): ModelConfig[] {
+      let models = alternatives.get(task.stage);
+      if (!models) {
+        models = channels.map(channel => routes.get(channel)!(task.stage));
+        const identity = (model: ModelConfig) => canonical([model.model, model.thinking, model.api,
+          model.contextWindow, model.maxOutputTokens, model.supportsDeveloperRole ?? true, model.supportsExplicitPromptCaching === true]);
+        if (new Set(models.map(identity)).size > 1) throw new Error("Equivalent channels must declare the same model, thinking and capabilities for " + task.stage);
+        alternatives.set(task.stage, models);
+      }
+      return models.filter(model => !exhausted.has(model.provider));
+    },
     onModelQuotaExhausted(model: ModelConfig, task: PlannedTask): boolean {
       if (!routes.has(model.provider)) return false;
       exhausted.add(model.provider);

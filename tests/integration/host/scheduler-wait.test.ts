@@ -38,7 +38,7 @@ test("scheduler quota polling does not accumulate listeners on a long-running ta
   t.after(() => worker.close());
   await runEvaluation({ ...services, runId: "wait", output: config.output, engine: "pi", identity: fakeIdentity,
     evaluatorVersion: fakeEvaluatorVersion, config, plan: await buildPlan(config), policy: config.execution, modelForStage,
-    concurrency: 1, modelRequests: { concurrency: () => 1, acquire: async () => () => {} },
+    concurrency: 1, modelRequests: { concurrency: () => 1, acquire: async context => ({ model: context.model, release() {} }) },
     retries: 0, retryDelaySeconds: 0, workerUrls: [worker.url] });
   assert(measured);
   assert(peakListeners < 10, `one pending promise accumulated ${peakListeners} listeners while polling`);

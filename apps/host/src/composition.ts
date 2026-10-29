@@ -11,11 +11,17 @@ import { comparisonWorkflow, comparisonRepository, reportRun, outputSchema } fro
 import path from "node:path";
 import { createFileLogger } from "@eval/data";
 import { ROOT, runtimePaths } from "./paths.js";
-export const logger = createFileLogger({
+const applicationLogger = () => createFileLogger({
   directory: path.resolve(process.env.EVAL_LOG_DIR || path.join(ROOT, "log")),
   lockDirectory: path.resolve(process.env.EVAL_LOG_LOCK_DIR || path.join(ROOT, ".runtime/log-writer")),
   secrets: configurationSecrets(),
 });
+export let logger = applicationLogger();
+export async function initializeServices() {
+  logger = applicationLogger();
+  services.logger = logger;
+  if (!await logger.initialize()) throw new Error("Runtime/evaluation log initialization failed");
+}
 export const agents = new AgentRegistry([scoreAgent, ...Object.values(attributionDimensions).map(dimension => dimension.agent),
   criteriaAgent, comparisonAgent, attributionAgent, rewriteAgent, clusteringAgent]);
 export const services = {

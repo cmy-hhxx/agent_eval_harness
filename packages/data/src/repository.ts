@@ -1,4 +1,4 @@
-import { mkdir, readdir } from "node:fs/promises";
+import { mkdir, open, readdir } from "node:fs/promises";
 import path from "node:path";
 import {
   canonical,
@@ -9,7 +9,7 @@ import {
   type RunRepository,
   type RunState,
 } from "@eval/contracts";
-import { atomicWrite, exists, readJson, readJsonlText } from "./files.js";
+import { exists, readJson, readJsonlText, writeCheckpointJson } from "./files.js";
 import { createResultFileWriter } from "./result-file.js";
 import { locateRun } from "./run-layout.js";
 import { writeRunOverview } from "./run-overview.js";
@@ -98,8 +98,9 @@ export function createRunRepository<Checkpoint>(
     async writeRun(run, state) {
       const compact = compactCheckpointState(state);
       const checkpoint = codec.encode(compact), overview = codec.overview?.(checkpoint, compact);
-      await atomicWrite(locateRun(run).stateFile, JSON.stringify(checkpoint) + "\n");
+      const bytes = await writeCheckpointJson(locateRun(run).stateFile, checkpoint);
       if (codec.overview) await writeRunOverview(run, overview);
+      return bytes;
     },
     readRun: (run) => readState(run),
     readTasks: (run, taskIds) => readState(run, new Set(taskIds)),
@@ -109,6 +110,7 @@ export function createRunRepository<Checkpoint>(
       const directory = locateRun(run).results;
       const files = new Map<string, ReturnType<typeof createResultFileWriter>>();
       const lineCounts = new Map<string, number>();
+      const incomplete = new Set<string>();
       let existingRows: Map<string, JsonObject> | undefined;
       let initialized = false;
       const write = async (state: RunState) => {
@@ -120,6 +122,13 @@ export function createRunRepository<Checkpoint>(
             for (const name of await readdir(directory)) {
               if (!name.endsWith(".jsonl")) continue;
               if (indexedFiles.has(name)) continue;
+              if (options.appendOnly) {
+                const handle = await open(path.join(directory, name), "r");
+                try {
+                  const { size } = await handle.stat(), tail = Buffer.alloc(1);
+                  if (size) { await handle.read(tail, 0, 1, size - 1); if (tail[0] !== 10) incomplete.add(name); }
+                } finally { await handle.close(); }
+              }
               for await (const line of readJsonlText(path.join(directory, name))) {
                 const row = JSON.parse(line) as JsonObject;
                 const key = safeId(name) + "\u0000" + codec.resultId(row), previous = existingRows.get(key);
@@ -150,6 +159,7 @@ export function createRunRepository<Checkpoint>(
               exports.set(task.id, result);
               continue;
             }
+            groups[file] ??= new Map();
             const existing = existingRows.get(file + "\u0000" + result.id);
             const matching = [...exports].filter(([, value]) => value.file === file && value.id === result.id);
             if (matching.some(([, value]) => canonical(value.row) !== canonical(result.row)) && !result.auxiliary)
@@ -174,6 +184,7 @@ export function createRunRepository<Checkpoint>(
           }
           for (const [file, rows] of Object.entries(groups)) {
             let writer = files.get(file);
+            const openedFile = !!writer;
             if (!writer) files.set(file, writer = createResultFileWriter(path.join(directory, file)));
             if (indexedFiles.has(file)) {
               const results = [...exports.values()].filter(result => result.file === file && (!initialized || rows.has(result.id)))
@@ -188,11 +199,14 @@ export function createRunRepository<Checkpoint>(
               lineCounts.set(file, line);
               continue;
             }
-            if ((!initialized && !options.appendOnly) || updates.has(file)) {
+            if ((!openedFile && !options.appendOnly) || incomplete.has(file) || updates.has(file)) {
               const all = new Map<string, JsonObject>();
+              if (options.appendOnly) for (const [key, row] of existingRows)
+                if (key.startsWith(file + "\u0000")) all.set(codec.resultId(row), row);
               for (const result of exports.values())
                 if (result.file === file) all.set(result.id, result.row);
               await writer.replace(all.values());
+              incomplete.delete(file);
             } else await writer.append(rows.values());
             for (const [id, row] of rows) existingRows.set(file + "\u0000" + id, row);
           }
@@ -206,6 +220,7 @@ export function createRunRepository<Checkpoint>(
           processed.clear();
           files.clear();
           lineCounts.clear();
+          incomplete.clear();
           existingRows = undefined;
           initialized = false;
           throw error;

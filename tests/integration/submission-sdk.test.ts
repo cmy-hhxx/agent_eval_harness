@@ -4,7 +4,7 @@ import { rm } from "node:fs/promises";
 import path from "node:path";
 import { object, type AgentProfile, type RunState, type ValidationIssue } from "@eval/contracts";
 import { createRunRepository } from "@eval/data";
-import { AgentRegistry, runEvaluation } from "@eval/host";
+import { AgentRegistry, runEvaluation, createChannelRequests } from "@eval/host";
 import { createBalancedModels } from "../../apps/host/src/balanced-models.js";
 import { body, json, listen } from "@eval/runtime/http";
 import { fixtureConfig } from "../fixtures/comparison.js";
@@ -12,7 +12,8 @@ import { services } from "../fixtures/services.js";
 import { attributionAgent } from "@eval/agents/attribution";
 import { attributionWorkflow, attributionRepository, planAttribution } from "@eval/workflows/attribution";
 
-    test(`pi: Responses falls back on quota exhaustion and preserves original JSON and tool validation`, { timeout: 60000 }, async () => {
+for (const borrow of [false, true])
+    test(`pi: Responses ${borrow ? "borrows an equivalent gateway before a request" : "falls back on quota exhaustion"} and preserves original JSON and tool validation`, { timeout: 60000 }, async () => {
       const { directory, config, models } = await fixtureConfig();
       const invalid = { count: "7", enabled: "true", text: 9, note: null, satisfies: false };
       const valid = { count: 7, enabled: true, text: "nine", note: null, satisfies: true };
@@ -95,6 +96,7 @@ import { attributionWorkflow, attributionRepository, planAttribution } from "@ev
       const repository = createRunRepository<RunState>({
         encode: (state) => structuredClone(state), references: () => [], resultId: (row) => String(row.id), decode: (state) => state,
       }, (task, state) => ({ id: task.id, file: "results.jsonl", row: { id: task.id, result: state.receipts[task.id].evaluation } }));
+      let held: { release(): void } | undefined;
       const previous = process.env.EVAL_CHANNEL_KEY_evaluation_Hgateway;
       process.env.EVAL_CHANNEL_KEY_evaluation_Hgateway = "local-fixture-secret";
       process.env.SDK_QUOTA_TEST_KEY = "preferred-fixture-secret";
@@ -105,10 +107,14 @@ import { attributionWorkflow, attributionRepository, planAttribution } from "@ev
           apiKeyEnv: "SDK_QUOTA_TEST_KEY" };
         const runId = "submission-pi";
         const routing = createBalancedModels(models, ["openai", "evaluation-gateway"]);
+        const control = createChannelRequests({ openai: 1, "evaluation-gateway": 1 });
+        if (borrow) held = await control.acquire({ callId: "held", runId: "held", taskId: "held", stage: "attribution",
+          model: routing.modelRoutesForTask({ stage: "attribution" }).find(model => model.provider === "openai")! }, new AbortController().signal);
         await runEvaluation({
           runId, output: config.output, config, plan: { tasks: [{ id: "structured-task", stage: "structured", inputIds: {}, dependencies: {}, data: {} }], inputs: {}, summary: {} },
           engine: "pi", evaluatorVersion: "fixture", modelForStage: () => routing.modelForStage("attribution"),
           modelForTask: (task, previousChannel) => routing.modelForTask({ ...task, stage: "attribution" }, previousChannel),
+          modelRequests: control, modelRoutesForTask: task => routing.modelRoutesForTask({ ...task, stage: "attribution" }),
           onModelQuotaExhausted: (model, task) => routing.onModelQuotaExhausted(model, { ...task, stage: "attribution" }),
           policy: { ...config.execution, repairAttempts: 2 }, concurrency: 1, retries: 0, retryDelaySeconds: 0,
           agents: new AgentRegistry([{ id: "structured", profiles: { default: profile } }]), repository,
@@ -116,16 +122,18 @@ import { attributionWorkflow, attributionRepository, planAttribution } from "@ev
           runtime: services.runtime,
         });
         assert.deepEqual(gatewayErrors, []);
-        assert.equal(quotaRequests, 1, "exhausted credentials must be attempted only once");
+        assert.equal(quotaRequests, borrow ? 0 : 1, "a saturated or exhausted gateway must not receive another request");
         assert.equal(requests, 3);
         assert.deepEqual(drafts, [invalid, valid], "SDK preserves string, number, boolean and null submission values");
         const saved = await repository.readRun(path.join(config.output.path, runId));
-        assert.equal(saved.manifest.states["structured-task"].attempts, 2);
+        assert.equal(saved.manifest.states["structured-task"].attempts, borrow ? 1 : 2);
+        assert.equal(saved.manifest.states["structured-task"].channel, "evaluation-gateway", "the actual granted gateway is recorded");
         const receipt = saved.receipts["structured-task"];
         assert.deepEqual(receipt?.evaluation, valid);
         assert.equal(receipt?.submissionStats?.contentSubmissions, 2);
         assert.equal(receipt?.audit.calls, 0, "the rejected ordinary call never enters the application tool runtime");
       } finally {
+        held?.release();
         delete process.env.SDK_QUOTA_TEST_KEY;
         if (previous === undefined) delete process.env.EVAL_CHANNEL_KEY_evaluation_Hgateway;
         else process.env.EVAL_CHANNEL_KEY_evaluation_Hgateway = previous;

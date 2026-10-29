@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { emptyUsage, type PlannedTask, type RunState, type SubmissionReceipt, type TaskState } from "@eval/contracts";
 import { attributionScheduling } from "@eval/workflows/attribution";
-import { progressSnapshot } from "./progress.js";
+import { progressSnapshot, inputDiagnostics } from "./progress.js";
 
 test("progress separates execution failures from dependency blocks and cancellations", () => {
   const states: Record<string, TaskState> = {
@@ -65,9 +65,21 @@ test("progress separates execution failures from dependency blocks and cancellat
   }
   const counted = progressSnapshot(state, 1000);
   assert.deepEqual([counted.accepted, counted.complete, counted.partial], [2, 1, 1]);
+  assert.equal(counted.formal_result_count, 0, "accepted internal receipts are not yet formal rows");
+  state.receipts.complete.exported = { file: "summary.jsonl", id: "same-row", row: {} };
+  state.receipts.partial.exported = { file: "summary.jsonl", id: "same-row", row: {} };
+  assert.equal(progressSnapshot(state, 1000).formal_result_count, 1, "multiple internal tasks can refer to one formal row");
   assert.deepEqual([counted.stages.summary!.accepted, counted.stages.summary!.complete, counted.stages.summary!.partial], [2, 1, 1]);
   assert.equal(counted.stages.summary!.ready, 1, 'only a terminal failure can release a settled dependency');
   assert.equal(progressSnapshot(state, 1000, new Set(['timed_out'])).stages.summary!.ready, 0);
+});
+
+test("input diagnostics count rejected source rows separately from unlocated group issues", () => {
+  assert.deepEqual(inputDiagnostics({ issues: [
+    { source: "/input/a.jsonl", line: 2, version: "a" },
+    { version: "a", sources: [{ source: "/input/a.jsonl", line: 2 }, { source: "/input/a.jsonl", line: 3 }] },
+    { case_id: "unmatched", reason: "no matching comparison" },
+  ] }), { input_rejected: 2, input_issue_count: 3 });
 });
 
 test("attribution progress reports business session states instead of internal task acceptance", () => {

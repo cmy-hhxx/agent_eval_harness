@@ -90,7 +90,7 @@ EVAL_CONFIG_FILE=/absolute/path/config.ini npm run eval -- run --run-id comparis
 
 Host 热状态默认写入 `~/.cache/eval-agent-harness/hot`，可通过 `EVAL_HOT_STATE_ROOT` 指定服务器本机 SSD。正式 JSONL、`progress.jsonl`、报告和 `state.json` 仍写评测产物目录。
 
-Worker 启动期限保持 60 秒。启动超时与短暂连接故障使用任务持久化的 `transportFailures` 和 `execution.retries` 有界重试，每次重建 Worker；启动失败不消耗模型尝试。耗尽后只将受影响任务标记失败，保存计数、原因并记录 `worker_startup_retries_exhausted`，其余任务继续；同 run 恢复不清零累计预算。
+Worker 启动期限保持 60 秒，由 Supervisor 异步、小批预热并统一有界重试。重试预算属于 Worker 容量，耗尽记录 `worker_capacity_quarantined`，不消耗记录的模型尝试或内容预算；其他健康容量继续。全部容量不可用时保存 pending 任务并明确报告 `resource_pause`。清理超过期限会终止对应进程，多槽进程中未提交任务重新排队，已接受收据保留。多路运行使用[批次调度](usage.md#批次调度)，共享网关额度和 Worker 池，完成后直接接力；配置、密钥与日志位置在模型派发前统一预检。
 
 ## 更新代码
 

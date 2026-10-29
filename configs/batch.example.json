@@ -1,0 +1,24 @@
+{
+  "stateDirectory": "/mnt/fin_bench/sync_datasets/code/1_eval_harnes/runtime/state/evaluation-batch",
+  "channels": { "gateway-a": 150, "gateway-b": 150 },
+  "equivalentChannels": ["gateway-a", "gateway-b"],
+  "taskConcurrency": 350,
+  "workers": { "slots": 4, "retries": 3, "retryDelaySeconds": 10 },
+  "runs": [
+    {
+      "runId": "recovery",
+      "configs": ["host.json", "/mnt/fin_bench/sync_datasets/code/1_eval_harnes/runtime/config/recovery.json"],
+      "priority": 0
+    },
+    {
+      "runId": "daily-a",
+      "configs": ["host.json", "/mnt/fin_bench/sync_datasets/code/1_eval_harnes/runtime/config/daily-a.json"],
+      "priority": 1
+    },
+    {
+      "runId": "daily-b",
+      "configs": ["host.json", "/mnt/fin_bench/sync_datasets/code/1_eval_harnes/runtime/config/daily-b.json"],
+      "priority": 1
+    }
+  ]
+}

@@ -104,6 +104,8 @@ export type EvaluationExecution = Policy & {
   sessionWindow: number;
   /** Local task slots; model permits stay global when shared by concurrent day runs. */
   taskConcurrency?: number;
+  workerSlots?: number;
+  modelRequestLimits?: Record<string, number>;
   retries: number;
   retryDelaySeconds: number;
   initialContextChars: number;

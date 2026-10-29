@@ -14,6 +14,7 @@ import { createRegistry, type ToolRegistry } from "@eval/tools";
 import { AttemptEventLog, readAttemptEvents, replayEventStream } from "./attempt-events.js";
 import { serveWorkerHttp } from "./worker-http.js";
 import { executeAttempt } from "./attempt-execution.js";
+import { bounded } from "./lifecycle.js";
 
 interface Running {
   spec: AttemptSpec;
@@ -42,7 +43,9 @@ export async function startWorker(
     attempt.status.state = state;
     attempt.status.error = reason;
     attempt.controller.abort(new Error(reason));
-    await attempt.session?.abort();
+    try { await bounded(Promise.resolve().then(() => attempt.session?.abort()),
+      (attempt.spec.policy.cleanupTimeoutSeconds ?? 10) * 1000, "Worker cancellation timeout"); }
+    catch { attempt.status.workerUnusable = true; }
   };
   const attemptDirectory = (id: string) => path.join(directory, id);
   const requireKnownAttempt = async (id: string, attempt: Running | undefined) => {
@@ -84,7 +87,7 @@ export async function startWorker(
         materials,
         stop,
         onSettled(attemptId) {
-          if (active === attemptId) active = null;
+          if (active === attemptId && !attempt.status.workerUnusable) active = null;
         },
       }).catch(async error => {
         Object.assign(attempt.status, {
@@ -146,9 +149,12 @@ export async function startWorker(
   return {
     ...http,
     async close() {
-      await Promise.all([...attempts.values()].map((a) => stop(a, "cancelled", "Worker shutting down")));
-      await Promise.all([...attempts.values()].map((a) => a.done));
-      await http.close();
+      try {
+        await bounded((async () => {
+          await Promise.all([...attempts.values()].map((a) => stop(a, "cancelled", "Worker shutting down")));
+          await Promise.all([...attempts.values()].map((a) => a.done));
+        })(), 10_000, "Worker shutdown timeout");
+      } finally { await http.close(); }
     },
   };
 }

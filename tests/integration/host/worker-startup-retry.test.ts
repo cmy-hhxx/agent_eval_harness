@@ -46,9 +46,10 @@ process.send({type:"ready",url:w.urls[0]});process.once("SIGTERM",async()=>{awai
     assert.equal(launches.length, 2);
     assert(Object.values(saved.manifest.states).every(state => state.attempts === 1), "startup failures do not spend model attempts");
   } else {
-    assert.deepEqual(result.execution_task_statuses, { failed: 2 });
-    assert.equal(launches.length, 6, "each task gets one initial startup plus two retries");
-    assert(Object.values(saved.manifest.states).every(state => state.transportFailures === 3 && state.attempts === 0));
-    assert.equal(events.filter(event => event.startsWith("worker_startup_retries_exhausted ")).length, 2);
+    assert.deepEqual(result.execution_task_statuses, { pending: 2 });
+    assert.equal(result.resource_pause, "worker_capacity_unavailable");
+    assert.equal(launches.length, 3, "capacity, rather than each innocent record, owns the startup budget");
+    assert(Object.values(saved.manifest.states).every(state => !state.transportFailures && state.attempts === 0));
+    assert.equal(events.filter(event => event.startsWith("worker_capacity_quarantined ")).length, 1);
   }
 });

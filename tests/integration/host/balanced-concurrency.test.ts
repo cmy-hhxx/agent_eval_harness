@@ -58,7 +58,7 @@ for (const growing of [false, true]) test(`healthy balanced channels execute dif
     const runId = "balanced-concurrency";
     const result = await runEvaluation({ ...services, ...routing, runId, output: config.output, config, plan,
       engine: "pi", identity: fakeIdentity, evaluatorVersion: fakeEvaluatorVersion, policy: config.execution,
-      concurrency: share, ...(growing ? { modelRequests: { concurrency: () => share, acquire: async () => () => {} } } : {}),
+      concurrency: share, ...(growing ? { modelRequests: { concurrency: () => share, acquire: async context => ({ model: context.model, release() {} }) } } : {}),
       retries: 0, retryDelaySeconds: 0, workerUrls: workers.map(worker => worker.url),
       signal: controller.signal });
     assert.equal(controller.signal.aborted, false);

@@ -69,7 +69,8 @@ process.once("disconnect", close);
       },
     });
     assert.equal(started.length, 3);
-    assert.equal(started[2], downstream.id, "newly ready comparison must not wait for all queued criteria to be admitted");
+    assert(started.indexOf(downstream.id) > 0 && started.indexOf(downstream.id) <= 2,
+      "newly ready comparison must be admitted among the first three starts while expansion is pending");
   } finally {
     controller.abort();
     await rm(directory, { recursive: true, force: true });

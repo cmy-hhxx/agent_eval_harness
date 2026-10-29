@@ -10,6 +10,11 @@ export type * from "./criteria.js";
 export interface Policy {
   timeoutSeconds: number;
   idleTimeoutSeconds: number;
+  firstResponseTimeoutSeconds?: number;
+  streamIdleTimeoutSeconds?: number;
+  toolTimeoutSeconds?: number;
+  submissionTimeoutSeconds?: number;
+  cleanupTimeoutSeconds?: number;
   maxToolCalls: number;
   repairAttempts: number;
   /** Explicit content-repair limits by workflow stage; omitted stages use repairAttempts. */
@@ -106,6 +111,7 @@ export interface AttemptSpec {
   controlModelRequests?: boolean;
   recovery?: FailureContext;
 }
+export type ModelRequestAdmission = { model: ModelConfig } | { error: string; scope: "capacity" | "run" };
 export type AttemptState = "running" | "succeeded" | "failed" | "timed_out" | "cancelled";
 export interface WorkerEvent {
   seq: number;
@@ -388,7 +394,7 @@ export interface AgentBackend {
     tools: ToolDefinition[];
     execute: (name: string, args: unknown, signal?: AbortSignal) => Promise<ToolResult>;
     onEvent: (value: unknown) => void;
-    modelRequest?: (signal?: AbortSignal) => Promise<() => Promise<void>>;
+    modelRequest?: (signal?: AbortSignal) => Promise<{ model: ModelConfig; release(): Promise<void> }>;
   }): Promise<AgentSession>;
 }
 export interface WorkerStatus {
@@ -397,6 +403,12 @@ export interface WorkerStatus {
   activeAttempt: string | null;
 }
 export interface AttemptStatus {
+  modelChannel?: string;
+  capacityUnavailable?: boolean;
+  modelConfigurationError?: boolean;
+  phase?: "preparing" | "queued" | "model_first_response" | "model_stream" | "tool" | "submission" | "cleanup";
+  timeoutPhase?: AttemptStatus["phase"] | "task";
+  workerUnusable?: boolean;
   state: AttemptState;
   lastSeq: number;
   error?: string;
@@ -543,7 +555,7 @@ export interface RunRepository {
   readRun(run: string): Promise<RunState>;
   /** Decode only the requested tasks; unrelated result rows stay on disk. */
   readTasks(run: string, taskIds: string[]): Promise<RunState>;
-  writeRun(run: string, state: RunState): Promise<void>;
+  writeRun(run: string, state: RunState): Promise<void | number>;
   createResultWriter(run: string, inputs: Record<string, unknown>): (state: RunState) => Promise<void>;
 }
 export interface LogContext {
@@ -577,6 +589,8 @@ export interface LogSink {
   evaluation(record: EvaluationLog): Promise<boolean>;
 }
 export interface TaskState {
+  phase?: AttemptStatus["phase"];
+  timeoutPhase?: AttemptStatus["timeoutPhase"];
   /** Actual channel selected for the most recent dispatched attempt. */
   channel?: string;
   status: "pending" | "running" | "succeeded" | "failed" | "blocked" | "cancelled" | "timed_out";
@@ -584,6 +598,7 @@ export interface TaskState {
   attempts: number;
   /** Network failures charged to this task across automatic retries and restarts. */
   transportFailures?: number;
+  timeoutFailures?: number;
   reason?: string;
   failure?: FailureContext;
   repeatedErrors?: number;
@@ -600,6 +615,7 @@ export interface TaskState {
   };
 }
 export interface RunManifest {
+  outcome?: "complete" | "partial";
   format: "evaluation-run";
   debug: boolean;
   runId: string;
@@ -621,6 +637,7 @@ export interface RunManifest {
   /** Monotone admissions count, independent of tasks retained by workflow reconciliation. */
   cumulativeAttempts?: number;
   executionStopReason?: "attempt_limit" | "dispatch_deadline";
+  resourcePause?: string;
   /** Explicit repair scope; input discovery resumes only when the operator releases it. */
   executionScope?: string[];
   /** Circuit breaks survive restart; only explicit stage recovery clears them. */

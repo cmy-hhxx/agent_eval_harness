@@ -59,6 +59,47 @@ export async function writeJson(file: string, value: unknown): Promise<void> {
   await atomicWrite(file, JSON.stringify(value, null, 2) + "\n");
 }
 
+/** Serialize bounded pieces, never build a string the size of a run. */
+export async function writeCheckpointJson(file: string, value: unknown): Promise<number> {
+  let bytes = 0;
+  const ancestors = new Set<object>();
+  function* tokens(item: unknown): Generator<string> {
+    if (item === null || typeof item !== "object") { yield JSON.stringify(item) ?? "null"; return; }
+    if (ancestors.has(item)) throw new TypeError("Circular checkpoint value");
+    ancestors.add(item);
+    if (Array.isArray(item)) {
+      yield "[";
+      for (let i = 0; i < item.length; i++) { if (i) yield ","; yield* tokens(item[i]); }
+      yield "]";
+    } else {
+      yield "{";
+      let first = true;
+      for (const [key, child] of Object.entries(item)) {
+        if (child === undefined) continue;
+        if (!first) yield ",";
+        first = false;
+        yield JSON.stringify(key) + ":";
+        yield* tokens(child);
+      }
+      yield "}";
+    }
+    ancestors.delete(item);
+  }
+  async function* chunks() {
+    let parts: string[] = [], length = 0;
+    for (const token of tokens(value)) {
+      parts.push(token); length += token.length;
+      if (length >= 64 * 1024) {
+        const chunk = Buffer.from(parts.join("")); bytes += chunk.length;
+        yield chunk; parts = []; length = 0;
+      }
+    }
+    const last = Buffer.from(parts.join("") + "\n"); bytes += last.length; yield last;
+  }
+  await atomicWrite(file, chunks());
+  return bytes;
+}
+
 async function* gzip(source: () => Readable): AsyncGenerator<Uint8Array> {
   // Open the source only once atomicWrite is ready to consume it and handle errors.
   const input = source(),

@@ -1,9 +1,10 @@
 import test from "node:test";
+import { waitForTestState } from "../fixtures/wait.js";
 import assert from "node:assert/strict";
 import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { AgentRegistry, runEvaluation } from "@eval/host";
+import { AgentRegistry, runEvaluation, createChannelRequests, WorkerSupervisor, RunStore, runBatch } from "@eval/host";
 import { createRunRepository, appendProgressJournal, RunHotStore, runHotFile, runJournalIdentity, type RunCodec } from "@eval/data";
 import { startWorker } from "@eval/runtime/worker";
 import { body, json, listen, request } from "@eval/runtime/http";
@@ -287,7 +288,7 @@ test("a delayed permit-release acknowledgement preserves a completed model turn 
     options.spec.hostUrl = proxy.url;
     return { async run() {
       const release = await options.modelRequest!();
-      await release();
+      await release.release();
       assert.equal(active, 0);
       assert(!(await options.execute("submit_evaluation", { score: 1 })).isError);
     }, async abort() {}, async dispose() {} };
@@ -301,7 +302,7 @@ test("a delayed permit-release acknowledgement preserves a completed model turn 
       policy: { ...DEFAULT_POLICY, timeoutSeconds: 20, idleTimeoutSeconds: 15 },
       modelForStage: () => model, concurrency: 1, retries: 0, retryDelaySeconds: 0,
       workerUrls: [worker.url], modelRequests: { concurrency: () => 1,
-        acquire: async () => { active++; return () => { active--; }; } },
+        acquire: async context => { active++; return { model: context.model, release: () => { active--; } }; } },
     });
     assert.deepEqual(result.execution_task_statuses, { succeeded: 1 });
     assert.equal(releases, 1); assert.equal(active, 0);
@@ -317,7 +318,7 @@ test("sessions warm up without model permits and queued permits do not consume w
       assert(options.modelRequest);
       const release = await options.modelRequest();
       assert.equal(active, 1);
-      await release();
+      await release.release();
       assert.equal(active, 0, "local tools run after the LLM slot is released");
       assert(!(await options.execute("submit_evaluation", { score: 1 })).isError);
     }, async abort() {}, async dispose() {} };
@@ -331,12 +332,12 @@ test("sessions warm up without model permits and queued permits do not consume w
       policy: { ...DEFAULT_POLICY, timeoutSeconds: 2, idleTimeoutSeconds: 1 },
       modelForStage: () => model, concurrency: 1, retries: 0, retryDelaySeconds: 0,
       workerUrls: [worker.url],
-      modelRequests: { concurrency: () => limit, acquire: async (_context, signal) => {
+      modelRequests: { concurrency: () => limit, acquire: async (context, signal) => {
         while (!limit && !signal.aborted) await new Promise(resolve => setTimeout(resolve, 25));
         signal.throwIfAborted();
         await new Promise(resolve => setTimeout(resolve, 2200));
         grants++; active++;
-        return () => { active--; };
+        return { model: context.model, release: () => { active--; } };
       } },
     });
     await new Promise(resolve => setTimeout(resolve, 300));
@@ -786,4 +787,188 @@ test("terminal accounting is reread without repeating model work", { timeout: 10
     assert.equal(records,2); assert.equal(runs,1); assert.equal(saved!.usage.totalTokens,123);
     assert.equal(saved!.manifest.states["task-1"].status,"succeeded");
   } finally {await worker.close();await rm(directory,{recursive:true,force:true});}
+});
+
+
+test("a gateway disabled while a Worker waits for admission preserves the record as pending", async () => {
+  const directory = await mkdtemp(path.join(tmpdir(), "eval-permit-denied-"));
+  const control = createChannelRequests({ [model.provider]: 1 });
+  const held = await control.acquire({ runId: "holder", taskId: "holder", callId: "holder", stage: "fixture", model }, new AbortController().signal);
+  const worker = await startWorker({ identity, async createSession(options) { return {
+    async run() { await options.modelRequest!(); throw new Error("a disabled gateway must never start a model call"); },
+    async abort() {}, async dispose() {},
+  }; } }, path.join(directory, "worker"));
+  try {
+    const pending = runEvaluation({ agents: new AgentRegistry([agent]), taskSource: workflow, repository,
+      runtime: { root: directory, workerEntry: "unused" }, runId: "denied", output: { kind: "directory", path: directory },
+      engine: "pi", identity, evaluatorVersion: "test", config: {}, plan,
+      policy: DEFAULT_POLICY, modelForStage: () => model, modelRequests: control,
+      concurrency: 1, retries: 0, retryDelaySeconds: 0, workerUrls: [worker.url], signal: AbortSignal.timeout(10_000) });
+    await waitForTestState(async () => control.snapshot().queued, count => count === 1, "Worker reaches the real Host admission queue");
+    control.disable(model.provider, "account unavailable");
+    const result = await pending;
+    assert.deepEqual(result.execution_task_statuses, { pending: 2 });
+    assert.equal(result.resource_pause, "model_channels_unavailable");
+  } finally { held.release(); await worker.close(); await rm(directory, { recursive: true, force: true }); }
+});
+
+
+test("an unexpected admission controller failure interrupts the run without judging its queued record", async () => {
+  const directory = await mkdtemp(path.join(tmpdir(), "eval-admission-fault-"));
+  const worker = await startWorker({ identity, async createSession(options) { return {
+    async run() { await options.modelRequest!(); }, async abort() {}, async dispose() {},
+  }; } }, path.join(directory, "worker"));
+  try {
+    await assert.rejects(runEvaluation({ agents: new AgentRegistry([agent]), taskSource: workflow, repository,
+      runtime: { root: directory, workerEntry: "unused" }, runId: "admission-fault", output: { kind: "directory", path: directory },
+      engine: "pi", identity, evaluatorVersion: "test", config: {}, plan, policy: DEFAULT_POLICY,
+      modelForStage: () => model, modelRequests: { concurrency: () => 1, async acquire() { throw new Error("admission controller fixture fault"); } },
+      concurrency: 1, retries: 0, retryDelaySeconds: 0, workerUrls: [worker.url], signal: AbortSignal.timeout(10_000) }), /admission controller fixture fault/);
+    const saved = await repository.readRun(path.join(directory, "admission-fault"));
+    assert.equal(saved.manifest.status, "interrupted");
+    assert(Object.values(saved.manifest.states).every(state => state.status === "pending"));
+    assert.equal((await request<{ activeAttempt: string | null }>(worker.url + "/api/health")).activeAttempt, null,
+      "a Host admission fault must not poison a successfully cleaned Worker shared with other runs");
+  } finally { await worker.close(); await rm(directory, { recursive: true, force: true }); }
+});
+
+test("a global admission failure releases other queued attempts before draining the run", async () => {
+  const directory = await mkdtemp(path.join(tmpdir(), "eval-admission-drain-"));
+  const workers = await Promise.all([1, 2].map(n => startWorker({ identity, async createSession(options) { return {
+    async run() { await options.modelRequest!(); }, async abort() {}, async dispose() {},
+  }; } }, path.join(directory, "worker-" + n))));
+  let calls = 0, queuedAborted = false;
+  const safety = AbortSignal.timeout(2000);
+  try {
+    await assert.rejects(runEvaluation({ agents: new AgentRegistry([agent]), taskSource: workflow, repository,
+      runtime: { root: directory, workerEntry: "unused" }, runId: "drain", output: { kind: "directory", path: directory },
+      engine: "pi", identity, evaluatorVersion: "test", config: {}, plan, policy: DEFAULT_POLICY,
+      modelForStage: () => model, modelRequests: { concurrency: () => 2, async acquire(_context, signal) {
+        if (++calls === 2) throw new Error("admission drain fixture fault");
+        return new Promise((_, reject) => signal.addEventListener("abort", () => {
+          queuedAborted = true; reject(signal.reason);
+        }, { once: true }));
+      } }, concurrency: 2, retries: 0, retryDelaySeconds: 0, workerUrls: workers.map(worker => worker.url), signal: safety }), /admission drain fixture fault/);
+    assert.equal(safety.aborted, false, "global failure must not wait for the external cancellation deadline");
+    assert.equal(queuedAborted, true);
+    const saved = await repository.readRun(path.join(directory, "drain"));
+    assert.equal(saved.manifest.status, "interrupted");
+    assert(Object.values(saved.manifest.states).every(state => state.status === "pending"));
+  } finally { await Promise.all(workers.map(worker => worker.close())); await rm(directory, { recursive: true, force: true }); }
+});
+
+test("Worker shutdown failure still checkpoints an interrupted run and closes its store", async t => {
+  const directory = await mkdtemp(path.join(tmpdir(), "eval-shutdown-checkpoint-"));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  const close = WorkerSupervisor.prototype.close, closeStore = RunStore.prototype.close;
+  let storesClosed = 0;
+  t.mock.method(WorkerSupervisor.prototype, "close", async function(this: WorkerSupervisor) {
+    await close.call(this); throw new Error("shutdown fixture fault");
+  });
+  t.mock.method(RunStore.prototype, "close", async function(this: RunStore) { storesClosed++; await closeStore.call(this); });
+  await assert.rejects(runEvaluation({ agents: new AgentRegistry([agent]),
+    taskSource: { ...workflow, canStart() { throw new Error("scheduler fixture fault"); } }, repository,
+    runtime: { root: directory, workerEntry: "unused" }, runId: "shutdown", output: { kind: "directory", path: directory },
+    engine: "pi", identity, evaluatorVersion: "test", config: {}, plan, policy: DEFAULT_POLICY,
+      modelForStage: () => model, concurrency: 1, retries: 0, retryDelaySeconds: 0 }), error => {
+    assert(error instanceof AggregateError);
+    assert.deepEqual(error.errors.map(error => error.message), ["scheduler fixture fault", "shutdown fixture fault"]);
+    return true;
+  });
+  assert.equal(storesClosed, 1);
+  assert.equal((await repository.readRun(path.join(directory, "shutdown"))).manifest.status, "interrupted");
+  await assert.rejects(readFile(path.join(directory, "shutdown/.run-lock")), { code: "ENOENT" });
+});
+
+test("a Host storage error remains fatal even when the corresponding Worker is lost", async t => {
+  const directory = await mkdtemp(path.join(tmpdir(), "eval-lost-worker-storage-"));
+  const worker = await startWorker({ identity, async createSession() { throw new Error("must not dispatch after storage failure"); } }, path.join(directory, "worker"));
+  let lost = false;
+  class Supervisor extends WorkerSupervisor {
+    override setDemand() {}
+    override exited() { return lost; }
+  }
+  const supervisor = new Supervisor({ identity, runtime: { root: directory, workerEntry: "unused" },
+    directory, retries: 0, retryDelaySeconds: 0, wake() {}, event() {} });
+  supervisor.slots.push({ url: worker.url, health: { identity, tools: [], activeAttempt: null } });
+  t.mock.method(RunStore.prototype, "activate", async () => { lost = true; throw new Error("WAL fixture failure"); });
+  const safety = AbortSignal.timeout(2000);
+  try {
+    await assert.rejects(runEvaluation({ agents: new AgentRegistry([agent]), taskSource: workflow, repository,
+      runtime: { root: directory, workerEntry: "unused" }, workerSupervisor: supervisor,
+      runId: "storage", output: { kind: "directory", path: directory }, engine: "pi", identity,
+      evaluatorVersion: "test", config: {}, plan, policy: DEFAULT_POLICY, modelForStage: () => model,
+      concurrency: 1, retries: 0, retryDelaySeconds: 0, signal: safety }), /WAL fixture failure/);
+    assert.equal(safety.aborted, false);
+    assert.equal((await repository.readRun(path.join(directory, "storage"))).manifest.status, "interrupted");
+  } finally { await supervisor.close(); await worker.close(); await rm(directory, { recursive: true, force: true }); }
+});
+
+test("an accepted receipt still retires a Worker whose session cleanup timed out", async t => {
+  const directory = await mkdtemp(path.join(tmpdir(), "eval-receipt-retire-"));
+  const worker = await startWorker({ identity, async createSession(options) { return {
+    async run() { assert(!(await options.execute("submit_evaluation", { score: 1 })).isError); },
+    async abort() {}, async dispose() { await new Promise(() => {}); },
+  }; } }, path.join(directory, "worker"));
+  let retired = 0;
+  class Supervisor extends WorkerSupervisor { override setDemand() {} }
+  const supervisor = new Supervisor({ identity, runtime: { root: directory, workerEntry: "unused" },
+    directory, retries: 0, retryDelaySeconds: 0, wake() {}, event() {} });
+  supervisor.slots.push({ url: worker.url, health: { identity, tools: [], activeAttempt: null } });
+  t.mock.method(supervisor, "retire", () => { retired++; supervisor.slots.length = 0; });
+  try {
+    await runEvaluation({ agents: new AgentRegistry([agent]), taskSource: workflow, repository,
+      runtime: { root: directory, workerEntry: "unused" }, workerSupervisor: supervisor,
+      runId: "retire", output: { kind: "directory", path: directory }, engine: "pi", identity,
+      evaluatorVersion: "test", config: {}, plan: { ...plan, tasks: plan.tasks.slice(0, 1) },
+      policy: { ...DEFAULT_POLICY, cleanupTimeoutSeconds: 0.05 }, modelForStage: () => model,
+      concurrency: 1, retries: 0, retryDelaySeconds: 0, signal: AbortSignal.timeout(5000) });
+    assert.equal(retired, 1);
+    assert.equal((await repository.readRun(path.join(directory, "retire"))).manifest.states["task-1"].status, "succeeded");
+  } finally { await supervisor.close(); await worker.close(); await rm(directory, { recursive: true, force: true }); }
+});
+
+for (const priority of [0, 1]) test(`a session window returns unused batch capacity to a ${priority === 0 ? "lower" : "same"} priority run`, async () => {
+  const directory = await mkdtemp(path.join(tmpdir(), "eval-window-handoff-"));
+  let release!: () => void;
+  const held = new Promise<void>(resolve => { release = resolve; });
+  const starts: string[] = [];
+  const workers = await Promise.all([1, 2, 3, 4].map(n => startWorker({ identity, async createSession(options) { return {
+    async run() {
+      starts.push(options.spec.runId);
+      if (starts.length === 4) release();
+      await held;
+      assert(!(await options.execute("submit_evaluation", { score: 1 })).isError);
+    }, async abort() { release(); }, async dispose() {},
+  }; } }, path.join(directory, "worker-" + n))));
+  class Supervisor extends WorkerSupervisor { override setDemand() {} }
+  const supervisor = new Supervisor({ identity, runtime: { root: directory, workerEntry: "unused" },
+    directory, retries: 0, retryDelaySeconds: 0, wake() {}, event() {} });
+  supervisor.slots.push(...workers.map(worker => ({ url: worker.url, health: { identity, tools: [], activeAttempt: null } })));
+  const safety = AbortSignal.timeout(10_000);
+  const tasks = Array.from({ length: 10 }, (_, n) => ({ ...plan.tasks[0], id: "task-" + n }));
+  try {
+    const result = await runBatch(["window", "healthy"].map(id => ({ id, priority: id === "window" ? priority : 1,
+      run: async (control, taskLimit, signal) => {
+        if (id === "healthy") await waitForTestState(async () => starts.includes("window"), value => value, "the window run starts", 5000);
+        return runEvaluation({ agents: new AgentRegistry([agent]), repository,
+        taskSource: id === "window" ? { ...workflow, scheduling: { sessionAdmission: {
+          id: task => task.id, window: 1, completed: () => true,
+        } } } : workflow,
+        runtime: { root: directory, workerEntry: "unused" }, workerSupervisor: supervisor,
+        runId: id, output: { kind: "directory", path: directory }, engine: "pi", identity,
+        evaluatorVersion: "test", config: {}, plan: { ...plan, tasks }, policy: DEFAULT_POLICY,
+        modelForStage: () => model, modelRequests: control, taskLimit, taskConcurrency: 4,
+        concurrency: 4, retries: 0, retryDelaySeconds: 0, signal });
+      },
+    })), { [model.provider]: 4 }, 4, safety, () => {});
+    assert.equal(safety.aborted, false);
+    assert.equal(result.window.status, "finished", JSON.stringify(result));
+    assert.equal(result.healthy.status, "finished", JSON.stringify(result));
+    assert.equal(starts.slice(0, 4).filter(id => id === "window").length, 1);
+    assert.equal(starts.slice(0, 4).filter(id => id === "healthy").length, 3);
+  } finally {
+    release(); await supervisor.close(); await Promise.all(workers.map(worker => worker.close()));
+    await rm(directory, { recursive: true, force: true });
+  }
 });

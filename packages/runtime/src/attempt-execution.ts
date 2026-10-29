@@ -14,6 +14,7 @@ import {
   type AttemptSpec,
   type AttemptRecord,
   type AttemptStatus,
+  type ModelRequestAdmission,
   type Submission,
   type SubmissionReceipt,
   type ToolAudit,
@@ -33,6 +34,7 @@ import { contentToolName, modelEventForLog, isModelQuotaExhausted } from "./sdk-
 import { decodeJsonSubmission } from "./attempt-json.js";
 import type { AttemptEventLog } from "./attempt-events.js";
 import { createContentQueue, invalidSubmissionFile, loadSubmissionFile } from "./attempt-submission.js";
+import { abortable, bounded } from "./lifecycle.js";
 
 export interface AttemptExecution {
   spec: AttemptSpec;
@@ -75,6 +77,7 @@ async function runAttempt(attempt: AttemptExecution, deps: AttemptExecutionDeps,
     const record: AttemptRecord = { spec, evidenceBank: [...audit.evidenceBank!] };
     const timings = { inputIoMs: 0, modelMs: 0, toolMs: 0, submissionMs: 0, requiredReadMs: 0 };
     let modelStarted: number | undefined;
+    let modelRun: Promise<void> | undefined;
     const saveRecord = () => writeJson(path.join(attempt.directory, "attempt.json"), record);
     let accepted: SubmissionReceipt | undefined,
       submissions = 0,
@@ -84,17 +87,27 @@ async function runAttempt(attempt: AttemptExecution, deps: AttemptExecutionDeps,
     let deadlineAt = spec.deadline, deadline: NodeJS.Timeout | undefined;
     const armDeadline = () => {
       clearTimeout(deadline);
-      deadline = setTimeout(() => { void stop(attempt, "timed_out", "Task deadline exceeded"); },
+      deadline = setTimeout(() => { attempt.status.timeoutPhase = "task"; void stop(attempt, "timed_out", "Task deadline exceeded"); },
         Math.max(1, deadlineAt - Date.now()));
     };
     armDeadline();
-    let idle: NodeJS.Timeout, pendingSubmissions = 0;
+    let idle: NodeJS.Timeout, pendingSubmissions = 0, finishing = false;
+    attempt.status.phase = "preparing";
+    const phase = (value: NonNullable<AttemptStatus["phase"]>) => { attempt.status.phase = value; activity(); };
     const activity = () => {
       clearTimeout(idle);
-      if (pendingSubmissions) return;
+      if (finishing) return;
+      const current = pendingSubmissions ? "submission" : attempt.status.phase ?? "model_first_response";
+      if (current === "queued" || current === "preparing") return;
+      const seconds = current === "model_first_response" ? spec.policy.firstResponseTimeoutSeconds
+        : current === "model_stream" ? spec.policy.streamIdleTimeoutSeconds
+        : current === "tool" ? spec.policy.toolTimeoutSeconds
+        : current === "submission" ? spec.policy.submissionTimeoutSeconds ?? spec.policy.timeoutSeconds : spec.policy.cleanupTimeoutSeconds;
       idle = setTimeout(() => {
-        void stop(attempt, "timed_out", "Model/tool idle timeout");
-      }, spec.policy.idleTimeoutSeconds * 1000);
+        attempt.status.timeoutPhase = current;
+        if (current === "tool" || current === "submission") attempt.status.workerUnusable = true;
+        void stop(attempt, "timed_out", `Timeout during ${current}`);
+      }, (seconds ?? spec.policy.idleTimeoutSeconds) * 1000);
     };
     // Fetching material from Host is preparation, not an idle model. The total
     // deadline remains armed even while Host is busy preparing another task.
@@ -120,7 +133,7 @@ async function runAttempt(attempt: AttemptExecution, deps: AttemptExecutionDeps,
         await material.copyTo(path.join(attempt.directory, "workspace/inputs", `${safeId(ref.name)}.json`));
       }
       timings.inputIoMs = performance.now() - inputStarted;
-      activity();
+      phase("preparing");
       const artifacts = new ArtifactStore(path.join(attempt.directory, "artifacts"));
       const definitions = registry.select(spec.evaluation.toolNames, [...inputs.keys()]).map(tool =>
         tool.name === "inspect_material" && !spec.evaluation.fileSubmission && spec.evaluation.inspectionSchema
@@ -563,15 +576,22 @@ async function runAttempt(attempt: AttemptExecution, deps: AttemptExecutionDeps,
         ...(spec.controlModelRequests ? { modelRequest: async (signal?: AbortSignal) => {
           const combined = signal ? AbortSignal.any([signal, controller.signal]) : controller.signal;
           const callId = randomUUID(), waitingAt = Date.now();
-          clearTimeout(idle); clearTimeout(deadline);
+          phase("queued"); clearTimeout(deadline);
+          let grantedModel: AttemptSpec["model"];
           try {
-            await request(`${spec.hostUrl}/api/model-requests/${spec.attemptId}/${callId}`, "POST", {}, combined);
+            const admission = await request<ModelRequestAdmission>(`${spec.hostUrl}/api/model-requests/${spec.attemptId}/${callId}`, "POST", {}, combined);
+            if ("error" in admission) {
+              attempt.status.capacityUnavailable = true;
+              throw new Error(admission.error);
+            }
+            grantedModel = admission.model;
           } finally {
             deadlineAt += Date.now() - waitingAt;
-            if (!controller.signal.aborted) { armDeadline(); activity(); }
+            if (!controller.signal.aborted) { armDeadline(); phase("model_first_response"); }
           }
           let released = false;
-          return async () => {
+          attempt.status.modelChannel = grantedModel.provider;
+          return { model: grantedModel, release: async () => {
             if (released) return;
             released = true;
             for (let retry = 0; ; retry++) try {
@@ -583,10 +603,10 @@ async function runAttempt(attempt: AttemptExecution, deps: AttemptExecutionDeps,
               if (!transientDelivery(error) || retry === 2) throw error;
               await new Promise(resolve => setTimeout(resolve, 100 * 2 ** retry));
             }
-          };
+          } };
         } } : {}),
         async execute(name, args, signal) {
-          activity();
+          phase("tool");
           if (accepted) return runtime.withBudget({ ...textResult({ accepted: true }), terminate: true }, explorationLimit());
           if (controller.signal.aborted) throw controller.signal.reason;
           attempt.events.append("tool_start", { name, args });
@@ -600,12 +620,12 @@ async function runAttempt(attempt: AttemptExecution, deps: AttemptExecutionDeps,
           try {
             result = submissionTool
               ? await submissionTool.execute(runtime.context, args, controller.signal)
-              : await runtime.execute(
+              : await abortable(runtime.execute(
                   name,
                   args,
                   signal ? AbortSignal.any([signal, controller.signal]) : controller.signal,
                   explorationLimit(),
-                );
+                ), controller.signal);
             if (spec.evaluation.fileSubmission && name === "edit_json" && !result.isError) {
               // Keep the last successfully written draft before workspace cleanup.
               // Writing is not submission: the resumed model must still submit it
@@ -631,11 +651,13 @@ async function runAttempt(attempt: AttemptExecution, deps: AttemptExecutionDeps,
             ...(result.details && typeof result.details === "object" ? result.details : {}), next_tool: nextContentTool(),
           } }, explorationLimit());
           attempt.events.append("tool_end", { name, result });
-          activity();
+          phase("model_first_response");
           return result;
         },
         onEvent(value) {
-          activity();
+          if (attempt.status.phase !== "tool" && attempt.status.phase !== "submission" &&
+            value && typeof value === "object" && "type" in value &&
+            value.type === "message_update") phase("model_stream");
           attempt.events.append("model", modelEventForLog(value));
           if (!value || typeof value !== "object") return;
           const event = value as {
@@ -668,13 +690,14 @@ async function runAttempt(attempt: AttemptExecution, deps: AttemptExecutionDeps,
         },
       });
       attempt.session=await createSession(spec);
+      phase("model_first_response");
       controller.signal.throwIfAborted();
       const runModel = async (initialPrompt: string) => {
         let prompt = initialPrompt;
         while (!accepted && !controller.signal.aborted && attempt.status.state === "running") {
           modelError = undefined;
           malformedCompletedResponse = false;
-          try { await attempt.session!.run(prompt); }
+          try { modelRun = attempt.session!.run(prompt); await abortable(modelRun, controller.signal); }
           catch (error) { if (accepted)return; if (modelError === undefined || modelError !== errorText(error)) throw error; }
           if (!modelError || accepted || controller.signal.aborted) return;
           // Only a real completed SDK assistant failure can enter argument repair.
@@ -752,6 +775,8 @@ async function runAttempt(attempt: AttemptExecution, deps: AttemptExecutionDeps,
           [process.env[spec.model.apiKeyEnv] || ""]);
         attempt.status.modelQuotaExhausted = !controller.signal.aborted && modelError === errorText(original) &&
           isModelQuotaExhausted(modelError);
+        attempt.status.modelConfigurationError = !controller.signal.aborted && modelError === errorText(original) && /\b(?:401|403)\b/.test(modelError);
+        attempt.status.capacityUnavailable ||= errorText(original).startsWith("Model capacity unavailable:");
         attempt.status.retryable =
           !controller.signal.aborted &&
           !attempt.status.modelQuotaExhausted &&
@@ -769,6 +794,7 @@ async function runAttempt(attempt: AttemptExecution, deps: AttemptExecutionDeps,
           ));
       }
     } finally {
+      finishing = true;
       if (modelStarted !== undefined) timings.modelMs += performance.now() - modelStarted;
       clearTimeout(deadline);
       clearTimeout(idle!);
@@ -780,7 +806,7 @@ async function runAttempt(attempt: AttemptExecution, deps: AttemptExecutionDeps,
         const retryableInterruption = submissions === 0 && (!recovery || recovery.stopped ||
           recovery.errors.every(({ category }) => category === "transport" || category === "interruption")) &&
           ((attempt.status.state === "failed" && attempt.status.error === "Agent ended without an accepted submission") ||
-            (attempt.status.state === "timed_out" && attempt.status.error === "Model/tool idle timeout"));
+            (attempt.status.state === "timed_out" && ["model_first_response", "model_stream"].includes(attempt.status.timeoutPhase ?? "")));
         if (retryableInterruption) attempt.status.retryable = true;
         const recoveryDraft = recovery?.stopped ? undefined : recovery?.draft;
         if (!record.failure?.errors.length) record.failure = {
@@ -817,12 +843,17 @@ async function runAttempt(attempt: AttemptExecution, deps: AttemptExecutionDeps,
       // A failed persistence leaves the workspace intact for recovery.
       await saveRecord();
       try {
-        await attempt.session?.dispose();
-        await rm(path.join(attempt.directory, "workspace"), {
+        attempt.status.phase = "cleanup";
+        await bounded((async () => {
+          await attempt.session?.dispose();
+          await modelRun?.catch(() => {});
+          await rm(path.join(attempt.directory, "workspace"), {
           recursive: true,
           force: true,
-        });
+          });
+        })(), (spec.policy.cleanupTimeoutSeconds ?? 10) * 1000, "Worker cleanup timeout");
       } catch (error) {
+        attempt.status.workerUnusable = true;
         attempt.status.error ??= `Cleanup: ${errorText(error)}`;
       }
       attempt.events.append("finished", attempt.status);

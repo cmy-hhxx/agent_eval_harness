@@ -16,7 +16,7 @@ npm run eval -- report --run /mnt/fin_bench/eval_data/0_wencai/3_eval_output/0_d
 npm run eval -- validate --run /mnt/fin_bench/eval_data/0_wencai/3_eval_output/0_daily_eval/pi-001
 ```
 
-`preflight` 不调用模型，有输入问题退出码为 2。`run` 解析模型与密钥；执行退出码为 0 成功、2 有失败、130 中断。
+`preflight` 不调用模型，统一检查模型声明、密钥、Worker 构建、目录可写性、运行锁与日志位置。先应用 INI 环境再初始化日志。坏记录登记文件、行号、batch/case ID 与原因，其余记录继续；直接输入和命名评测集使用相同隔离语义。处理结束后 `outcome:complete` 表示全部成功，`outcome:partial` 表示有缺损。执行退出码为 0 全部成功、2 有输入拒绝/任务失败/资源暂停、130 中断。
 
 ## 当前限制
 
@@ -70,11 +70,37 @@ npm run eval -- model-probe --stage comparison --config configs/local/models.jso
 
 归因中的私密规范裁剪容器只用于导航；证据从未改写的原文叶子读取。业务链路检查点覆盖已登记的完整边界，分页窗口不限制可引用的后文；调查事实、环节、责任主体与证据各用自身目录编号。用户问题与设备事实不自动成为专有规范，真实本方规范继续按其作用域检查。提交仅使用工具当前 Schema 的字段和枚举，修正不增加提交上限。
 
-Attribution 的 `execution.sessionWindow` 默认 16，必须是正整数；执行、进度和续跑使用同一 effective 值。`execution.taskConcurrency` 是任务槽位硬上限且不再随模型并发放大，内置 Worker 按实际可派发任务惰性启动。
+Attribution 的 `execution.sessionWindow` 默认 16，必须是正整数；执行、进度和续跑使用同一 effective 值。`execution.taskConcurrency` 是任务槽位硬上限且不再随模型并发放大。`execution.concurrency` 限制真实在途模型请求，`execution.modelRequestLimits` 可进一步声明各网关上限。`execution.workerSlots` 控制每个托管进程的槽位数，应用默认 4；Supervisor 按需求小批预热，每次最多并行启动两个进程，派发循环只领取就绪槽位。
 
 共用配置把 Rewrite 的推理档位单独设为 `low`，保留润色，只处理已接受文本；其他阶段沿用各自配置。专项的后置覆盖也须保留该阶段设置，不能用全阶段 `high` 覆盖。降低推理档位不是语义保真证明，仍按改写验收流程对照原文抽查。
 
-`run / reattribute / cluster --balance-channels` 按 INI 的 traffic_weight 分配完整任务，普通重试保持渠道，明确配额耗尽才切换；各渠道须提供相同阶段模型。
+`run / reattribute / cluster --balance-channels` 显式声明评测渠道可互换：各阶段的模型、思考档位、协议和能力必须相同。每次模型请求在真正发出前选择有额度的渠道；在途流保持原路由，普通工具执行不占模型额度。鉴权或账户额度失效会隔离对应渠道，保留未完成任务；其他健康渠道继续。全部所需渠道不可用时明确暂停，修复配置或额度后同 run ID 续跑。
+
+## 批次调度
+
+在服务器准备外部批次配置，参考 [batch.example.json](../configs/batch.example.json)：
+
+```bash
+EVAL_CONFIG_FILE=/absolute/path/config.ini npm run eval -- batch --batch-config /absolute/path/batch.json
+```
+
+`runs` 显式声明稳定 `runId`、按顺序合并的 `configs` 与整数 `priority`，数字越小越优先；相对路径以批次文件所在目录解析。每路配置分别提供输入和正式输出目录，调度器不从目录名推导业务来源。`stateDirectory` 只用于批次实例锁，正式产物仍在各来源的配置输出目录。
+
+`channels` 限制跨 run 的真实在途模型请求；`equivalentChannels` 显式声明可互换的网关集合。示例每网关 150、合计 300 个模型请求，`taskConcurrency:350` 是整批任务槽位上限。`workers` 统一配置共享池的槽位数、启动重试数和退避。单路的任务槽位与模型请求上限分别展示，不能把 350 当作模型并发。
+
+优先级控制新请求的排队顺序，同优先级等权；任务槽位按实际在途任务和就绪需求分配，暂停、预检等待和收尾路不占空闲份额，不抢占在途任务。某路完成后直接重新分配额度，并复用共享池中的就绪 Worker。配置中的优先恢复路结束后，另外两路自动接力；单路中断保留原执行范围恢复，不要求当前输入选择能够重新生成任务。模型能否满载取决于就绪请求数，工具执行和提交等待分别观测。
+
+批次重启沿用相同 run ID：已完成的成功或缺损运行不自动重评。一路运行级故障明确记录，其余独立路继续。Worker 容量耗尽时保留 pending 记录、隔离容量，批次每 30 秒进行一轮恢复；全部模型渠道不可用则停止并等待配置/额度修复。新输入、新任务或显式补评应通过对应运行配置和已有恢复命令声明。
+
+## 超时与故障隔离
+
+额度排队不计入模型执行期限，可以取消。`firstResponseTimeoutSeconds`、`streamIdleTimeoutSeconds`、`toolTimeoutSeconds` 分别限制首包、流式停顿与工具执行；省略时沿用 `idleTimeoutSeconds`。代码工具另受 `codeTimeoutSeconds` 约束。`submissionTimeoutSeconds` 限制提交确认等待，省略时由整体 `timeoutSeconds` 兜底，不套用模型空闲期限；`cleanupTimeoutSeconds` 默认 10 秒。
+
+只有模型首包/流式停顿最多自动重试一次；整体 deadline 终止当前任务。Worker 重建、传输重试、超时重试和内容修复分别计数，续跑保留任务累计预算。提交重试先查持久收据，已接受结果优先于失败或超时观察。
+
+Worker 启动和重建预算属于容量，耗尽后隔离容量而不把健康记录判失败；其余健康 Worker 继续。单槽位无法清理时回收所属进程，同进程未提交任务重新排队，持久收据保留。外部 Worker 不由 Host 杀进程，不可复用时隔离并报告。未分类 Host 执行异常向运行级报告，不能被任务级 catch 当作普通坏记录吞掉。
+
+本地 WAL 无法可靠写入时立即停止新派发。周期 checkpoint 失败后每 30 秒重试，连续 5 分钟失败暂停新派发，保存成功自动解除；在途任务仍可可靠提交。outbox 保留积压 5 分钟/10 GB 的准入保护。失败快照不会压缩进度日志，故障通过统一 runtime.log、CLI 和实时进度明确报告。
 
 ## 目录约定
 
@@ -127,7 +153,7 @@ npm run eval -- run --dataset competitor_comparison --run-id competitor-001 \
 
 `--input ID=PATH` 可重复；`--catalog DIR` 改变索引根目录，后续选择使用同一目录。`--dataset` 与临时 `--input` 不可混用。缺少 batch_id 且没有全局默认批次时，使用评测集 ID。
 
-索引只存文件、行号、UTF-8 字节位置及诊断。选择时重新核对原始文件，修正文件后重新 index；无效或重复记录不能因已建索引而参评。未传 dataset 时扫描配置来源。
+索引只存业务标识、文件、行号、UTF-8 字节位置和具体诊断。选择时重新核对原始文件；少量无效行不会拒绝整个集，坏记录仍被排除并报告。修正或变更文件后重新 index，文件变化、索引损坏与坐标错位不能静默忽略。未传 dataset 时扫描配置来源。
 
 续跑按 state.json 中的原来源恢复，再传 dataset 不切换来源。未完成记录缺失或无效时跳过并报告诊断，已接受结果保留。运行中修改源文件会拒绝受影响读取，保存进度后同 ID 续跑。
 
@@ -219,7 +245,7 @@ npm run eval -- run --test-eval --run-id pilot-001 --discover-inputs \
   --config configs/host.json --config configs/local/models.json
 ```
 
-释放前按[改写放量验收](quality.md#改写放量验收)检查。运行中用 `concurrency --run PATH --value N` 调整上限，`progress --run PATH` 查看状态；降低并发让在途任务自然完成。以新增正式交付衡量产出，不用 Worker 数代替。
+释放前按[改写放量验收](quality.md#改写放量验收)检查。运行中用 `concurrency --run PATH --value N` 调整上限，`progress --run PATH` 查看状态；降低并发让在途任务自然完成。以新增正式交付衡量产出，不用 Worker 数代替。`status` 明确标记 checkpoint 观察，并分别核实 owner 进程和匹配 run ID/PID 的存活 Host；`progress` 是实时观测。进度分别提供 `task_concurrency`、`model_request_allocation`（当前分配额）、真实请求 active/queued/limit、手动 run 限额和各网关额度、输入拒绝、内部 accepted/failed/partial 以及 `formal_result_count`，accepted 不等同于正式落盘行数。
 
 Worker 启动或任务准备期间若有任务完成，Host 会重新排序可执行任务，让刚就绪的下游及时共享槽位，不等待旧的上游派发队列走完。
 
@@ -338,7 +364,7 @@ npm run eval -- rewrite-comparisons --run /mnt/fin_bench/eval_data/0_wencai/3_ev
 
 | 文件 | 用途 |
 |---|---|
-| state.json | 周期性派生快照：任务状态、来源索引、收据引用和累计用量；不保存完整修复/复核现场 |
+| state.json | 周期性派生快照：任务状态、来源索引、收据引用、累计预算与未完成任务的完整恢复上下文 |
 | progress.jsonl | 检查点之后的增量状态与收据；检查点成功落盘后压缩已覆盖事件，保留序号边界 |
 | overview.json | 运行目录与预计算统计：正式战绩、比例和结果引用，不保存正文 |
 | results/criteria.jsonl | 共同标准 |
@@ -356,13 +382,13 @@ npm run eval -- rewrite-comparisons --run /mnt/fin_bench/eval_data/0_wencai/3_ev
 
 恢复时，同序号的 progress 投影只允许为热日志 receipt 补充尚未存在的 `exported`；判词、审计、状态或已有结果引用不一致仍拒绝恢复。重放完成后才应用本次配置与评测器标记，已接受 receipt 保留原评测器标记，保证续跑策略记录与实际执行一致。
 
-`state.json` 仅周期写入，并对错误消息、错误数量和 receipt 审计做固定压缩；draft、completion candidate、inspection、evidence bank 与完整 review 上下文不进入检查点。热日志和 outbox 路径由 `EVAL_HOT_STATE_ROOT` 控制，默认位于 `~/.cache/eval-agent-harness/hot`；生产应放在本机 SSD，不放在 Ceph。
+`state.json` 周期性分块原子写入，字节数统计来自实际写入，不序列化整份原始 RunState。Attribution 任务只保存 input_id，共享一次 candidate 索引；已接受正文引用正式 JSONL。仅已接受任务压缩诊断；未完成任务完整保留 draft、inspection、evidence bank、review 和累计预算，热库丢失或进度日志压缩后仍可恢复。快照复用不可变已接受正文，只拷贝可变恢复状态，避免重复全量 clone。热日志和 outbox 路径由 `EVAL_HOT_STATE_ROOT` 控制，默认位于 `~/.cache/eval-agent-harness/hot`；生产应放在本机 SSD，不放在 Ceph。
 
 Host 每次成功保存检查点后，原子替换 `progress.jsonl`，仅保留检查点之后的事件和一个序号边界。运行结束并保存成功后通常只剩边界；检查点写入失败时保留原事件。追加与压缩共用同一写入队列；读取遇到检查点切换会重新读取快照，不能跳过缺失增量。该文件不承担完整历史审计。
 
 既有停止运行的目录可执行 `node scripts/compact-progress.mjs <run目录>`，使用已有检查点压缩历史进度，并输出压缩前后字节数。命令持有同一把 run 锁，会拒绝正在运行的 Host；不改原始输入、正式结果或检查点。
 
-Worker 健康检查暂时失败时，Host 暂缓使用该槽位并重查，不终止仍存活的进程，也不增加任务尝试次数。托管槽位绑定具体子进程，确认进程退出后才重建，避免端口复用误认其他 Worker。
+Worker 健康检查暂时失败时，Host 暂缓使用该槽位并重查，不终止仍存活的进程，也不增加任务尝试次数。托管槽位绑定具体子进程，确认进程退出或有界清理失败后由 Supervisor 回收对应进程，再重建其槽位，避免端口复用误认其他 Worker。
 
 stats 的胜负按对局，标准一致性及核心完成按回答去重；未知、冲突与覆盖单列。Token 包含已记录失败与重试，未知终态不算零；缓存命中率为 cacheRead / (input + cacheRead + cacheWrite)。任务累计耗时与首次启动后的 wall_seconds 分开，后者包含停机间隔。
 

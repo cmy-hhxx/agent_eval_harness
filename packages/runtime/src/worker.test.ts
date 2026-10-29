@@ -1487,7 +1487,7 @@ for (const reason of ["idle", "deadline", "cancel"] as const)
       const status = await fixture.done();
       assert.equal(status.state, reason === "cancel" ? "cancelled" : "timed_out");
       if (reason === "idle") {
-        assert.equal(status.error, "Model/tool idle timeout");
+        assert.equal(status.error, "Timeout during model_first_response");
         assert.equal(status.retryable, true);
         assert.equal(status.failure?.errors[0]?.category, "interruption");
         assert.equal(status.failure?.contentSubmissions, 0);
@@ -1614,14 +1614,14 @@ test(`model permit ${mode} network failures preserve transport retries and compl
       if (mode === "acquire" && init?.method === "POST" || init?.method === "DELETE" &&
         (mode === "release-always" || mode === "release-once" && releases === 1))
         throw new TypeError("fetch failed", { cause: Object.assign(new Error("connection reset"), { code: "ECONNRESET" }) });
-      return new Response(JSON.stringify({ admitted: true, released: true }), { headers: { "content-type": "application/json" } });
+      return new Response(JSON.stringify({ model: fixture.spec.model, released: true }), { headers: { "content-type": "application/json" } });
     }
     return original(input, init);
   };
   const fixture = await harness(async options => ({ async run() {
     const release = await options.modelRequest!();
     providerCalls++;
-    await release();
+    await release.release();
     await options.execute("read_trace", { candidate: "answer", message_index: 0, path: "/content" });
     await submitFor(options, { ok: true });
   }, async abort() {}, async dispose() {} }), { material: "source" });
@@ -2455,4 +2455,37 @@ test("Worker rejects malformed program material navigation before starting a ses
       (error:unknown)=>error instanceof HttpError&&error.status===400&&error.message==="Invalid material navigation");
     assert.equal(sessions,0);
   }finally{await fixture.close();}
+});
+
+
+test("a stuck session cleanup is bounded and cannot make its Worker reusable", async () => {
+  const fixture = await harness(async options => ({ async run() {
+    await options.execute("read_trace", { candidate: "answer", message_index: 0, path: "/content" });
+    await submitFor(options, { ok: true });
+  }, async abort() {}, async dispose() { await new Promise(() => {}); } }),
+  { material: "source", policy: { cleanupTimeoutSeconds: 0.05 } });
+  try {
+    await fixture.start();
+    const status = await fixture.done();
+    assert.equal(status.state, "succeeded", "a cleanup failure cannot revoke a durable receipt");
+    assert.equal(status.workerUnusable, true);
+    const health = await request<{ activeAttempt: string | null }>(fixture.worker.url + "/api/health");
+    assert.equal(health.activeAttempt, fixture.spec.attemptId);
+  } finally { await fixture.close(); }
+});
+
+
+for (const streaming of [false, true]) test(`timeouts distinguish ${streaming ? "stream stalls" : "model first responses"}`, async () => {
+  let finish!: () => void;
+  const fixture = await harness(async options => ({ async run() {
+    if (streaming) options.onEvent({ type: "message_update", assistantMessageEvent: { type: "text_delta", delta: "started" } });
+    await new Promise<void>(resolve => { finish = resolve; });
+  }, async abort() { finish?.(); }, async dispose() {} }), { material: "source",
+    policy: { firstResponseTimeoutSeconds: 0.1, streamIdleTimeoutSeconds: 0.1 } });
+  try {
+    await fixture.start(); const status = await fixture.done();
+    assert.equal(status.state, "timed_out");
+    assert.equal(status.timeoutPhase, streaming ? "model_stream" : "model_first_response");
+    assert.equal(status.failure!.contentSubmissions, 0);
+  } finally { await fixture.close(); }
 });

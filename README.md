@@ -10,7 +10,7 @@ TypeScript Host 编排评测任务，Pi Worker 执行模型与工具调用。通
 
 服务器代码统一部署在 `/mnt/fin_bench/sync_datasets/code/1_eval_harnes/` 下：主线为 `main/`，Eris 为 `eris-code/`，其他分支或用途使用独立子目录；持久运行目录为 `runtime/`。不再向 `user_workspace` 部署代码或运行脚本，完整约定见[部署目录](docs/deployment.md#目录)。
 
-输入由仓库外准备，Host 接收显式配置的文件或目录，通过 CLI 预检、执行、续跑并保存正式结果。收包清洗、网页工作台、目录监控、日夜自动调度、MongoDB 同步和统计上传不在本仓库的运行链路中。
+输入由仓库外准备，Host 接收显式配置的文件或目录，通过 CLI 预检、执行、续跑并保存正式结果。显式批次入口统一网关额度、Worker 池和多路完成接力；配置见[批次调度](docs/usage.md#批次调度)。收包清洗、网页工作台、目录监控、日夜定时触发、MongoDB 同步和统计上传不在本仓库的运行链路中。
 
 服务器数据工作重点是各来源的 `2_eval_input/`、`3_eval_output/` 和 `4_user_kyc_data/`；默认不查看 `0_archive/`、`1_7z_data/`。完整目录及配置方式见[服务器数据目录](docs/deployment.md#服务器数据目录)，业务路径和来源清单只在外部配置中声明。
 

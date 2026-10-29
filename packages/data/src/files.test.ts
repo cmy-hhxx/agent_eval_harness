@@ -6,7 +6,7 @@ import { syncBuiltinESMExports } from "node:module";
 import os from "node:os";
 import path from "node:path";
 import { gzipSync } from "node:zlib";
-import { exists, hasLiveRunOwner, readJsonl, readJsonlText, runLock, writeJson } from "./files.js";
+import { exists, hasLiveRunOwner, readJsonl, readJsonlText, runLock, writeJson, writeCheckpointJson } from "./files.js";
 
 const deadOwner = { pid: 2147483647, token: "dead-owner" };
 
@@ -132,4 +132,24 @@ test("malformed lock owners are never probed, reclaimed or silently replaced", a
     assert.equal(await readFile(file, "utf8"), text);
   }
   assert.equal(probe.mock.calls.length, 0);
+});
+
+
+test("checkpoint writes bounded JSON pieces and preserves the previous snapshot on failure", async t => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), "eval-checkpoint-stream-"));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  const file = path.join(directory, "state.json");
+  const state = { rows: Array.from({ length: 500 }, (_, id) => ({ id, text: "中文😀".repeat(1000) })), empty: [undefined, null], absent: undefined };
+  const stringify = JSON.stringify;
+  t.mock.method(JSON, "stringify", ((value: unknown) => {
+    assert(value === null || typeof value !== "object", "the writer must never stringify the aggregate state");
+    return stringify(value);
+  }) as typeof JSON.stringify);
+  const bytes = await writeCheckpointJson(file, state);
+  const text = await readFile(file, "utf8");
+  assert.equal(bytes, Buffer.byteLength(text));
+  assert.deepEqual(JSON.parse(text), { rows: state.rows, empty: [null, null] });
+  const circular: { self?: unknown } = {}; circular.self = circular;
+  await assert.rejects(writeCheckpointJson(file, circular), /Circular/);
+  assert.equal(await readFile(file, "utf8"), text);
 });

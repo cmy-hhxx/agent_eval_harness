@@ -119,3 +119,17 @@ test("balanced tasks keep their channel and stage parameters, and quota exhausti
     await rm(directory, { recursive: true, force: true });
   }
 });
+
+
+test("equivalent routes compare effective capabilities and reject actual model capability differences", async t => {
+  const { directory, models } = await fixtureConfig();
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  process.env.EQUIVALENT_ROUTE_KEY = "fixture";
+  t.after(() => { delete process.env.EQUIVALENT_ROUTE_KEY; });
+  models.channels.second = { ...models.models.judge, provider: "second", baseUrl: "http://127.0.0.1:2/v1",
+    apiKeyEnv: "EQUIVALENT_ROUTE_KEY", supportsDeveloperRole: true, supportsExplicitPromptCaching: false };
+  const routing = createBalancedModels(models, ["evaluation-gateway", "second"]);
+  assert.equal(routing.modelRoutesForTask({ stage: "criteria" }).length, 2);
+  models.channels.second.supportsDeveloperRole = false;
+  assert.throws(() => createBalancedModels(models, ["evaluation-gateway", "second"]).modelRoutesForTask({ stage: "criteria" }), /same model, thinking and capabilities/);
+});

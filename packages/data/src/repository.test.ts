@@ -83,6 +83,29 @@ test("repository checkpoint saves refresh the overview through running, finished
   }
 });
 
+test("append-only projections recover a partial final line without losing complete accepted rows", async t => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), "eval-append-recovery-"));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  const tasks = ["one", "two"].map(id => ({ id, stage: "result", inputIds: {}, dependencies: {}, data: {} }));
+  const value: RunState = { ...state, manifest: { ...state.manifest, tasks }, receipts: Object.fromEntries(tasks.map(task =>
+    [task.id, { taskId: task.id, attemptId: task.id, submissionId: task.id, status: "succeeded", acceptedAt: 1,
+      evaluatorVersion: "test", judge: "test", evaluation: { id: task.id }, usage: emptyUsage(),
+      audit: { calls: 0, requiredReadCalls: 0, traceReads: [], viewedImages: [], calculations: [], artifacts: [] } }])) };
+  const codec: RunCodec<RunState> = { encode: value => value, decode: value => value,
+    references: () => [], resultId: row => String(row.id) };
+  const repository = createRunRepository(codec, (task, snapshot) => ({ id: task.id, file: "results.jsonl",
+    row: snapshot.receipts[task.id].evaluation as { id: string } }), { appendOnly: true });
+  const file = path.join(directory, "results/results.jsonl");
+  await mkdir(path.dirname(file), { recursive: true });
+  await writeFile(file, '{"id":"preserved"}\n{"id":"one"}\n{"id":"tw');
+  const write = repository.createResultWriter(directory, {});
+  await write(value);
+  await write(value);
+  await repository.createResultWriter(directory, {})(value);
+  assert.deepEqual((await readFile(file, "utf8")).trim().split("\n").map(line => JSON.parse(line)),
+    [{ id: "preserved" }, { id: "one" }, { id: "two" }]);
+});
+
 test("a reader racing journal compaction reloads the new checkpoint instead of dropping covered events", async t => {
   const root = await mkdtemp(path.join(os.tmpdir(), "eval-checkpoint-race-"));
   t.after(() => rm(root, { recursive: true, force: true }));

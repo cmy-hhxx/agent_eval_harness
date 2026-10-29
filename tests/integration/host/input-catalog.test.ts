@@ -107,7 +107,7 @@ test("CLI indexes a named dataset and preflights it without scanning unrelated m
   const { directory, config } = await fixtureConfig();
   try {
     const overlay = path.join(directory, "comparison.json");
-    await writeFile(overlay, JSON.stringify({ comparisons: [["a_fast", "b_fast"]] }));
+    await writeFile(overlay, JSON.stringify({ comparisons: [["a_fast", "b_fast"]], output: config.output }));
     await writeJsonl(config.inputs.versions.find((v) => v.id === "b_fast")!.sources[0]!.path, [{
       ...raw(),
       messages: [
@@ -167,7 +167,7 @@ test("a named dataset supplies its ID as the batch only for records missing batc
   }
 });
 
-test("index errors contain locations rather than raw messages and cannot be selected", async () => {
+test("indexed bad records retain diagnostics and do not prevent selecting healthy records", async () => {
   const { directory, config } = await fixtureConfig();
   try {
     const catalog = path.join(directory, "catalog");
@@ -180,12 +180,15 @@ test("index errors contain locations rather than raw messages and cannot be sele
     const invalid = await indexDataset(config, catalog, "dataset", "评测集");
     assert.equal(invalid.invalid, 2);
     assert.equal((await readInputCatalog<InputDatasetIndex>(catalog, "dataset")).records_file, invalid.records_file);
-    await assert.rejects(selectDataset(config, catalog, "dataset"), /无效输入/);
+    const selected = await selectDataset(config, catalog, "dataset");
+    const plan = await buildPlan(selected, undefined, { materializeInputs: false });
+    assert((plan.summary.issues as unknown[]).length >= 2);
     const rows: { status: string; error_code?: string }[] = [];
     for await (const row of readJsonl(path.join(catalog, "dataset", invalid.records_file))) rows.push(row as typeof rows[number]);
     assert.deepEqual(rows.filter((row) => row.status === "invalid").map((row) => row.error_code),
       ["duplicate_input", "input_json_invalid"]);
     assert(!JSON.stringify(rows).includes("messages"));
+    assert(rows.filter(row => row.status === "invalid").every(row => typeof (row as any).reason === "string"));
     await writeFile(file, JSON.stringify(raw()) + "\n");
     const repaired = await indexDataset(config, catalog, "dataset", "评测集");
     assert.equal((await selectDataset(config, catalog, "dataset")).inputs.versions.length, 2);

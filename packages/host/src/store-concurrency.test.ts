@@ -128,8 +128,13 @@ test("only a durable checkpoint compacts progress and a fresh hot store retains 
   const original = await readFile(runProgressFile(run), "utf8");
   await assert.rejects(store.persistCheckpoint(), /fixture checkpoint failure/);
   assert.equal(await readFile(runProgressFile(run), "utf8"), original);
+  assert.equal(store.admissionPaused(), false, "a transient snapshot failure does not discard healthy work");
+  store.checkpointMetrics.failedSince = Date.now() - 5 * 60_000 - 1;
+  assert.equal(store.admissionPaused(), true, "a stale snapshot stops admission after the agreed window");
   fail = false;
   await store.persistCheckpoint();
+  assert.equal(store.admissionPaused(), false, "durable recovery automatically resumes admission");
+  assert.equal(store.checkpointMetrics.lastError, undefined);
   assert.deepEqual(await readProgressJournal(run, sequence), []);
   await store.close();
   const restored = await repository.readRun(run);

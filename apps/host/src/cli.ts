@@ -1,12 +1,12 @@
-import { configurationSecrets } from "./settings.js";
+import { configurationSecrets, readSettings, applySettings } from "./settings.js";
 import { parseArgs } from "node:util";
 import { stat } from "node:fs/promises";
 import path from "node:path";
 import { ROOT } from "./paths.js";
 import { errorText, redact } from "@eval/contracts";
-import { readJson, exists, runLayout, runLock } from "@eval/data";
-import { boundProfiles, createModelResolver, loadConfig, testEvaluationOutput } from "@eval/host-app/config";
-import { services, agents, logger } from "./composition.js";
+import { readJson, exists, runLayout, runLock, hasLiveRunOwner } from "@eval/data";
+import { boundProfiles, loadConfig, testEvaluationOutput } from "@eval/host-app/config";
+import { services, agents, logger, initializeServices } from "./composition.js";
 import { comparisonWorkflow, selectDataset, prepareComparisonRewrites, prepareComparisonVerification, prepareDeferredClustering, prepareFailedTasks, readRunTasks, reviewProblemOccurrences } from "@eval/workflows/comparison";
 import { indexDataset, selectDatasetInputs } from "@eval/workflows/inputs";
 import { reportRun, reportStability } from "@eval/workflows/comparison";
@@ -17,16 +17,18 @@ import { runAttributionCommand } from "./attribution-command.js";
 import { readAttributionWorkflowCommand, runAttributionWorkflowCommand } from "./attribution-workflow-command.js";
 import { runStabilityCommand } from "./stability-command.js";
 import { runModelProbe } from "./model-probe.js";
-import { createBalancedModels } from "./balanced-models.js";
+import { evaluationRouting } from "./evaluation-routing.js";
 import { pilotTaskIds, comparisonRewriteReview, readRunState } from "@eval/workflows/comparison";
+import { runBatchCommand } from "./batch-command.js";
+import { preflightHost } from "./preflight.js";
 
 let logRunId: string | undefined;
 async function main(): Promise<void> {
-  await logger.initialize();
   const { values, positionals } = parseArgs({
     allowPositionals: true,
     options: {
       config: { type: "string", multiple: true, default: [path.join(ROOT, "configs/host.json")] },
+      "batch-config": { type: "string" },
       "run-id": { type: "string" },
       run: { type: "string", multiple: true },
       output: { type: "string" },
@@ -77,8 +79,9 @@ async function main(): Promise<void> {
   logRunId = values["run-id"] || (selectedRun ? path.basename(path.resolve(selectedRun)) : undefined);
   if (values.help || !command) {
     console.log(
-      `eval index|preflight|run|reattribute|status|validate|report|cluster|verify-comparisons|validate-stability|model-probe|retry-failed|recluster|review-problem-occurrences|rewrite-comparisons|rewrite-review|concurrency|progress [--config FILE ...]
+      `eval index|preflight|run|batch|reattribute|status|validate|report|cluster|verify-comparisons|validate-stability|model-probe|retry-failed|recluster|review-problem-occurrences|rewrite-comparisons|rewrite-review|concurrency|progress [--config FILE ...]
 run: --run-id ID [--debug] [--worker URL ...]
+batch: --batch-config FILE 共享网关额度与 Worker 池，完成后自动接力
 配置文件按顺序深度合并；具体模型放在不入库的 --config 中
 相同 run-id 自动续跑，已完成结果保留；--debug 额外保存 _internal/
 selection: --batch ID --case ID --limit-cases N
@@ -96,7 +99,7 @@ cluster: --run-id ID --apply 续跑独立聚类作业（无需重复指定来源
 reattribute: --run PATH ... --run-id ID --from-date YYYY-MM-DD [--pilot-answers N] [--apply]
 reattribute: --run-id ID --apply 续跑；验收后 --discover-inputs 释放完整计划
 reattribute: --run-id ID --pilot-per-model N [--apply] 保留已选回答，按模型配额扩大有限试跑
-channels: run|reattribute|cluster --balance-channels 按 traffic_weight 加权分配完整任务
+channels: run|reattribute|cluster --balance-channels 在等价网关间按空闲额度分配每次模型请求
 verify-comparisons: --run PATH [--result ID ...] [--apply] 独立复核已接受的对局
 validate-stability: --cases FILE|--run PATH --run-id EXPERIMENT [--execute] [--max-attempts N]
   [--stop-starting-at ISO_DATE_WITH_OFFSET] [--seed N]；默认预览，重复同一实验 ID 续跑
@@ -112,6 +115,17 @@ progress: --run PATH`,
     );
     return;
   }
+  if (process.env.EVAL_CONFIG_FILE || await exists(path.join(ROOT, "config.ini"))) applySettings(await readSettings());
+  await initializeServices();
+  if (command === "batch") {
+    if (!values["batch-config"]) throw new Error("batch requires --batch-config FILE");
+    const controller = new AbortController(), stop = () => controller.abort(new Error("User interrupted"));
+    process.once("SIGINT", stop); process.once("SIGTERM", stop);
+    try { process.exitCode = await runBatchCommand(path.resolve(values["batch-config"]), controller.signal); }
+    finally { process.off("SIGINT", stop); process.off("SIGTERM", stop); }
+    return;
+  }
+  if (values["batch-config"]) throw new Error("--batch-config is only used by batch");
   if (values.details && command !== "report") throw new Error("--details 仅用于 report");
   if (values["dataset-name"] && command !== "index") throw new Error("--dataset-name 仅用于 index");
   if (values.dataset && !["index", "preflight", "run"].includes(command))
@@ -164,6 +178,7 @@ progress: --run PATH`,
     );
     const result = await response.json();
     if (!response.ok) throw new Error(JSON.stringify(result));
+    if (result.run_id !== path.basename(path.resolve(selectedRun))) throw new Error("Run control URL belongs to another run; inspect the lock and live process");
     console.log(JSON.stringify(result, null, 2));
     return;
   }
@@ -232,6 +247,21 @@ progress: --run PATH`,
             : isStability ? await reportStability(run) : await reportRun(run, { details: values.details });
     } finally {
       await release();
+    }
+    if (command === "status") {
+      let liveHost = false;
+      const ownerAlive = await hasLiveRunOwner(run);
+      if (ownerAlive) {
+        try {
+          const owner = await readJson<{ pid: number; url?: string; token: string }>(path.join(run, ".run-lock"));
+          if (owner.url) try {
+            const response = await fetch(owner.url + "/api/progress", { headers: { "x-run-token": owner.token }, signal: AbortSignal.timeout(1000) });
+            const progress = await response.json();
+            liveHost = response.ok && progress.run_id === path.basename(run) && progress.host?.pid === owner.pid;
+          } catch { /* A checkpoint remains readable when its Host cannot be observed. */ }
+        } catch (error) { if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error; }
+      }
+      result = { ...result, observation: { source: "checkpoint", owner_process_alive: ownerAlive, live_host: liveHost } };
     }
     console.log(JSON.stringify(result, null, 2));
     if (command === "validate" && !(result as { valid: boolean }).valid) {
@@ -352,6 +382,10 @@ progress: --run PATH`,
     if (!Number.isInteger(limit) || limit < 1) throw new Error("limit-cases must be positive");
     config.inputs.limit = limit;
   }
+  if (["preflight", "run"].includes(command)) {
+    const startup = await preflightHost({ ...host, evaluation: config } as typeof host, values["run-id"]);
+    if (startup.length) throw new Error("Startup preflight failed: " + JSON.stringify(startup));
+  }
   if ("workflow" in config && config.workflow === "attribution") {
     process.exitCode = await runAttributionWorkflowCommand({ ...host, workflow: "attribution", evaluation: config }, {
       command, runId: values["run-id"], debug: values.debug, workers: values.worker,
@@ -383,7 +417,7 @@ progress: --run PATH`,
   )
     throw new Error("没有可评对比组，请先查看 preflight");
   const engine = "pi" as const;
-  const routing = values["balance-channels"] ? createBalancedModels(host.models) : { modelForStage: createModelResolver(host.models) };
+  const routing = evaluationRouting({ ...host, evaluation: config } as typeof host, values["balance-channels"]);
   const { modelForStage } = routing;
   for (const stage of Object.keys(host.models.bindings)) modelForStage(stage);
   for (const profile of boundProfiles(host.models))
@@ -402,6 +436,8 @@ progress: --run PATH`,
       evaluatorVersion: host.evaluatorVersion,
       config,
       ...services,
+      runtime: { ...services.runtime, workerSlots: config.execution.workerSlots ?? 4 },
+      taskConcurrency: config.execution.taskConcurrency,
       plan,
       policy: config.execution,
       ...routing,
@@ -422,7 +458,7 @@ progress: --run PATH`,
     const statuses = result.execution_task_statuses;
     process.exitCode = controller.signal.aborted
       ? 130
-      : result.paused_stages.length || ["failed", "blocked", "timed_out", "cancelled", "pending", "running"].some((s) => statuses[s])
+      : result.outcome === "partial" || result.input_issue_count || result.input_rejected || result.resource_pause || result.paused_stages.length || ["failed", "blocked", "timed_out", "cancelled", "pending", "running"].some((s) => statuses[s])
         ? 2
         : 0;
   } finally {

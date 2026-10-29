@@ -15,3 +15,4 @@ export * from "./evaluation-collections.js";
 export * from "./analysis-assets.js";
 export * from "./run-journal.js";
 export * from "./checkpoint-state.js";
+export * from "./preflight.js";

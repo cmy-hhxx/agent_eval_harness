@@ -256,7 +256,8 @@ const codec: RunCodec<Checkpoint> = {
     return { workflow: "attribution", manifest, inputs: Object.fromEntries((inputCatalog as Candidate[]).map(candidate => [candidate.input_id, candidate])), usage: state.usage, recordedAttempts: state.recordedAttempts,
       tasks: Object.fromEntries(tasks.map(task => { const { id, data, ...definition } = task, info = data as AttributionTaskData, receipt = state.receipts[id]; let saved: any;
         if (receipt) { const { evaluation, submitted: _submitted, exported, ...rest } = receipt; saved = { ...rest, ...(exported ? { exported: { id: exported.id, file: exported.file } } : { evaluation }) }; }
-        return [id, { task: definition, data: { ...info, input_id: info.candidate.input_id }, state: states[id], ...(saved ? { receipt: saved } : {}) }]; })) };
+        const { candidate, ...coordinates } = info;
+        return [id, { task: definition, data: { ...coordinates, input_id: candidate.input_id }, state: states[id], ...(saved ? { receipt: saved } : {}) }]; })) };
   },
   references(checkpoint, ids) { return Object.entries(checkpoint.tasks).flatMap(([id, row]) => (!ids || ids.has(id)) && row.receipt?.exported ? [resultReference(checkpoint, row)] : []); },
   resultId: attributionResultId,

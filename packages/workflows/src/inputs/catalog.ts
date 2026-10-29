@@ -1,4 +1,4 @@
-import { canonical, object, ValidationError } from "@eval/contracts";
+import { canonical, errorText, object, ValidationError } from "@eval/contracts";
 import { fileSourceReader, localFiles, readInputCatalog, readInputCatalogRecords, saveInputCatalog } from "@eval/data";
 import { adapt } from "./records.js";
 import type { EvaluationConfig, RawInput } from "./types.js";
@@ -31,6 +31,7 @@ export interface IndexedInputRecord {
   batch_id?: string;
   case_id?: string;
   error_code?: string;
+  reason?: string;
 }
 
 /** Extract only business coordinates and byte locations; raw messages never enter the catalogue. */
@@ -66,8 +67,9 @@ export async function indexDataset(
           file.rows++;
           summary.rows++;
           const location = { file: fileIndex, line: index, byte_offset: byteOffset, byte_length: byteLength };
+          let raw: RawInput | undefined;
           try {
-            const raw = object(JSON.parse(line)) as RawInput;
+            raw = object(JSON.parse(line)) as RawInput;
             const record = adapt(raw, version, source, index, summary.default_batch_id);
             const key = canonical([record.batch_id, record.case_id, version.id]);
             if (seen.has(key))
@@ -87,6 +89,9 @@ export async function indexDataset(
               status: "invalid",
               error_code: error instanceof ValidationError ? error.issues?.[0]?.code || "input_invalid" :
                 error instanceof SyntaxError ? "input_json_invalid" : "input_invalid",
+              batch_id: String(raw?.batch_id || raw?.meta?.batch_id || summary.default_batch_id),
+              ...(raw?.case_id || raw?.meta?.case_id ? { case_id: String(raw.case_id || raw.meta?.case_id) } : {}),
+              reason: errorText(error),
             };
           }
         }
@@ -138,7 +143,8 @@ async function verifyIndex(root: string, index: InputDatasetIndex): Promise<void
       if (seen.has(key)) throw new Error("评测集索引业务标识重复：" + index.id);
       seen.add(key);
       current.valid++;
-    } else if (row.status === "invalid" && typeof row.error_code === "string" && row.error_code) {
+    } else if (row.status === "invalid" && typeof row.error_code === "string" && row.error_code &&
+      typeof row.reason === "string" && row.reason.trim()) {
       current.invalid++;
     } else throw new Error("评测集索引行状态无效：" + index.id);
   }
@@ -166,9 +172,20 @@ async function verifySources(root: string, index: InputDatasetIndex, config: Pic
             throw new Error("记录行位置或数量变化");
           const row = value as IndexedInputRecord;
           if (row.file !== fileNumber || row.line !== lineNumber ||
-            row.byte_offset !== byteOffset || row.byte_length !== byteLength || row.status !== "valid")
+            row.byte_offset !== byteOffset || row.byte_length !== byteLength)
             throw new Error("记录行位置或数量变化");
-          const candidate = adapt(object(JSON.parse(line)) as RawInput, version, file.source, lineNumber, index.default_batch_id);
+          let candidate, raw: RawInput | undefined;
+          try { raw = object(JSON.parse(line)) as RawInput; candidate = adapt(raw, version, file.source, lineNumber, index.default_batch_id); }
+          catch (error) {
+            const code = error instanceof ValidationError ? error.issues?.[0]?.code || "input_invalid"
+              : error instanceof SyntaxError ? "input_json_invalid" : "input_invalid";
+            if (row.status !== "invalid" || row.error_code !== code) throw error;
+            const batch = String(raw?.batch_id || raw?.meta?.batch_id || index.default_batch_id);
+            const caseId = raw?.case_id || raw?.meta?.case_id;
+            if (row.batch_id !== batch || row.case_id !== (caseId ? String(caseId) : undefined)) throw new Error("无效记录业务标识变化");
+            continue;
+          }
+          if (row.status === "invalid" && row.error_code !== "duplicate_input") throw new Error("无效记录已变化");
           if (candidate.batch_id !== row.batch_id || candidate.case_id !== row.case_id)
             throw new Error("记录业务标识变化");
         }
@@ -186,7 +203,6 @@ async function verifySources(root: string, index: InputDatasetIndex, config: Pic
 export async function selectDatasetInputs<T extends Pick<EvaluationConfig, "inputs">>(config: T, root: string, id: string): Promise<T> {
   const index = await readInputCatalog<InputDatasetIndex>(root, id);
   await verifyIndex(root, index);
-  if (index.invalid) throw new Error(`评测集 ${id} 有 ${index.invalid} 条无效输入，请修正后重新索引`);
   if (config.inputs.default_batch_id && config.inputs.default_batch_id !== index.default_batch_id)
     throw new Error(`评测集 ${id} 的默认批次已变更，请重新索引`);
   const versions = config.inputs.versions.flatMap((version) => {
