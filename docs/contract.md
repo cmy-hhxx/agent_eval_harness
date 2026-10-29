@@ -23,7 +23,7 @@
 
 Attribution 每条输入记录导出一行，包含 `session_meta`、`turns[]`、`session_summary`、`session_problem`；按 trace 抓取时允许多条记录共享会话身份，记录身份及去重规则见 [Session 归因](attribution.md)。每个 turn 使用 `meta/summary/problem/is_correct/correct_reason`，turn 与 session 的 Problem 同形：`problem_id/component/label/definition/problem_phenomena/reason/severity/severity_reason/evidence/calculations`。严重程度与理由均为必填，语义见[正式契约](attribution.md#正式契约)。`is_correct` 为 1、0 或 null；不再使用 `has_standard_answer`。`evidence.position` 必须同时包含 trace_index、message_index 和 path；`quote` 最多 400 字且必须精确连续。
 
-收据保存接受时的评测器标识和实际判官模型 `judge`；正式行的 `evaluator_version` 必须与收据一致。改写另存 `rewritten.evaluator_version`，统计汇总 `evaluator_versions` 与 `judge_models`。同 run 可混合版本：已接受结果不变，未完成任务使用当前配置。
+收据保存接受时的评测器标识和实际判官模型 `judge`；正式行存在 `evaluator_version` 时必须与收据一致。归因纯判词行的版本、模型和原始回答坐标通过正式溯源索引关联原收据，不伪造顶层字段。改写另存 `rewritten.evaluator_version`，统计汇总 `evaluator_versions` 与 `judge_models`。同 run 及跨 run 复用均可混合评测器版本：已接受判词保留原版本，未完成任务使用当前配置；完整成功与最新覆盖规则见[目录约定](usage.md#目录约定)。
 
 ## 输入与输出的分层
 

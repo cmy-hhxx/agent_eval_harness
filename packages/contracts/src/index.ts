@@ -183,6 +183,12 @@ export interface ResultReference {
 export interface OutputTarget {
   kind: "directory";
   path: string;
+  /** Public business partitions, or an explicitly requested isolated run delivery. */
+  layout?: "business" | "run";
+  /** Explicit original run ledgers needed to verify previously organized formal rows. */
+  receiptSources?: string[];
+  /** False only when the caller explicitly requests a new evaluation. */
+  reuseCompleted?: boolean;
   /** Explicit root for test runs; never inferred from production directory names. */
   testPath?: string;
 }
@@ -326,6 +332,8 @@ export interface SubmissionReceipt extends Submission {
   judge: string;
   /** Unaccepted upstream task IDs at acceptance, propagated without inventing evaluations. */
   incompleteDependencies?: string[];
+  /** Original durable receipt when a completed business evaluation is reused. */
+  reusedFrom?: { run: string; taskId: string };
   submitted?: unknown;
   exported?: ResultReference & { row: JsonObject; auxiliary?: boolean };
 }
@@ -552,6 +560,8 @@ export interface WorkflowDefinition {
   scheduling?: WorkflowScheduling;
 }
 export interface RunRepository {
+  /** Inspect formal results before dispatch; release shared business claims on exit. */
+  prepareRun?(run: string, state: RunState, inputs: Record<string, unknown>, selectedTaskIds?: string[]): Promise<() => Promise<void>>;
   readRun(run: string): Promise<RunState>;
   /** Decode only the requested tasks; unrelated result rows stay on disk. */
   readTasks(run: string, taskIds: string[]): Promise<RunState>;
@@ -589,6 +599,8 @@ export interface LogSink {
   evaluation(record: EvaluationLog): Promise<boolean>;
 }
 export interface TaskState {
+  /** A startup prerequisite failed; retries cannot turn it into model work. */
+  admissionBlock?: string;
   phase?: AttemptStatus["phase"];
   timeoutPhase?: AttemptStatus["timeoutPhase"];
   /** Actual channel selected for the most recent dispatched attempt. */

@@ -15,7 +15,7 @@ export interface RunLayout {
 }
 
 export function runLayout(target: OutputTarget, runId: string): RunLayout {
-  const directory = path.join(target.path, safeId(runId));
+  const directory = path.join(target.path, ...(target.layout === "business" ? [".runs"] : []), safeId(runId));
   return {
     directory,
     stateFile: path.join(directory, "state.json"),

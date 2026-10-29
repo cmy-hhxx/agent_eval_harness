@@ -19,7 +19,7 @@
 | Clustering | 归类、建类、合并与纯问题库规则 | [公开入口](../../packages/agents/src/clustering/index.ts) |
 | Rewrite | 文本槽位校验 | [公开入口](../../packages/agents/src/rewrite/index.ts) |
 | Workflow Inputs | 共用输入类型、来源编目、适配与按原始坐标重读 | [公开入口](../../packages/workflows/src/inputs/index.ts) |
-| Workflow Review | 共用归因、指令遵循归因材料与证据、过程投影 | [公开入口](../../packages/workflows/src/review/index.ts) |
+| Workflow Review | 共用归因材料、证据、过程投影及业务结果复用与溯源 | [公开入口](../../packages/workflows/src/review/index.ts) · [正式结果复用](../../packages/workflows/src/review/business-result-repository.ts) |
 | 归因维度 | 维度登记、独立材料绑定与结果封装 | [dimensions.ts](../../packages/workflows/src/review/dimensions.ts) |
 | Comparison Workflow | 输入、盲测、阶段绑定、改写回填、责任摘要、稳定性实验与报告 | [index.ts](../../packages/workflows/src/comparison/index.ts) |
 | Attribution Workflow | 独立 session 归因的任务规划、提交、恢复与正式导出 | [index.ts](../../packages/workflows/src/attribution/index.ts) |

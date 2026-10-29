@@ -11,9 +11,9 @@ npm run eval -- preflight --config configs/host.json --config configs/local/mode
 npm run eval -- run --run-id pi-001 \
   --config configs/host.json --config configs/local/models.json \
   --output /mnt/fin_bench/eval_data/0_wencai/3_eval_output/0_daily_eval
-npm run eval -- status --run /mnt/fin_bench/eval_data/0_wencai/3_eval_output/0_daily_eval/pi-001
-npm run eval -- report --run /mnt/fin_bench/eval_data/0_wencai/3_eval_output/0_daily_eval/pi-001
-npm run eval -- validate --run /mnt/fin_bench/eval_data/0_wencai/3_eval_output/0_daily_eval/pi-001
+npm run eval -- status --run /mnt/fin_bench/eval_data/0_wencai/3_eval_output/0_daily_eval/.runs/pi-001
+npm run eval -- report --run /mnt/fin_bench/eval_data/0_wencai/3_eval_output/0_daily_eval/.runs/pi-001
+npm run eval -- validate --run /mnt/fin_bench/eval_data/0_wencai/3_eval_output/0_daily_eval/.runs/pi-001
 ```
 
 `preflight` 不调用模型，统一检查模型声明、密钥、Worker 构建、目录可写性、运行锁与日志位置。先应用 INI 环境再初始化日志。坏记录登记文件、行号、batch/case ID 与原因，其余记录继续；直接输入和命名评测集使用相同隔离语义。处理结束后 `outcome:complete` 表示全部成功，`outcome:partial` 表示有缺损。执行退出码为 0 全部成功、2 有输入拒绝/任务失败/资源暂停、130 中断。
@@ -64,7 +64,7 @@ npm run eval -- model-probe --stage comparison --config configs/local/models.jso
 | standardAnswerReview | 默认关闭；显式启用标准答案质疑与复核 |
 | rewrite | 归因、对比、逐项点评及聚类改写，默认开启 |
 | clustering | 主线默认关闭；后置聚类的支持数与类数预算 |
-| output.path / output.testPath / problemLibrary | 正式运行根目录、独立测试根目录与每模型问题库；测试根目录不从正式目录名推导 |
+| output.path / output.testPath / output.layout / problemLibrary | 正式交付根目录、独立测试根目录、交付布局与每模型问题库；layout 默认 business，只有显式 run 才交付隔离运行目录 |
 
 默认值与字段全集直接查 [EvalConfig](../packages/workflows/src/comparison/types.ts)、[DEFAULT_POLICY](../packages/contracts/src/index.ts)、[loadConfig](../apps/host/src/config.ts)，不复制到文档。
 
@@ -112,8 +112,13 @@ Worker 启动和重建预算属于容量，耗尽后隔离容量而不把健康�
 | /mnt/fin_bench/eval_data/{source}/2_eval_input/ | 服务器评测输入，不复制到本地或每个 run |
 | /mnt/fin_bench/eval_data/4_user_kyc_data/{source}/ | 当前任务需要的用户 KYC 数据 |
 | data/input-catalog/ | 业务身份及字节位置索引，不存正文 |
-| {source}/3_eval_output/0_daily_eval/<YYYY-MM-DD>/results/ | 日常正式评测，按业务日期归档 |
-| {source}/3_eval_output/0_daily_eval/<YYYY-MM-DD>/cluster/ | 当天的聚类树与状态；未开始时保留空的 `cluster_tree.jsonl` 和 `state.json` |
+| {source}/3_eval_output/0_daily_eval/<模型>/<模型>-YYYY-MM-DD.jsonl | 日常单模型归因 |
+| {source}/3_eval_output/3_lost_user_eval/<模型>/<模型>-YYYY-MM-DD.jsonl | 流失样本归因 |
+| <正式根>/criteria/criteria-YYYY-MM-DD.jsonl | 当天共享的共同标准 |
+| <正式根>/comparison/<模型A>_vs_<模型B>/<模型A>_vs_<模型B>-YYYY-MM-DD.jsonl | 当天对局；comparison-review、comparison-verification 等对应产物采用相同的模型对/日期命名 |
+| <正式根>/<模型>/<其他产物>/<模型>-YYYY-MM-DD.jsonl | 其他单模型正式产物 |
+| <正式根>/.delivery/provenance/YYYY-MM-DD.jsonl | 正式行与原始业务回答、来源收据、评测器和判官的溯源索引，不保存正文 |
+| <正式根>/.runs/<run ID>/ | 内部运行账本、恢复状态与来源结果，不作为默认交付入口 |
 | {source}/3_eval_output/1_task_eval/<任务>/ | 专项正式评测 |
 | 当前评测目录的 attribution/、clustering/ | 独立归因与聚类作业 |
 | {source}/3_eval_output/test_eval/ | 所有小样本、试跑与稳定性验证 |
@@ -123,6 +128,16 @@ Worker 启动和重建预算属于容量，耗尽后隔离容量而不把健康�
 | .artifacts/ | 临时开发验证材料 |
 
 输入文件布局由各来源的 `2_eval_input/` 决定，通过配置显式选择；不假定固定的模型或日期子目录。记录身份以 JSON 为准，不按文件名分批。原始输入、运行结果、缓存和本机配置不入库。`0_archive/` 与 `1_7z_data/` 不属于默认读取范围。
+
+正式交付日期使用原始输入已确定的业务日期/批次日期。当前 AIME 日常、AIME 流失和问财均使用完整的 `batch_id: YYYY-MM-DD`，索引保留该值；缺失或不是有效日历日期时明确暂缓，不退回评测启动日期。AIME 日常可能出现 `batch_id=2026-10-26`、`request_time=2026-10-25T17:22:06.486Z`，两者不能通过截取时间互相替代。流失输入已经有日期型 batch_id，不另行转换 recalled_date；问财的无时区 request_time 也不重新解释。被评模型使用外部配置的 `version.id`，不以底层模型名称、目录名或判官模型分区。
+
+启动评测时先核对当前正式根目录中的已接受结果、来源收据和原始输入。只有模型、业务样本、原始回答、trace 范围及适用材料一致，且完整成功的结果才复用；run ID 和 evaluatorVersion 不参与排除复用。同一回答多份完整成功结果以最新 `acceptedAt` 为准，交付文件只保留该份，原收据和来源仍可追溯。当前迭代允许旧评测器判词缺少后来新增的字段，复用时原样保留，不调用模型补字段或伪装成当前版本。部分完成继续补评；已有行但身份、完成状态或来源无法核实时列出原因并暂缓该样本，不自动当作未评重新执行。
+
+相同日期/模型的并发运行共用分区准入锁，避免两个新 run 同时检查后重复评测；占用分区暂缓，其他独立分区继续。正式视图与溯源索引使用统一文件写入队列和发布锁，发布中断从原接受行恢复。内部 `.runs/` 继续保存恢复账本与来源结果；除非用户明确要求 `output.layout: "run"`，不能把 `daily-production-*` 等目录当成交付入口。不同来源和日常/流失根目录由外部配置隔离，不扫描或猜测其他业务根。
+
+已整理的历史结果通过 `output.receiptSources` 显式登记原运行账本目录，包括确有需要的输出归档内的具体 run；不把整个归档作为默认递归扫描根。存在 `organization.json` 时，读取其 `artifact/relative/source_lines` 核对原正式行与当前目标行。旧清单中的来源绝对路径可能因移动失效，使用登记的实际 run 根及相对结果坐标，不把整理时间当作评测接受时间。缺少映射或收据时保留原文件并暂缓相关样本，不通过覆盖或追加来猜测归属。
+
+`output.reuseCompleted` 默认 true，显式 run 布局也不因换 run ID 自动重评。只有用户明确要求重新评测时才设为 false；隔离模拟测试使用该显式开关。复用只导入原接受判词与溯源，当前运行不把历史模型用量当作新调用。
 
 ### 历史问题样本的来源复核
 
@@ -216,8 +231,8 @@ tail -f log/runtime.log
 停止该 run 的 Host，先预览，再准备固定补跑范围：
 
 ```bash
-npm run eval -- retry-failed --run /mnt/fin_bench/eval_data/0_wencai/3_eval_output/0_daily_eval/pi-001
-npm run eval -- retry-failed --run /mnt/fin_bench/eval_data/0_wencai/3_eval_output/0_daily_eval/pi-001 --task <task-uuid> --apply
+npm run eval -- retry-failed --run /mnt/fin_bench/eval_data/0_wencai/3_eval_output/0_daily_eval/.runs/pi-001
+npm run eval -- retry-failed --run /mnt/fin_bench/eval_data/0_wencai/3_eval_output/0_daily_eval/.runs/pi-001 --task <task-uuid> --apply
 npm run eval -- run --run-id pi-001 --config configs/host.json --config configs/local/models.json
 ```
 
@@ -289,8 +304,8 @@ npm run eval -- validate-stability --run-id stability-001 \
 已接受正式对比的独立核验：
 
 ```bash
-npm run eval -- verify-comparisons --run /mnt/fin_bench/eval_data/0_wencai/3_eval_output/0_daily_eval/pi-001 --result <comparison-id>
-npm run eval -- verify-comparisons --run /mnt/fin_bench/eval_data/0_wencai/3_eval_output/0_daily_eval/pi-001 --result <comparison-id> --apply
+npm run eval -- verify-comparisons --run /mnt/fin_bench/eval_data/0_wencai/3_eval_output/0_daily_eval/.runs/pi-001 --result <comparison-id>
+npm run eval -- verify-comparisons --run /mnt/fin_bench/eval_data/0_wencai/3_eval_output/0_daily_eval/.runs/pi-001 --result <comparison-id> --apply
 npm run eval -- run --run-id pi-001 --config configs/host.json --config configs/local/models.json
 ```
 
@@ -301,8 +316,8 @@ npm run eval -- run --run-id pi-001 --config configs/host.json --config configs/
 Comparison run 的归因结束后，可跨多个该类 run 创建独立聚类，聚类命令使用包含 clustering 和 problemLibrary 设置的对战配置：
 
 ```bash
-npm run eval -- cluster --run /mnt/fin_bench/eval_data/0_wencai/3_eval_output/0_daily_eval/pi-001 --run-id problems-001
-npm run eval -- cluster --run /mnt/fin_bench/eval_data/0_wencai/3_eval_output/0_daily_eval/pi-001 --run-id problems-001 \
+npm run eval -- cluster --run /mnt/fin_bench/eval_data/0_wencai/3_eval_output/0_daily_eval/.runs/pi-001 --run-id problems-001
+npm run eval -- cluster --run /mnt/fin_bench/eval_data/0_wencai/3_eval_output/0_daily_eval/.runs/pi-001 --run-id problems-001 \
   --config configs/host.json --config configs/local/models.json --apply
 npm run eval -- cluster --run-id problems-001 --apply \
   --config configs/host.json --config configs/local/models.json
@@ -321,9 +336,9 @@ run 可重复；续跑只给作业 ID，查看进度省略 apply。来源状态�
 reattribute 按明确来源的正式对比定位回答，重做共同标准、归因与改写，不执行 Comparison，也不改来源 run。
 
 ```bash
-npm run eval -- reattribute --run /mnt/fin_bench/eval_data/0_wencai/3_eval_output/0_daily_eval/pi-001 \
+npm run eval -- reattribute --run /mnt/fin_bench/eval_data/0_wencai/3_eval_output/0_daily_eval/.runs/pi-001 \
   --from-date YYYY-MM-DD --pilot-answers 30 --run-id attribution-pilot
-npm run eval -- reattribute --run /mnt/fin_bench/eval_data/0_wencai/3_eval_output/0_daily_eval/pi-001 \
+npm run eval -- reattribute --run /mnt/fin_bench/eval_data/0_wencai/3_eval_output/0_daily_eval/.runs/pi-001 \
   --from-date YYYY-MM-DD --pilot-answers 30 --run-id attribution-pilot \
   --config configs/host.json --config configs/local/models.json --config configs/test-eval.json --apply
 npm run eval -- reattribute --run-id attribution-pilot --apply \
@@ -352,15 +367,17 @@ node scripts/attribution-review.mjs --run /mnt/fin_bench/eval_data/0_wencai/3_ev
 停止该 run 的 Host，预览后加 apply，再同 ID 续跑：
 
 ```bash
-npm run eval -- rewrite-comparisons --run /mnt/fin_bench/eval_data/0_wencai/3_eval_output/0_daily_eval/pi-001 --scope items
-npm run eval -- rewrite-comparisons --run /mnt/fin_bench/eval_data/0_wencai/3_eval_output/0_daily_eval/pi-001 \
+npm run eval -- rewrite-comparisons --run /mnt/fin_bench/eval_data/0_wencai/3_eval_output/0_daily_eval/.runs/pi-001 --scope items
+npm run eval -- rewrite-comparisons --run /mnt/fin_bench/eval_data/0_wencai/3_eval_output/0_daily_eval/.runs/pi-001 \
   --scope items --mode refresh --result <comparison-id> --slot comparison.2.B.summary --apply
-npm run eval -- rewrite-comparisons --run /mnt/fin_bench/eval_data/0_wencai/3_eval_output/0_daily_eval/pi-001 --scope verdicts --apply
+npm run eval -- rewrite-comparisons --run /mnt/fin_bench/eval_data/0_wencai/3_eval_output/0_daily_eval/.runs/pi-001 --scope verdicts --apply
 ```
 
 默认 missing 补缺；refresh 必须指定 task、result 或 --all。scope 为 items 或 verdicts，slot 可重复。应用保存固定清单，只更新选中槽位；应执行完当前清单再准备下一份。未完成同范围任务复用 UUID 与预算，已接受改写的刷新创建新 UUID。
 
 ## 运行产物
+
+下表是内部运行账本的文件集合。默认 business 布局的正式交付入口见[目录约定](#目录约定)；显式 run 布局才直接交付这些运行目录。
 
 | 文件 | 用途 |
 |---|---|
@@ -397,7 +414,7 @@ debug 才保存 _internal/：契约快照、attempt 参数与记录、事件日�
 report 重建报告与统计，不调用模型；validate 检查结果、证据、覆盖及可选附件。计划未完成时整体 valid=false，不能用已有行合法代替全量完成。
 
 ```bash
-npm run eval -- validate --run /mnt/fin_bench/eval_data/0_wencai/3_eval_output/0_daily_eval/pi-001 \
+npm run eval -- validate --run /mnt/fin_bench/eval_data/0_wencai/3_eval_output/0_daily_eval/.runs/pi-001 \
   --require-batch <batch-id> --require-rewrite verdicts --require-rewrite items
 ```
 

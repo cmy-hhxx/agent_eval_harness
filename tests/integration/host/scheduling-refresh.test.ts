@@ -68,7 +68,9 @@ process.once("disconnect", close);
         }
       },
     });
-    assert.equal(started.length, 3);
+    // Progress follows the Worker acknowledgement. The fourth slot can already
+    // be dispatched when the third notification requests cancellation.
+    assert(started.length >= 3 && started.length <= 4, JSON.stringify(started));
     assert(started.indexOf(downstream.id) > 0 && started.indexOf(downstream.id) <= 2,
       "newly ready comparison must be admitted among the first three starts while expansion is pending");
   } finally {

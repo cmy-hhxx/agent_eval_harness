@@ -120,7 +120,7 @@ export async function fixtureConfig(
   config.comparisons = [["a_fast", "b_fast"]];
   config.rewrite = { comparison: rewrite, attribution: rewrite, clustering: rewrite };
   config.clustering = { ...config.clustering, enabled: clustering, minSupport: 1 };
-  config.output = { kind: "directory", path: path.join(directory, "runs"), testPath: path.join(directory, "experiments") };
+  config.output = { kind: "directory", layout: "run", reuseCompleted: false, path: path.join(directory, "runs"), testPath: path.join(directory, "experiments") };
   config.problemLibrary = { kind: "directory", path: path.join(directory, "problems") };
   config.execution.retries = 0;
   config.execution.retryDelaySeconds = 0;

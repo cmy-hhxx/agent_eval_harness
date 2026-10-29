@@ -2,12 +2,13 @@ import path from "node:path";
 import { readJson, runLayout, runLock, exists } from "@eval/data";
 import { runBatch, runEvaluation, WorkerSupervisor, inputDiagnostics, type BatchJob } from "@eval/host";
 import { loadIdentity, createRunWorkspace } from "@eval/runtime/client";
-import { comparisonRepository, comparisonWorkflow } from "@eval/workflows/comparison";
-import { attributionRepository, attributionWorkflow } from "@eval/workflows/attribution";
+import { comparisonWorkflow } from "@eval/workflows/comparison";
+import { attributionWorkflow } from "@eval/workflows/attribution";
 import { loadConfig, readSettings } from "./config.js";
 import { createBalancedModels } from "./balanced-models.js";
 import { services, logger } from "./composition.js";
 import { preflightHost } from "./preflight.js";
+import { businessAttributionRepository, businessComparisonRepository } from "./business-results.js";
 
 interface BatchConfig {
   stateDirectory: string;
@@ -64,7 +65,7 @@ export async function runBatchCommand(file: string, signal: AbortSignal) {
         const issues = await preflightHost(host, entry.runId);
         if (issues.length) throw new Error("Run startup preflight failed: " + JSON.stringify(issues));
         const workflow = host.workflow === "attribution" ? attributionWorkflow : comparisonWorkflow;
-        const repository = host.workflow === "attribution" ? attributionRepository : comparisonRepository;
+        const repository = host.workflow === "attribution" ? businessAttributionRepository : businessComparisonRepository;
         const run = runLayout(host.evaluation.output, entry.runId).directory;
         const resuming = await exists(runLayout(host.evaluation.output, entry.runId).stateFile);
         if (resuming) {

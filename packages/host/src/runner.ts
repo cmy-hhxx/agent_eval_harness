@@ -125,6 +125,8 @@ export async function runEvaluation(options: RunOptions): Promise<Record<string,
   if (options.signal?.aborted) abort();
   let store: RunStore | undefined, hot: RunHotStore | undefined, http: Awaited<ReturnType<typeof listen>> | undefined;
   let workspace: Awaited<ReturnType<typeof createRunWorkspace>> | undefined;
+  let releaseBusiness: (() => Promise<void>) | undefined;
+  const selectedTaskIds = options.taskIds?.slice();
   let progressTimer: ReturnType<typeof setInterval> | undefined, checkpointTimer: ReturnType<typeof setInterval> | undefined;
   let wake: () => void = () => {};
   const pause = () => wake();
@@ -197,6 +199,8 @@ export async function runEvaluation(options: RunOptions): Promise<Record<string,
     manifest.engine = identity;
     manifest.evaluatorVersion = options.evaluatorVersion;
     manifest.config = options.config;
+    if (options.repository.prepareRun)
+      releaseBusiness = await options.repository.prepareRun(run, saved, inputs, selectedTaskIds);
     if (options.debug !== undefined) manifest.debug = options.debug;
     cumulativeAttempts(manifest);
     if (options.maxAttempts !== undefined || options.stopStartingAt !== undefined)
@@ -208,9 +212,9 @@ export async function runEvaluation(options: RunOptions): Promise<Record<string,
     delete manifest.outcome;
     const contentRemaining = (task: PlannedTask) => 1 + (options.policy.stageRepairAttempts?.[task.stage] ?? options.policy.repairAttempts) -
       (manifest.states[task.id].failure?.contentSubmissions ?? 0);
-    if (options.taskIds) {
-      if (!options.taskIds.length) throw new Error("Task selection must not be empty");
-      manifest.executionScope = [...new Set(options.taskIds)];
+    if (selectedTaskIds) {
+      if (!selectedTaskIds.length) throw new Error("Task selection must not be empty");
+      manifest.executionScope = [...new Set(selectedTaskIds)];
     }
     const selected = manifest.executionScope && new Set(manifest.executionScope);
     const taskIds = new Set(manifest.tasks.map(task => task.id));
@@ -252,7 +256,10 @@ export async function runEvaluation(options: RunOptions): Promise<Record<string,
       if (!dispatchable(task)) continue;
       const receipt = await store.receipt(task.id),
         state = manifest.states[task.id];
-      if (receipt) {
+      if (state.admissionBlock && !receipt) {
+        state.status = "blocked";
+        state.reason = state.admissionBlock;
+      } else if (receipt) {
         state.status = "succeeded";
       } else if (attemptsExhausted(task)) {
         state.status = "failed";
@@ -1185,6 +1192,7 @@ export async function runEvaluation(options: RunOptions): Promise<Record<string,
     await finish(() => store ? store.close() : hot?.close());
     await finish(() => http?.close());
     await finish(() => workspace?.close());
+    if (releaseBusiness) await finish(releaseBusiness);
     await finish(unlock);
     if (cleanupErrors.length) {
       const errors = [...(runFailure ? [runFailure.error] : []), ...cleanupErrors];

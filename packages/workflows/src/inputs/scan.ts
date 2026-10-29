@@ -107,6 +107,7 @@ export async function collectInputs(config: Pick<EvaluationConfig, "inputs">,
             }
             if (row.error) throw row.error;
             const record = row.record!;
+            record.source_revision = revision;
             const selectedRecord=scopeRows?.get(canonical([version.id,source,index]));
             if(selectedRecord&&'trace_id' in selectedRecord&&selectedRecord.trace_id!==record.trace_id)throw new Error('输入范围与实际trace_id不一致');
             options.prepareRecord?.(record);

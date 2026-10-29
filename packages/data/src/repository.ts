@@ -37,7 +37,7 @@ export type ResultEncoder = (
 export function createRunRepository<Checkpoint>(
   codec: RunCodec<Checkpoint>,
   encodeResult: ResultEncoder,
-  options: { appendOnly?: boolean; indexedFiles?: readonly string[] } = {},
+  options: { appendOnly?: boolean; indexedFiles?: readonly string[]; semanticReferences?: boolean } = {},
 ): RunRepository {
   const indexedFiles = new Set(options.indexedFiles);
   async function readState(run: string, taskIds?: ReadonlySet<string>): Promise<RunState> {
@@ -53,13 +53,14 @@ export function createRunRepository<Checkpoint>(
     for (const reference of codec.references(checkpoint, taskIds)) {
       const name = safeId(reference.file!);
       const references = byFile.get(name) ?? byFile.set(name, new Map()).get(name)!;
-      if (indexedFiles.has(name) && (!Number.isSafeInteger(reference.line) || reference.line! < 1))
+      if (indexedFiles.has(name) && !options.semanticReferences && (!Number.isSafeInteger(reference.line) || reference.line! < 1))
         throw new Error("结果行引用无效：" + reference.id);
       const previous = references.get(reference.id);
       if (previous && previous.line !== reference.line) throw new Error("结果 ID 对应冲突行：" + reference.id);
       references.set(reference.id, reference);
     }
     const rows = new Map<string, JsonObject>();
+    const rowLines = new Map<string, number>();
     for (const [name, references] of byFile) {
       const file = path.join(layout.results, name);
       if (!(await exists(file))) continue;
@@ -73,7 +74,8 @@ export function createRunRepository<Checkpoint>(
       for await (const line of readJsonlText(file)) {
         lineNumber++;
         const indexedId = idsByLine.get(lineNumber);
-        if (indexedFiles.has(name) && !indexedId) continue;
+        if (indexedFiles.has(name) && !indexedId &&
+            !(options.semanticReferences && references.has(codec.resultId(JSON.parse(line) as JsonObject)))) continue;
         const row = JSON.parse(line) as JsonObject,
           id = indexedId ?? codec.resultId(row);
         if (taskIds && !references.has(id)) continue;
@@ -82,6 +84,7 @@ export function createRunRepository<Checkpoint>(
         if (previous && canonical(previous) !== canonical(row))
           throw new Error("结果 ID 对应冲突结果：" + id);
         rows.set(key, row);
+        if (!rowLines.has(key)) rowLines.set(key, lineNumber);
       }
     }
     const decoded = codec.decode(checkpoint, (reference) => {
@@ -89,6 +92,8 @@ export function createRunRepository<Checkpoint>(
       if (!row) throw new Error(`结果文件缺失：${reference.id}（${safeId(reference.file!)}）`);
       return row;
     }, taskIds);
+    for (const receipt of Object.values(decoded.receipts)) if (receipt.exported?.file && receipt.exported.line === undefined)
+      receipt.exported.line = rowLines.get(safeId(receipt.exported.file!) + "\u0000" + receipt.exported.id);
     if (!taskIds)
       for (const event of await readProgressJournal(run, decoded.manifest.journalSequence ?? 0))
         applyRunJournalDelta(decoded, event.event);
@@ -110,6 +115,7 @@ export function createRunRepository<Checkpoint>(
       const directory = locateRun(run).results;
       const files = new Map<string, ReturnType<typeof createResultFileWriter>>();
       const lineCounts = new Map<string, number>();
+      const existingLines = new Map<string, number>();
       const incomplete = new Set<string>();
       let existingRows: Map<string, JsonObject> | undefined;
       let initialized = false;
@@ -134,6 +140,9 @@ export function createRunRepository<Checkpoint>(
                 const key = safeId(name) + "\u0000" + codec.resultId(row), previous = existingRows.get(key);
                 if (previous && canonical(previous) !== canonical(row)) throw new Error("结果 ID 对应冲突结果：" + codec.resultId(row));
                 existingRows.set(key, row);
+                const number = (lineCounts.get(name) ?? 0) + 1;
+                lineCounts.set(name, number);
+                if (!existingLines.has(key)) existingLines.set(key, number);
               }
             }
           }
@@ -195,7 +204,23 @@ export function createRunRepository<Checkpoint>(
               // Receipts are authoritative. Rebuild once on open to discard an append interrupted
               // before its checkpoint; identical bodies still belong to distinct task identities.
               if (opened) await writer.append(results.map(result => result.row));
-              else await writer.replace(results.map(result => result.row));
+              else if (options.appendOnly && await exists(path.join(directory, file))) {
+                const handle = await open(path.join(directory, file), "r");
+                let prefix = true, count = 0;
+                try {
+                  const before = await handle.stat(), tail = Buffer.alloc(1);
+                  if (before.size) { await handle.read(tail, 0, 1, before.size - 1); prefix = tail[0] === 10; }
+                  for await (const text of readJsonlText(path.join(directory, file))) {
+                    if (!results[count] || canonical(JSON.parse(text)) !== canonical(results[count].row)) prefix = false;
+                    count++;
+                  }
+                  const after = await handle.stat();
+                  if (before.ino !== after.ino || before.size !== after.size || before.mtimeMs !== after.mtimeMs)
+                    throw new Error("Result file changed while verifying accepted rows");
+                } finally { await handle.close(); }
+                if (prefix) await writer.append(results.slice(count).map(result => result.row));
+                else await writer.replace(results.map(result => result.row));
+              } else await writer.replace(results.map(result => result.row));
               lineCounts.set(file, line);
               continue;
             }
@@ -206,8 +231,18 @@ export function createRunRepository<Checkpoint>(
               for (const result of exports.values())
                 if (result.file === file) all.set(result.id, result.row);
               await writer.replace(all.values());
+              let line = 0;
+              for (const id of all.keys()) existingLines.set(file + "\u0000" + id, ++line);
+              lineCounts.set(file, line);
               incomplete.delete(file);
-            } else await writer.append(rows.values());
+            } else {
+              await writer.append(rows.values());
+              let line = lineCounts.get(file) ?? 0;
+              for (const id of rows.keys()) existingLines.set(file + "\u0000" + id, ++line);
+              lineCounts.set(file, line);
+            }
+            for (const result of exports.values()) if (result.file === file)
+              result.line = existingLines.get(file + "\u0000" + result.id);
             for (const [id, row] of rows) existingRows.set(file + "\u0000" + id, row);
           }
           for (const [id, exported] of exports) {
@@ -220,6 +255,7 @@ export function createRunRepository<Checkpoint>(
           processed.clear();
           files.clear();
           lineCounts.clear();
+          existingLines.clear();
           incomplete.clear();
           existingRows = undefined;
           initialized = false;

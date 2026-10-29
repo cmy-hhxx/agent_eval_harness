@@ -7,10 +7,11 @@ import { attributionAgent, componentAttributionProfile, sessionAttributionProfil
 import { rewriteAgent, rewriteProfile } from "@eval/agents/rewrite";
 import { clusteringAgent, clusteringProfile } from "@eval/agents/clustering";
 import { criteriaAgent, criteriaProfile } from "@eval/agents/criteria";
-import { comparisonWorkflow, comparisonRepository, reportRun, outputSchema } from "@eval/workflows/comparison";
+import { comparisonWorkflow, reportRun, outputSchema } from "@eval/workflows/comparison";
 import path from "node:path";
 import { createFileLogger } from "@eval/data";
 import { ROOT, runtimePaths } from "./paths.js";
+import { businessComparisonRepository } from "./business-results.js";
 const applicationLogger = () => createFileLogger({
   directory: path.resolve(process.env.EVAL_LOG_DIR || path.join(ROOT, "log")),
   lockDirectory: path.resolve(process.env.EVAL_LOG_LOCK_DIR || path.join(ROOT, ".runtime/log-writer")),
@@ -28,7 +29,7 @@ export const services = {
   logger,
   agents,
   taskSource: comparisonWorkflow,
-  repository: comparisonRepository,
+  repository: businessComparisonRepository,
   runtime: runtimePaths,
   report: reportRun,
   snapshots: {

@@ -4,6 +4,7 @@ import { attributionRepository, attributionWorkflow, planAttribution, validateAt
 import type { AttributionHostConfig } from "./config.js";
 import { evaluationRouting } from "./evaluation-routing.js";
 import { services } from "./composition.js";
+import { businessAttributionRepository } from "./business-results.js";
 
 export async function readAttributionWorkflowCommand(command: "status" | "validate", run: string) {
   const state = await attributionRepository.readRun(run);
@@ -34,7 +35,7 @@ export async function runAttributionWorkflowCommand(host: AttributionHostConfig,
     const { report: _report, ...baseServices } = services;
     const result = await runEvaluation({ ...baseServices, ...routing, taskSource: attributionWorkflow,
       runtime: { ...baseServices.runtime, workerSlots: host.evaluation.execution.workerSlots ?? 4 },
-      repository: attributionRepository, runId: options.runId, output: host.evaluation.output, engine: "pi",
+      repository: businessAttributionRepository, runId: options.runId, output: host.evaluation.output, engine: "pi",
       evaluatorVersion: host.evaluatorVersion, config: host.evaluation, plan: initial,
       policy: host.evaluation.execution, concurrency: host.evaluation.execution.concurrency,
       taskConcurrency: host.evaluation.execution.taskConcurrency, retries: host.evaluation.execution.retries,

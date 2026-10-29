@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import path from "node:path";
 import os from "node:os";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
-import { exists, runLock } from "@eval/data";
+import { exists, runLayout, runLock } from "@eval/data";
 import { loadConfig, parseSettings } from "@eval/host-app/config";
 import { initializeServices } from "@eval/host-app/composition";
 import { preflightHost } from "../../../apps/host/src/preflight.js";
@@ -27,7 +27,7 @@ test("INI log paths are applied before logger creation and startup reports all m
   process.env.EVAL_HOT_STATE_ROOT = blocked;
   process.env.EVAL_PYTHON = path.join(directory, "missing-python");
   host.evaluation.output.path = path.join(directory, "results");
-  unlock = await runLock(path.join(host.evaluation.output.path, "owned"));
+  unlock = await runLock(runLayout(host.evaluation.output, "owned").directory);
   const issues = await preflightHost(host, "owned");
   assert(issues.some(issue => issue.check === settings.channels["evaluation-gateway"].apiKeyEnv));
   assert(issues.some(issue => issue.check === "python"));

@@ -56,6 +56,10 @@ export interface Candidate {
   /** Source/configuration names that differ from the display name. */
   identity_names?: string[];
   input_id: string;
+  /** Persistent answer identity selected from verified formal results, never a content hash. */
+  answer_id?: string;
+  /** File identity at input admission; protects reuse after an in-place source edit. */
+  source_revision?: string;
   trace_id: string | null;
   source: string;
   line: number;

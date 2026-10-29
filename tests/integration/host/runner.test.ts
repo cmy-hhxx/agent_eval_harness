@@ -79,7 +79,7 @@ test("stage content limits stop rejected attribution after its first submission 
   }finally{await worker.close();await rm(directory,{recursive:true,force:true});}
 });
 
-test("two workers execute the current graph, preserve formal results and reuse only same-run receipts", async () => {
+test("two workers preserve same-run receipts and honor explicitly requested reevaluation across runs", async () => {
   const { directory, config, modelForStage } = await fixtureConfig();
   config.comparisons = [["a_fast", "b_fast"], ["a_expert", "b_expert"]];
   const plan = await buildPlan(config), calls = new Map<string, number>();

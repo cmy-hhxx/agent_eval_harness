@@ -246,16 +246,15 @@ function attributionResultId(row: JsonObject): string {
 
 interface Checkpoint { workflow: "attribution"; manifest: Omit<RunManifest, "tasks" | "states" | "inputs" | "inputCatalog">; inputs: Record<string, Candidate>; tasks: Record<string, { task: Omit<PlannedTask, "id" | "data">; data: Omit<AttributionTaskData, "candidate"> & { input_id: string }; state: RunManifest["states"][string]; receipt?: any }>; usage: RunState["usage"]; recordedAttempts: number }
 function resultReference(checkpoint: Checkpoint, row: Checkpoint["tasks"][string]) {
-  const candidate = checkpoint.inputs[row.data.input_id];
-  return { ...row.receipt.exported, id: canonical([candidate.session_id ?? candidate.case_id,
-    turns(candidate).map(trace => trace.trace_id)]) };
+  if (!checkpoint.inputs[row.data.input_id]) throw new Error("归因结果缺少输入身份");
+  return { ...row.receipt.exported };
 }
 const codec: RunCodec<Checkpoint> = {
   encode(state) {
     const { tasks, states, inputs: _inputs, inputCatalog, ...manifest } = state.manifest;
     return { workflow: "attribution", manifest, inputs: Object.fromEntries((inputCatalog as Candidate[]).map(candidate => [candidate.input_id, candidate])), usage: state.usage, recordedAttempts: state.recordedAttempts,
       tasks: Object.fromEntries(tasks.map(task => { const { id, data, ...definition } = task, info = data as AttributionTaskData, receipt = state.receipts[id]; let saved: any;
-        if (receipt) { const { evaluation, submitted: _submitted, exported, ...rest } = receipt; saved = { ...rest, ...(exported ? { exported: { id: exported.id, file: exported.file } } : { evaluation }) }; }
+        if (receipt) { const { evaluation, submitted: _submitted, exported, ...rest } = receipt; saved = { ...rest, ...(exported ? { exported: { id: exported.id, file: exported.file, line: exported.line } } : { evaluation }) }; }
         const { candidate, ...coordinates } = info;
         return [id, { task: definition, data: { ...coordinates, input_id: candidate.input_id }, state: states[id], ...(saved ? { receipt: saved } : {}) }]; })) };
   },
@@ -277,10 +276,14 @@ const codec: RunCodec<Checkpoint> = {
 };
 const repository = createRunRepository(codec, (task, state) => {
   if (task.stage !== "attribution-session") return null;
+  const accepted = state.receipts[task.id]!;
+  if (accepted.exported && canonical(accepted.exported.row) !== canonical(accepted.evaluation))
+    throw new Error("结果 ID 对应冲突结果：" + task.id);
+  if (accepted.reusedFrom && accepted.exported) return { ...accepted.exported, id: task.id };
   const row = structuredClone(state.receipts[task.id]!.evaluation) as JsonObject;
   if (!validateSession(row)) throw new Error("Attribution session 导出契约无效：" + JSON.stringify(validateSession.errors));
-  return { id: attributionResultId(row), file: "attribution.jsonl", row };
-}, { appendOnly: true });
+  return { id: task.id, file: "attribution.jsonl", row };
+}, { appendOnly: true, indexedFiles: ["attribution.jsonl"], semanticReferences: true });
 export const attributionRepository = { ...repository, createResultWriter(run: string, inputs: Record<string, unknown>) { return repository.createResultWriter(run, inputs); } };
 
 export async function validateAttributionRun(state: RunState) {

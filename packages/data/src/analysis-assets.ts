@@ -7,8 +7,10 @@ import { evaluationCollectionPath, resolveEvaluationCollections } from "./evalua
 
 const reports = new Set(["report.md", "task_summaries.md"]);
 const summaries = new Set(["stats.json", "publication-statistics.json", "attribution-tree.json", "sample-summaries.json", "problem-publication.json"]);
-function publicAsset(name: string, parent: string) {
+function publicAsset(name: string, parent: string, grandparent = "") {
+  const dated = /^(.+)-\d{4}-\d{2}-\d{2}\.jsonl$/.exec(name);
   return reports.has(name) || summaries.has(name) ||
+    dated?.[1] === parent || dated?.[1] === grandparent && ["clustering", "rewrite", "instruction-review", "model-behavior"].includes(parent) ||
     /^(?:model-behavior|cluster_tree)\.jsonl(?:\.gz)?$/.test(name) ||
     parent === "results" && /^[\w.-]+\.jsonl(?:\.gz)?$/.test(name) ||
     parent === "problems" && /^[\w.-]+\.json$/.test(name);
@@ -38,7 +40,7 @@ export class EvaluationAssets implements AnalysisAssetSource {
             if (entry.isDirectory() && entry.name !== "_internal" && (!entry.name.startsWith(".") || entry.name === ".archive")) {
               if (depth >= 10) errors.push({ collectionId, assetId, message: "目录超过已扫描深度" });
               else await visit(file, depth + 1);
-            } else if (entry.isFile() && publicAsset(entry.name, path.basename(folder))) {
+            } else if (entry.isFile() && publicAsset(entry.name, path.basename(folder), path.basename(path.dirname(folder)))) {
               const info = await stat(file);
               items.push({ reference: { collectionId, assetId }, name: entry.name, bytes: info.size, modifiedAt: info.mtimeMs,
                 format: /\.jsonl(?:\.gz)?$/.test(entry.name) ? "jsonl" : entry.name.endsWith(".md") ? "markdown" : "json",
@@ -73,7 +75,7 @@ export class EvaluationAssets implements AnalysisAssetSource {
     const invalid = () => new Error("资产不存在或不在公开评测产物范围；沿用 list_assets 返回的引用。");
     if (!collection ||
       parts.some(part => !part || part === ".." || part === "_internal" || part.startsWith(".") && part !== ".archive") ||
-      !publicAsset(parts.at(-1)!, parts.at(-2) ?? "")) throw invalid();
+      !publicAsset(parts.at(-1)!, parts.at(-2) ?? "", parts.at(-3) ?? "")) throw invalid();
     const file = await evaluationCollectionPath(collection, parts);
     const before = await stat(file);
     if (!before.isFile()) throw invalid();

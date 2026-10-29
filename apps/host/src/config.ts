@@ -107,6 +107,11 @@ async function readLocated(file: string): Promise<ConfigObject> {
         if (!source.output[key].trim()) throw new Error(`Invalid output.${key}`);
         source.output[key] = path.resolve(directory, source.output[key]);
       }
+  if (isObject(source.output) && Array.isArray(source.output.receiptSources))
+    source.output.receiptSources = source.output.receiptSources.map(value => {
+      if (typeof value !== "string" || !value.trim()) throw new Error("Invalid output.receiptSources");
+      return path.resolve(directory, value);
+    });
   if (isObject(source.problemLibrary) && typeof source.problemLibrary.path === "string")
     source.problemLibrary = {
       ...source.problemLibrary,
@@ -198,6 +203,14 @@ function buildEvaluationBase(source: ConfigObject): EvaluationConfig {
   if (!isObject(output) || output.kind !== "directory" || typeof output.path !== "string" || !output.path)
     throw new Error("Missing output target");
   optionalString(output.testPath, "output.testPath");
+  if (output.layout !== undefined && output.layout !== "business" && output.layout !== "run")
+    throw new Error("Invalid output.layout");
+  output.layout ??= "business";
+  if (output.reuseCompleted !== undefined && typeof output.reuseCompleted !== "boolean") throw new Error("Invalid output.reuseCompleted");
+  output.reuseCompleted ??= true;
+  if (output.receiptSources !== undefined && (!Array.isArray(output.receiptSources) ||
+    output.receiptSources.some(value => typeof value !== "string" || !path.isAbsolute(value)) ||
+    new Set(output.receiptSources).size !== output.receiptSources.length)) throw new Error("Invalid output.receiptSources");
   return config;
 }
 

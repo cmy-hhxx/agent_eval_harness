@@ -1,5 +1,5 @@
 {
-  "evaluatorVersion": "r444",
+  "evaluatorVersion": "r445",
   "inputs": {
     "timing_unit": "ms",
     "versions": [
@@ -134,6 +134,7 @@
   },
   "output": {
     "kind": "directory",
+    "layout": "business",
     "path": "/mnt/fin_bench/eval_data/0_wencai/3_eval_output/0_daily_eval",
     "testPath": "/mnt/fin_bench/eval_data/0_wencai/3_eval_output/test_eval"
   },

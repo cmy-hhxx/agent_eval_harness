@@ -46,7 +46,7 @@
 
 ### 目录配置
 
-以上目录是服务器工作约定，代码不内置数据根目录、来源名称或输出目录名。Host 的服务器覆盖配置显式填写 `inputs.versions[].sources[].path`、`output.path`、`output.testPath` 和 `problemLibrary.path`；相对路径按各自配置文件解析。`--test-eval`、`--pilot-cases`、归因试跑和稳定性实验只使用 `output.testPath`，请求的子目录必须位于该根目录内；未配置时明确报错。
+以上目录是服务器工作约定，代码不内置数据根目录、来源名称或输出目录名。Host 的服务器覆盖配置显式填写 `inputs.versions[].sources[].path`、`output.path`、`output.testPath` 和 `problemLibrary.path`；相对路径按各自配置文件解析。已有整理产物需要核对原收据时，通过 `output.receiptSources` 登记实际保留的具体 run 目录，不默认递归扫描整个归档。`output.layout` 默认 `business`，主交付采用[模型/日期文件](usage.md#目录约定)；只有明确要求隔离 run 时才设为 `run`。`--test-eval`、`--pilot-cases`、归因试跑和稳定性实验只使用 `output.testPath`，请求的子目录必须位于该根目录内；未配置时明确报错。
 
 Eris 的 `collectionsFile` 指向独立 JSON 清单，格式见[清单示例](../configs/collections.example.json)。每条记录用 `id` 表示稳定业务坐标，`path` 指向实际产物目录，`test:true` 标记仅在显式纳入测试时展示的目录；不标记时为正式目录。相对路径按清单文件位置解析。ID 与物理目录名独立，新增来源、改名或迁移目录只更新清单，不修改代码。ID 或路径重复、配置字段无效直接报错。
 
@@ -62,13 +62,14 @@ Eris 的 `collectionsFile` 指向独立 JSON 清单，格式见[清单示例](..
 | 外部运行目录 | `/mnt/fin_bench/sync_datasets/code/1_eval_harnes/runtime` |
 | 数据源 | `/mnt/fin_bench/eval_data` |
 | 日常评测产物 | `/mnt/fin_bench/eval_data/{source}/3_eval_output/0_daily_eval/` |
+| 流失样本产物 | `/mnt/fin_bench/eval_data/{source}/3_eval_output/3_lost_user_eval/` |
 | 专项评测产物 | `/mnt/fin_bench/eval_data/{source}/3_eval_output/1_task_eval/<任务>/` |
 | 测试评测产物 | `/mnt/fin_bench/eval_data/{source}/3_eval_output/test_eval/` |
 | 配置与密钥 | `runtime/config/`、`runtime/secrets/` |
 | 状态与锁 | `runtime/state/` |
 | 日志 | `runtime/log/runtime.log`、`runtime/log/evaluation.log` |
 
-`source` 使用实际来源目录，例如 `0_wencai`、`1_aime`、`2_ifind`。配置、输入、账号和结果独立于 checkout。正式结果与恢复状态随 run 存在对应输出目录，不另存到 checkout 或 `runtime/data/runs`。
+`source` 使用实际来源目录，例如 `0_wencai`、`1_aime`、`2_ifind`。配置、输入、账号和结果独立于 checkout。正式归因为 `<模型>/<模型>-YYYY-MM-DD.jsonl`；问财对局为 `comparison/<模型对>/<模型对>-YYYY-MM-DD.jsonl`。恢复账本与来源结果放在同一配置输出根下的 `.runs/<run ID>/`，不另存到 checkout 或 `runtime/data/runs`，也不作为默认交付入口。业务日期沿用输入完整的日期型 batch_id，不从运行或整理时间推导。
 
 所有分支、提交或专项用途的代码均部署在上述代码根目录的独立子目录，目录名由操作者按用途指定；`runtime/` 专用于持久配置、密钥、账号、聊天、状态和日志，不存放 checkout。停止使用 `user_workspace` 下的代码和运行目录，不保留指向旧位置的软链接。不同 checkout 共用外部配置时仍须遵守实例锁，更新代码不会自动启动评测或调度任务。
 

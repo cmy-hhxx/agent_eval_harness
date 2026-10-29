@@ -24,9 +24,9 @@ session input
 
 运行进度同时保留 component、trace、session 任务计数，并单独报告 `total_sessions`、`active_sessions`、`completed_sessions`、`waiting_sessions`、`failed_sessions`、`blocked_sessions`。业务完成度以 `completed_sessions` 为准，不能用内部 component 的 accepted 数代替。
 
-每个 `attribution-session` 收据接受后立即追加到 `results/attribution.jsonl`，不等待同一 run 的其他记录。正式行保留原始 `session_meta` 和各 turn 的 `meta`。Comparison 内的归因使用持久化任务 UUID 关联收据，检查点保存文件与一基行号；恢复不从元数据或正文推导身份。首次打开结果写入器时按已接受收据重建索引文件，处理未写入检查点的中断尾部，后续增量追加。不同来源、模型、批次即使正文和元数据完全一致也分别保留。
+每个 `attribution-session` 收据接受后立即写入内部 `results/attribution.jsonl`，不等待同一 run 的其他记录；默认正式交付为 `<输出根>/<模型>/<模型>-YYYY-MM-DD.jsonl`，布局与复用规则见[目录约定](usage.md#目录约定)。正式行保留原始 `session_meta` 和各 turn 的 `meta`。独立 Attribution 与 Comparison 内的归因均使用持久化任务 UUID、一基行号关联收据，原始证据坐标不变。恢复按已接受收据处理未写入检查点的中断尾部，完整有效前缀增量追加。不同模型、回答和 trace 范围即使正式点评相同也分别保留，不从点评正文推导回答身份。
 
-独立 Attribution workflow 当前仍使用 `session_id`（缺少时使用 `case_id`）和有序的 `turns[].meta.trace_id` 作为结果身份。进度中的 session 数是输入记录数，按 trace 抓取时不代表去重后的完整会话数。
+业务复用核对原始 `batch_id/case_id`、配置模型 ID、session 与有序 trace 范围，并回读原始输入确认回答和适用材料一致；跨 run 的回答标识使用核实后保留的 UUID，不创建内容哈希。session_id 或正式行里的 case_id 不能单独作为跨模型、跨 run 的复用键。进度中的 session 数是输入记录数，按 trace 抓取时不代表去重后的完整会话数。
 
 独立 Attribution 和 Comparison 内的归因在新建、续跑时共用同一原始输入与 trace 投影；组件提交仍按对应 trace 的原文核验证据。Trace 汇总不向 Worker 暴露原始来源；Session 只登记原始 QA 的消息内容作为证据来源，保留到原始 trace、消息与文本路径的坐标映射。
 
@@ -93,7 +93,7 @@ session input
 
 `quote` 推荐不超过 400 字；工具只暴露 ≤400 字的可提交编号，校验宽容到 800 字。引文必须是精确连续原文，不能拼接或由程序截断。`evidence.component` 明确区分 `reasoning:`、`tool_call:`、`answer:` 等证据位置及具体组件。`calculations` 只保留文字点评，不再嵌套操作数和复算元数据。
 
-每条 Problem 必填 `severity`（P0/P1/P2/P3，P0 最严重）和 `severity_reason`，按本次对最终交付的已确认影响判定；已补救的问题按残余影响分级。同类问题在不同回答中可以有不同等级，不按等级拆类，也不改变 Comparison 的判胜规则。分级口径与点评表达统一维护在[问题表达规则](../packages/prompts/resources/attribution/problem-output.md)。Component 与 Session 各自填写本阶段产生的问题，Trace 汇总和正式导出原样保留。
+新生成的每条 Problem 必填 `severity`（P0/P1/P2/P3，P0 最严重）和 `severity_reason`，按本次对最终交付的已确认影响判定；已补救的问题按残余影响分级。同类问题在不同回答中可以有不同等级，不按等级拆类，也不改变 Comparison 的判胜规则。分级口径与点评表达统一维护在[问题表达规则](../packages/prompts/resources/attribution/problem-output.md)。Component 与 Session 各自填写本阶段产生的问题，Trace 汇总和正式导出原样保留。跨版本复用的历史正式行不补造后来新增的字段。
 
 Component 提交只校验 Schema、字段范围、证据身份、原文坐标及读取证明；不靠占位词黑名单、相似措辞或语义重复判断触发返工。证据工具只暴露可解析且不超过 400 字的推荐引用；校验接受到 800 字，超过时反馈真实原文片段的新编号，要求只替换 evidence。校验不会改写或截断 quote，正式证据仍按原坐标解析。
 

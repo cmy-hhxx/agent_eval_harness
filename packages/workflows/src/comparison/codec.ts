@@ -179,7 +179,7 @@ function evaluationFromRow(data: TaskData, row: JsonObject): ComparisonResult {
   };
 }
 
-function resultEvaluation(data: TaskData, row: JsonObject, rewriteIds?: string[]): unknown {
+export function resultEvaluation(data: TaskData, row: JsonObject, rewriteIds?: string[]): unknown {
   const dimension = attributionDimension(data.stage);
   if (dimension) return row[dimension.resultKey];
   if (data.stage === "rewrite") {
@@ -408,6 +408,10 @@ function decodeState(
         row,
       },
     };
+  }
+  for (const [id, receipt] of Object.entries(state.receipts)) {
+    const line = savedTasks[id].receipt?.exported?.line;
+    if (receipt.exported && line !== undefined) receipt.exported.line = line;
   }
   return state;
 }

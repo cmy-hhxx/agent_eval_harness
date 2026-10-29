@@ -12,7 +12,7 @@ export async function assistantRunLocations(collections: readonly EvaluationColl
   for (const collection of collections.filter(item => includeTests || !item.test)) {
     const categoryRoot = collection.path;
     const visit = async (directory: string, depth: number): Promise<void> => {
-      const relative = path.relative(categoryRoot, path.dirname(directory));
+      const relative = path.relative(categoryRoot, path.dirname(directory)).split(path.sep).filter(part => part !== ".runs").join(path.sep);
       const collectionId = [collection.id, relative === "." || depth === 0 ? "" : relative].filter(Boolean).join("/");
       try {
         if (depth === 0) await evaluationCollectionPath(collection);
@@ -28,7 +28,8 @@ export async function assistantRunLocations(collections: readonly EvaluationColl
           return;
         }
         if (depth >= 3) return;
-        for (const entry of await readdir(directory, { withFileTypes: true })) if (entry.isDirectory() && !entry.name.startsWith(".")) await visit(path.join(directory, entry.name), depth + 1);
+        for (const entry of await readdir(directory, { withFileTypes: true })) if (entry.isDirectory() &&
+          (!entry.name.startsWith(".") || entry.name === ".runs")) await visit(path.join(directory, entry.name), depth + 1);
       } catch (error) {
         if (depth === 0 && (error as NodeJS.ErrnoException).code === "ENOENT") return;
         errors.push({ collectionId, runId: depth ? path.basename(directory) : null, message: error instanceof Error ? error.message : "运行目录读取失败" });
