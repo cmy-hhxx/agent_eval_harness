@@ -6,6 +6,13 @@
 2. 修改行为时同步更新实现、当前调用方、测试和文档；只保留当前事实，不保留历史计划或重复说明。
 3. 不编辑生成的 `dist/`，不删除本地输入、评测结果或缓存来“清理代码”。
 
+## Git 远程与推送
+
+- `origin` 是 117 主仓库：`ssh://git@117.50.195.94:2177/chenmingyang2/agent_eval_harness.git`。
+- `gitcc` 是 GitCC 副仓库：`https://git-cc.myhexin.com:6443/aidata/eval_harnesss.git`。
+- 按用户指定的目标显式推送：117 / 主仓库使用 `git push origin <分支>`，GitCC / 副仓库使用 `git push gitcc <分支>`；只有明确要求同步两边时才分别推送。未指定目标时先确认。
+- `main` 跟踪 `origin/main`；向副仓库推送时使用不带 `-u` 的命令，保持主仓库上游不变。
+
 ## 当前契约优先
 
 - **统计上传日志结构已冻结**：以 [`schemas/workflow/statistics-log.schema.json`](schemas/workflow/statistics-log.schema.json) 为固定契约，包括所有 `wins` 同级的 `both_good / both_bad` 对战计数。后续仅更新统计值、标签内容和日期条目；禁止自行增删、重命名字段或改变类型、层级。落盘与上传（包括续传）必须校验，不能静默转换。只有用户明确要求修改这份外部契约时才能变更；普通看板、统计或自动化改动不构成授权。
