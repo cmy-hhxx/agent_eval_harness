@@ -2,32 +2,83 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "type": "object",
   "additionalProperties": false,
-  "required": ["session_summary", "session_problem"],
+  "required": [
+    "session_summary",
+    "session_problem"
+  ],
   "properties": {
-    "session_summary": { "type": "string", "minLength": 1 },
+    "session_summary": {
+      "type": "string",
+      "minLength": 1
+    },
     "session_problem": {
       "type": "array",
       "items": {
         "type": "object",
         "additionalProperties": false,
-        "required": ["label", "definition", "problem_phenomena", "reason", "severity", "severity_reason", "evidence"],
+        "required": [
+          "component",
+          "actor_index",
+          "label",
+          "definition",
+          "problem_phenomena",
+          "reason",
+          "severity",
+          "severity_reason",
+          "evidence"
+        ],
         "properties": {
-          "label": { "type": "string", "minLength": 1 },
-          "definition": { "type": "string", "minLength": 1 },
-          "problem_phenomena": { "type": "string", "minLength": 1 },
-          "reason": { "type": "string", "minLength": 1 },
-          "severity": { "enum": ["P0", "P1", "P2", "P3"] },
-          "severity_reason": { "type": "string", "minLength": 1 },
+          "component": {
+            "type": "string",
+            "minLength": 1
+          },
+          "label": {
+            "type": "string",
+            "minLength": 1
+          },
+          "definition": {
+            "type": "string",
+            "minLength": 1
+          },
+          "problem_phenomena": {
+            "type": "string",
+            "minLength": 1
+          },
+          "reason": {
+            "type": "string",
+            "minLength": 1
+          },
+          "severity": {
+            "enum": [
+              "P0",
+              "P1",
+              "P2",
+              "P3"
+            ]
+          },
+          "severity_reason": {
+            "type": "string",
+            "minLength": 1
+          },
           "evidence": {
             "type": "array",
             "minItems": 1,
             "items": {
               "type": "object",
               "additionalProperties": false,
-              "required": ["index", "reason"],
+              "required": [
+                "index",
+                "reason"
+              ],
               "properties": {
-                "index": { "type": "integer", "minimum": 1 },
-                "reason": { "type": "string", "minLength": 1 }
+                "index": {
+                  "type": "integer",
+                  "minimum": 1
+                },
+                "reason": {
+                  "type": "string",
+                  "minLength": 1
+                }
               }
             }
           },
@@ -37,9 +88,20 @@
             "items": {
               "type": "object",
               "additionalProperties": false,
-              "required": ["text"],
-              "properties": { "text": { "type": "string", "minLength": 1 } }
+              "required": [
+                "text"
+              ],
+              "properties": {
+                "text": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              }
             }
+          },
+          "actor_index": {
+            "type": "integer",
+            "minimum": 1
           }
         }
       }

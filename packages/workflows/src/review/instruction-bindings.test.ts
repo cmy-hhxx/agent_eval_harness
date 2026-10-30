@@ -1,3 +1,4 @@
+import { compactReceipt } from "../../../../tests/fixtures/compact.js";
 import { AgentRegistry } from "@eval/host";
 import { attributionAgent } from "@eval/agents/attribution";
 import { canonicalEvidence } from "../../../../tests/fixtures/evidence.js";
@@ -68,9 +69,9 @@ test("reference changes leave Criteria material unchanged and remain complete in
     const receipt: SubmissionReceipt = { taskId: criteriaTask.id, attemptId: randomUUID(), submissionId: randomUUID(),
       acceptedAt: 1, status: "succeeded", evaluatorVersion: "fixture", judge: "fixture", evaluation: analysis,
       audit: emptyAudit(), usage: emptyUsage() };
-    const task: PlannedTask = { id: randomUUID(), stage: "attribution-component", inputIds: { answer: candidates.A.input_id },
-      dependencies: { criteria: criteriaTask.id }, data: { stage: "attribution-component", candidate: candidates.A, candidates: { A: candidates.A }, reference } satisfies TaskData };
-    const attribution = bindTask(task, inputs, { criteria: receipt }, { tasks: [criteriaTask, task] });
+    const task: PlannedTask = { id: randomUUID(), stage: "attribution-trace", inputIds: { answer: candidates.A.input_id },
+      dependencies: { compact: "compact", criteria: criteriaTask.id }, data: { stage: "attribution-trace", candidate: candidates.A, candidates: { A: candidates.A }, reference } satisfies TaskData };
+    const attribution = bindTask(task, inputs, { compact: compactReceipt(), criteria: receipt }, { tasks: [criteriaTask, task] });
     const material = attribution.modelInput!.answer as { final_message_index: number; final_answer?: string;
       final_evidence: { message_index: number; quote: string }[] };
     assert.equal(material.final_message_index, finalIndex);
@@ -100,10 +101,10 @@ for (const normFirst of [true, false]) test(`accepted merged Criteria retains no
   const receipt: SubmissionReceipt = { taskId: criteriaTask.id, attemptId: randomUUID(), submissionId: randomUUID(),
     acceptedAt: 1, status: "succeeded", evaluatorVersion: "fixture", judge: "fixture", evaluation: rubric,
     audit: emptyAudit(), usage: emptyUsage() };
-  const task: PlannedTask = { id: randomUUID(), stage: "attribution-component", inputIds: { answer: candidates.A!.input_id },
-    dependencies: { criteria: criteriaTask.id },
-    data: { stage: "attribution-component", candidate: candidates.A!, candidates: { A: candidates.A! }, reference: null } satisfies TaskData };
-  const binding = bindTask(task, inputs, { criteria: receipt }, { tasks: [criteriaTask, task] });
+  const task: PlannedTask = { id: randomUUID(), stage: "attribution-trace", inputIds: { answer: candidates.A!.input_id },
+    dependencies: { compact: "compact", criteria: criteriaTask.id },
+    data: { stage: "attribution-trace", candidate: candidates.A!, candidates: { A: candidates.A! }, reference: null } satisfies TaskData };
+  const binding = bindTask(task, inputs, { compact: compactReceipt(), criteria: receipt }, { tasks: [criteriaTask, task] });
   const answer = { norm_directory: shownNorms(binding, trace, candidates.A.input_id),
     criterion_instruction_sources: criterionInstructionSources(trace, candidates.A.final_index, rubric, candidates.A.input_id) };
   assert.deepEqual(answer.criterion_instruction_sources.r1, [{ ...canonicalEvidence(candidates.A.input_id, 0, norm), path: "/content" },
@@ -114,7 +115,7 @@ for (const normFirst of [true, false]) test(`accepted merged Criteria retains no
     criterion_instruction_sources: Record<string, { reference: { evidence_id: string } }[]> };
   const finalRef = shown.final_evidence[0]!.reference;
   assert.equal(resolveEvidence(inputs[candidates.A.input_id],finalRef,"answer",emptyAudit(),"/evidence",candidates.A.input_id).quote,final);
-  assert.deepEqual(Object.keys(registry.prepare(binding).evaluation.outputSchema.properties ?? {}).sort(),["problems"].sort());
+  assert.deepEqual(Object.keys(registry.prepare(binding).evaluation.outputSchema.properties ?? {}).sort(),["problems", "summary"].sort());
 });
 
 test("01868 public USER leaf closes attribution without absorbing its private joined condition", () => {
@@ -148,11 +149,11 @@ test("01868 public USER leaf closes attribution without absorbing its private jo
   const receipt: SubmissionReceipt = { taskId: criteriaTask.id, attemptId: randomUUID(), submissionId: randomUUID(),
     acceptedAt: 1, status: "succeeded", evaluatorVersion: "fixture", judge: "fixture", evaluation: rubric,
     audit: emptyAudit(), usage: emptyUsage() };
-  const task: PlannedTask = { id: randomUUID(), stage: "attribution-component", inputIds: { answer: candidates.A!.input_id },
-    dependencies: { criteria: criteriaTask.id }, data: { stage: "attribution-component", candidate: candidates.A!,
+  const task: PlannedTask = { id: randomUUID(), stage: "attribution-trace", inputIds: { answer: candidates.A!.input_id },
+    dependencies: { compact: "compact", criteria: criteriaTask.id }, data: { stage: "attribution-trace", candidate: candidates.A!,
       candidates: { A: candidates.A! },
       reference: "-0.6个百分点" } satisfies TaskData };
-  const binding = bindTask(task, inputs, { criteria: receipt }, { tasks: [criteriaTask, task] });
+  const binding = bindTask(task, inputs, { compact: compactReceipt(), criteria: receipt }, { tasks: [criteriaTask, task] });
   const answer = { norm_directory: shownNorms(binding, trace, candidates.A.input_id),
     criterion_instruction_sources: criterionInstructionSources(trace, candidates.A.final_index, rubric, candidates.A.input_id) };
   assert.deepEqual(answer.criterion_instruction_sources.r1, [{ ...canonicalEvidence(candidates.A.input_id, 0, question, "/content/0/text"), path: "/content/0/text" }]);
@@ -180,7 +181,7 @@ test("01868 public USER leaf closes attribution without absorbing its private jo
   assert.equal(resolveEvidence(trace,finalRef,"answer",emptyAudit(),"/Problem/0/evidence",candidates.A.input_id).quote,final);
   const otherTask: PlannedTask = { ...task, id: randomUUID(), inputIds: { answer: candidates.B!.input_id },
     data: { ...(task.data as TaskData), candidate: candidates.B!, candidates: { A: candidates.B! } } };
-  const other = bindTask(otherTask, inputs, { criteria: receipt }, { tasks: [criteriaTask, otherTask] });
+  const other = bindTask(otherTask, inputs, { compact: compactReceipt(), criteria: receipt }, { tasks: [criteriaTask, otherTask] });
   assert.equal(criterionInstructionSources(inputs[candidates.B.input_id], candidates.B.final_index, rubric, candidates.B.input_id).r2, undefined);
   const otherNorms = shownNorms(other, inputs[candidates.B.input_id], candidates.B.input_id);
   assert.deepEqual(otherNorms.map(norm => norm.requirement_index), [0]);

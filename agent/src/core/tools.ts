@@ -1,5 +1,5 @@
 import { Ajv2020 } from "ajv/dist/2020.js";
-import { parseEvidenceCoordinates, schemaIssues, type AnalysisAssetSource, type AnalysisAssetQuery, type AnalysisAssetReference, type AnalysisDataSource, type AnalysisReference, type AnalysisCaseLookup, type AnalysisQuery, type AnalysisReadOptions, type AnalysisResultReadOptions, type AssistantTool, type JsonObject, type WebSearchProvider, type WebSearchRequest, type WebReader, type WebReadRequest } from "@eval/contracts";
+import { attributionPositionReference, parseEvidenceCoordinates, schemaIssues, type AnalysisAssetSource, type AnalysisAssetQuery, type AnalysisAssetReference, type AnalysisDataSource, type AnalysisReference, type AnalysisCaseLookup, type AnalysisQuery, type AnalysisReadOptions, type AnalysisResultReadOptions, type AssistantTool, type JsonObject, type WebSearchProvider, type WebSearchRequest, type WebReader, type WebReadRequest } from "@eval/contracts";
 import { calculate } from "@eval/tools";
 import schemas from "../../../schemas/eris/tools.json" with { type: "json" };
 import { comparisonChartData, validateChart, type ChartSpec, type ComparisonChartMetric } from "./chart.js";
@@ -64,8 +64,8 @@ function reviewReferences(value: unknown, run: Pick<AnalysisReference, "collecti
     if (Array.isArray(item)) { item.forEach(visit); return; }
     if (item === null || typeof item !== "object") return;
     for (const [key, child] of Object.entries(item)) {
-      if (key === "evidence_id" && typeof child === "string") {
-        const coordinate = parseEvidenceCoordinates(child);
+      if ((key === "evidence_id" || key === "position" && typeof (item as JsonObject).quote === "string") && typeof child === "string") {
+        const coordinate = parseEvidenceCoordinates(key === "position" ? attributionPositionReference(child)?.evidence_id ?? "" : child);
         if (coordinate) references.set(`${coordinate.input_id}:${coordinate.message_index}`, {
           collectionId: run.collectionId, runId: run.runId, inputId: coordinate.input_id, messageIndex: coordinate.message_index,
         });

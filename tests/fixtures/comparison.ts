@@ -9,7 +9,7 @@ import { hasSourceTextBlock } from "@eval/tools";
 import { ROOT } from "./services.js";
 import { writeJson, writeJsonl } from "@eval/data";
 import { loadComparisonConfig, createModelResolver } from "@eval/host-app/config";
-import { sessionProblems, type SessionAttributionResult, type SessionProblem } from "@eval/agents/attribution";
+import { type SessionAttributionResult, type SessionProblem } from "@eval/agents/attribution";
 import type { ComparisonResult, TaskData } from "@eval/workflows/comparison";
 import type { RawInput } from "@eval/workflows/inputs";
 import { comparisonSubmission, flatComparisonSubmission } from "./comparison-submission.js";
@@ -145,7 +145,7 @@ export async function fixtureConfig(
 }
 
 export function attributionResult(correct=true,answer='2+2=4',available=true,inputId='7c4e3ba8-8f7c-46cc-b8fb-3016e10ea2dd'):SessionAttributionResult{
-  const problem: SessionProblem[] = correct ? [] : [{ problem_id: 'p1', component: '模型自身推理', label: '加法结果错误',
+  const problem: SessionProblem[] = correct ? [] : [{ problem_id: 'p1', component: '算术运算', label: '加法结果错误',
     definition: '最终回答与给定加法结果不一致。', problem_phenomena: '2+2 应得 4，实际回答给出了不同结果。',
     reason: '最终回答中的计算结果错误。', severity: 'P0', severity_reason: '加法结果是本题的核心交付，数值错误使回答不可采信。',
     evidence: [{ position: 'trace_index 0 / message_index 1 / path /content',
@@ -161,17 +161,21 @@ export function attributionResult(correct=true,answer='2+2=4',available=true,inp
 export function taskResult(spec: Pick<AttemptSpec, "evaluation" | "prompt" | "inputs">, revealed?: unknown): unknown {
   const properties =
     (spec.evaluation.outputSchema as { properties?: Record<string, unknown> }).properties || {};
-  if ("problems" in properties) {
-    const result = spec.inputs.length ? attributionResult(false) : attributionResult(true);
-    return { problems: sessionProblems(result).map(problem => ({ label: problem.label, definition: problem.definition,
-      problem_phenomena: problem.problem_phenomena, reason: problem.reason,
-      severity: problem.severity, severity_reason: problem.severity_reason,
-      evidence: problem.evidence.map(() => ({ index: 1, reason: "fixture evidence" })),
-      ...(problem.calculations ? { calculations: problem.calculations } : {}) })) };
+  if (spec.evaluation.id === "compact") {
+    const material = parsedMaterial(spec, revealed) as { turns: { turn_index: number }[] };
+    const field = spec.evaluation.profile;
+    if (field !== "default") return { value: ["reasoning_chain", "execution_chain", "reflections", "gaps", "artifacts", "components"].includes(field) ? []
+      : field === "key_data" ? { value: 4, unit: "元" } : { summary: "会话已完成。" } };
+    return { session_overview: { summary: "整理实际会话。" }, meta: {}, turns: material.turns.map(turn => ({
+      turn_index: turn.turn_index, key_data: { conclusion: "按原始证据核验。" } })) };
   }
   if (spec.evaluation.id === "attribution" && "summary" in properties) {
     const result = attributionResult(false), turn = result.turns[0]!;
-    return { summary: turn.summary, ...("is_correct" in properties ? { is_correct: turn.is_correct, correct_reason: turn.correct_reason } : {}) };
+    return { summary: turn.summary, problems: turn.problem.map(problem => ({ component: "result-interpretation", actor_index: ((parsedMaterial(spec, revealed) as { actor_catalog: {kind:string;actor_index:number}[] }).actor_catalog.find(entry => entry.kind === "model")!.actor_index),
+      label: problem.label, definition: problem.definition, problem_phenomena: problem.problem_phenomena, reason: problem.reason,
+      severity: problem.severity, severity_reason: problem.severity_reason,
+      evidence: problem.evidence.map(() => ({ index: 1, reason: "原始证据。" })) })),
+      ...("is_correct" in properties ? { is_correct: turn.is_correct, correct_reason: turn.correct_reason } : {}) };
   }
   if ("session_summary" in properties) {
     const result = attributionResult(false);
@@ -444,7 +448,8 @@ export function draftFor(spec: Pick<AttemptSpec, "evaluation" | "inputs" | "prom
 /** A complete current submission whose first finding selects beyond the provided bank. */
 export function invalidDraft(spec: Pick<AttemptSpec, "evaluation" | "inputs" | "prompt" | "evidenceBank">): unknown {
   const draft=draftFor(spec,taskResult(spec)) as {session_summary?:unknown; summary?:unknown};
-  if ("session_summary" in draft) draft.session_summary=42; else draft.summary=42;
+  if ("session_overview" in draft) (draft as Record<string, unknown>).session_overview = 42;
+  else if ("session_summary" in draft) draft.session_summary=42; else draft.summary=42;
   return draft;
 }
 

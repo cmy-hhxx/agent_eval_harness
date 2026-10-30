@@ -34,8 +34,3 @@ export interface SessionAttributionResult {
   session_summary: string;
   session_problem: SessionProblem[];
 }
-
-export interface ComponentReviewResult {
-  component: string;
-  problems: SessionProblem[];
-}

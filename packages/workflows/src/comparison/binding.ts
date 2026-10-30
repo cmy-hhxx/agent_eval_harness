@@ -4,9 +4,11 @@ import { isDeepStrictEqual } from "node:util";
 import { workflowText } from "@eval/prompts";
 import { canonical, presentSource, type AgentBinding, type PlannedTask, type SubmissionReceipt, type TaskAnalysis } from "@eval/contracts";
 import { cite, evidenceSources, messageContentSources, instructionSources, normativeSources } from "@eval/tools";
+import { attributionSessionSource } from "../review/public-trace.js";
+import { attributionPresentation } from "../review/attribution-presentation.js";
+import { presentedMaterialReads } from "../review/evidence-presentation.js";
 import { projectComparisonEvidence } from "../review/evidence-presentation.js";
-import { contentText } from "../inputs/records.js";
-import { sessionComparisonInput, sessionQas } from "../inputs/session.js";
+import { sessionQas } from "../inputs/session.js";
 import type { TaskData, ComparisonResult } from "./types.js";
 import type { RawInput } from "../inputs/types.js";
 import { attributionDimension } from "../review/dimensions.js";
@@ -42,9 +44,9 @@ export function bindTask(
   if (task.stage.startsWith("attribution-")) {
     const binding = bindAttribution(task, inputs, dependencies, { reference: (task.data as TaskData).reference });
     const data = task.data as TaskData;
-    if (binding.modelInput && data.reviewQuestions?.length)
+    if (binding.agent !== "compact" && binding.modelInput && data.reviewQuestions?.length)
       binding.modelInput.review_context = { reasons: data.reviewQuestions, kind: "unverified_concerns" };
-    if (binding.modelInput && data.prediction)
+    if (binding.agent !== "compact" && binding.modelInput && data.prediction)
       binding.modelInput.prediction_evaluation = workflowText("prediction-evaluation");
     return binding;
   }
@@ -63,16 +65,16 @@ function bindSourceTask(
     const blind = blindMaterials(data.candidates);
     const first = Object.values(data.candidates)[0]!;
     const sources = Object.fromEntries(Object.entries(task.inputIds).map(([label, id]) => [label, {
-      id, value: inputs[id], presentation: blind.presentation,
+      id, value: attributionSessionSource(inputs[id] as RawInput, id).raw, presentation: blind.presentation,
     }]));
     return { agent: "criteria", profile: "default", request: { sources, input: {
       question: first.question,
       candidates: Object.values(data.candidates).map((candidate) => {
-        const raw = inputs[candidate.input_id] as RawInput;
+        const raw = attributionSessionSource(inputs[candidate.input_id] as RawInput, candidate.input_id).raw;
         return {
           candidate_id: candidate.input_id,
           instructions: [],
-          context: normativeSources(raw, candidate.input_id, candidate.final_index).filter(source => source.role === "user" && source.path === "/content")
+          context: normativeSources(raw, candidate.input_id, raw.messages.length - 1).filter(source => source.role === "user" && source.path === "/content")
             .map(({ message_index, content }) => ({ message_index, role: "user" as const, content })),
         };
       }),
@@ -167,27 +169,33 @@ function bindSourceTask(
   const blind = criteriaTask ? blindMaterials((criteriaTask.data as TaskData).candidates) : undefined;
   const reference = structuredClone(data.reference);
   const task_analysis = structuredClone(criteria.evaluation);
+  const sourceContexts = Object.fromEntries(Object.entries(task.inputIds).map(([label, id]) =>
+    [label, attributionSessionSource(inputs[id] as RawInput, id)]));
   const sources = Object.fromEntries(
     Object.entries(task.inputIds).map(([label, id]) => [label, {
       id,
-      value: sessionComparisonInput(inputs[id] as RawInput, data.candidates[label]!),
+      value: sourceContexts[label]!.raw,
       ...(blind ? { presentation: blind.presentation } : {}),
     }]),
   );
   const materials = Object.fromEntries(
     Object.entries(data.candidates).map(([label, candidate]) => {
       const raw = sources[label].value as RawInput;
-      const finalIndex = raw.messages.length - 1;
-      const finalSources = messageContentSources(raw.messages[finalIndex]);
+      const positions = sourceContexts[label]!.positions;
+      const qas = sessionQas(inputs[candidate.input_id] as RawInput, candidate);
+      const finalIndices = (candidate.turns ?? [{ trace_index: 0, final_index: candidate.final_index }]).map(trace =>
+        positions.findIndex(point => point.trace_index === trace.trace_index && point.message_index === (trace.final_index ?? candidate.final_index)));
+      const finalIndex = finalIndices.at(-1)!;
+      const finalSources = finalIndices.flatMap(message_index => messageContentSources(raw.messages[message_index]).map(source => ({ ...source, message_index })));
       const finalBlockLimit = Math.max(16000, data.initialContextChars ?? 16000);
       // Comparison already owns the session's QA text. Present it once, including long
       // answers, instead of requiring tool round trips to read the same delivery again.
       const deferred = data.verificationAudit ? finalSources.filter((source) => source.text.length > finalBlockLimit) : [];
       const final = deferred.reduce(
         (text, source) => text.replaceAll(source.text, ""),
-        contentText(raw.messages[finalIndex].content),
+        qas.map(qa => qa.answer).join("\n\n"),
       );
-      const question = contentText(raw.messages[0]?.content);
+      const question = qas.map(qa => qa.question).join("\n\n");
       const instructions = instructionSources(raw, candidate.input_id, finalIndex);
       const citations = citationInventory(raw, candidate.input_id, finalIndex);
       // Question, answer and instructions are already separate required material.
@@ -219,7 +227,7 @@ function bindSourceTask(
         .sort((a, b) => Number(b.returned) - Number(a.returned) || b.index - a.index)
         .map(item => item.index);
       for (const i of priority) {
-        if (i === finalIndex) continue;
+        if (finalIndices.includes(i)) continue;
         if (["system", "developer"].includes(raw.messages[i].role || "")) continue;
         const value = Object.fromEntries(
           Object.entries(raw.messages[i]).filter(
@@ -230,7 +238,7 @@ function bindSourceTask(
         // against the same budget. Raw-only fields stay behind read_trace for progressive
         // disclosure instead of inflating the first prompt with quotes from hidden content.
         const evidence = evidenceSources(value)
-          .filter((source) => source.kind === "text" && source.text.length && source.text.length <= 2000)
+          .filter((source) => source.kind === "text" && source.quotable !== false && source.text.length && source.text.length <= 2000)
           .map((source) => cite(candidate.input_id, i, source, 0, source.text.length));
         addInitial(i, value, evidence);
       }
@@ -239,16 +247,18 @@ function bindSourceTask(
         label,
         {
           question,
-          turns: sessionQas(inputs[candidate.input_id] as RawInput, candidate),
+          turns: qas,
+          source_positions: positions,
           candidate_id: candidate.input_id,
           final_message_index: finalIndex,
+          final_message_indices: finalIndices,
           answer_generation: getAnswerGeneration(raw, candidate.input_id, finalIndex),
           final_answer: final,
           final_evidence: finalSources
             .filter((source) => source.text.length <= finalBlockLimit)
-            .map((source) => cite(candidate.input_id, finalIndex, source, 0, source.text.length)),
+            .map((source) => cite(candidate.input_id, source.message_index, source, 0, source.text.length)),
           deferred_final_material: deferred.map((source) => ({
-            message_index: finalIndex, path: source.path, total_chars: source.text.length,
+            message_index: source.message_index, path: source.path, total_chars: source.text.length,
           })),
           initial_material: initial,
           instruction_sources: instructions,
@@ -308,16 +318,17 @@ function bindSourceTask(
           const projected = modelMaterial(material, label, sources[label].value as RawInput, sources[label].id);
           return [label, { ...material, citation_inventory: projected.citation_inventory, answer_generation: projected.answer_generation,
             criterion_instruction_sources: criterionInstructionSources(sources[label].value as RawInput,
-              data.candidates[label].final_index, task_analysis as TaskAnalysis, data.candidates[label].input_id) }];
+              material.final_message_index, task_analysis as TaskAnalysis, data.candidates[label].input_id) }];
         })) }, sources, task_analysis as TaskAnalysis)
       : { ...input, task_analysis: taskAnalysisPresentation(task_analysis as TaskAnalysis,
           Object.fromEntries(Object.entries(sources).map(([label,source]) => [label,source.id]))),
         task_focus: focus,
         comparison_scope: comparisonScope({ input, sources }),
         comparison_slots: comparisonSlotChoices({ input, sources }),
-        attributions,
+        attributions: Object.fromEntries(Object.entries(attributions).map(([label, result]) => [label,
+          attributionPresentation(result, label, sources[label].value, sources[label].id)])),
         candidates: Object.fromEntries(Object.entries(materials).map(([label, material]) => {
-          const { turns: _turns, final_evidence: _evidence, initial_material: _initial,
+          const { turns: _turns, initial_material: _initial,
             citation_inventory: _citations, answer_generation: _generation, note: _note, ...delivery } =
             { ...material, ...modelMaterial(material, label, sources[label].value as RawInput, sources[label].id) };
           return [label, delivery];
@@ -330,5 +341,8 @@ function bindSourceTask(
     binding.inspectionInput = binding.modelInput;
     binding.modelInput = verificationInspectionPresentation(binding.modelInput as ReturnType<typeof verificationPresentation>, task_analysis as TaskAnalysis);
   }
+  if (!data.verificationAudit) binding.presentedReads = Object.entries(binding.modelInput!.candidates as Record<string, Record<string, unknown>>)
+    .flatMap(([label, material]) => [...presentedMaterialReads(material, label, sources[label].id),
+      ...presentedMaterialReads({ process_evidence: ((binding.modelInput!.attributions as Record<string, { Problem: { evidence: unknown[] }[] }>)[label].Problem).flatMap(problem => problem.evidence) }, label, sources[label].id)]);
   return binding;
 }

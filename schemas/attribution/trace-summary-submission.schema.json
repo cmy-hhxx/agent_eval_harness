@@ -2,10 +2,120 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "type": "object",
   "additionalProperties": false,
-  "required": ["summary"],
+  "required": [
+    "summary",
+    "problems"
+  ],
   "properties": {
-    "summary": { "type": "string", "minLength": 1 },
-    "is_correct": { "enum": [1, 0, null] },
-    "correct_reason": { "type": "string", "minLength": 1 }
+    "summary": {
+      "type": "string",
+      "minLength": 1
+    },
+    "is_correct": {
+      "enum": [
+        1,
+        0,
+        null
+      ]
+    },
+    "correct_reason": {
+      "type": "string",
+      "minLength": 1
+    },
+    "problems": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "component",
+          "actor_index",
+          "label",
+          "definition",
+          "problem_phenomena",
+          "reason",
+          "severity",
+          "severity_reason",
+          "evidence"
+        ],
+        "properties": {
+          "component": {
+            "type": "string",
+            "minLength": 1
+          },
+          "label": {
+            "type": "string",
+            "minLength": 1
+          },
+          "definition": {
+            "type": "string",
+            "minLength": 1
+          },
+          "problem_phenomena": {
+            "type": "string",
+            "minLength": 1
+          },
+          "reason": {
+            "type": "string",
+            "minLength": 1
+          },
+          "severity": {
+            "enum": [
+              "P0",
+              "P1",
+              "P2",
+              "P3"
+            ]
+          },
+          "severity_reason": {
+            "type": "string",
+            "minLength": 1
+          },
+          "evidence": {
+            "type": "array",
+            "minItems": 1,
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "index",
+                "reason"
+              ],
+              "properties": {
+                "index": {
+                  "type": "integer",
+                  "minimum": 1
+                },
+                "reason": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              }
+            }
+          },
+          "calculations": {
+            "type": "array",
+            "minItems": 1,
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "text"
+              ],
+              "properties": {
+                "text": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              }
+            }
+          },
+          "actor_index": {
+            "type": "integer",
+            "minimum": 1
+          }
+        }
+      }
+    }
   }
 }

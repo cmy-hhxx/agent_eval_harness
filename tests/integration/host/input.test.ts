@@ -1,8 +1,10 @@
+import { isTraceAttributionTask } from "@eval/workflows/attribution";
 import { testSettings } from "../../fixtures/settings.js";
 import { canonicalEvidence } from "../../fixtures/evidence.js";
 import { services as appServices } from "@eval/host-app/composition";
 import test from "node:test";
 import { agentPrompt } from "@eval/prompts";
+import { compactFieldProfiles } from "@eval/agents/compact";
 import assert from "node:assert/strict";
 import crypto from "node:crypto";
 import { syncBuiltinESMExports } from "node:module";
@@ -32,7 +34,7 @@ test("GPT reasoning metadata and null roles remain paired and pass the attributi
   try {
     const plan = await buildPlan(config);
     assert.equal(plan.tasks.filter(task => task.stage === "comparison").length, 1);
-    const task = plan.tasks.find(task => task.stage === "attribution-component")!;
+    const task = plan.tasks.find(task => task.stage === "attribution-compact")!;
     assert(task);
     assert.doesNotThrow(() => prepare(task, plan.inputs, {}));
     assert.deepEqual(row, original);
@@ -82,8 +84,8 @@ test("expanding an unfinished run removes its orphaned pending rubric", async ()
     const after = await reconcileRun(directory, state, config, { extendVersions: true });
     assert.equal(after.tasks.filter(task => task.stage === "criteria").length, 1);
     assert.equal(after.tasks.filter(task => task.stage === "attribution-session").length, 3);
-    assert.equal(after.tasks.filter(task => task.stage === "attribution-trace").length, 3);
-    assert.equal(after.tasks.filter(task => task.stage === "attribution-component").length, 3);
+    assert.equal(after.tasks.filter(task => isTraceAttributionTask(task)).length, 3);
+    assert.equal(after.tasks.filter(task => task.stage === "attribution-compact").length, 3);
     const ids = new Set(after.tasks.map(task => task.id));
     for (const task of after.tasks) for (const id of Object.values(task.dependencies)) assert(ids.has(id));
   } finally { await rm(directory, { recursive: true, force: true }); }
@@ -522,9 +524,9 @@ test("planner preserves stage dependencies, fixed pair order and blind assignmen
   const { directory, config } = await fixtureConfig();
   try {
     const plan = await buildPlan(config);
-    assert.equal(plan.tasks.length, 8);
-    assert.equal(plan.tasks.filter(task => task.stage === "attribution-component").length, 2);
-    assert.equal(plan.tasks.filter(task => task.stage === "attribution-trace").length, 2);
+    assert.equal(plan.tasks.length, 28);
+    assert.equal(plan.tasks.filter(task => task.stage === "attribution-compact").length, 2);
+    assert.equal(plan.tasks.filter(task => isTraceAttributionTask(task)).length, 2);
     assert.equal(plan.tasks.filter(task => task.stage === "attribution-session").length, 2);
     assert.equal(plan.summary.attribution_tasks, 2);
     assert.equal(plan.summary.comparison_tasks, 1);
@@ -564,30 +566,32 @@ test("public prompt definitions reach prepared tasks and the run snapshot", asyn
   try {
     const plan = await buildPlan(config);
     const prompts = new Map<string, ReturnType<typeof agentPrompt>>();
-    for (const stage of ["criteria", "attribution-component", "comparison"] as const) {
+    for (const stage of ["criteria", "attribution-compact-field", "comparison"] as const) {
       const task = plan.tasks.find(item => item.stage === stage)!;
       const dependencies = Object.fromEntries(Object.entries(task.dependencies).map(([label, id]) =>
         [label, fixtureReceipt(id, label === "criteria" ? criteriaResultForTask(task, plan.inputs)
           : attributionResult(true, "2+2=4", true, task.inputIds[label]!))]));
       const prepared = prepare(task, plan.inputs, dependencies, plan.tasks);
-      const prompt = agentPrompt(stage === "attribution-component" ? "attribution" : stage, prepared.evaluation.toolNames, {
-        profile: stage === "attribution-component" ? "component" : "default",
+      const prompt = agentPrompt(stage === "attribution-compact-field" ? "compact" : stage, prepared.evaluation.toolNames, {
+        profile: "default",
         fileSubmission: prepared.evaluation.fileSubmission ?? false,
         draftWriteInCallLimit: prepared.evaluation.draftWriteInCallLimit,
       });
-      prompts.set(stage, prompt);
+      if (stage === "attribution-compact-field") prompt.systemPrompt = compactFieldProfiles[prepared.evaluation.profile]!.systemPrompt;
+      prompts.set(stage === "attribution-compact-field" ? "attribution-compact-" + prepared.evaluation.profile : stage, prompt);
       assert.equal(prepared.evaluation.systemPrompt, prompt.systemPrompt);
       assert.equal(prepared.evaluation.submissionNudge, prompt.submissionNudge);
       assert.deepEqual(prepared.evaluation.toolDescriptions, prompt.toolDescriptions);
       assert(!prepared.prompt.includes(prompt.instructions), "fixed instructions are not repeated in task material");
       assert(prepared.prompt.includes("计算2+2"));
-      assert(prepared.renderAttempt(config.execution).startsWith(prepared.prompt + "\n\n执行预算："));
+      assert(prepared.renderAttempt(config.execution).startsWith(prepared.prompt));
+      if (stage !== "attribution-compact-field") assert(prepared.renderAttempt(config.execution).includes("执行预算："));
       if (stage === "criteria") {
         assert(prepared.prompt.includes('"candidate_count"'));
         assert(!prepared.prompt.includes('"findings"'));
-      } else if (stage === "attribution-component") {
+      } else if (stage === "attribution-compact-field") {
         assert(!prepared.evaluation.toolNames.includes("calculate_pair"));
-        assert(prepared.prompt.includes('"answer":{'));
+        assert(prepared.prompt.includes('"turns":['));
         assert(!prepared.prompt.includes('"candidates"'));
       } else {
         const submission = prepared.evaluation.outputSchema as { required: string[]; properties: Record<string, unknown> };
@@ -630,8 +634,7 @@ test("initial material discloses only projected content within its budget", asyn
   try {
     const plan = await buildPlan(config);
     const task = plan.tasks.find(
-      (item) => item.stage === "attribution-component" && (item.data as TaskData).candidates.A?.version === "a_fast" &&
-        (item.data as { component?: string }).component === "终稿生成轮",
+      (item) => isTraceAttributionTask(item) && (item.data as TaskData).candidates.A?.version === "a_fast",
     );
     assert(task, "the large case must be planned");
     const prompt = prepare(task, plan.inputs, {}).prompt;
@@ -642,7 +645,7 @@ test("initial material discloses only projected content within its budget", asyn
     ) as { answer: { final_evidence: { quote: string }[] } };
     assert.equal(material.answer.final_evidence.map(entry => entry.quote).join(""), "2+2=4");
     assert(!Object.hasOwn(material.answer, "initial_material"), "a final-section task only receives its owned final evidence");
-    assert(!prompt.includes("简短中间回答"));
+    assert(prompt.includes("简短中间回答"), "process review includes observed intermediate outputs");
   } finally {
     await rm(directory, { recursive: true, force: true });
   }

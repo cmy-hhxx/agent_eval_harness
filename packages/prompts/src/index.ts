@@ -1,16 +1,20 @@
 import { readFileSync } from "node:fs";
 import { canonical, submissionToolNames, type FailureContext, type JsonObject, type Policy } from "@eval/contracts";
 
-export type PromptStage = "criteria" | "attribution" | "comparison" | "rewrite" | "clustering" | "score" | "instruction-review";
+export type PromptStage = "compact" | "criteria" | "attribution" | "comparison" | "rewrite" | "clustering" | "score" | "instruction-review";
 
 const builtinToolNames = [
   "read_trace", "search_trace", "view_image", "calculate", "calculate_pair", "execute_code",
   "read_artifact", "check_table", "inspect_material", "edit_json", "review_material", "review_calculate", "review_external", "score_material", "score_calculate", "score_external", ...submissionToolNames(false), ...submissionToolNames(true),
 ] as const;
 
+const resources = new Map<string, string>();
 function resource(path: string): string {
+  const loaded = resources.get(path);
+  if (loaded !== undefined) return loaded;
   const text = readFileSync(new URL(`../resources/${path}`, import.meta.url), "utf8").trim();
   if (!text) throw new Error(`Empty prompt resource: ${path}`);
+  resources.set(path, text);
   return text;
 }
 
@@ -38,6 +42,7 @@ export function attributionConditionalRules(options: {
 }
 export interface AttributionComponent {
   label: string;
+  kind: "reasoning" | "tool" | "script" | "skill";
   group: string;
   stage: string;
   definition: string;
@@ -50,6 +55,12 @@ export const attributionTaxonomy = JSON.parse(resource("attribution/taxonomy.jso
   domains: Record<string, string[]>;
   stages: string[];
   investigation_steps: string[];
+};
+export const compactFields = JSON.parse(resource("compact/fields.json")) as Record<string, {
+  scope: "session" | "turn"; instruction: string; submission_example?: JsonObject;
+}>;
+export const compactOutputGuidance = JSON.parse(resource("compact/output-guidance.json")) as {
+  examples: Record<string, JsonObject>; repair_instruction: string; field_task: string;
 };
 const descriptions = new Map<string, string>(
   builtinToolNames.map((name) => [name, resource(`tools/${name}.md`)]),
@@ -74,15 +85,19 @@ export function agentPrompt(stage: PromptStage, toolNames: string[], options: Ag
   if (!/^[a-z][a-z0-9_-]*$/.test(profile)) throw new Error(`Invalid prompt profile: ${profile}`);
   const resourceProfile=profile;
   const instructions = resource(`${stage}/${resourceProfile}/instructions.md`) + (stage === "score" ? '\n\n'+scoreRules(profile) : "") +
-    (stage === "attribution" && ["component", "session"].includes(profile) ? "\n\n" + resource("attribution/problem-output.md") : "");
-  const evidenceGuide = stage !== "attribution" && toolNames.some(name => ["read_trace", "search_trace", "view_image", "check_table"].includes(name))
+    (stage === "attribution" && ["trace", "session"].includes(profile)
+      ? (profile === "trace" ? "\n\n" + resource("attribution/component-choice.md") : "") + "\n\n" + resource("attribution/problem-output.md") : "");
+  const evidenceGuide = !["attribution", "compact"].includes(stage) && toolNames.some(name => ["read_trace", "search_trace", "view_image", "check_table"].includes(name))
     ? `\n${evidence}\n` : "";
-  const systemPrompt = resource(`${stage}/${resourceProfile}/system.md`) + "\n\n" + (["score", "attribution"].includes(stage) ? "" : commentary + "\n\n") + instructions + evidenceGuide;
+  const taxonomy = stage === "attribution" && ["trace", "session"].includes(profile)
+    ? "\n\n责任组件目录（component 必须选择具体条目的 ID）：\n" + JSON.stringify(attributionTaxonomy.components) : "";
+  const systemPrompt = resource(`${stage}/${resourceProfile}/system.md`) + "\n\n" + (["score", "attribution", "compact"].includes(stage) ? "" : commentary + "\n\n") + instructions + taxonomy + evidenceGuide;
   const names = [...toolNames, ...submissionToolNames(fileSubmission)];
   if (new Set(names).size !== names.length) throw new Error(`Duplicate prompt tool in ${stage}`);
   const toolDescriptions = Object.fromEntries(names.map((name) => {
-    const description = stage === "attribution" && !fileSubmission && name === "execute_code"
-      ? resource("attribution/component/execute_code.md") : descriptions.get(name);
+    const description = stage === "compact" && name === "submit_evaluation"
+      ? resource("compact/submit_evaluation.md") : stage === "attribution" && !fileSubmission && name === "execute_code"
+      ? resource("attribution/trace/execute_code.md") : descriptions.get(name);
     if (!description) throw new Error(`Missing tool description: ${name}`);
     return [name, description];
   }));
@@ -96,7 +111,7 @@ export function agentPrompt(stage: PromptStage, toolNames: string[], options: Ag
     renderPrompt(input: JsonObject, policy?: Policy, failure?: FailureContext): string {
       if (failure && !policy) throw new Error("Recovery requires an execution policy");
       const { task_focus, ...complete } = input;
-      const focus = task_focus === undefined ? "" : `${stage === "attribution" ? resource("attribution/component/task-focus.md") : taskFocus}\n${JSON.stringify(task_focus)}\n\n`;
+      const focus = task_focus === undefined ? "" : `${stage === "attribution" ? resource("attribution/trace/task-focus.md") : taskFocus}\n${JSON.stringify(task_focus)}\n\n`;
       const limits = policy ? {
         content_call_limit: 1 + policy.repairAttempts,
         ...(toolNames.some(name => name !== "inspect_material") ? {
@@ -107,7 +122,7 @@ export function agentPrompt(stage: PromptStage, toolNames: string[], options: Ag
       } : undefined;
       return focus + `${material}\n` + canonical(task_focus === undefined ? input : complete) +
         (limits ? `\n\n${budget}${JSON.stringify(limits)}。` : "") +
-        (failure ? `\n${recovery}\n${JSON.stringify({
+        (failure ? `\n${["compact", "attribution"].includes(stage) ? resource("shared/attribution-recovery.md") : recovery}\n${JSON.stringify({
           ...(!failure.stopped ? { draft: failure.draft } : {}), errors: failure.errors,
         })}` : "");
     },

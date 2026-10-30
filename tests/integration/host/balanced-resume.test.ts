@@ -12,7 +12,7 @@ test("restored task routes do not consume new-task weights and respect the curre
   models.channels.openai = { ...models.channels["evaluation-gateway"], provider: "openai",
     baseUrl: "https://balanced.example/v1", apiKeyEnv: "BALANCED_RESUME_TEST_KEY", trafficWeight: 4 };
   process.env.BALANCED_RESUME_TEST_KEY = "balanced-resume-test-secret";
-  const task = (id: string) => ({ id, stage: "attribution-component" } as PlannedTask);
+  const task = (id: string) => ({ id, stage: "attribution-compact" } as PlannedTask);
   try {
     const exhausted = new Set<string>(), routing = createBalancedModels(models, undefined, exhausted);
     for (let index = 0; index < 7; index++) {

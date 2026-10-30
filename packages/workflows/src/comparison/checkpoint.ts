@@ -1,4 +1,4 @@
-import type { RunManifest, RunState, SubmissionReceipt, TaskState } from "@eval/contracts";
+import type { ResultReference, RunManifest, RunState, SubmissionReceipt, TaskState } from "@eval/contracts";
 import type { Candidate } from "../inputs/types.js";
 import type { Stage, TaskData } from "./types.js";
 
@@ -10,6 +10,7 @@ export type SavedReceipt = Omit<SubmissionReceipt, "exported" | "evaluation" | "
   submittedPatch?: Patch;
   rewriteIds?: string[];
   exported?: DiskReference;
+  compact?: ResultReference;
 };
 export type SavedTask = TaskState & {
   stage: Stage;

@@ -67,6 +67,12 @@
             "type": "integer",
             "minimum": 0
           },
+          "final_message_indices": {
+            "type": "array",
+            "minItems": 1,
+            "uniqueItems": true,
+            "items": { "type": "integer", "minimum": 0 }
+          },
           "original_answer_timing": {
             "type": "object",
             "required": [

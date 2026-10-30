@@ -144,7 +144,7 @@ export async function validateRun(
       try {
         const receipt = receipts.get(task.id)!;
         // Internal receipts are validated above; only session attribution is a formal row.
-        if (task.stage === "attribution-component" || task.stage === "attribution-trace") continue;
+        if (task.stage === "attribution-trace" || task.stage === "attribution-compact-field") continue;
         const dimension = attributionDimension(task.stage);
         if (dimension) {
           const exported = encodeResult(task, state, inputs);
@@ -161,6 +161,13 @@ export async function validateRun(
           if (!exported) throw new Error("阶段没有正式结果：" + task.id);
           if (!expected.has(exported.file!)) expected.set(exported.file!, []);
           expected.get(exported.file!)!.push(canonical(exported.row));
+          continue;
+        }
+        if (task.stage === "attribution-compact") {
+          const exported = encodeResult(task, state, inputs);
+          if (!exported || canonical(exported.row) !== canonical(receipt.evaluation)) throw new Error("Compact 结果与收据不一致");
+          if (!expected.has("compact.jsonl")) expected.set("compact.jsonl", []);
+          expected.get("compact.jsonl")!.push(canonical(exported.row));
           continue;
         }
         if (task.stage === "attribution-session") {

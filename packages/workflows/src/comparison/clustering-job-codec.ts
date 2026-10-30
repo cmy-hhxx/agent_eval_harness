@@ -3,7 +3,7 @@ import { canonical, type RunState, type SubmissionReceipt } from "@eval/contract
 import { createRunRepository, type RunCodec, type ResultEncoder } from "@eval/data";
 import { clusteringProfile } from "@eval/agents/clustering";
 import { rewriteProfile } from "@eval/agents/rewrite";
-import { difference, restore } from "./codec.js";
+import { difference, restore } from "@eval/contracts";
 import { clusteringJobItems, jobBatchIds, jobObservations, type ClusteringJobConfig, type ClusteringJobRow, type ClusteringJobTask } from "./clustering-job-types.js";
 import rowSchema from "../../../../schemas/workflow/clustering-job.schema.json" with { type: "json" };
 

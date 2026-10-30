@@ -112,7 +112,7 @@ function validateAttemptSpec(spec: AttemptSpec, identity: EngineIdentity, regist
     "codeTimeoutSeconds",
     "maxOutputChars",
   ] as const)
-    if (!Number.isInteger(spec.policy?.[key]) || spec.policy[key] <= 0)
+    if (!Number.isInteger(spec.policy?.[key]) || spec.policy[key] < (key === "maxToolCalls" ? 0 : 1))
       throw new HttpError(400, "Invalid policy");
   if (!Number.isInteger(spec.policy.repairAttempts) || spec.policy.repairAttempts < 0)
     throw new HttpError(400, "Invalid repair budget");

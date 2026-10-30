@@ -87,8 +87,8 @@ test("attribution progress reports business session states instead of internal t
   for (let index = 0; index < 12; index++) {
     const id = `session-${index + 1}`;
     tasks.push(
-      { id: `${id}-component`, stage: "attribution-component", inputIds: {}, dependencies: {},
-        data: { stage: "attribution-component", candidate: { input_id: id } } },
+      { id: `${id}-component`, stage: "attribution-compact", inputIds: {}, dependencies: {},
+        data: { stage: "attribution-compact", candidate: { input_id: id } } },
       { id: `${id}-session`, stage: "attribution-session", inputIds: {},
         dependencies: { component: `${id}-component` }, data: { stage: "attribution-session", candidate: { input_id: id } } },
     );

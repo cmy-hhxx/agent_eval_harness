@@ -1,40 +1,46 @@
 # Attribution 提示词与任务分工
 
-Attribution workflow 使用三个独立 profile，共用 `attribution/taxonomy.json` 的组件定义。模型只做技术审查和问题表达，身份、组件、证据坐标和最终结构由程序组装。
+归因链路为 Compact → Trace → Session，独立 Attribution 与 Comparison 共用同一规划、材料和恢复契约。
 
-## Component
+## Compact
 
-`attribution/component` 只审查一个 trace 中固定的工具或 skill 组件。材料包含完整 Q/A、执行导航和该 trace 的原始证据；提示要求按小现场查看调用前推理、参数、返回、下一轮实际输入和后续输出。
+Compact 字段 Agent 接收代码整理的消息目录、请求返回关系、原始名称及有界原文片段。每个字段任务明确给出当前字段、value 类型、提取要求和完整提交示例；模型只提交这个字段的内容。摘要与结论实际进入后续归因，不提前判定问题类别与责任；`compact/default` 只校验代码拼装的完整结果，不调用模型。
 
-- 工具报错、空结果、零行、截断、缺返回和调用无结果必须作为问题候选。
-- 首屏只展示有界材料；后续通过搜索原文和精确字段读取补齐必要证据，不以固定续读次数截断取证。
-- 输出 `label`、`definition`、`problem_phenomena`、`reason`、`severity`、`severity_reason`、证据引用和可选计算文字。
-- 不填写 `problem_id`、`component`、`position`、`quote`；这些由程序从任务和证据解析。
+外壳与分区类型见 [`schemas/compact/result.schema.json`](../schemas/compact/result.schema.json)，内部内容开放，尤其 `key_data` 没有固定指标和逐项模板。只记录实际收到的轮次与可见思考，不补写隐藏过程，不记录评测者未核验等自述。一个输入记录按轮次、字段拆成独立单轮会话，`cross_turn` 仅在多轮时运行。代码共享原始事实整理，优先保留数值与稳定坐标；字段会话默认关闭额外思考，无探索调用，只提交自己的字段，代码直接拼装完整 compact，不调用汇总或复审模型。
+
+模型材料只保留当前字段用得到的信息：关键数值菜单只发给 `key_data`，与原文统一使用 `$evidence` 整数数组，避免第二套事实编号。一个对象可选择多个数值，代码回填精确原值及其来源。字段任务提供完整提交示例；关键数值示例使用当前材料中真实可选的编号。程序保留完整来源，字段内部结构继续开放。
+
+字段使用专用提交说明：调用 `submit_evaluation` 提交 `{"value":...}`，包括空对象和空数组；正文 JSON 不代表完成。说明不混入 Comparison 候选项、排名等规则，不增加复审或提交校验循环。
 
 ## Trace
 
-`attribution/trace` 接收完整 Q/A 与组件已形成的 Problem，只输出 `summary`、`is_correct`、`correct_reason`。不新增、删除或改写组件问题；`is_correct` 使用 1/0/null。
+`attribution/trace` 沿一轮的完整思考和执行过程审查。接收 compact 的概览、本轮记录及跨轮观察，以及原始问答、标准和原文工具；输出 `summary/problems` 和有标准时的正确性判断。单轮 session 的该次过程审查直接由程序组装正式 session，无需额外 Session 模型调用。
+
+模型为每个问题直接选择 [`taxonomy.json`](../packages/prompts/resources/attribution/taxonomy.json) 中的具体组件 ID，按定义与 exclusions 区分参数形成、工具执行、上下文、返回使用、推理计算和交付。程序验证责任 ID 和来源主体，不从工具别名、执行 locator 或任务分组推断责任。
+
+统计范围识别单独定位总体、子集、调整前后的实际混用；不同口径数值都正确且已说明差异时不报矛盾。结论一致性要求对象、时点、统计范围、调整方式和适用条件相同，不能把未展开的口径解释自动当作互相矛盾。
+
+问题须由完整原文对照确认；先排除合理解释，区分已实现事实、正在推进、预计和目标。不能把更新文章中的预测当作新近已实现结果来否定回答。证据不足时不生成问题，Trace、Session 均允许空问题列表，不设类别或问题数要求。
+
+原文明示的计划、目标、预测、推进中、已完成状态被读错时选择实现状态识别。状态理解正确、仅对其影响的推测语气过强，才选择置信度校准；不能用宽泛置信度条目代替明确的状态误读。
+
+代码核对的是引文与原文相同，不替材料内容背书。被评回答的自述只能证明模型说过什么；事实、执行状态和计算方法仍须对照工具返回、实际代码、执行结果或用户条件，不能拿回答自身的“事件重叠”等自述作事实依据。
 
 ## Session
 
-`attribution/session` 的模型材料只包含完整、有序的原始 QA 和原文证据编号，不包含各 trace 的 summary、Problem 或正确性结论。它只关注跨问答的目标延续、上下文一致性、前后结论冲突和整体交付逻辑，输出 `session_summary` 与同 Problem 结构的 `session_problem`；已有 Trace 结果由程序原样回填到 `turns[]`。
-
-`session_problem` 内部 evidence 使用 `{index, reason}` 引用 QA 原文的证据编号，复用原文校验与坐标解析机制，正式结果保留原始 trace、消息与文本路径。局部问题仅留在 `turns[]`，跨 QA 矛盾须由不同 QA 原文共同支持，合理的条件更新不算矛盾。
+`attribution/session` 使用完整 compact、有序原始QA与执行原文入口，新增跨轮问题和整体总结；逐轮归因由程序原样回填，不向模型灌入局部评测意见。跨轮问题同样选择具体 taxonomy 条目，证据映射回原始消息。
 
 ## 程序边界
 
-- Component 与 Session 共用[问题表达与严重程度规则](../packages/prompts/resources/attribution/problem-output.md)：现象须独立说明具体偏差，定义可复用，理由说明证据支持的判断，严重程度理由说明已确认影响。Trace 与 Session 总结分别由各自提示词约束，不增加润色调用。
-- 组件目录统一读取真实消息身份：明确命名的 planner/tool 保留名称；匿名 locator 归一成语义角色，`llm-call-*` 默认“中间推理处理”，其他无法识别 locator 归入“流程处理”，`final_answer` 才是“终稿生成轮”。相同最终内容不能证明某个匿名模型调用生成了终稿。
-- 组件名称按 taxonomy 映射，未知工具保留真实名称。
-- 证据 `position` 和 `component` 由原始坐标、消息类型、路径和固定组件生成，例如 `tool_call: finquery 取数服务` 或 `reasoning: 终稿生成轮`。
-- `quote` 必须来自真实原文；提示词推荐不超过 400 字，提交校验宽容到 800 字。
-- 长证据由工具切成不超过 400 字的连续片段；`quote_too_long` 反馈只允许替换 evidence index，不重写归因正文。
-- component 和 trace 结果是内部任务，只进入运行状态与收据；最终只有 `attribution-session` 写 `attribution.jsonl`。
-- 每个 trace 都必须有独立的“终稿生成轮”责任任务；匿名模型调用即使后接同内容 `final_answer` 也仍保留通用模型角色。
+- 目录在 Trace、Session 系统提示词中提供一次，模型必须定位到具体条目；不预先将问题分配给组件任务。
+- 摘要带 summary_origin；关键观察和 key_data 统一用 `$evidence` 选择原文，代码回填 source_evidence 和所选 source_values，不由模型手写引文或重复抄录菜单原值。代码提供 execution_facts，原始调用计数和模型返回形式不交给摘要模型重新估算。
+- 同一条完整 evidence_id 的原文在归因材料中只展示一次，重复处保留编号及来源；相同文字来自不同消息或范围时仍分别保留。该精简只作用于模型展示，不改写正式 compact 或归因结果。
+- Trace、Session 共用[问题表达与严重程度规则](../packages/prompts/resources/attribution/problem-output.md)。所有新生成描述使用中文，尤其 label/definition；不增加语言校验、语义复审或润色循环。
+- Trace、Session 通过 taxonomy 定义与排除边界选择责任，Trace 另有[具体动作对照](../packages/prompts/resources/attribution/component-choice.md)。每条问题独立核对要求、实际动作和交付影响，不沿用上一条的责任、不强求类别分布；用户条件误读、具体数值动作、事实补写、内容转写、结论一致性分别定位。终稿引用未绑定选择引用绑定，有替换前后记录才能定位引用标签替换。不以缺值和成功状态同时出现推定服务错误，原因不明时不编造工具契约。
+- 恢复提示只说明本任务的错误路径和修正方法，Compact、Attribution 不接收 Comparison 的候选槽位规则。静态提示文本在进程内复用；来源整理按输入记录共享，关键数值按需提取，不建立跨运行正文缓存。
+- Compact 与 Session 各自接受后立即正式落盘，Trace 为内部任务。恢复通过收据、持久化任务 UUID 和 JSONL 行号关联，不重复保存摘要正文。
+- Compact 失败暂缓本 session 的归因，其余 session 继续。流程与正式输出结构见 [Session 归因](attribution.md)。
 
-## 文件
+component 区分责任环节和执行主体：模型自身错误选择 taxonomy 的具体 reasoning 条目；工具、脚本或 skill 故障定位实际组件。actor_index 从 actor_catalog 选择原始主体，模型名称只说明来源。正式输出结构不变，问题描述定位具体错误步骤。会话生成脚本的代码错误定位该文件；调用参数错误定位参数生成环节，shell 执行异常须有运行环境或执行证据。被额度守卫强制结束不等于主动停止；必要质量检查不自动视为预算浪费。
 
-- 固定提示：`packages/prompts/resources/attribution/{component,trace,session}/`
-- 组件 taxonomy：`packages/prompts/resources/attribution/taxonomy.json`
-- 提交与结果 Schema：`schemas/attribution/`
-- 测试：`packages/workflows/src/attribution/`
+候选SQL、规划草案和实际执行分开核对；没有执行依据的片段不作为已发生故障，不以另一段SQL替代字段契约。草案已改正且无残余影响时不单独定责。

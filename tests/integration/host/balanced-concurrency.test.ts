@@ -31,7 +31,7 @@ for (const growing of [false, true]) test(`healthy balanced channels execute dif
   const backend: AgentBackend = { identity: fakeIdentity, async createSession(options) { return {
     async run() {
       const spec = options.spec;
-      if (spec.evaluation.id === "attribution" && spec.evaluation.profile === "component") {
+      if (!simultaneous.length) {
         active.set(spec.taskId, spec.model.provider);
         if (growing && active.size === 1) share = 2; // Another date drained and released its share.
         if (active.size === 2) {
@@ -63,16 +63,14 @@ for (const growing of [false, true]) test(`healthy balanced channels execute dif
       signal: controller.signal });
     assert.equal(controller.signal.aborted, false);
     assert.deepEqual(result.paused_stages, []);
-    const attributionTasks = plan.tasks.filter(task => task.stage === "attribution-component");
-    assert.equal(attributionTasks.length, 2);
-    assert.deepEqual(new Set(simultaneous.map(([id]) => id)), new Set(attributionTasks.map(task => task.id)),
-      "both attribution sessions must be active before either submits");
+    assert.equal(new Set(simultaneous.map(([id]) => id)).size, 2,
+      "two independent model sessions must be active before either submits");
     const saved = await readRunState(path.join(config.output.path, runId));
     for (const task of plan.tasks) {
       assert.equal(saved.manifest.states[task.id].status, "succeeded");
       assert.equal(saved.manifest.states[task.id].attempts, 1);
-      assert.equal(submissions.get(task.id), 1);
-      assert.equal(saved.receipts[task.id].submissionStats?.contentSubmissions, 1);
+      assert.equal(submissions.get(task.id), task.stage === "attribution-compact" ? undefined : 1);
+      assert.equal(saved.receipts[task.id].submissionStats?.contentSubmissions, task.stage === "attribution-compact" ? undefined : 1);
     }
   } finally {
     clearTimeout(timeout);

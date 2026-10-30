@@ -78,7 +78,7 @@ export function modelBehavior(tasks: readonly PlannedTask[], receipts: Readonly<
       case_id: candidate.case_id, version: candidate.version, sources: [], findings: [] });
     row.sources.push(source);
     for (const finding of sessionProblems(receipt.evaluation as SessionAttributionResult)) {
-      const components = finding.component.split(" / ").filter(Boolean).sort();
+      const components = [finding.component].filter(Boolean).sort();
       const responsibility: ResponsibilityGroup = !components.length ? "unknown" : "known";
       const observation = { finding_id: finding.problem_id, responsibility, components, text: finding.problem_phenomena,
         impact: finding.reason, source_conflict: false };

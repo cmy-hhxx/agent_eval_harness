@@ -2,8 +2,9 @@ import type { JsonSchema, JsonObject, ModelConfig, ToolResult, TraceRead, Failur
 export type * from "./primitives.js";
 export { presentSource, type SourcePresentation } from "./source-presentation.js";
 export type Engine = "pi";
-export { evidenceId, evidenceSources, messageContentSources, evidenceImageAvailable, imagePlaceholder, overlapsImagePlaceholder, parseEvidenceCoordinates, type EvidenceCoordinates } from "./evidence.js";
+export { evidenceId, evidenceSources, evidenceOrigin, messageContentSources, evidenceImageAvailable, imagePlaceholder, overlapsImagePlaceholder, parseEvidenceCoordinates, attributionEvidencePosition, attributionPositionReference, type EvidenceCoordinates } from "./evidence.js";
 export * from "./evidence-selection.js";
+export * from "./value-patch.js";
 export { mergeRequiredReadRanges, extendRequiredReadRanges, requiredReadCallLimit, toolBudgetMetadataChars, validationRequiredReads } from "./required-reading.js";
 export type * from "./criteria.js";
 
@@ -470,6 +471,8 @@ export interface AgentProfile {
   evidenceSelections?: boolean;
   /** Longest selectable evidence span for this profile; tools expose no index for a longer range. */
   maxEvidenceQuoteChars?: number;
+  /** Profile ceiling on exploration calls; the Host also applies the run-wide budget. */
+  maxToolCalls?: number;
   /** A mandatory read-only inspection before the trusted secondary material is revealed. */
   inspection?: {
     /** Canonical schema also used when restoring an accepted checkpoint. */
@@ -507,6 +510,8 @@ export interface AgentDefinition {
   profiles: Record<string, AgentProfile>;
 }
 export interface AgentBinding {
+  /** Trusted workflow result assembled by code; validate and persist without dispatching a model. */
+  computedResult?: unknown;
   /** Measured once during this assembly; never exposed as model fields. */
   preparationTimings?: Record<string, number>;
   /** Immutable workflow-owned navigation shared with tools without entering modelInput or evidence registration. */
@@ -537,6 +542,8 @@ export interface WorkflowScheduling {
 }
 export interface WorkflowDefinition {
   id: string;
+  /** Code-owned aggregation needs neither a model request permit nor a Worker slot. */
+  isComputedTask?(task: PlannedTask): boolean;
   plan(config: unknown, options?: unknown): Promise<TaskPlan>;
   reconcile?(run: string, state: RunState, config: unknown): Promise<TaskPlan>;
   bind(

@@ -24,7 +24,7 @@ test("scoped failure retry and same-run resume preserve accepted results", async
   const backend:AgentBackend = { identity:fakeIdentity,async createSession(options) { return {
     async run() {
       calls.push(options.spec.taskId);
-      if (fail && options.spec.evaluation.id === 'attribution' && options.spec.evaluation.profile === 'component') {
+      if (fail && options.spec.evaluation.id === 'compact') {
         failedTaskId ??= options.spec.taskId;
         if (options.spec.taskId === failedTaskId) throw new Error('fixture connection failed');
       }

@@ -1,3 +1,4 @@
+import { isTraceAttributionTask } from "@eval/workflows/attribution";
 import { testSettings } from "../../../../tests/fixtures/settings.js";
 import test from "node:test";
 import assert from "node:assert/strict";
@@ -18,8 +19,8 @@ test("evaluation with explicit rewrites off has one comparison and no mandatory 
     const plan = await buildPlan(f.config);
     assert.deepEqual(plan.tasks.filter(task => task.stage === "criteria").length, 1);
     assert.deepEqual(plan.tasks.filter(task => task.stage === "attribution-session").length, 2);
-    assert.deepEqual(plan.tasks.filter(task => task.stage === "attribution-component").length > 0, true);
-    assert.deepEqual(plan.tasks.filter(task => task.stage === "attribution-trace").length, 2);
+    assert.deepEqual(plan.tasks.filter(task => task.stage === "attribution-compact").length > 0, true);
+    assert.deepEqual(plan.tasks.filter(task => isTraceAttributionTask(task)).length, 2);
     assert.deepEqual(plan.tasks.filter(task => task.stage === "comparison").length, 1);
     const comparison = plan.tasks.find(task => task.stage === "comparison")!;
     assert.equal((comparison.data as TaskData).verificationOf, undefined);

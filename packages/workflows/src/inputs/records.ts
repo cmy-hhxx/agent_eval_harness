@@ -1,7 +1,6 @@
 import { fileSourceReader } from "@eval/data";
 import { randomUUID } from "node:crypto";
 import { canonical, evidenceSources, object, ValidationError, type ValidationIssue } from "@eval/contracts";
-import { traceComponentScopes } from "./component-scopes.js";
 import { inputAdapters, resolveAdapter } from "./adapters.js";
 import { normalizeInput } from "./normalize.js";
 import type { Candidate, CandidateTurn, RawInput, SessionTurn, Timing, VersionConfig } from "./types.js";
@@ -128,7 +127,6 @@ export function adapt(
       trace_id: typeof traceMeta.trace_id === "string" ? traceMeta.trace_id : null,
       question,
       final_index: final,
-      component_scopes: traceComponentScopes(messages, final, inputId),
     };
     return { trace, traceMeta, messages, adapter, final, question, traceCandidate };
   });

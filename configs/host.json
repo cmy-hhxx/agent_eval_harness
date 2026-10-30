@@ -1,5 +1,5 @@
 {
-  "evaluatorVersion": "r445",
+  "evaluatorVersion": "r485",
   "inputs": {
     "timing_unit": "ms",
     "versions": [
@@ -77,7 +77,7 @@
     "enabled": false,
     "maxClassesPerModel": 40,
     "maxNewClassesPerTask": 3,
-    "maxComponentsPerModel": 12,
+    "maxComponentsPerModel": 49,
     "consolidateAt": 30,
     "minSupport": 3,
     "maxCasesPerTask": 30
@@ -96,6 +96,10 @@
     "attribution": {
       "profile": "judge",
       "thinking": "low"
+    },
+    "attribution-compact": {
+      "profile": "judge",
+      "thinking": "off"
     },
     "comparison": {
       "profile": "judge",
@@ -126,6 +130,9 @@
     "idleTimeoutSeconds": 120,
     "maxToolCalls": 24,
     "repairAttempts": 3,
+    "stageRepairAttempts": {
+      "attribution-compact-field": 1
+    },
     "retries": 3,
     "retryDelaySeconds": 10,
     "codeTimeoutSeconds": 60,

@@ -43,7 +43,7 @@ test("stability resume records actual model capabilities and withholds pooled in
     assert.deepEqual(first.execution_task_statuses, { succeeded: firstAttempts, pending: plan.tasks.length - firstAttempts });
     const before = await stabilityRepository.readRun(run);
     assert.equal(stabilityReport(before).statistics.status, "exploratory_pilot");
-    for (const task of before.manifest.tasks.filter(task => before.receipts[task.id])) {
+    for (const task of before.manifest.tasks.filter(task => before.receipts[task.id] && task.stage !== "attribution-compact")) {
       const { apiKeyEnv, ...publicModel } = seen.get(task.id)!;
       const condition = (task.data as StabilityTaskData).stability.condition!;
       assert.deepEqual(condition.model, publicModel);
@@ -57,7 +57,7 @@ test("stability resume records actual model capabilities and withholds pooled in
     const after = await stabilityRepository.readRun(run), report = stabilityReport(after);
     for (const [id, receipt] of Object.entries(before.receipts)) {
       assert.equal(after.receipts[id].submissionId, receipt.submissionId);
-      assert.equal(seen.get(id)!.maxOutputTokens, 4096, "accepted trials must not run again");
+      if (receipt.judge !== "code") assert.equal(seen.get(id)!.maxOutputTokens, 4096, "accepted trials must not run again");
     }
     assert.equal(report.statistics.status, "mixed_conditions");
     assert.equal(report.statistics.swap_agreement.mean, null);

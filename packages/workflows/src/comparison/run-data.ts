@@ -14,7 +14,7 @@ import { reconcileAttributionRewriteGroups } from "./attribution-rewrite-plannin
 import { pendingTaskProgress } from "../review/task-progress.js";
 import { configureStandardReview } from "./review.js";
 
-export const comparisonRepository = createRunRepository(comparisonCodec, encodeResult, { indexedFiles: ["attribution.jsonl"] });
+export const comparisonRepository = createRunRepository(comparisonCodec, encodeResult, { indexedFiles: ["attribution.jsonl", "compact.jsonl"] });
 export const { readRun: readRunState, writeRun: writeRunState, createResultWriter, readTasks: readRunTasks } =
   comparisonRepository;
 export async function reconcileRun(_run: string, state: RunState, current: unknown,
@@ -63,6 +63,7 @@ export async function reconcileRun(_run: string, state: RunState, current: unkno
   const tasks = new Map(plan.tasks.map((task) => [task.id, task]));
   // Accepted work is immutable within a run. Only unfinished/new tasks use the latest source records.
   for (const task of previous) {
+    if (task.stage.startsWith("attribution-") && !state.receipts[task.id] && !tasks.has(task.id) && !(task.data as TaskData).reviewOf) continue;
     if (task.stage === "rewrite" && !state.receipts[task.id]) {
       const target = (task.data as TaskData).rewriteOf!.stage;
       if (!selected.rewrite[target]) continue;
@@ -114,7 +115,7 @@ export async function reconcileRun(_run: string, state: RunState, current: unkno
   }
   // Remove unused upstream work from downstream to upstream after session replacement.
   // Accepted tasks keep their original dependency chain for evidence and resume.
-  for (const stage of ["attribution-trace", "attribution-component", "criteria"]) {
+  for (const stage of ["attribution-trace", "attribution-compact", "attribution-compact-field", "criteria"]) {
     const required = new Set([...tasks.values()].flatMap(task => Object.values(task.dependencies)));
     for (const [id, task] of tasks)
       if (task.stage === stage && !state.receipts[id] && !required.has(id)) tasks.delete(id);

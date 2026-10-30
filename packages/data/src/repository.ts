@@ -160,6 +160,8 @@ export function createRunRepository<Checkpoint>(
             if (!result) continue;
             const file = safeId(result.file!);
             if (indexedFiles.has(file)) {
+              const previous = receipts[task.id]!.exported;
+              if (previous?.id === result.id && previous.file === result.file) result.line = previous.line;
               const key = file + "\u0000" + result.id;
               if (indexedIds.has(key))
                 throw new Error("重复结果身份：" + result.id);

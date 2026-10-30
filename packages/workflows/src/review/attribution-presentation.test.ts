@@ -1,3 +1,4 @@
+import { compactReceipt } from "../../../../tests/fixtures/compact.js";
 import test from "node:test";
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
@@ -120,11 +121,11 @@ test("canonical component table views use own full-directory ordinals while trus
   const rubric = criteriaResult(criteriaBinding.request.input as unknown as CriteriaInput);
   const receipt: SubmissionReceipt = { taskId: criteriaTask.id, attemptId: randomUUID(), submissionId: randomUUID(), acceptedAt: 1,
     status: "succeeded", evaluatorVersion: "fixture", judge: "fixture", evaluation: rubric, audit: emptyAudit(), usage: emptyUsage() };
-  const task: PlannedTask = { id: randomUUID(), stage: "attribution-component", dependencies: { criteria: criteriaTask.id },
+  const task: PlannedTask = { id: randomUUID(), stage: "attribution-trace", dependencies: { compact: "compact", criteria: criteriaTask.id },
     inputIds: { answer: candidates.A.input_id },
-    data: { stage: "attribution-component", candidate: candidates.A, candidates: { A: candidates.A }, reference: null } satisfies TaskData };
+    data: { stage: "attribution-trace", candidate: candidates.A, candidates: { A: candidates.A }, reference: null } satisfies TaskData };
   const before = structuredClone(inputs);
-  bindTask(task, inputs, { criteria: receipt }, { tasks: [criteriaTask, task] });
+  bindTask(task, inputs, { compact: compactReceipt(), criteria: receipt }, { tasks: [criteriaTask, task] });
   const own = { table_check_results: attributionTableChecks(traces.A, candidates.A.input_id, candidates.A.final_index) };
   const shown = { answer: { table_check_results: tableChecksPresentation(own.table_check_results, traces.A, candidates.A.input_id) } };
   assert.equal(shown.answer.table_check_results[0].answer_table_index, 2);

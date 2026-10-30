@@ -1,54 +1,40 @@
 import { Ajv2020 } from "ajv/dist/2020.js";
-import { ValidationError, resolveEvidenceSelection, schemaIssues, selectEvidence, type AgentProfile, type AgentRequest, type JsonObject, type ToolAudit } from "@eval/contracts";
-import { agentPrompt, attributionConditionalRules, attributionNoStandardReason } from "@eval/prompts";
+import { ValidationError, attributionEvidencePosition, resolveEvidenceSelection, schemaIssues, selectEvidence, type AgentProfile, type AgentRequest, type JsonObject, type ToolAudit, type ValidationIssue } from "@eval/contracts";
+import { agentPrompt, attributionConditionalRules, attributionNoStandardReason, attributionTaxonomy } from "@eval/prompts";
 import { cite, evidenceSources, parseEvidenceCoordinates } from "@eval/tools";
-import componentRequestSchema from "../../../../schemas/attribution/component-request.schema.json" with { type: "json" };
-import componentSubmissionSchema from "../../../../schemas/attribution/component-submission.schema.json" with { type: "json" };
-import componentResultSchema from "../../../../schemas/attribution/component-result.schema.json" with { type: "json" };
 import problemSchema from "../../../../schemas/attribution/problem.schema.json" with { type: "json" };
 import traceSubmissionSchema from "../../../../schemas/attribution/trace-summary-submission.schema.json" with { type: "json" };
 import traceResultSchema from "../../../../schemas/attribution/trace-result.schema.json" with { type: "json" };
 import sessionSubmissionSchema from "../../../../schemas/attribution/session-summary-submission.schema.json" with { type: "json" };
 import sessionResultSchema from "../../../../schemas/attribution/session-result.schema.json" with { type: "json" };
 import { resolveAttributionEvidence } from "./source-evidence.js";
+import { attributionComponentLabel } from "./responsibility.js";
 import { investigationMaterial } from "./investigation-material.js";
 import { numericReferenceDirectory } from "./units.js";
-import type { ComponentReviewResult, SessionAttributionResult, SessionProblem, TraceAttributionResult } from "./types.js";
+import type { SessionAttributionResult, SessionProblem, TraceAttributionResult } from "./types.js";
 
-const componentTools = [
-  "read_trace", "search_trace", "view_image", "calculate", "execute_code",
-  "read_artifact",
-];
-const componentPrompt = agentPrompt("attribution", componentTools, { profile: "component", fileSubmission: false });
-const tracePrompt = agentPrompt("attribution", [], { profile: "trace", fileSubmission: false });
-const sessionPrompt = agentPrompt("attribution", [], { profile: "session", fileSubmission: false });
-const componentSchema = new Ajv2020({ allErrors: true, strict: false }).compile(componentSubmissionSchema);
-const traceWithStandardSchema = { ...traceSubmissionSchema, required: ["summary", "is_correct", "correct_reason"] };
+const tools = ["read_trace", "search_trace", "view_image", "calculate", "execute_code", "read_artifact"];
+const tracePrompt = agentPrompt("attribution", tools, { profile: "trace", fileSubmission: false });
+const sessionPrompt = agentPrompt("attribution", tools, { profile: "session", fileSubmission: false });
+const traceSubmission = structuredClone(traceSubmissionSchema);
+const sessionSubmission = structuredClone(sessionSubmissionSchema);
+for (const problem of [traceSubmission.properties.problems.items, sessionSubmission.properties.session_problem.items])
+  Object.assign(problem.properties.component, { enum: Object.keys(attributionTaxonomy.components) });
+const traceWithStandardSchema = { ...traceSubmission, required: ["summary", "problems", "is_correct", "correct_reason"] };
 const validateTraceWithStandard = new Ajv2020({ allErrors: true, strict: false }).compile(traceWithStandardSchema);
 const traceHasStandard = (request: AgentRequest) => (request.input.ground_truth as { available: boolean }).available;
-const copy = <T>(value: T): T => structuredClone(value);
-const inline = <T>(value: T): T => {
-  const result = copy(value) as Record<string, unknown>;
-  delete result.$id;
-  delete result.$schema;
-  return result as T;
-};
-const bareProblem = copy(problemSchema) as Record<string, unknown>;
-delete bareProblem.$id;
-delete bareProblem.$schema;
-const componentResult = copy(componentResultSchema) as any;
-componentResult.properties.problems.items = copy(bareProblem);
-const traceResult = copy(traceResultSchema) as any;
-traceResult.properties.problem.items = copy(bareProblem);
-export const sessionAttributionResultSchema = copy(sessionResultSchema) as any;
-delete sessionAttributionResultSchema.$id;
-delete sessionAttributionResultSchema.$schema;
-const inlineTraceResult = inline(traceResult) as any;
-inlineTraceResult.properties.problem.items = copy(bareProblem);
-sessionAttributionResultSchema.properties.turns.items = inlineTraceResult;
-sessionAttributionResultSchema.properties.session_problem.items = copy(bareProblem);
+const bareProblem = structuredClone(problemSchema) as Record<string, unknown>;
+delete bareProblem.$id; delete bareProblem.$schema;
+const traceResult = structuredClone(traceResultSchema) as any;
+delete traceResult.$id; delete traceResult.$schema;
+traceResult.properties.problem.items = bareProblem;
+export const sessionAttributionResultSchema = structuredClone(sessionResultSchema) as any;
+delete sessionAttributionResultSchema.$id; delete sessionAttributionResultSchema.$schema;
+sessionAttributionResultSchema.properties.turns.items = traceResult;
+sessionAttributionResultSchema.properties.session_problem.items = bareProblem;
 
 function evidenceKind(message: Record<string, unknown>, path: string): "reasoning" | "tool_call" | "answer" | "question" | "material" {
+  if (message.role === "tool" || ["tool_call", "tool_result", "function_call", "function_call_output"].includes(String(message.type))) return "tool_call";
   if (/tool_calls?|function_call|tool_result|function_call_output/iu.test(path)) return "tool_call";
   if (/reasoning|thinking|analysis|calculations?/iu.test(path)) return "reasoning";
   if (message.type === "final_answer" || message.role === "assistant") return "answer";
@@ -57,16 +43,13 @@ function evidenceKind(message: Record<string, unknown>, path: string): "reasonin
   return "material";
 }
 
-function evidencePosition(traceIndex: number, messageIndex: number, path: string): string {
-  return `trace_index ${traceIndex} / message_index ${messageIndex} / path ${path || "root"}`;
-}
-
 function evidenceComponent(message: Record<string, unknown>, path: string, fixedComponent: string): string {
   const kind = evidenceKind(message, path);
-  return kind === "tool_call" ? `tool_call: ${fixedComponent}`
-    : kind === "reasoning" ? `reasoning: ${fixedComponent}`
+  const source = message.model ?? message.name ?? fixedComponent;
+  return kind === "tool_call" ? `tool_call: ${message.name ?? fixedComponent}`
+    : kind === "reasoning" ? `reasoning: ${source}`
       : kind === "answer" ? "answer: 终稿生成轮"
-        : kind === "question" ? "question: 用户输入" : `material: ${fixedComponent}`;
+        : kind === "question" ? "question: 用户输入" : `material: ${source}`;
 }
 
 /** Split one rejected long quote into real, independently selectable excerpts without changing source bytes. */
@@ -89,139 +72,96 @@ function quoteRepair(request: AgentRequest, audit: ToolAudit, evidence: { eviden
     start, Math.min(point.end, start + limit)).evidence_id) };
 }
 
-function componentReview(request: AgentRequest, draft: unknown, audit: ToolAudit): ComponentReviewResult {
-  const issues = componentSchema(draft) ? [] : schemaIssues(componentSchema.errors, draft);
-  if (issues.length) throw new ValidationError(issues);
-  const value = draft as { problems: { label: string; definition: string; problem_phenomena: string; reason: string;
-    severity: SessionProblem["severity"]; severity_reason: string;
-    evidence: { index: number; reason: string }[]; calculations?: { text: string }[] }[] };
-  const component = String(request.input.component ?? "").trim();
-  if (!component) throw new ValidationError([{ category: "decision", code: "component_required", path: "/component",
-    message: "组件审查任务缺少固定组件。" }]);
+type SubmittedProblem = Omit<SessionProblem, "problem_id" | "evidence"> & { actor_index: number; evidence: { index: number; reason: string }[] };
+function resolveProblems(request: AgentRequest, problems: SubmittedProblem[], audit: ToolAudit, field: string, session = false): SessionProblem[] {
   const raw = request.sources.answer.value as { messages: Record<string, unknown>[] };
-  const traceIndex = Number(request.input.trace_index);
-  const problems: SessionProblem[] = value.problems.map((problem, index) => ({
-    problem_id: `p${index + 1}`,
-    component,
-    label: problem.label,
-    definition: problem.definition,
-    problem_phenomena: problem.problem_phenomena,
-    reason: problem.reason,
-    severity: problem.severity,
-    severity_reason: problem.severity_reason,
-    evidence: problem.evidence.map((selection, evidenceIndex) => {
-      const path = `/problems/${index}/evidence/${evidenceIndex}`;
-      const reference = resolveEvidenceSelection(audit.evidenceBank ?? [], { evidence_index: selection.index }, path);
-      const evidence = resolveAttributionEvidence(request, reference, audit, path);
-      if (evidence.quote.length > 800) {
-        const repair = quoteRepair(request, audit, evidence);
-        throw new ValidationError([{ category: "evidence", code: "quote_too_long", path: `${path}/index`,
-          message: "quote 校验上限为 800 字；请优先选择不超过 400 字的片段，并只替换本条 evidence.index，不要重新生成整份归因。", actual: evidence.quote.length,
-          expected: { quote_chars_limit: 400, validation_limit: 800,
-            ...(repair ? { suggested_evidence: repair.choices, append_evidence_ids: repair.append,
-              repair_action: "从 suggested_evidence 中选择 2–3 个能支持同一结论的合规引用并替换 index；保留其余字段。" } : {}) } }]);
-      }
-      const point = parseEvidenceCoordinates(evidence.evidence_id);
-      if (!point) throw new ValidationError([{ category: "evidence", code: "evidence_position_invalid", path, message: "证据坐标不可解析。" }]);
-      return { position: evidencePosition(traceIndex, evidence.message_index, point.kind === "image" ? "image" : point.path),
-        component: evidenceComponent(raw.messages[evidence.message_index] ?? {}, point.kind === "image" ? "image" : point.path, component),
-        quote: evidence.quote, reason: selection.reason };
-    }),
-    ...(problem.calculations?.length ? { calculations: problem.calculations } : {}),
-  }));
-  return { component, problems };
+  const issues: ValidationIssue[] = [];
+  const result = problems.map((problem, index) => {
+    const component = attributionComponentLabel(problem.component, problem.actor_index, request.input.components as JsonObject[]);
+    const actor = (request.input.components as JsonObject[]).find(entry => entry.component_index === problem.actor_index)!;
+    const { actor_index: _componentIndex, ...description } = problem;
+    return { ...description, component, problem_id: `${session ? "s-" : ""}p${index + 1}`,
+      evidence: problem.evidence.flatMap((selection, evidenceIndex) => {
+        try {
+          const path = `/${field}/${index}/evidence/${evidenceIndex}`;
+          const reference = resolveEvidenceSelection(audit.evidenceBank ?? [], { evidence_index: selection.index }, path);
+          const evidence = resolveAttributionEvidence(request, reference, audit, path);
+          if (evidence.quote.length > 400) {
+            const repair = quoteRepair(request, audit, evidence);
+            throw new ValidationError([{ category: "evidence", code: "quote_too_long", path: `${path}/index`,
+              message: "引文超过400字，请只替换本条 evidence.index，选择反馈中不超过400字的原文片段。",
+              expected: { quote_chars_limit: 400, validation_limit: 400,
+                ...(repair ? { suggested_evidence: repair.choices, append_evidence_ids: repair.append } : {}) } }]);
+          }
+          const point = parseEvidenceCoordinates(evidence.evidence_id);
+          const position = (request.input.source_positions as { trace_index: number; message_index: number }[])[evidence.message_index];
+          if (!point || !position) throw new ValidationError([{ category: "evidence", code: "evidence_position_invalid", path,
+            message: "证据必须能定位到本次收到的原始消息。" }]);
+          return [{ position: attributionEvidencePosition(position.trace_index, position.message_index, evidence.evidence_id),
+            component: evidenceComponent(raw.messages[evidence.message_index] ?? {}, point.kind === "image" ? "image" : point.path, String(actor.name)),
+            quote: evidence.quote, reason: selection.reason }];
+        } catch (error) {
+          if (!(error instanceof ValidationError)) throw error;
+          issues.push(...error.issues!);
+          return [];
+        }
+      }) };
+  });
+  if (issues.length) throw new ValidationError(issues);
+  return result;
 }
-
-export const componentAttributionProfile: AgentProfile = {
-  id: "component",
-  requestSchema: componentRequestSchema,
-  submissionSchema: componentSubmissionSchema,
-  resultSchema: componentResult,
-  evidenceSelections: true,
-  maxEvidenceQuoteChars: 400,
-  ...componentPrompt,
-  renderPrompt(input, policy, failure) {
-    const analysis = input.task_analysis as { requirements: Record<string, unknown>[] } | undefined;
-    const answer = input.answer as Record<string, unknown>, truth = input.ground_truth as { available: boolean; value: unknown } | undefined;
-    const requirements = analysis?.requirements.map((item, index) => ({ ...item, requirement_index: Number(item.requirement_index ?? index) + 1 }));
-    const numeric = truth?.available ? numericReferenceDirectory(truth.value) : [];
-    const tables = answer.table_check_results as { rows: unknown[] }[] | undefined;
-    const images = answer.final_images as { image_count: number } | undefined;
-    const rules = attributionConditionalRules({ standardAnswer: truth?.available ?? false, numeric: numeric.length > 0,
-      tableDoubts: Number(answer.table_check_count ?? 0) > 0 || (tables?.some(table => table.rows.length > 0) ?? false),
-      images: (images?.image_count ?? 0) > 0, captureGaps: Array.isArray(answer.capture_gaps) && answer.capture_gaps.length > 0 });
-    const shown = { ...input, ...(analysis ? { task_analysis: { ...analysis, requirements } } : {}) };
-    return (rules ? rules + "\n\n" : "") + componentPrompt.renderPrompt(investigationMaterial({ ...shown,
-      numeric_references: numeric.map(item => ({ ...item, reference_index: item.reference_index + 1 })) }), policy, failure);
-  },
-  toolNames: componentTools,
-  resolve: componentReview,
-};
-
 export const traceAttributionProfile: AgentProfile = {
-  id: "trace",
-  requestSchema: { type: "object", required: ["trace_meta", "question", "answer", "problems", "ground_truth"],
+  id: "trace", requestSchema: { type: "object", required: ["trace_meta", "question", "answer", "compact", "ground_truth", "source_positions"],
     properties: { ground_truth: { type: "object", required: ["available", "value"],
       properties: { available: { type: "boolean" }, value: {} }, additionalProperties: false } }, additionalProperties: true },
-  submissionSchema: traceSubmissionSchema,
+  submissionSchema: traceSubmission,
   modelSubmissionSchema(request) {
-    return traceHasStandard(request) ? traceWithStandardSchema : { ...traceSubmissionSchema,
-      properties: { summary: traceSubmissionSchema.properties.summary } };
+    if (traceHasStandard(request)) return traceWithStandardSchema;
+    const { is_correct: _correct, correct_reason: _reason, ...properties } = traceSubmission.properties;
+    return { ...traceSubmission, properties };
   },
   validateSubmission(request, draft) {
     return traceHasStandard(request) && !validateTraceWithStandard(draft) ? schemaIssues(validateTraceWithStandard.errors, draft) : [];
   },
-  resultSchema: traceResult,
-  ...tracePrompt,
-  toolNames: [],
-  resolve(request, draft) {
-    const value = draft as { summary: string; is_correct: 1 | 0 | null; correct_reason: string };
-    const unreviewed = (request.input.review_coverage as { unreviewed_count: number } | undefined)?.unreviewed_count ?? 0;
-    const result: TraceAttributionResult = { meta: (request.input.trace_meta ?? {}) as JsonObject,
-      summary: value.summary + (unreviewed ? `（本次有 ${unreviewed} 项审查未完成，问题清单仅覆盖已完成范围。）` : ""),
-      problem: (request.input.problems ?? []) as SessionProblem[],
+  resultSchema: traceResult, evidenceSelections: true, maxEvidenceQuoteChars: 400,
+  ...tracePrompt, toolNames: tools,
+  renderPrompt(input, policy, failure) {
+    const truth = input.ground_truth as { available: boolean; value: unknown };
+    const numeric = truth.available ? numericReferenceDirectory(truth.value) : [];
+    const rules = attributionConditionalRules({ standardAnswer: truth.available, numeric: numeric.length > 0,
+      tableDoubts: false, images: false, captureGaps: false });
+    const repair = failure?.draft !== undefined && failure.errors.length && failure.errors.every(error =>
+      error.code === "quote_too_long" || error.code === "schema_maxLength" && error.path.endsWith("/quote"))
+      ? { previous_submission: failure.draft, errors: failure.errors } : undefined;
+    return (rules ? rules + "\n\n" : "") + tracePrompt.renderPrompt(investigationMaterial({ ...input,
+      numeric_references: numeric.map(item => ({ ...item, reference_index: item.reference_index + 1 })),
+      ...(repair ? { evidence_repair: repair } : {}) }), policy, repair ? undefined : failure);
+  },
+  resolve(request, draft, audit) {
+    const value = draft as { summary: string; problems: SubmittedProblem[]; is_correct: 1 | 0 | null; correct_reason: string };
+    return { meta: request.input.trace_meta as JsonObject, summary: value.summary,
+      problem: resolveProblems(request, value.problems, audit, "problems"),
       is_correct: traceHasStandard(request) ? value.is_correct : null,
-      correct_reason: traceHasStandard(request) ? value.correct_reason : attributionNoStandardReason };
-    return result;
+      correct_reason: traceHasStandard(request) ? value.correct_reason : attributionNoStandardReason } satisfies TraceAttributionResult;
+  },
+};
+export const sessionAttributionProfile: AgentProfile = {
+  id: "session", requestSchema: { type: "object", required: ["session_meta", "qa", "source_positions", "turns", "compact"], additionalProperties: true },
+  submissionSchema: sessionSubmission, resultSchema: sessionAttributionResultSchema,
+  evidenceSelections: true, maxEvidenceQuoteChars: 400, ...sessionPrompt, toolNames: tools,
+  resolve(request, draft, audit) {
+    const value = draft as { session_summary: string; session_problem: SubmittedProblem[] };
+    return { session_meta: request.input.session_meta as JsonObject, turns: request.input.turns as TraceAttributionResult[],
+      session_summary: value.session_summary, session_problem: resolveProblems(request, value.session_problem, audit, "session_problem", true) } satisfies SessionAttributionResult;
   },
 };
 
-export const sessionAttributionProfile: AgentProfile = {
-  id: "session",
-  requestSchema: { type: "object", required: ["session_meta", "qa", "qa_positions", "turns"], additionalProperties: true },
-  submissionSchema: sessionSubmissionSchema,
-  resultSchema: sessionAttributionResultSchema,
-  evidenceSelections: true,
-  maxEvidenceQuoteChars: 400,
-  ...sessionPrompt,
-  toolNames: [],
+/** Single-turn session: the process judgment is final; session assembly needs no second model call. */
+export const singleSessionAttributionProfile: AgentProfile = {
+  ...traceAttributionProfile, id: "single", resultSchema: sessionAttributionResultSchema,
   resolve(request, draft, audit) {
-    const value = draft as { session_summary: string; session_problem: { label: string; definition: string;
-      problem_phenomena: string; reason: string; evidence: { index: number; reason: string }[];
-      severity: SessionProblem["severity"]; severity_reason: string;
-      calculations?: { text: string }[] }[] };
-    const traces = (request.input.turns ?? []) as TraceAttributionResult[];
-    const session_problem: SessionProblem[] = value.session_problem.map((problem, index) => {
-      const evidence = problem.evidence.map((selection, evidenceIndex) => {
-        const path = `/session_problem/${index}/evidence/${evidenceIndex}/index`;
-        const reference = resolveEvidenceSelection(audit.evidenceBank ?? [], { evidence_index: selection.index }, path);
-        const source = resolveAttributionEvidence(request, reference, audit, path);
-        const point = parseEvidenceCoordinates(source.evidence_id)!;
-        const position = (request.input.qa_positions as { trace_index: number; message_index: number }[])[source.message_index];
-        if (!position || point.kind !== "text" || source.quote.length > 800)
-          throw new ValidationError([{ category: "evidence", code: "session_qa_reference", path,
-            message: "Session 证据必须引用已提供的 QA 原文片段。" }]);
-        const raw = request.sources.answer.value as { messages: Record<string, unknown>[] };
-        return { position: evidencePosition(position.trace_index, position.message_index, point.path),
-          component: evidenceComponent(raw.messages[source.message_index]!, point.path, "终稿生成轮"),
-          quote: source.quote, reason: selection.reason };
-      });
-      return { problem_id: `s-p${index + 1}`, component: "终稿生成轮",
-        label: problem.label, definition: problem.definition, problem_phenomena: problem.problem_phenomena,
-        reason: problem.reason, severity: problem.severity, severity_reason: problem.severity_reason,
-        evidence, ...(problem.calculations?.length ? { calculations: problem.calculations } : {}) };
-    });
-    return { session_meta: (request.input.session_meta ?? {}) as JsonObject, turns: traces,
-      session_summary: value.session_summary, session_problem } satisfies SessionAttributionResult;
+    const turn = traceAttributionProfile.resolve!(request, draft, audit) as TraceAttributionResult;
+    return { session_meta: request.input.session_meta as JsonObject, turns: [turn],
+      session_summary: turn.summary, session_problem: [] } satisfies SessionAttributionResult;
   },
 };

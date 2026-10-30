@@ -1,3 +1,4 @@
+import { jsonRanges } from "./json-ranges.js";
 import type { ToolAudit, ValidationIssue } from "@eval/contracts";
 import { evidenceId, evidenceSources, imagePlaceholder, overlapsImagePlaceholder, parseEvidenceCoordinates, ValidationError } from "@eval/contracts";
 export { evidenceId, evidenceSources, messageContentSources, imagePlaceholder, overlapsImagePlaceholder, parseEvidenceCoordinates, type EvidenceCoordinates } from "@eval/contracts";
@@ -44,61 +45,16 @@ function readSuggestions(raw: { messages: unknown[] }, candidate: string, inputI
   const offered = new Set(recovered.map((item) => item.reference.evidence_id));
   return [...recovered, ...suggested.filter((item) => !offered.has(item.reference.evidence_id))];
 }
-/** Locate a JSON pointer in the exact rendered message; returned offsets stay in that JSON source. */
-function jsonPathRange(text: string, path: string): { start: number; end: number } | undefined {
-  if (!path) return { start: 0, end: text.length };
-  if (!path.startsWith("/") || /~(?![01])/u.test(path)) return undefined;
-  const parts = path.slice(1).split("/").map((part) => part.replaceAll("~1", "/").replaceAll("~0", "~"));
-  const length = (value: unknown, depth: number) => {
-    const rendered = JSON.stringify(value, null, 2);
-    return rendered.length + (rendered.match(/\n/g)?.length ?? 0) * depth * 2;
-  };
-  const locate = (value: unknown, start: number, depth: number, remaining: string[]): { start: number; end: number } | undefined => {
-    if (!value || typeof value !== "object" || !Object.hasOwn(value, remaining[0]!)) return undefined;
-    const array = Array.isArray(value);
-    let cursor = start + 2 + (depth + 1) * 2;
-    for (const [key, child] of Object.entries(value)) {
-      const valueStart = cursor + (array ? 0 : JSON.stringify(key).length + 2);
-      const end = valueStart + length(child, depth + 1);
-      if (key === remaining[0]) return remaining.length === 1
-        ? { start: cursor, end }
-        : locate(child, valueStart, depth + 1, remaining.slice(1));
-      cursor = end + 2 + (depth + 1) * 2;
-    }
-    return undefined;
-  };
-  return locate(JSON.parse(text), 0, 0, parts);
-}
 type EvidenceRange = { start: number; end: number };
 /** Optional call-scoped index; callers retain it only while assembling one request. */
 export type EvidenceSelectionCache = WeakMap<ReturnType<typeof evidenceSources>[number], Map<string, EvidenceRange>>;
-function indexJsonRanges(text: string): Map<string, EvidenceRange> {
-  const ranges = new Map<string, EvidenceRange>();
-  const visit = (value: unknown, start: number, depth: number, path: string): number => {
-    if (value === null || typeof value !== "object") return start + JSON.stringify(value).length;
-    const entries = Object.entries(value), array = Array.isArray(value);
-    if (!entries.length) return start + 2;
-    let cursor = start + 2 + (depth + 1) * 2, end = cursor;
-    for (const [key, child] of entries) {
-      const childPath = path + "/" + key.replaceAll("~", "~0").replaceAll("/", "~1");
-      const valueStart = cursor + (array ? 0 : JSON.stringify(key).length + 2);
-      end = visit(child, valueStart, depth + 1, childPath);
-      ranges.set(childPath, { start: cursor, end });
-      cursor = end + 2 + (depth + 1) * 2;
-    }
-    return end + 2 + depth * 2;
-  };
-  visit(JSON.parse(text), 0, 0, "");
-  ranges.set("", { start: 0, end: text.length });
-  return ranges;
-}
 export function selectEvidenceSource(sources: ReturnType<typeof evidenceSources>, path?: string, cache?: EvidenceSelectionCache) {
   const text = path !== undefined ? sources.find((source) => source.kind === "text" && source.path === path) : undefined;
   if (text) return { source: text, start: 0, end: text.text.length };
   const json = sources.find((source) => source.kind === "json")!;
-  if (cache && !cache.has(json)) cache.set(json, indexJsonRanges(json.text));
-  const range = cache ? cache.get(json)!.get(path ?? "") : jsonPathRange(json.text, path ?? "");
-  return range ? { source: json, ...range } : undefined;
+  if (cache && !cache.has(json)) cache.set(json, jsonRanges(json.text));
+  const range = cache ? cache.get(json)!.get(path ?? "") : jsonRanges(json.text).get(path ?? "");
+  return range ? { source: json, start: range.start, end: range.end } : undefined;
 }
 function coordinateRepair(raw: { messages: unknown[] }, candidate: string, inputId: string, index: number, kind: "text" | "json", path: string, audit: EvidenceAudit) {
   const message = raw.messages[index];

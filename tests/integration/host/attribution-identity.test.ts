@@ -23,6 +23,7 @@ async function verifyIdentity(t: test.TestContext, sources: RawInput[][], distin
       await inspectFor(options);
       const result = taskResult(options.spec) as Record<string, unknown>;
       if (distinctSummaries && "session_summary" in result) result.session_summary = "独立来源归因：" + options.spec.taskId;
+      if (distinctSummaries && options.spec.evaluation.profile === "single") result.summary = "独立来源归因：" + options.spec.taskId;
       const submitted = await submitFor(options, draftFor(options.spec, result));
       assert.equal(submitted.isError, undefined, JSON.stringify(submitted));
     }, async abort() {}, async dispose() {} };
@@ -38,7 +39,9 @@ async function verifyIdentity(t: test.TestContext, sources: RawInput[][], distin
   const file = path.join(run, "results/attribution.jsonl"), original = await readFile(file, "utf8");
   const rows = original.trim().split("\n").map(line => JSON.parse(line));
   assert.equal(rows.length, records.length, "all source records need separate formal rows even when their bodies match");
-  if (!distinctSummaries) assert.equal(new Set(rows.map(row => JSON.stringify(row))).size, 1, "identical result bodies are retained separately");
+  if (!distinctSummaries) assert.equal(new Set(rows.map(row => JSON.stringify(row, (key, value) =>
+    key === "position" && typeof value === "string" ? value.split(" / evidence_id ")[0] : value))).size, 1,
+    "identical verdict prose retains each record's independent evidence source identity");
   const before = await readRunState(run);
   const tasks = before.manifest.tasks.filter(task => task.stage === "attribution-session");
   assert.equal(tasks.length, records.length);

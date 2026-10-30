@@ -10,6 +10,7 @@ import {
 } from "@eval/agents/clustering";
 import { parseEvidenceCoordinates, resolveEvidence } from "@eval/tools";
 import { locateRecordStream } from "../inputs/records.js";
+import { sessionSource } from "../inputs/session.js";
 import { readRunState, readRunTasks } from "./run-data.js";
 import { taskObservations } from "./observations.js";
 import type { EvalConfig, TaskData } from "./types.js";
@@ -168,7 +169,7 @@ export async function reviewProblemOccurrences(
     const association = problemAssociation(initial, occurrence);
     const component = initial.components[association.component_id]!;
     if (!finding ||
-      !finding.component.split(" / ").some(label => [component.label, ...component.aliases]
+      ![finding.component].some(label => [component.label, ...component.aliases]
         .some(name => normalizeLabel(name) === normalizeLabel(label))))
       fail("问题样本原 finding 或责任组件不存在：" + item.occurrence_id);
 
@@ -199,7 +200,7 @@ export async function reviewProblemOccurrences(
     const sourceConfig = sourceState!.manifest.config as EvalConfig;
     const version = sourceConfig.inputs.versions.find(version => version.id === candidate.version);
     if (!version) fail("原归因 owner 输入版本未登记");
-    const { raw } = await locateRecordStream(candidate.source, candidate, version, sourceConfig.inputs.default_batch_id);
+    const raw = sessionSource((await locateRecordStream(candidate.source, candidate, version, sourceConfig.inputs.default_batch_id)).raw).raw;
     for (const [proofIndex, reference] of item.evidence.entries()) {
       const coordinates = parseEvidenceCoordinates(reference.evidence_id);
       if (!coordinates) fail("问题样本复核需要完整当前 evidence_id");

@@ -1,3 +1,4 @@
+import { compactResultSchema } from "@eval/agents/compact";
 import { Ajv2020 } from "ajv/dist/2020.js";
 import {
   type JsonObject,
@@ -155,6 +156,7 @@ export function attributionRow(_task:PlannedTask,receipt:SubmissionReceipt):Json
 export function resultFile(stage: Stage | "attribution"): string {
   const dimension = attributionDimension(stage);
   if (dimension) return dimension.resultKey + ".jsonl";
+  if (stage === "attribution-compact") return "compact.jsonl";
   if (stage === "criteria") return "criteria.jsonl";
   if (stage === "attribution" || stage === "attribution-session") return "attribution.jsonl";
   if (stage === "comparison") return "comparison.jsonl";
@@ -208,6 +210,7 @@ export function clusteringRow(
 }
 
 const ajv = new Ajv2020({ strict: false, allErrors: true });
+const validateCompact = ajv.compile(compactResultSchema);
 const validateOutput = ajv.compile(outputSchema),
   validateCriteria = ajv.compile(criteriaProfile.resultSchema!),
   validateComparison = ajv.compile(comparisonProfile.resultSchema!),
@@ -221,9 +224,11 @@ export function encodeResult(task: PlannedTask, state: RunState, inputs: Record<
     (task.stage !== "comparison" || data.verificationAudit !== true || !data.verificationOf?.taskId))
     throw new Error("可选核验必须同时声明核验标记与正式对比来源。");
   const receipt = state.receipts[task.id];
-  if (task.stage === "attribution-component" || task.stage === "attribution-trace") return null;
+  if (task.stage === "attribution-trace" || task.stage === "attribution-compact-field") return null;
   if (attributionDimension(task.stage)) return receipt.exported ?? { id: task.id, file: resultFile(task.stage as Stage),
     row: dimensionAttributionRow(task, receipt, Object.values(data.candidates)[0]) };
+  if (task.stage === "attribution-compact" && !validateCompact(receipt.evaluation))
+    throw new Error("Compact 导出契约无效：" + ajv.errorsText(validateCompact.errors));
   // Durable exports have already crossed the acceptance boundary. Reuse their exact row on resume.
   if (receipt.exported && task.stage !== "rewrite") {
     const data = task.data as TaskData;
@@ -245,6 +250,10 @@ export function encodeResult(task: PlannedTask, state: RunState, inputs: Record<
       task_id: task.id, case: { batch_id: Object.values((task.data as TaskData).candidates)[0]!.batch_id,
         case_id: Object.values((task.data as TaskData).candidates)[0]!.case_id }, result: receipt.evaluation,
     } };
+  }
+  if (task.stage === "attribution-compact") {
+    const row = receipt.evaluation as JsonObject;
+    return { id: task.id, file: "compact.jsonl", row };
   }
   if (task.stage === "attribution-session") {
     const row = attributionRow(task, receipt);

@@ -34,6 +34,7 @@ export interface ComparisonInput {
   candidates: Record<string, {
     candidate_id: string;
     final_message_index: number;
+    final_message_indices?: number[];
     answer_generation?: { available: true; message_type: "llm_turn"; matches_captured_final: boolean | null; message_index: number; captured_final_message_index: number;
       input_contexts: { message_index: number; path: string; total_chars: number;
         read_request: { message_index: number; path: string; offset: number; max_chars: number } }[];

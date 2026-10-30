@@ -985,6 +985,7 @@ export class ToolRuntime {
 }
 
 export * from "./evidence.js";
+export { jsonRanges } from "./json-ranges.js";
 export * from "./evidence-coverage.js";
 export * from "./instructions.js";
 export * from "./component-identity.js";

@@ -2,6 +2,7 @@ import { evidenceSources, instructionSources, parseEvidenceCoordinates, resolveE
 import { ValidationError, type ToolAudit, type ValidationIssue } from "@eval/contracts";
 import type { RawInput } from "../inputs/types.js";
 import { workflowText } from "@eval/prompts";
+import { sessionSource } from "../inputs/session.js";
 
 const omitted = workflowText("material-omitted");
 
@@ -39,8 +40,17 @@ export function attributionTrace(raw: RawInput, inputId: string, finalIndex: num
     return result;
   };
   return { messages: raw.messages.map((message, index) => hiddenSkills.has(index)
-    ? { type: message.type, name: message.name, output: omitted }
+    ? { ...Object.fromEntries(Object.entries(message).filter(([key]) =>
+      ["type", "role", "name", "call_id", "tool_call_id", "parent_span", "span_id", "status", "exit_code"].includes(key))), output: omitted }
     : visit(message) as RawInput["messages"][number]) };
+}
+
+/** Project each received turn independently, then retain the shared original message coordinates. */
+export function attributionSessionSource(session: RawInput, inputId: string) {
+  const source = sessionSource(session);
+  const turns = (session.turns ?? [{ messages: session.messages }]).map(turn =>
+    attributionTrace({ messages: turn.messages }, inputId, turn.messages.length - 1));
+  return { ...source, original: source.raw, raw: { messages: turns.flatMap(turn => turn.messages) } as RawInput };
 }
 
 /** Privacy projection cannot turn a changed JSON parent into an original-source quote. */

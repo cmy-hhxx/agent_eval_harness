@@ -1,3 +1,5 @@
+import { isTraceAttributionTask } from "@eval/workflows/attribution";
+import { compactReceipt } from "../../../tests/fixtures/compact.js";
 import { draftFor, submitFor } from "../../../tests/fixtures/comparison.js";
 import { waitForTestState } from "../../../tests/fixtures/wait.js";
 import test from "node:test";
@@ -59,8 +61,8 @@ interface WorkerHarnessOptions {
 
 const fileProfile: Partial<AgentProfile> = {
   fileSubmission: true, jsonStringSubmission:false, draftWriteInCallLimit:false,
-  toolDescriptions: agentPrompt("attribution", attributionAgent.profiles.component!.toolNames,
-    { profile: "component", fileSubmission: true }).toolDescriptions,
+  toolDescriptions: agentPrompt("attribution", attributionAgent.profiles.trace!.toolNames,
+    { profile: "trace", fileSubmission: true }).toolDescriptions,
 };
 
 for (const method of ["accept", "inspect"] as const)
@@ -290,8 +292,9 @@ async function harness(
       inputs: { "11111111-1111-4111-8111-111111111111": { messages: [{ content: material }, { content: "非必读正文" }] } },
       summary: {},
     };
-    const task = plan.tasks.find((item) => item.stage === "attribution-component") ?? plan.tasks[0],
-      criteria = plan.tasks.find((item) => item.id === task.dependencies.criteria);
+    const task = plan.tasks.find((item) => isTraceAttributionTask(item)) ?? plan.tasks[0],
+      criteria = plan.tasks.find((item) => item.id === task.dependencies.criteria),
+      compact = plan.tasks.find((item) => item.id === task.dependencies.compact);
     const criteriaReceipt: SubmissionReceipt | undefined = criteria && {
       taskId: criteria.id, attemptId: "criteria", submissionId: "criteria", status: "succeeded",
       acceptedAt: 1, evaluatorVersion: "fixture", judge: "fixture", evaluation: criteriaResult(), audit: emptyAudit(), usage: emptyUsage(),
@@ -299,7 +302,8 @@ async function harness(
     const evaluationServices: EvaluationServices = material === undefined ? {
       ...services,
       ...(profile ? { agents: new AgentRegistry([{ ...attributionAgent, profiles: {
-        component: { ...attributionAgent.profiles.component!, ...(profile.fileSubmission ? {jsonStringSubmission:false}:{}), ...profile },
+        trace: { ...attributionAgent.profiles.trace!, ...(profile.fileSubmission ? {jsonStringSubmission:false}:{}), ...profile },
+        single: { ...attributionAgent.profiles.single!, ...(profile.fileSubmission ? {jsonStringSubmission:false}:{}), ...profile },
       } }]) } : {}),
     } : {
       repository: createRunRepository<RunState>({
@@ -330,21 +334,21 @@ async function harness(
       engine: fakeIdentity,
       evaluatorVersion: "fixture",
       config,
-      tasks: criteria ? [criteria, task] : [task],
+      tasks: [...(criteria ? [criteria] : []), ...(compact ? [compact] : []), task],
       inputs: {},
-      states: { ...(criteria ? { [criteria.id]: { status: "succeeded" as const, attempts: 1 } } : {}),
+      states: { ...(compact ? { [compact.id]: { status: "succeeded" as const, attempts: 1 } } : {}), ...(criteria ? { [criteria.id]: { status: "succeeded" as const, attempts: 1 } } : {}),
         [task.id]: { status: "pending", attempts: 0 } },
       preflight: plan.summary,
       startedAt: Date.now(),
     };
     const store = new RunStore(
       path.join(directory, "run"),
-      { manifest, receipts: criteria ? { [criteria.id]: criteriaReceipt! } : {}, usage: emptyUsage(), recordedAttempts: 0 },
+      { manifest, receipts: { ...(criteria ? { [criteria.id]: criteriaReceipt! } : {}), ...(compact ? { [compact.id]: { ...compactReceipt(), taskId: compact.id } } : {}) }, usage: emptyUsage(), recordedAttempts: 0 },
       plan.inputs,
       evaluationServices,
     );
     const prepared = evaluationServices.agents.prepare(evaluationServices.taskSource.bind(task, plan.inputs,
-      criteria ? { criteria: criteriaReceipt! } : {}, { tasks: plan.tasks }));
+      { ...(criteria ? { criteria: criteriaReceipt! } : {}), ...(compact ? { compact: { ...compactReceipt(), taskId: compact.id } } : {}) }, { tasks: plan.tasks }));
     let posts = 0, inspectionPosts = 0,
       lookups = 0;
     const host = await listen(async (req, res, url) => {
@@ -2488,4 +2492,23 @@ for (const streaming of [false, true]) test(`timeouts distinguish ${streaming ? 
     assert.equal(status.timeoutPhase, streaming ? "model_stream" : "model_first_response");
     assert.equal(status.failure!.contentSubmissions, 0);
   } finally { await fixture.close(); }
+});
+
+test("exhausted exploration budget still permits submission", async () => {
+  const f = await harness(async options => ({ async run() {
+    assert.equal(options.spec.policy.maxToolCalls, 2);
+    assert.notEqual((await options.execute("read_trace", { candidate: "answer", message_index: 0, path: "/content" })).isError, true);
+    for (let i = 0; i < 2; i++) assert.notEqual((await options.execute("read_trace", { candidate: "answer", message_index: 0, path: "/content" })).isError, true);
+    assert.equal((await options.execute("read_trace", { candidate: "answer", message_index: 0, path: "/content" })).isError, true);
+    assert.equal((await submitFor(options, { ok: true })).isError, undefined);
+  }, async abort() {}, async dispose() {} }), { material: "事实材料", policy: { maxToolCalls: 2 } });
+  try { await f.start(); const status = await f.done(); assert.equal(status.state, "succeeded", status.error); } finally { await f.close(); }
+});
+
+test("a zero exploration policy permits a direct single submission", async () => {
+  const f = await harness(async options => ({ async run() {
+    assert.equal(options.spec.policy.maxToolCalls, 0);
+    assert.equal((await submitFor(options, { ok: true })).isError, undefined);
+  }, async abort() {}, async dispose() {} }), { material: "事实材料", profile: { requiredReads: () => [] }, policy: { maxToolCalls: 0, repairAttempts: 0 } });
+  try { await f.start(); assert.equal((await f.done()).state, "succeeded"); } finally { await f.close(); }
 });

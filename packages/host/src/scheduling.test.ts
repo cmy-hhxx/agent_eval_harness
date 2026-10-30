@@ -27,16 +27,28 @@ test("settled dependencies release aggregation after failure but never consume p
 });
 
 function attributionSessionTasks(session: string): PlannedTask[] {
-  const components = ["query", "search"].map(component => ({ id: `${session}-component-${component}`,
-    stage: "attribution-component", inputIds: {}, dependencies: {},
-    data: { stage: "attribution-component", candidate: { input_id: session }, component } }));
-  const trace = { id: `${session}-trace`, stage: "attribution-trace", inputIds: {},
-    dependencies: Object.fromEntries(components.map((task, index) => [`component${index}`, task.id])),
-    data: { stage: "attribution-trace", candidate: { input_id: session } } };
-  const summary = { id: `${session}-session`, stage: "attribution-session", inputIds: {},
-    dependencies: { trace: trace.id }, data: { stage: "attribution-session", candidate: { input_id: session } } };
-  return [...components, trace, summary] as PlannedTask[];
+  const fields = ["plan", "key_data"].map(field => ({ id: session + "-field-" + field,
+    stage: "attribution-compact-field", inputIds: {}, dependencies: {},
+    data: { candidate: { input_id: session }, compactField: field } }));
+  const compact = { id: session + "-compact", stage: "attribution-compact", inputIds: {},
+    dependencies: Object.fromEntries(fields.map(task => [(task.data as {compactField: string}).compactField, task.id])),
+    data: { candidate: { input_id: session } } };
+  const trace = { id: session + "-trace", stage: "attribution-trace", inputIds: {},
+    dependencies: { compact: compact.id }, data: { candidate: { input_id: session } } };
+  const summary = { id: session + "-session", stage: "attribution-session", inputIds: {},
+    dependencies: { compact: compact.id, trace: trace.id }, data: { candidate: { input_id: session } } };
+  return [...fields, compact, trace, summary] as PlannedTask[];
 }
+
+test("a ready attribution does not wait behind other sessions' compact fields", () => {
+  const tasks = [...attributionSessionTasks("ready"), ...attributionSessionTasks("new")];
+  const states: RunManifest["states"] = Object.fromEntries(tasks.map(task => [task.id, { status: "pending", attempts: 0 }]));
+  states["ready-field-plan"]!.status = states["ready-field-key_data"]!.status = states["ready-compact"]!.status = "succeeded";
+  const ordered = scheduleTasks(tasks, states, attributionScheduling.stagePriority);
+  assert.equal(ordered[0]!.id, "ready-trace");
+  states["ready-trace"]!.status = "succeeded";
+  assert.equal(scheduleTasks(tasks, states, attributionScheduling.stagePriority)[0]!.id, "ready-session");
+});
 
 test("large execution scopes are indexed once and track follow-ups and rollback", () => {
   let reads = 0;
@@ -118,7 +130,7 @@ test("a finite session window advances only when a foreground session completes 
   assert.equal(snapshot.waiting_sessions, 1);
   assert.equal(snapshot.admitted.has("session-9"), true);
 
-  states["session-2-component-query"]!.status = "failed";
+  states["session-2-field-plan"]!.status = "failed";
   snapshot = sessionAdmissionSnapshot(tasks, states, policy, manifest);
   assert.equal(snapshot.failed_sessions, 1);
   assert.equal(snapshot.active_sessions, 8);
@@ -130,8 +142,8 @@ test("a finite session window advances only when a foreground session completes 
 test("session admission and foreground selection resume from durable task states", () => {
   const tasks = Array.from({ length: 5 }, (_, index) => attributionSessionTasks(`session-${index + 1}`)).flat();
   const states: RunManifest["states"] = Object.fromEntries(tasks.map(task => [task.id, { status: "pending", attempts: 0 }]));
-  states["session-1-component-query"] = { status: "succeeded", attempts: 1 };
-  states["session-2-component-query"] = { status: "running", attempts: 1 };
+  states["session-1-field-plan"] = { status: "succeeded", attempts: 1 };
+  states["session-2-field-plan"] = { status: "running", attempts: 1 };
   const policy = { ...attributionScheduling.sessionAdmission!, window: 2 };
   const snapshot = sessionAdmissionSnapshot(tasks, states, policy);
   assert.deepEqual([...snapshot.admitted].sort(), ["session-1", "session-2"]);
@@ -139,7 +151,7 @@ test("session admission and foreground selection resume from durable task states
   assert.equal(snapshot.waiting_sessions, 3);
 
   states["session-1-session"] = { status: "succeeded", attempts: 1 };
-  states["session-2-component-search"] = { status: "blocked", attempts: 1 };
+  states["session-2-field-key_data"] = { status: "blocked", attempts: 1 };
   const resumed = sessionAdmissionSnapshot(tasks, states, policy);
   assert.equal(resumed.completed_sessions, 1);
   assert.equal(resumed.blocked_sessions, 1);
@@ -151,7 +163,7 @@ test("session admission and foreground selection resume from durable task states
 test("resume bounds a partially started backlog back to the foreground window", () => {
   const tasks = Array.from({ length: 10 }, (_, index) => attributionSessionTasks(`session-${index + 1}`)).flat();
   const states: RunManifest["states"] = Object.fromEntries(tasks.map(task => [task.id, { status: "pending", attempts: 0 }]));
-  for (let index = 1; index <= 10; index++) states[`session-${index}-component-query`] = { status: "succeeded", attempts: 1 };
+  for (let index = 1; index <= 10; index++) states[`session-${index}-field-plan`] = { status: "succeeded", attempts: 1 };
   const snapshot = sessionAdmissionSnapshot(tasks, states, { ...attributionScheduling.sessionAdmission!, window: 3 });
   assert.equal(snapshot.active_sessions, 3);
   assert.equal(snapshot.waiting_sessions, 7);
@@ -166,12 +178,14 @@ test("session window rejects non-positive or fractional execution configuration"
   /positive integer/u);
 });
 
-test("ready attribution trace and session tasks outrank another session's component backlog", () => {
+test("computed compact assembly releases ready attribution before new field work", () => {
   const tasks = [...attributionSessionTasks("session-1"), ...attributionSessionTasks("session-2")];
   const states: RunManifest["states"] = Object.fromEntries(tasks.map(task => [task.id, { status: "pending", attempts: 0 }]));
-  states["session-1-component-query"]!.status = "succeeded";
-  states["session-1-component-search"]!.status = "succeeded";
+  states["session-1-field-plan"]!.status = "succeeded";
+  states["session-1-field-key_data"]!.status = "succeeded";
+  assert.equal(scheduleTasks(tasks, states, attributionScheduling.stagePriority)[0]!.id, "session-1-compact");
+  states["session-1-compact"]!.status = "succeeded";
   assert.equal(scheduleTasks(tasks, states, attributionScheduling.stagePriority)[0]!.id, "session-1-trace");
-  states["session-1-trace"]!.status = "succeeded";
+  for (const id of ["session-2-field-plan", "session-2-field-key_data", "session-2-compact", "session-1-trace"]) states[id]!.status = "succeeded";
   assert.equal(scheduleTasks(tasks, states, attributionScheduling.stagePriority)[0]!.id, "session-1-session");
 });

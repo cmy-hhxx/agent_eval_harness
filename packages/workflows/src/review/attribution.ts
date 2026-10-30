@@ -1,11 +1,12 @@
-import { initialAttributionMaterial, initialComponentScene } from "./attribution-navigation.js";
-import { type AgentBinding, type TaskAnalysis } from "@eval/contracts";
-import { traceComponentIdentities, traceCallOrigins, cite, images, displayEvidence, evidenceSources, messageContentSources, parseEvidenceCoordinates, sourceTextBlocks, visualCaptureMarkers, type InstructionSource, type TableCheckResult, type TraceComponentIdentity } from "@eval/tools";
-import { presentedMaterialReads, projectComparisonEvidence } from "./evidence-presentation.js";
-import type { RawInput, Candidate, ComponentReviewScope } from "../inputs/types.js";
+import { processMaterial } from "./process-material.js";
+import { processComponents, actorCatalog } from "./components.js";
+import { initialAttributionMaterial } from "./attribution-navigation.js";
+import { type AgentBinding, type TaskAnalysis, type JsonObject } from "@eval/contracts";
+import { cite, images, displayEvidence, evidenceSources, parseEvidenceCoordinates, sourceTextBlocks, visualCaptureMarkers, type InstructionSource, type TableCheckResult, type TraceComponentIdentity } from "@eval/tools";
+import { presentedMaterialReads, projectComparisonEvidence, compactNavigation } from "./evidence-presentation.js";
+import type { RawInput, Candidate } from "../inputs/types.js";
 import { attributionTrace } from "./public-trace.js";
-import { attributionNormDirectory, attributionComponentLabel } from "@eval/agents/attribution";
-import { traceCatalog } from "./catalog.js";
+import { attributionNormDirectory } from "@eval/agents/attribution";
 import { traceOverview } from "./trace-overview.js";
 import { citationInventory, citationSourceParts, type CitationContext, type CitationInventory } from "./citations.js";
 import { criterionInstructionSources } from "./instruction-bindings.js";
@@ -170,8 +171,8 @@ export function modelMaterial(material: Record<string, unknown>, candidate: stri
 }
 
 /** Source facts are shared by the input window; there is no per-task execution graph. */
-function prepareAttributionMaterial(candidate: Candidate, original: RawInput, analysis?: TaskAnalysis) {
-  const started = performance.now(), raw = attributionTrace(original, candidate.input_id, candidate.final_index);
+function prepareAttributionMaterial(candidate: Candidate, original: RawInput, analysis?: TaskAnalysis, publicRaw?: RawInput) {
+  const raw = publicRaw ?? attributionTrace(original, candidate.input_id, candidate.final_index);
   const task_analysis: TaskAnalysis = analysis ?? { task_type: "回答评审", goal: candidate.question,
     requirements: [{ id: "r1", text: candidate.question, acceptance_rule: candidate.question, applies_to: [] }], scoring_points: [], red_flags: [] };
   const sources = { answer: { id: candidate.input_id, value: raw } };
@@ -180,65 +181,47 @@ function prepareAttributionMaterial(candidate: Candidate, original: RawInput, an
   const input = { candidate_id: candidate.input_id, task_analysis, answer };
   const norms = attributionNormDirectory({ input, sources });
   const citations = citationInventory(raw, candidate.input_id, candidate.final_index);
-  return { raw, sources, task_analysis, answer, norms, citations, catalog: traceCatalog(raw),
-    callOrigins: traceCallOrigins(raw.messages), directoryMs: performance.now() - started };
+  return { raw, sources, task_analysis, answer, norms, citations };
 }
 
-const materialCache = new WeakMap<object, {
-  inputId: string; question: string; finalIndex: number; analysis: TaskAnalysis | undefined;
-  value: ReturnType<typeof prepareAttributionMaterial>;
-}>();
-
-/** A review receives its own source range and direct read coordinates, never a second global graph. */
-export function bindAttributionMaterial(candidate: Candidate, original: RawInput, analysis?: TaskAnalysis,
-  options: { reference?: unknown; component?: string; scope?: ComponentReviewScope } = {}): AgentBinding {
-  const started = performance.now(), component = options.component ?? "终稿生成轮";
-  const scope = options.scope ? { ...options.scope } : { component, message_indices: component === "终稿生成轮" ? [candidate.final_index]
-    : traceComponentIdentities(original, candidate.input_id, candidate.final_index)
-      .filter(actor => attributionComponentLabel(actor.component) === component).flatMap(actor => actor.message_indices) } as ComponentReviewScope;
-  if (!scope.message_indices.length) throw new Error("归因任务没有可定位的原始消息");
-  const finalReview = scope.message_indices.includes(candidate.final_index);
-  if (finalReview && !scope.final_ranges) scope.final_ranges = messageContentSources(original.messages[candidate.final_index])
-    .map(source => ({ path: source.path, start: 0, end: source.text.length })).filter(range => range.end > 0);
-  let cached = options.scope ? materialCache.get(original.messages) : undefined;
-  const reused = cached && cached.inputId === candidate.input_id && cached.finalIndex === candidate.final_index &&
-    cached.question === candidate.question && cached.analysis === analysis;
-  if (!reused) {
-    cached = { inputId: candidate.input_id, question: candidate.question, finalIndex: candidate.final_index, analysis,
-      value: prepareAttributionMaterial(candidate, original, analysis) };
-    if (options.scope) materialCache.set(original.messages, cached);
-  }
-  const { raw, sources, answer, task_analysis, norms, citations, catalog, callOrigins } = cached!.value;
-  const read = (item: { evidence_id: string; message_index: number; quote: string }) => {
-    const point = parseEvidenceCoordinates(item.evidence_id)!;
-    if (point.kind === "image") return { ...displayEvidence(item), view_request: { candidate: "answer", message_index: point.message_index } };
-    const { quote, ...coordinates } = item;
-    return { ...displayEvidence(quote.length <= 200 ? item : { ...coordinates, quote_preview: quote.slice(0, 200), has_more: true }),
-      read_request: { candidate: "answer", message_index: point.message_index, path: point.path, offset: point.start,
-        max_chars: Math.min(16000, point.end - point.start) }, end_offset: point.end };
-  };
-  const scopedCitations = { references: citations.references.filter(reference => !scope.final_ranges ||
-    reference.occurrences.some(occurrence => {
-      const point = parseEvidenceCoordinates(occurrence.evidence_id);
-      return point?.kind === "text" && scope.final_ranges!.some(range => range.path === point.path &&
-        range.start < point.end && point.start < range.end);
-    })).map(reference => ({ reference: reference.reference, format: reference.format, status: reference.status,
-      sources: reference.sources.flatMap(source => citationSourceParts(raw, candidate.input_id, source)).map(read) })) };
-  const reviewKind = finalReview ? "final_section" : scope.message_indices.some(index =>
-    ["tool_call", "tool_return"].includes(catalog[index].semantic_role)) ? "tool_call" : "model_turn";
+/** One trace review follows the complete process; responsibility is chosen by the model. */
+export function bindAttributionMaterial(candidate: Candidate, original: RawInput, analysis: TaskAnalysis | undefined,
+  options: { reference?: unknown; compact: JsonObject; source?: { raw: RawInput; positions: { trace_index: number; message_index: number }[]; traceIndex: number } }): AgentBinding {
+  const started = performance.now();
+  const prepared = prepareAttributionMaterial(candidate, original, analysis, options.source?.raw);
+  const { raw, sources, answer, task_analysis, norms, citations } = prepared;
   const reference = options.reference === undefined ? candidate.reference : options.reference;
-  const modelInput = { review_kind: reviewKind, review_scope: scope,
-    ...(finalReview ? { ground_truth: { available: reference !== null, value: reference },
-      task_analysis: taskAnalysisPresentation(task_analysis, { answer: candidate.input_id }, answer.criterion_instruction_sources) } : {}),
-    answer: { question: candidate.question, ...initialAttributionMaterial(candidate.final_index, raw, candidate.input_id, scope),
-      direct_call_links: callOrigins.filter(origin => scope.message_indices.includes(origin.request_index) || scope.message_indices.includes(origin.planner_index))
-        .map(origin => ({ request: { message_index: origin.request_index, path: origin.input_path },
-          generated_arguments: { message_index: origin.planner_index, path: origin.arguments_path } })),
-      ...(finalReview ? { citation_inventory: scopedCitations,
-        norm_directory: norms.map(norm => ({ ...norm, evidence: norm.evidence.map(read) })),
-        source_directory: catalog } : { component_scene: initialComponentScene(raw, original, candidate.input_id, component, scope) }) } };
-  return { agent: "attribution", profile: "component", request: { input: { component, trace_index: 0, review_scope: scope }, sources }, modelInput,
-    preparationTimings: { materialMs: performance.now() - started, directoryMs: reused ? 0 : cached!.value.directoryMs },
-    materialNavigation: { answer: { final_message_index: candidate.final_index, review_scope: scope } },
-    projectModelInput: projectComparisonEvidence, presentedReads: presentedMaterialReads(modelInput.answer, "answer", candidate.input_id) };
+  const ground_truth = { available: reference !== null, value: reference };
+  const citation_inventory = { references: citations.references.map(reference => ({ reference: reference.reference,
+    format: reference.format, status: reference.status,
+    sources: reference.sources.flatMap(source => citationSourceParts(raw, candidate.input_id, source)).map(source => {
+      const point = parseEvidenceCoordinates(source.evidence_id)!;
+      if (point.kind === "image") return displayEvidence(source);
+      const { quote, ...coordinates } = source;
+      return { ...displayEvidence(quote.length <= 200 ? source : { ...coordinates, quote_preview: quote.slice(0, 200), has_more: true }),
+        read_request: { candidate: "answer", message_index: point.message_index, path: point.path, offset: point.start,
+          max_chars: Math.min(16000, point.end - point.start) }, end_offset: point.end };
+    }) })) };
+  const delivery = initialAttributionMaterial(candidate.final_index, raw, candidate.input_id, 6400);
+  const { execution_facts, ...process } = processMaterial(raw, original, candidate.input_id, "answer", 12000, options.source?.positions, options.source?.traceIndex);
+  const counted = (options.compact.turns as JsonObject[]).every(turn => turn.execution_facts !== undefined);
+  const components = processComponents(raw, original, candidate.input_id, options.source?.positions ??
+    raw.messages.map((_, message_index) => ({ trace_index: 0, message_index })),
+    (options.compact.turns as JsonObject[]).flatMap(turn => turn.components as JsonObject[] ?? []));
+  const catalog = actorCatalog(options.source ? components.filter(entry => entry.positions.some(position =>
+    position.trace_index === options.source!.traceIndex)) : components);
+  const modelInput = { ground_truth, compact: compactNavigation(options.compact, !delivery.final_context.partial),
+    actor_catalog: catalog,
+    task_analysis: taskAnalysisPresentation(task_analysis, { answer: candidate.input_id }, answer.criterion_instruction_sources),
+    answer: { question: candidate.question, ...delivery,
+      ...process, ...(!counted ? { execution_facts } : {}),
+      citation_inventory,
+      norm_directory: norms.map(norm => ({ ...norm, evidence: norm.evidence.map(displayEvidence) })) } };
+  return { agent: "attribution", profile: "trace", request: { input: { trace_index: 0, ground_truth, compact: options.compact, trace_meta: original.meta ?? {},
+    question: candidate.question, answer: String(original.messages[candidate.final_index]?.content ?? ""),
+    components, source_positions: options.source?.positions ?? original.messages.map((_, message_index) => ({ trace_index: 0, message_index })) }, sources }, modelInput,
+    preparationTimings: { materialMs: performance.now() - started },
+    materialNavigation: { answer: { final_message_index: candidate.final_index } },
+    projectModelInput: (input, bank) => projectComparisonEvidence(input, bank, 400),
+    presentedReads: presentedMaterialReads({ ...modelInput.answer, actor_catalog: catalog }, "answer", candidate.input_id) };
 }

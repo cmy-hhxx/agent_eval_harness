@@ -1,3 +1,4 @@
+import { compactReceipt } from "../../fixtures/compact.js";
 import test from "node:test";
 import assert from "node:assert/strict";
 import path from "node:path";
@@ -29,13 +30,18 @@ async function prepare(config: AttributionConfig, runId: string) {
   assert(plan.tasks.length > 0, JSON.stringify(plan.summary));
   return { plan, state: stateFor(config, plan, runId), run: runLayout(config.output, runId).directory };
 }
-async function completed(config: AttributionConfig, runId: string, version: string, summary: string, acceptedAt: number) {
+async function completed(config: AttributionConfig, runId: string, version: string, summary: string, acceptedAt: number, includeCompact = true) {
   const f = await prepare(config, runId);
+  if (!includeCompact) {
+    f.plan.tasks = f.plan.tasks.filter(task => !task.stage.startsWith("attribution-compact"));
+    f.state.manifest.tasks = f.plan.tasks;
+    for (const task of f.plan.tasks) delete task.dependencies.compact;
+  }
   for (const task of f.plan.tasks) {
     f.state.manifest.states[task.id].status = "succeeded";
     f.state.receipts[task.id] = { taskId: task.id, attemptId: "attempt-" + task.id, submissionId: "submission-" + task.id,
       acceptedAt, evaluatorVersion: version, judge: "judge", status: "succeeded", audit: emptyAudit(), usage: emptyUsage(),
-      evaluation: task.stage === "attribution-session" ? { session_meta: input().meta,
+      evaluation: task.stage === "attribution-compact" ? compactReceipt().evaluation : task.stage === "attribution-session" ? { session_meta: input().meta,
         turns: [{ meta: input().traces[0].meta, summary: "完成。", problem: [], is_correct: null, correct_reason: "无标准。" }],
         session_summary: summary, session_problem: [] } : {} };
   }
@@ -49,18 +55,22 @@ test("new runs reuse the latest complete business answer across evaluator versio
   t.after(() => rm(f.directory, { recursive: true, force: true }));
   const config = { ...f.config, workflow: "attribution", output: { ...f.config.output, layout: "business", reuseCompleted: true },
     inputs: { ...f.config.inputs, batches: ["2026-10-26"], versions: [f.config.inputs.versions[0], f.config.inputs.versions[2]] } } as AttributionConfig;
-  await completed(config, "old-run", "old-evaluator", "旧判词", Date.now() + 10);
+  const oldest = await completed(config, "old-run", "old-evaluator", "旧判词", Date.now() + 10);
   const latest = await completed(config, "newer-run", "newer-evaluator", "最新判词", Date.now() + 20);
   const next = await prepare(config, "new-run-id");
   const close = await businessAttributionRepository.prepareRun!(next.run, next.state, next.plan.inputs);
   try {
-    assert.equal(next.state.manifest.tasks.length, 2, "accepted sessions do not dispatch their component/trace DAG again");
+    assert.deepEqual((next.plan.catalog as { version: string; input_id: string }[]).map(candidate => [candidate.version, candidate.input_id]),
+      (oldest.plan.catalog as { version: string; input_id: string }[]).map(candidate => [candidate.version, candidate.input_id]),
+      "verified identical input retains the persistent source UUID across fresh runs");
+    assert(next.state.manifest.tasks.every(task => Object.values(task.inputIds).every(id => Object.hasOwn(next.plan.inputs, id))));
+    assert.equal(next.state.manifest.tasks.length, 4, "accepted sessions do not dispatch their component/trace DAG again");
     assert(Object.values(next.state.receipts).every(receipt => receipt.evaluatorVersion === "newer-evaluator"));
     assert(Object.values(next.state.receipts).every(receipt => receipt.reusedFrom?.run === latest.run));
     await businessAttributionRepository.createResultWriter(next.run, next.plan.inputs)(next.state);
     await businessAttributionRepository.writeRun(next.run, next.state);
     const resumed = await businessAttributionRepository.readRun(next.run);
-    assert.equal(Object.keys(resumed.receipts).length, 2);
+    assert.equal(Object.keys(resumed.receipts).length, 4);
     for (const model of config.inputs.versions) {
       const rows = []; for await (const row of readJsonl(path.join(config.output.path, model.id, model.id + "-2026-10-26.jsonl"))) rows.push(row);
       assert.equal(rows.length, 1);
@@ -92,8 +102,8 @@ test("organized historical verdicts retain missing newer fields and are reused f
   const next = await prepare(config, "reuse-organized");
   const close = await businessAttributionRepository.prepareRun!(next.run, next.state, next.plan.inputs);
   try {
-    assert.equal(next.state.manifest.tasks.length, 1);
-    const receipt = Object.values(next.state.receipts)[0];
+    assert.equal(next.state.manifest.tasks.length, 2);
+    const receipt = next.state.receipts[next.state.manifest.tasks.find(task => task.stage === "attribution-session")!.id];
     assert.equal(receipt.evaluatorVersion, "historical-evaluator");
     assert.equal(receipt.reusedFrom?.run, archived);
     assert.deepEqual(receipt.evaluation, row);
@@ -114,6 +124,7 @@ test("Comparison and shared Criteria reuse their original receipts and finish wi
     state.receipts[task.id] = { taskId: task.id, attemptId: "attempt-" + task.id, submissionId: "submission-" + task.id,
       acceptedAt: at, evaluatorVersion: "original-evaluator", judge: "judge", status: "succeeded", audit: emptyAudit(), usage: emptyUsage(), evaluation: {} };
   }
+  for (const task of plan.tasks) if (task.stage === "attribution-compact") state.receipts[task.id].evaluation = compactReceipt().evaluation;
   for (const task of plan.tasks) if (task.stage === "criteria") state.receipts[task.id].evaluation = criteriaResultForTask(task, plan.inputs);
   for (const task of plan.tasks) if (task.stage === "attribution-session") state.receipts[task.id].evaluation = {
     session_meta: input().meta, turns: [{ meta: input().traces[0].meta, summary: "完成。", problem: [], is_correct: null, correct_reason: "无标准。" }],
@@ -132,7 +143,7 @@ test("Comparison and shared Criteria reuse their original receipts and finish wi
   assert.equal(result.status, "finished", JSON.stringify(result));
   assert.notEqual(result.outcome, "partial");
   const restored = await businessComparisonRepository.readRun(runLayout(config.output, "comparison-reused").directory);
-  assert.equal(restored.manifest.tasks.length, 4);
+  assert.equal(restored.manifest.tasks.length, 6);
   assert(Object.values(restored.receipts).every(receipt => receipt.evaluatorVersion === "original-evaluator"));
   const formal = []; for await (const row of readJsonl(path.join(config.output.path, "comparison/a_fast_vs_b_fast/a_fast_vs_b_fast-2026-10-26.jsonl"))) formal.push(row);
   assert.equal(formal.length, 1);
@@ -152,5 +163,25 @@ test("an in-place answer change cannot inherit an older completed verdict", asyn
     assert.equal(Object.keys(next.state.receipts).length, 0);
     assert(next.state.manifest.tasks.every(task => next.state.manifest.states[task.id].admissionBlock),
       "unverifiable old source identity is paused instead of silently reusing or reevaluating it");
+  } finally { await close(); }
+});
+
+test("an accepted attribution without compact only schedules the missing summary and retains the original verdict", async t => {
+  const f = await fixtureConfig([[input()], [], [], []]);
+  t.after(() => rm(f.directory, { recursive: true, force: true }));
+  const config = { ...f.config, workflow: "attribution", output: { ...f.config.output, layout: "business", reuseCompleted: true },
+    inputs: { ...f.config.inputs, batches: ["2026-10-26"], versions: f.config.inputs.versions.slice(0, 1) } } as AttributionConfig;
+  await completed(config, "accepted-without-summary", "original-evaluator", "保留原正式判词。", Date.now() + 10, false);
+  const next = await prepare(config, "backfill-summary");
+  const close = await businessAttributionRepository.prepareRun!(next.run, next.state, next.plan.inputs);
+  try {
+    assert.equal(next.state.manifest.tasks.filter(task => task.stage === "attribution-compact-field").length, 11);
+    assert.deepEqual(next.state.manifest.tasks.filter(task => task.stage !== "attribution-compact-field").map(task => task.stage).sort(), ["attribution-compact", "attribution-session"]);
+    const compact = next.state.manifest.tasks.find(task => task.stage === "attribution-compact")!;
+    const source = next.state.manifest.tasks.find(task => task.stage === "attribution-session")!;
+    assert.equal(next.state.manifest.states[compact.id]!.status, "pending");
+    assert.equal(next.state.manifest.states[source.id]!.status, "succeeded");
+    assert.equal(next.state.receipts[source.id]!.evaluatorVersion, "original-evaluator");
+    assert.equal((next.state.receipts[source.id]!.evaluation as { session_summary: string }).session_summary, "保留原正式判词。");
   } finally { await close(); }
 });

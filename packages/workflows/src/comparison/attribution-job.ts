@@ -157,7 +157,7 @@ export async function prepareAttributionJob(
         data: { stage: "criteria", candidates, reference, criteriaScope } satisfies TaskData };
       tasks.push(criteria);
       for (const candidate of scope) {
-        const unit = planAttributionUnit(candidate, { data: { stage: "attribution-component", candidates: { A: candidate }, reference, criteriaScope,
+        const unit = planAttributionUnit(candidate, { data: { stage: "attribution-compact", candidates: { A: candidate }, reference, criteriaScope,
             standardAnswerReview: config.standardAnswerReview === true,
             initialContextChars: config.execution.initialContextChars }, dependencies: { criteria: criteria.id }, identity: criteria.id });
         tasks.push(...unit.tasks); answerTasks.push({ candidate, task: unit.session, standard: reference !== null });
@@ -217,6 +217,7 @@ export async function prepareAttributionJob(
 
 export const attributionJobWorkflow: WorkflowDefinition = {
   id: "attribution-job",
+  isComputedTask: task => task.stage === "attribution-compact",
   plan: async () => { throw new Error("使用 prepareAttributionJob 选择已有正式对比回答"); },
   bind: bindTask,
   advance: advanceReview,

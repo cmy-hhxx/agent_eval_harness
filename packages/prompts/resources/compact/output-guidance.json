@@ -1,0 +1,20 @@
+{
+  "field_task": "当前任务：只提取 {field}；value 类型为 {type}。\n{instruction}",
+  "examples": {
+    "array": {
+      "value": [
+        {
+          "description": "当前字段的事实描述",
+          "$evidence": []
+        }
+      ]
+    },
+    "object": {
+      "value": {
+        "description": "当前字段的事实描述",
+        "$evidence": []
+      }
+    }
+  },
+  "repair_instruction": "仅修复反馈指出的封装、类型或引用位置，保留其他事实；字段内容直接放入 value，$evidence 使用当前材料的整数编号数组。"
+}

@@ -36,7 +36,7 @@ test("task attempt cap preserves successes and fresh work across automatic retri
     assert.equal(calls.get(failing), 2, "same run must not replenish task attempts");
     for (const [id, submissionId] of accepted) {
       assert.equal(after.receipts[id!]?.submissionId, submissionId);
-      assert.equal(calls.get(id!), 1, "accepted tasks do not run again");
+      assert.equal(calls.get(id!), before.manifest.tasks.find(task => task.id === id)!.stage === "attribution-compact" ? undefined : 1, "accepted tasks do not run again");
     }
   } finally { await worker.close(); await rm(directory, { recursive: true, force: true }); }
 });

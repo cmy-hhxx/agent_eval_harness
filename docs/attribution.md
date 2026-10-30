@@ -10,41 +10,42 @@ AIME 的 `4_daily_eval_slim` JSONL 可以直接作为输入。每个 trace 的 `
 
 ```text
 session input
-→ attribution-component（同一 trace 目标下的组件审查 / 完整终稿）
-→ attribution-trace（合并该 trace 的组件问题并判定正确性）
-→ attribution-session（跨 QA 汇总）
-→ results/attribution.jsonl（仅 session 任务导出一行）
+→ attribution-compact-field（每个字段一个独立、单轮模型会话）
+→ attribution-compact（代码拼装，无模型调用）
+→ attribution-trace（每个 trace 沿完整过程归因）
+→ attribution-session（跨轮归因，回填逐轮结果）
+→ results/compact.jsonl + results/attribution.jsonl
 ```
 
-组件统一从 `traceComponentIdentities` 的真实消息执行目录派生：明确命名的 planner/tool 保留名称；`llm-call-*`、span、UUID 等执行 locator 不原样进入组件，而是归一为“中间推理处理”或“流程处理”；只有 `final_answer` 明确表示终稿交付，不能因匿名模型调用与其内容相同就推定该调用是“终稿生成轮”。同一 trace 问题下，同一组件的处理、请求和返回合并审查；组件别名沿用既有归属规则，不混入其他组件。终稿的全部文本块组成一个完整审查范围，不按消息数、标题或字符数启动额外会话。每个 trace 至少保留一项终稿审查。内部任务只保留在 `state.json` 与收据中，不写独立结果文件。
+每条实际收到的输入记录生成一条 compact。输入包含几轮就处理几轮，不跨记录拼接、不按外层计数推测未采集的上下文。Compact 是 Attribution 的必需前置任务；正常重试后仍失败时仅暂缓该 session，其他 session 继续，续跑复用已完成工作。
 
-每项 `review_scope` 保存全部原始消息坐标与终稿文本范围；任务身份包括这个范围，同 run 续跑保留已规划范围及 UUID，不因新边界重新评测。模型只提交该组件范围直接解释的问题，必要时仍可读取完整上下文。trace 汇总在组件结束后合并已接受的问题，将问题 ID 按 trace 顺序统一编号，保留各问题的组件、正文和证据；失败组件记入内部不完整依赖，不阻塞其他结果。正式 attribution 输出字段不变，完整与部分结果分别统计。
+代码按实际轮次提供有界结构化字段、原生值和稳定原文坐标，先保留返回自身的主体、单位、期间等原生标量，再整理嵌套数列，避免大表列描述挤占额度；整理消息顺序、请求返回关联、原始组件身份和原文片段；优先保留明确诊断字段及仅见于输入快照的工具回执（含额度守卫），不把快照回执另算一次工具调用，不从工具名推断责任。每轮的每个摘要字段使用独立模型会话，只生成该字段内容；会话概览、跨轮观察另行生成。内部结构保持开放。字段会话并行调度，共用全局模型并发上限；就绪的归因优先于其他字段任务，计算得到的 compact 立即组装，避免归因等待整批摘要；模型选择关键事实编号，代码回填精确数值和稳定来源，避免重复抄表；默认 `bindings.attribution-compact.thinking: "off"`，无探索调用，一次响应直接提交。提示明确当前字段、value 类型及完整提交示例，值直接放入 value。结构失败最多定向修复一次，保留原事实，不做语义或语言复审。代码共享事实整理，并按字段、轮次拼装完整 compact，不调用汇总模型。
 
-调度按输入 `input_id` 分成 session 前台窗口，`execution.sessionWindow` 默认同时准入 16 个未结束 session。窗口内的 component、trace、session 任务继续推进；窗口外 session 的 component 不进入执行槽位。session 完成、失败或 blocked 后释放窗口，后续 session 才获准进入。ready 的 trace 和 session 任务优先于其他 session 的 component backlog。准入状态完全从任务的持久化状态推导，执行、进度和续跑共用同一配置值，续跑不依赖内存游标，也不允许 component backlog 占满全部任务槽位而饿死下游汇总。
+Compact 外壳使用 `session_overview`、`meta`、`turns[]`，多轮可带 `cross_turn`。每个 turn 保留从0开始的 `turn_index`，可包含 `plan/reasoning_chain/execution_chain/reflections/gaps/stop_reason/final_answer/key_data/artifacts`。这些分区内部保持开放 JSON，允许自定义重要信息；缺乏依据的分区可以省略，不强迫填写空结论。`key_data` 不固定指标或条目模板，重点保留数值、实体、期间、单位、口径、来源与结论使用关系。Schema 只固定外壳和分区类型、轮次覆盖；不做语义或语言返工。
 
-运行进度同时保留 component、trace、session 任务计数，并单独报告 `total_sessions`、`active_sessions`、`completed_sessions`、`waiting_sessions`、`failed_sessions`、`blocked_sessions`。业务完成度以 `completed_sessions` 为准，不能用内部 component 的 accepted 数代替。
+摘要以原会话为主体，`gaps` 只记录原会话实际材料缺失。评测者未核验、未补读、首屏展示截断不属于原会话缺失，不写入 compact；同一事实只记录一次。
 
-每个 `attribution-session` 收据接受后立即写入内部 `results/attribution.jsonl`，不等待同一 run 的其他记录；默认正式交付为 `<输出根>/<模型>/<模型>-YYYY-MM-DD.jsonl`，布局与复用规则见[目录约定](usage.md#目录约定)。正式行保留原始 `session_meta` 和各 turn 的 `meta`。独立 Attribution 与 Comparison 内的归因均使用持久化任务 UUID、一基行号关联收据，原始证据坐标不变。恢复按已接受收据处理未写入检查点的中断尾部，完整有效前缀增量追加。不同模型、回答和 trace 范围即使正式点评相同也分别保留，不从点评正文推导回答身份。
+`meta` 的业务身份、被评模型、收到的 trace ID、source_input_id、summary_origin 和原始 session 元信息由程序回填。一个来源 UUID 始终指向按接收轮次顺序展平的同一消息数组；source_positions 将统一消息序号映射回原始 trace_index/message_index。字段会话、Trace、Session、Criteria 与 Comparison 共用来源身份、原文字段路径和半开 UTF-16 片段范围，不把拼接问答注册为原始消息。
 
-业务复用核对原始 `batch_id/case_id`、配置模型 ID、session 与有序 trace 范围，并回读原始输入确认回答和适用材料一致；跨 run 的回答标识使用核实后保留的 UUID，不创建内容哈希。session_id 或正式行里的 case_id 不能单独作为跨模型、跨 run 的复用键。进度中的 session 数是输入记录数，按 trace 抓取时不代表去重后的完整会话数。
+字段模型统一用 `{"$evidence":[本次reference.evidence_index]}` 关联关键观察、失败动作、调用关系和关键数值；数值菜单直接使用同一原文编号，一个自由分组可以选择多个编号。代码回填 `source_evidence`，选择数值菜单项时将原值、位置和引用写入 `source_values`。两者均是代码保留字段，模型不填写；`evidence` 裸数字数组会被拒绝并指向 `$evidence`，不作为未解析编号落盘；其余内部结构开放。正式 compact 不保留临时编号，summary_origin 标记模型概述身份，摘要文字不作为引文。类型或引用错误沿用现有一次定向修复，反馈指向具体JSON路径和当前可选编号，不做语义或语言返工。存成字符串的 JSON 直接索引原字符范围，重复数值保留各自坐标；隐私投影后的父对象不作为原文。
 
-独立 Attribution 和 Comparison 内的归因在新建、续跑时共用同一原始输入与 trace 投影；组件提交仍按对应 trace 的原文核验证据。Trace 汇总不向 Worker 暴露原始来源；Session 只登记原始 QA 的消息内容作为证据来源，保留到原始 trace、消息与文本路径的坐标映射。
+每个字段的具体任务及 value 类型直接写入该字段的系统提示。提交示例演示可解析引用，不引导选择菜单开头的状态码、耗时等遥测项；key_data 自由组织指标说明和用途，具体数值、日期保留在代码回填的 source_values 或 source_evidence 中，不再让模型另抄一份或换算期间。没有相关数值时返回空对象。归因展示保留原值、原文字段路径、发言来源、引文和补读入口，省去 source_values 中重复的轮次、消息等坐标；正式 compact 继续保存全部定位信息。
 
-## 小现场
+每轮 `execution_facts` 由代码记录已收到的工具调用数量、消息位置及模型返回形式，调用记录与返回记录分开计数，空规划数组不代表其他模型也返回空数组。该字段及其原文引用在拼装时填写，不由摘要模型改写。摘要只负责提取当前字段的语义，按这些事实描述过程；没有关键数值时直接返回空对象。
 
-组件任务直接展示范围内请求与返回的原文片段，并在同一个 12,000 字材料预算内提供模型实际收到的公开输入；不另建一份输入正文。`context_sources` 保留输入坐标，仅未展示部分提供精确续读入口，私密指令仍不进入材料。`direct_call_links` 只连接有实际参数匹配依据的生成记录与请求。终稿任务直接展示原文引用，以及引用标记对应的来源片段和续读坐标。跨步骤核查通过明确消息、路径及 `search_trace` 定位原文；不构建、传输或枚举全局责任图，原始证据继续可读，证据校验不放宽。
+字段完成后可独立续跑；完整 compact 落盘后，字段收据通过其文件与行号恢复，原始提交仅保存恢复差异，不重复保存正文。结果写入器按已接受收据的原有行号恢复顺序，不以任务计划顺序重排旧行。
 
-组件材料明确区分 `tool_call`（实际请求与执行返回）、`model_turn`（实际输入到规划/推理输出的变化）和 `final_section`（章节交付）。最终交付标准只进入章节任务，不让每个局部调用重新检查整份答案。已展示文字完整时标记 `partial=false`；未展示部分提供精确续读位置。章节工具读取默认从所属范围开始，跨范围上下文须用明确坐标读取。归因提交只执行结构、原文引用等确定性规则，不增加效果复核 Agent 或语义返工循环。
+每个 Trace Agent 接收会话概览、本轮 compact、跨轮观察、原始问答、适用标准与原文导航。先使用 compact 中已核验的原文片段，遇到决定性缺口才定点补读。compact.components 列出真实链路组件：程序整理模型、Agent 和工具身份，独立 components 字段任务补充未单独记录的内层服务、委派模型、具体脚本路径与 skill 名，代码核对名称存在于所选原文后合并。目录保留调用位置、原始来源和组件编号，不判断责任；identity_basis 区分原始调用记录和从原文提取的名称，名称提及本身不证明执行。归因选择 [`taxonomy.json`](../packages/prompts/resources/attribution/taxonomy.json) 中最具体的责任条目 ID，并以 actor_index 选择来源主体。模型自身错误使用 reasoning 条目名称，模型名称仅说明来源；工具、脚本和 skill 故障使用具体组件名称。失败动作写入问题描述，正式字段结构不变。错误命令定位参数生成步骤，脚本实现错误定位脚本文件，技能正文错误定位具体 skill；不因经 shell 执行就归责 shell，也不因终稿有错就排除上游故障。同一故障只计一次，独立偏差分别记录，不要求类别分散。
 
-归因导航允许模型在同一轮请求多个独立证据片段，提示词要求每轮最多四个，并将提交与读取分开。Pi 仍逐个执行工具，按实际调用登记证据、扣除读取预算；预算耗尽后不再允许批量工具请求。合并读取不减少材料范围，也不放宽原文引用和提交校验。
+每个 trace 有一个完整过程审查，不再按组件拆分调用。单轮 session 的过程审查直接生成终态，由程序回填 session 总结和空跨轮问题，不额外调用 Session 模型。请求参数错误、工具实际执行错误、返回后使用错误分别定位；同一上游问题沿用到终稿不重复计责。报错、空返回、零行、截断、缺返回和调用无结果是调查线索，由模型结合上下文判定，不能凭关键词直接生成问题。
 
-固定样本、对照命令与吞吐验收口径见[归因可靠性验证](../evaluation-report/attribution-reliability.md)。
+归因首屏终稿最多6400字符，按400字符切成可提交原文，超出部分保留准确续读入口；key_data 复用同样的6400字符窗口。plan、reasoning_chain、execution_chain、reflections、components 只接收过程材料，不接收终稿或过程节点中与终稿完全相同的纯生成文本；同一节点的真实输入观察仍保留。结论相关字段接收终稿陈述。final_context.partial 与过程片段的 partial/total_chars 保留展示范围，不表示原文缺失或原会话未完成。过程片段与数值按实际轮次独立分配预算。模型展示只传一份精简的 actor_catalog（actor_index、kind、name、原文引用），省去 compact 中重复的组件目录、调用关系元数据、交付索引、重复坐标和摘要身份标签，保留原始运行环境事实；终稿已完整展示时省去重复的最终结论摘要。精确位置与摘要身份仍保留在正式compact中，每段原文附定点补读入口。重复引用只在本次准备期间按同一 evidence_id 解析一次，每次出现仍核对引文；不建立跨 run 正文缓存。代码提供 execution_links，保留请求、回执、发起模型和关联模型输入的原始位置，不据此宣称模型采纳了回执；同一接收组件的相同原文输入合并导航，完整位置存为 additional_input_locations。归因视图省去这些重复位置及代码计数/输出形态的重复证明，语义观察和 source_values 的原文证据照常呈现，已读记录以实际展示为准。可见思考、动作、返回及数字型 JSON 均有导航；仅对决定性证据缺口补读，独立读取可并行，不枚举全局责任图，不增加模型阶段或校验循环。
 
-组件审查以本次范围为完成边界。首屏材料有输出上限，超大返回给出可定位片段和续读范围；沿具体疑点读取直接上下文，必要时通过 `search_trace` 定位原始来源，不要求每个任务重新检查整条轨迹，也不以固定续读次数截断必要取证。
+Session Agent 使用完整 compact、有序原始 QA 和执行原文入口，只核查跨轮前提、条件、状态、结论变化，不重做各轮数值和工具审查；各轮结果由程序原样回填。某轮失败或未重试不能仅因前轮成功过就重复报为跨轮问题。模型通过标有 question/answer 的连续引文读取完整回答，不再同时传一份重复正文；可信输入和正式产物不变。不同 QA 的矛盾须由相应原文支持，合理条件更新不算矛盾。Session 同样自主选择具体 taxonomy ID，不固定为终稿生成轮；单轮定责示例只进入 Trace 提示。
 
-零行、空返回、工具报错、返回截断、缺返回和调用无结果都属于必须审查的技术问题。证据必须引用真实原文；图片使用 `view_image` 并记录观察。模型不选择全局责任编号，组件由任务固定。
+Compact 接受后立即写 `results/compact.jsonl`，Session 接受后立即写 `results/attribution.jsonl`；其他 session 无需等待。默认业务交付按模型和原始完整日期组织：归因为 `<模型>/<模型>-YYYY-MM-DD.jsonl`，摘要为 `<模型>/compact/<模型>-YYYY-MM-DD.jsonl`。持久化与续跑均保留任务 UUID、一基行号、原始来源和已接受结果。完整成功的归因仍跨版本复用；旧归因缺摘要时只补 compact，不自动重评正式判词。
 
-内部规范隔离产生的展示占位符不能作为原始执行失败的依据。组件结果虽然只导出位置与引文，Host 仍从本次提交的证据编号恢复内部坐标，逐字核对原始输入后才接受收据；非法引用反馈定位到对应 `evidence[].index`，不会泄漏被隔离的原文。
+调度按输入记录准入，`execution.sessionWindow` 默认16；代码拼装与就绪归因优先于新字段任务；代码任务不占模型 Worker 或网关额度，持久化接受提交后立即唤醒下游调度。失败或阻塞的 session 释放窗口，完成度仍以 session 任务为准。
 
 ## 正式契约
 
@@ -79,7 +80,7 @@ session input
   "severity_reason": "重要结论缺少数据支持，需要重新取数核对后才能使用。",
   "evidence": [
     {
-      "position": "trace_index 0 / message_index 3 / path /output/0/text",
+      "position": "trace_index 0 / message_index 3 / path /output/0/text / evidence_id ev_11111111-1111-4111-8111-111111111111_3_text_0_8_/output/0/text",
       "component": "tool_call: finquery 取数服务",
       "quote": "为您找到0条数据",
       "reason": "证明工具返回零行。"
@@ -91,19 +92,23 @@ session input
 }
 ```
 
-`quote` 推荐不超过 400 字；工具只暴露 ≤400 字的可提交编号，校验宽容到 800 字。引文必须是精确连续原文，不能拼接或由程序截断。`evidence.component` 明确区分 `reasoning:`、`tool_call:`、`answer:` 等证据位置及具体组件。`calculations` 只保留文字点评，不再嵌套操作数和复算元数据。
+`quote` 上限为400字；工具和错误反馈只提供不超过400字的可提交片段。引文必须是精确连续原文，不能拼接或由程序截断。`position` 保留原始轮次、轮内消息和字段路径，末尾附 ` / evidence_id <完整坐标>`，外部字段结构不变；后续阶段直接解析该 ID，不生成临时替代来源。`evidence.component` 明确区分 `reasoning:`、`tool_call:`、`answer:` 等证据位置及具体组件。`calculations` 只保留文字点评，不再嵌套操作数和复算元数据。
 
-新生成的每条 Problem 必填 `severity`（P0/P1/P2/P3，P0 最严重）和 `severity_reason`，按本次对最终交付的已确认影响判定；已补救的问题按残余影响分级。同类问题在不同回答中可以有不同等级，不按等级拆类，也不改变 Comparison 的判胜规则。分级口径与点评表达统一维护在[问题表达规则](../packages/prompts/resources/attribution/problem-output.md)。Component 与 Session 各自填写本阶段产生的问题，Trace 汇总和正式导出原样保留。跨版本复用的历史正式行不补造后来新增的字段。
+新生成的每条 Problem 必填 `severity`（P0/P1/P2/P3，P0 最严重）和 `severity_reason`，按本次对最终交付的已确认影响判定；已补救的问题按残余影响分级。同类问题在不同回答中可以有不同等级，不按等级拆类，也不改变 Comparison 的判胜规则。分级口径与点评表达统一维护在[问题表达规则](../packages/prompts/resources/attribution/problem-output.md)。Trace 与 Session 各自填写本阶段产生的问题，正式导出原样保留。跨版本复用的历史正式行不补造后来新增的字段。
 
-Component 提交只校验 Schema、字段范围、证据身份、原文坐标及读取证明；不靠占位词黑名单、相似措辞或语义重复判断触发返工。证据工具只暴露可解析且不超过 400 字的推荐引用；校验接受到 800 字，超过时反馈真实原文片段的新编号，要求只替换 evidence。校验不会改写或截断 quote，正式证据仍按原坐标解析。
+提交只校验 Schema、字段范围、证据身份、原文坐标及读取证明；不靠占位词黑名单、相似措辞或语义重复判断触发返工。来源预览的编号只对应已展示的连续原文，完整长段在展示时拆成不超过400字的独立片段，各自保留原始坐标。工具沿用相同限制；拒绝提交时一次反馈全部引用问题和可选短片段，要求替换对应 evidence.index，不逐条消耗修复次数。校验不会改写或截断所选 quote，不增加校验阶段或预算。
 
 ## Trace 与 Session 汇总
 
-Trace 汇总读取完整 Q/A、显式 ground_truth 和组件 Problem，不改写组件问题。有标准答案时模型提交 `summary`、`is_correct`、`correct_reason`；无标准答案时模型仅提交 `summary`，程序固定输出 `is_correct=null`，理由为“未提供标准答案，无法判断回答与标准答案是否一致；已确认的问题独立保留。”，不采用模型自行生成的正确性值或理由。Session 模型只读取完整、有序的原始 QA，不读取 Trace summary、Problem、正确性结论或其他评测意见；局部结果由程序原样回填到 `turns[]`。Session 仅总结整体表现、登记跨 QA 问题，内部 evidence 提交 `{index, reason}`，index 选择原始 QA 的证据编号，经既有原文校验与坐标解析后生成正式证据。跨 QA 矛盾必须由不同 QA 原文支持，合理的条件更新不算矛盾；外部正式结果 Schema 不变。
+Trace 接收原始 Q/A、compact、适用 Criteria 和显式 ground_truth，输出总结与逐条问题。有标准答案时提交 `summary/problems/is_correct/correct_reason`；无标准时仅提交 `summary/problems`，程序固定 `is_correct=null` 和未提供标准答案的说明。一般缺陷不直接等同于与标准不一致。
+
+Session 接收完整 compact、有序原始 QA、执行原文导航，不读取各轮评测意见，避免将局部评语当成原始事实。已有 Trace 结果由程序原样回填到 `turns[]`。Session 内部 evidence 使用 `{index, reason}` 选择原文编号，程序映射回原始 trace、消息和字段坐标。
+
+所有新生成的描述使用中文，特别是 `label`、`definition`、问题理由、总结和严重程度理由；真实工具名、代码、单位与原文引文保留原样。该要求通过提示词表达，不新增语言校验或润色循环。
 
 ## Comparison
 
-Comparison 是另一个独立 workflow，按整场 session 比较，不逐 trace 判胜。材料始终是 `turns[]`；单轮和多轮走同一套材料、证据和比较逻辑，仅渲染时允许紧凑展示。Attribution 结果提供整场总结、turn 问题和 session 问题，用于识别最终交付与跨问答逻辑。
+Comparison 是另一个独立 workflow，按整场 session 比较，不逐 trace 判胜。单轮和多轮共用原始来源目录；首屏可合并展示有序问答，正式引文仍定位每轮原始消息，独立核验覆盖所有实际交付轮次。Attribution 结果提供整场总结、turn 问题和 session 问题，用于识别最终交付与跨问答逻辑。结果查看与问题样本复核也用相同展平消息索引解析原文。
 
 ## 验证
 

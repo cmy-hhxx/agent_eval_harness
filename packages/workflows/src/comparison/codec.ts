@@ -1,59 +1,15 @@
-import { isDeepStrictEqual } from "node:util";
 import { attributionDimension } from "../review/dimensions.js";
 import type { JsonObject, RunState, SubmissionReceipt } from "@eval/contracts";
-import { canonical, type ResultReference } from "@eval/contracts";
+import { canonical, difference, restore, type ResultReference } from "@eval/contracts";
 import type { RunCodec } from "@eval/data";
 import type { Candidate } from "../inputs/types.js";
-import type { AttributionTaskData } from "@eval/workflows/attribution";
+import { compactFieldResult, type AttributionTaskData } from "@eval/workflows/attribution";
 import type { ComparisonResult, EvalConfig, Stage, TaskData } from "./types.js";
 import { originalResultRow, stageRewritten, resultFile, acceptedRewrites } from "./results.js";
 import { analysisRunOverview } from "./analysis-progress.js";
 
 import type { Checkpoint, Patch, SavedReceipt, SavedTask } from "./checkpoint.js";
 
-/** Exact within-receipt text references keep reordered submission fields out of the state ledger. */
-function textReferences(value: unknown, path: string[] = [], result = new Map<string,string[]>()) {
-  if (typeof value === "string" && value.length && !result.has(value)) result.set(value,path);
-  else if (value && typeof value === "object")
-    for (const [key,item] of Object.entries(value)) textReferences(item,[...path,key],result);
-  return result;
-}
-export function difference(base: unknown, value: unknown, path: string[] = [], texts?: Map<string, string[]>): Patch {
-  if (isDeepStrictEqual(base,value)) return [];
-  texts ??= textReferences(base);
-  if (typeof value === "string" && texts.has(value)) return [{path,from:texts.get(value)!}];
-  const sameContainer = !!base && !!value && typeof base === "object" && typeof value === "object" &&
-    Array.isArray(base) === Array.isArray(value) && (!Array.isArray(base) || base.length === (value as unknown[]).length);
-  if (!sameContainer) {
-    if (value && typeof value === "object") return [{path,value:Array.isArray(value)?[]:{}},
-      ...Object.entries(value).flatMap(([key,item])=>difference(undefined,item,[...path,key],texts))];
-    return [{path,...(value!==undefined?{value}:{})}];
-  }
-  const a=base as Record<string,unknown>,b=value as Record<string,unknown>;
-  return [...new Set([...Object.keys(a),...Object.keys(b)])].flatMap(key=>difference(a[key],b[key],[...path,key],texts));
-}
-export function restore(base: unknown, patch: Patch): unknown {
-  let value=structuredClone(base);
-  for(const entry of patch) {
-    let replacement=entry.value;
-    if(entry.from) {
-      if(Object.hasOwn(entry,"value")) throw new Error("恢复字段不能同时声明字面值和来源引用。");
-      replacement=base;
-      for(const key of entry.from) {
-        if(!replacement || typeof replacement!=="object" || !Object.hasOwn(replacement,key))
-          throw new Error("正式结果缺少恢复引用："+entry.from.join("/"));
-        replacement=(replacement as Record<string,unknown>)[key];
-      }
-    }
-    if(!entry.path.length) { value=structuredClone(replacement); continue; }
-    let parent=value as Record<string,unknown>;
-    for(const key of entry.path.slice(0,-1))parent=parent[key] as Record<string,unknown>;
-    const key=entry.path.at(-1)!;
-    if(entry.from || Object.hasOwn(entry,"value")) Object.defineProperty(parent,key,{value:structuredClone(replacement),writable:true,configurable:true,enumerable:true});
-    else delete parent[key];
-  }
-  return value;
-}
 // Accepted bodies are immutable and shared by checkpoint snapshots. Retain only
 // their computed submission patch; replacing either body computes a fresh one.
 const submissionPatches = new WeakMap<object, { submitted: unknown; patch: Patch }>();
@@ -114,6 +70,13 @@ function encodeState(state: RunState): Checkpoint {
       const receipt = state.receipts[task.id];
       if (receipt) {
         const { exported, evaluation, submitted, ...rest } = receipt;
+        const compactId = (task.data as AttributionTaskData).compactTaskId;
+        const compact = compactId && state.receipts[compactId]?.exported;
+        if (compact) {
+          value.receipt = { ...rest, compact: { id: compact.id, file: compact.file, line: compact.line },
+            ...(submitted !== undefined ? { submittedPatch: submissionDifference(evaluation, submitted) } : {}) };
+          return [task.id, value];
+        }
         const rewriteIds = task.stage === "rewrite"
           ? (evaluation as { rewrites: { id: string }[] }).rewrites.map((item) => item.id) : undefined;
         const reference = exported && {
@@ -191,7 +154,7 @@ export function resultEvaluation(data: TaskData, row: JsonObject, rewriteIds?: s
     }) : rewrites };
   }
   row = originalResultRow(data.stage, row);
-  if (data.stage === "attribution-session") return row;
+  if (data.stage === "attribution-session" || data.stage === "attribution-compact") return row;
   if (data.stage === "criteria" || ["comparison_review", "comparison_verification"].includes(String(row.evaluation_type))) return row.result;
   if (data.stage === "clustering") return row.result;
   return evaluationFromRow(data, row);
@@ -208,7 +171,7 @@ function decodeState(
     throw new Error("运行状态缺少评测器版本");
   const resultRow = (receipt: SavedReceipt, ref: ResultReference, rewritten?: { stage: string; evaluatorVersion: string }) => {
     const row = getRow(ref);
-    if (ref.file !== "attribution.jsonl" &&
+    if (!["attribution.jsonl", "compact.jsonl"].includes(ref.file!) &&
       (rewritten ? (stageRewritten(rewritten.stage,row) as JsonObject)?.evaluator_version : row.evaluator_version) !== (rewritten?.evaluatorVersion ?? receipt.evaluatorVersion))
       throw new Error("结果评测器版本与收据不一致：" + ref.id);
     return row;
@@ -281,7 +244,14 @@ function decodeState(
     state.manifest.states[task.id] = status;
     if (taskIds && !taskIds.has(task.id)) continue;
     if (!receipt) continue;
-    const { evaluationPatch, submittedPatch, rewriteIds, ...value } = receipt;
+    const { evaluationPatch, submittedPatch, rewriteIds, compact, ...value } = receipt;
+    if (compact) {
+      const row = getRow(compact);
+      const info = task.data as AttributionTaskData, evaluation = compactFieldResult(row, info.compactField!, info.traceIndex);
+      state.receipts[task.id] = { ...value, evaluation,
+        ...(submittedPatch ? { submitted: restore(evaluation, submittedPatch) } : {}) } as SubmissionReceipt;
+      continue;
+    }
     if (!receipt.exported) {
       state.receipts[task.id] = {
         ...value,
@@ -290,10 +260,11 @@ function decodeState(
       continue;
     }
     const data = task.data as TaskData;
-    if (data.stage === "attribution-session") {
-      if (receipt.exported.taskId !== task.id || receipt.exported.file !== "attribution.jsonl")
+    if (data.stage === "attribution-session" || data.stage === "attribution-compact") {
+      const file = resultFile(data.stage);
+      if (receipt.exported.taskId !== task.id || receipt.exported.file !== file)
         throw new Error("归因 session 结果引用与任务不一致：" + task.id);
-      const reference = { id: task.id, file: "attribution.jsonl", line: receipt.exported.line };
+      const reference = { id: task.id, file, line: receipt.exported.line };
       const row = resultRow(receipt, reference);
       const evaluation = restore(row, evaluationPatch || []);
       state.receipts[task.id] = { ...value, evaluation,
@@ -429,6 +400,7 @@ export const comparisonCodec: RunCodec<Checkpoint> = {
     if (checkpoint.format !== "evaluation-run") throw new Error("不支持此运行格式；只支持 evaluation-run。");
     return Object.entries(checkpoint.tasks).flatMap(([id, task]) => {
       if (taskIds && !taskIds.has(id)) return [];
+      if (task.receipt?.compact) return [task.receipt.compact];
       const ref = task.receipt?.exported;
       return ref
         ? [

@@ -95,6 +95,9 @@
       ],
       "@eval/workflows/review": [
         "./packages/workflows/src/review/index.ts"
+      ],
+      "@eval/agents/compact": [
+        "./packages/agents/src/compact/index.ts"
       ]
     }
   },

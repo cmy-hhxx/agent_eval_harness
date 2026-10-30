@@ -12,7 +12,7 @@ npm run eval -- run --test-eval --run-id aime-attribution-test \
   --config /absolute/path/aime-attribution-inputs.json
 ```
 
-真实测试产物只能写入 `/mnt/fin_bench/eval_data/1_aime/3_eval_output/test_eval/`。正式结果一行对应一条输入记录，包含 `session_meta`、`turns[]`、`session_summary` 和 `session_problem`，由 [Session 归因](attribution.md) 定义；内部 component、trace 任务只保存在运行状态与收据中。
+真实测试产物只能写入 `/mnt/fin_bench/eval_data/1_aime/3_eval_output/test_eval/`。正式结果一行对应一条输入记录，包含 `session_meta`、`turns[]`、`session_summary` 和 `session_problem`，由 [Session 归因](attribution.md) 定义；compact 单独输出会话过程摘要，trace 任务只保存在运行状态与收据中。
 
 输入扫描按一行为一条评测记录，保留该记录的全部 trace；按 trace 抓取时允许同一会话有多条记录；空回答、缺最终回答、缺 trace 身份、重复业务身份和冲突记录必须保留可定位原因，不得静默裁剪或拼接。内部 run 保留恢复账本、来源收据与累计预算，正式交付默认按[业务目录](usage.md#目录约定)整理：
 

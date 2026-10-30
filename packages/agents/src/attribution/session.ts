@@ -1,4 +1,5 @@
 import type { SessionAttributionResult, SessionProblem } from "./types.js";
+import { attributionPositionReference, parseEvidenceCoordinates } from "@eval/contracts";
 
 /** The only flattening used by downstream consumers; turn problems stay in trace order. */
 export function sessionProblems(result: SessionAttributionResult): SessionProblem[] {
@@ -6,6 +7,8 @@ export function sessionProblems(result: SessionAttributionResult): SessionProble
 }
 
 export function evidenceMessageIndex(position: string): number | null {
+  const reference = attributionPositionReference(position);
+  if (reference) return parseEvidenceCoordinates(reference.evidence_id)!.message_index;
   const match = /message_index\s+(\d+)/u.exec(position);
   return match ? Number(match[1]) : null;
 }

@@ -5,7 +5,6 @@ import type { ComparisonAttribution } from "@eval/agents/comparison";
 import { verificationCheckAspects } from "@eval/agents/comparison";
 import type { ComparisonResult } from "./types.js";
 import type { RawInput } from "../inputs/types.js";
-import { contentText } from "../inputs/records.js";
 import { attributionPresentation } from "../review/attribution-presentation.js";
 
 /** Convert only valid native calendar instants with an explicit offset; Date's invalid-day rollover is not evidence. */
@@ -36,6 +35,7 @@ function criterionMeaning(criterion: TaskAnalysis["requirements"][number]) {
 export function verificationPresentation(input: Record<string, unknown>, sources: NonNullable<AgentRequest["sources"]>,
   analysis: TaskAnalysis) {
   const materials = input.candidates as Record<string, { question: string; final_message_index: number;
+    final_message_indices: number[]; final_answer: string; source_positions: unknown;
     catalog: unknown; citation_inventory: unknown; answer_generation: unknown;
     original_answer_timing: { finish_seconds: number | null };
     original_answer_usage: { total_tokens: number | null; issues: string[] };
@@ -72,14 +72,15 @@ export function verificationPresentation(input: Record<string, unknown>, sources
       original_user_timestamp_utc: timestampUTC(timestamp),
       question_evidence: (material.criterion_instruction_sources ?? {})[analysis.requirements.find(criterion =>
         common(criterion) && hasSourceTextBlock(criterion.acceptance_rule, material.question))?.id ?? ""]?.map(entry => sourceReference(label, entry)) ?? [],
-      final_message_index: material.final_message_index, final_answer: contentText(raw.messages[material.final_message_index].content),
+      final_message_index: material.final_message_index, final_message_indices: material.final_message_indices,
+      source_positions: material.source_positions, final_answer: material.final_answer,
       ...(captureGaps.length ? { capture_gaps: captureGaps } : {}),
       ...(imageCount ? { final_images: { image_count: imageCount,
         view_request: { candidate: label, message_index: material.final_message_index } } } : {}),
-      final_evidence: messageContentSources(raw.messages[material.final_message_index])
-        .map(source => { const full = cite(sourceIds[label], material.final_message_index, source, 0, source.text.length);
+      final_evidence: (material.final_message_indices ?? [material.final_message_index]).flatMap(message_index => messageContentSources(raw.messages[message_index])
+        .map(source => { const full = cite(sourceIds[label], message_index, source, 0, source.text.length);
           return displayEvidence(source.text.length <= 200 ? full : { ...full, quote: undefined,
-            quote_preview: source.text.slice(0, 200), has_more: true }); }),
+            quote_preview: source.text.slice(0, 200), has_more: true }); })),
       answer_generation: material.answer_generation,
       original_answer_timing: structuredClone(material.original_answer_timing),
       original_answer_usage: structuredClone(material.original_answer_usage),

@@ -235,7 +235,7 @@ export async function runEvaluation(options: RunOptions): Promise<Record<string,
       return !attemptsExhausted(task) && !boundedTimeout && options.taskSource.observesFailures?.(task) !== false;
     };
     const paused = (task: PlannedTask) => observesFailures(task) && guard.paused(task.stage);
-    const resourceAvailable = (task: PlannedTask) => options.modelRequests?.available?.(
+    const resourceAvailable = (task: PlannedTask) => options.taskSource.isComputedTask?.(task) || options.modelRequests?.available?.(
       (options.modelRoutesForTask?.(task) ?? [options.modelForStage(task.stage)]).map(model => model.provider)) !== false;
     const dispatchable = (task: PlannedTask) => inScope(task) && !paused(task) &&
       (manifest.states[task.id].status !== "pending" || resourceAvailable(task));
@@ -374,7 +374,10 @@ export async function runEvaluation(options: RunOptions): Promise<Record<string,
         return json(res, await current.inspect((await body(req)) as unknown as import("@eval/contracts").MaterialInspection));
       if (req.method === "POST" && url.pathname === "/api/submissions") {
         const value = (await body(req)) as Submission;
-        return json(res, await current.accept(value));
+        const receipt = await current.accept(value);
+        completions++;
+        wake();
+        return json(res, receipt);
       }
       if (req.method === "GET" && parts[0] === "api" && parts[1] === "submissions" && parts[2])
         return json(res, await current.findSubmission(safeId(parts[2])));
@@ -488,7 +491,8 @@ export async function runEvaluation(options: RunOptions): Promise<Record<string,
       if (paused(task)) return;
       // Automatic retries and explicit resume share the task's cumulative content cap.
       state.channel = model.provider;
-      const policy = { ...options.policy, repairAttempts: contentRemaining(task) - 1 };
+      const policy = { ...options.policy, maxToolCalls: Math.min(options.policy.maxToolCalls, prepared.maxToolCalls ?? Infinity),
+        repairAttempts: contentRemaining(task) - 1 };
       const renderStarted = performance.now();
       const spec: AttemptSpec = {
         runId: options.runId,
@@ -1030,8 +1034,10 @@ export async function runEvaluation(options: RunOptions): Promise<Record<string,
         if (dependencies.some(([label]) => !dependencyReady(task, label, manifest.states, running))) continue;
         if (!admitted(task)) continue;
         if (options.taskSource.canStart?.(task, manifest) === false) continue;
-        if (running.size >= taskConcurrency()) break;
-        if (eligible.every((worker) => busy.has(worker) || worker.reserved || unavailable.has(worker))) break;
+        if (!options.taskSource.isComputedTask?.(task)) {
+          if (running.size >= taskConcurrency()) break;
+          if (eligible.every((worker) => busy.has(worker) || worker.reserved || unavailable.has(worker))) break;
+        }
         let binding: AgentBinding, prepared: ReturnType<typeof options.agents.prepare>,
           timing: Record<string, number>, capable: typeof eligible;
         try {
@@ -1046,11 +1052,30 @@ export async function runEvaluation(options: RunOptions): Promise<Record<string,
           preparing.add(task.id);
           options.onProgress?.(`preparing ${task.stage} ${task.id}`);
           await yieldToIO();
+          // A pool can exit during the yield; wait for replacement before loading task materials.
+          if (!eligible.length && !options.taskSource.isComputedTask?.(task)) { preparing.delete(task.id); break; }
           const preparationStarted = performance.now(), cpuStarted = process.cpuUsage();
           binding = options.taskSource.bind(task, inputs, acceptedDependencies, { tasks: manifest.tasks });
           const bindingMs = performance.now() - preparationStarted;
           if (paused(task)) { preparing.delete(task.id); continue; }
           prepared = options.agents.prepare(binding);
+          if (Object.hasOwn(binding, "computedResult")) {
+            const started = Date.now(), model = options.modelForStage(task.stage);
+            const spec: AttemptSpec = { runId: options.runId, taskId: task.id, attemptId: randomUUID(),
+              inputRevision: manifest.states[task.id].revision || 1, engine: identity,
+              evaluation: prepared.evaluation, model: { ...model, model: "code", thinking: "off" },
+              policy: { ...options.policy, maxToolCalls: 0 }, prompt: "", evidenceBank: [],
+              inputs: Object.entries(task.inputIds).map(([name, id]) => ({ ...manifest.inputs[id], id, name })),
+              hostUrl, deadline: started + options.policy.timeoutSeconds * 1000 };
+            if (!await current.activate(spec, binding)) { preparing.delete(task.id); continue; }
+            manifest.states[task.id].durationMs = Date.now() - started;
+            await current.accept({ taskId: task.id, attemptId: spec.attemptId, submissionId: randomUUID(),
+              evaluation: binding.computedResult, usage: emptyUsage(),
+              audit: { evidenceBank: [], calls: 0, requiredReadCalls: 0, traceReads: [], viewedImages: [], calculations: [], artifacts: [] } });
+            preparing.delete(task.id); scheduled = true; completions++;
+            options.onProgress?.(`computed ${task.stage} ${task.id}`);
+            continue;
+          }
           const cpu = process.cpuUsage(cpuStarted);
           timing = { queuedMs: Math.max(0, Date.now() - (manifest.states[task.id].nextRetryAt ?? manifest.startedAt)),
             bindingMs, profileMs: performance.now() - preparationStarted - bindingMs,

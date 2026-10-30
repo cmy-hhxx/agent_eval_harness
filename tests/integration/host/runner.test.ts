@@ -54,12 +54,12 @@ test("a failed checkpoint save during cleanup still releases the Host lock", asy
 
 test("stage content limits stop rejected attribution after its first submission even when global repairs are enabled",async()=>{
   const {directory,config,modelForStage}=await fixtureConfig([[raw()],[],[raw()],[]]);
-  config.execution.repairAttempts=3;config.execution.stageRepairAttempts={"attribution-component":0};
+  config.execution.repairAttempts=3;config.execution.stageRepairAttempts={"attribution-compact-field":0};
   const plan=await buildPlan(config),calls=new Map<string,number>();
   const backend:AgentBackend={identity:fakeIdentity,async createSession(options){return {
     async run(){
       calls.set(options.spec.taskId,(calls.get(options.spec.taskId)??0)+1);
-      if(options.spec.evaluation.profile==="component"){
+      if(options.spec.evaluation.id==="compact"){
         assert.equal(options.spec.policy.repairAttempts,0);
         assert.equal((await submitFor(options,invalidDraft(options.spec))).isError,true);
       }else assert.equal((await submitFor(options,draftFor(options.spec,taskResult(options.spec)))).terminate,true);
@@ -68,9 +68,10 @@ test("stage content limits stop rejected attribution after its first submission 
   const worker=await startWorker(backend,path.join(directory,"worker"));
   try{
     await runEvaluation({...services,runId:"first-submission",output:config.output,config,engine:"pi",identity:fakeIdentity,evaluatorVersion:fakeEvaluatorVersion,
-      plan,policy:config.execution,modelForStage,concurrency:1,retries:1,retryDelaySeconds:0,workerUrls:[worker.url]});
+      plan,policy:config.execution,modelForStage,concurrency:1,retries:1,retryDelaySeconds:0,
+      failureGuard:{enabled:false,windowSize:50,threshold:5},workerUrls:[worker.url]});
     const state=await readRunState(path.join(config.output.path,"first-submission"));
-    const components=plan.tasks.filter(task=>task.stage==="attribution-component");
+    const components=plan.tasks.filter(task=>task.stage==="attribution-compact-field");
     assert(components.length>0);
     for(const task of components){
       assert.equal(calls.get(task.id),1);assert.equal(state.manifest.states[task.id].status,"failed");
@@ -88,6 +89,8 @@ test("two workers preserve same-run receipts and honor explicitly requested reev
     identity: fakeIdentity, async createSession(options) { return {
       async run() {
         calls.set(options.spec.taskId, (calls.get(options.spec.taskId) ?? 0) + 1);
+        if (options.spec.evaluation.id === "compact")
+          assert.equal(options.spec.policy.maxToolCalls, 0);
         const accepted = await submitFor(options, draftFor(options.spec, taskResult(options.spec)));
         assert.equal(accepted.isError, undefined, JSON.stringify(accepted));
         assert.equal(accepted.terminate, true);
@@ -105,7 +108,7 @@ test("two workers preserve same-run receipts and honor explicitly requested reev
     assert.equal(Object.keys(saved.receipts).length, saved.manifest.tasks.length);
     for (const task of saved.manifest.tasks) {
       assert.equal(saved.manifest.states[task.id].status, "succeeded", task.stage);
-      assert.equal(calls.get(task.id), 1);
+      assert.equal(calls.get(task.id), task.stage === "attribution-compact" ? undefined : 1);
     }
     for (const file of ["state.json", "overview.json", "stats.json", "report.md", "task_summaries.md"])
       assert.equal(await exists(path.join(run, file)), true, file);
@@ -130,7 +133,7 @@ test("two workers preserve same-run receipts and honor explicitly requested reev
       assert.equal(resumed.receipts[id].submissionId, receipt.submissionId);
     const independent = await runEvaluation({ ...options, runId: "second" });
     assert.equal(independent.completed_comparisons, summary.completed_comparisons);
-    assert.equal([...calls.values()].reduce((sum, count) => sum + count, 0), saved.manifest.tasks.length * 2,
+    assert.equal([...calls.values()].reduce((sum, count) => sum + count, 0), saved.manifest.tasks.filter(task => task.stage !== "attribution-compact").length * 2,
       "another run independently executes the complete graph");
     assert.equal((await validateRun(path.join(config.output.path, "second"))).valid, true);
     for (const workdir of workerDirectories)
@@ -259,7 +262,7 @@ test("an unknown final submission ledger stops automatic retries and permits exp
   const input = raw("unknown-content-ledger", null);
   const { directory, config, modelForStage } = await fixtureConfig([[input], [], [input], []]);
   config.execution.repairAttempts = 3;
-  const plan = await buildPlan(config), target = plan.tasks.find((task) => task.stage === "attribution-component")!;
+  const plan = await buildPlan(config), target = plan.tasks.find((task) => task.stage === "criteria")!;
   let attempts = 0, submissions = 0, resumed = false, hideLedger = false;
   let failedAttemptId: string | undefined;
   const repairBudgets: number[] = [];
@@ -455,9 +458,9 @@ test("same run ID preserves accepted work when the model, budget and evaluator c
     for (const task of after.manifest.tasks) {
       const receipt = after.receipts[task.id], previous = before.receipts[task.id];
       assert.equal(after.manifest.states[task.id].status, "succeeded", task.stage);
-      assert.equal(calls.get(task.id), previous ? previousCalls.get(task.id) : (previousCalls.get(task.id) ?? 0) + 1);
+      assert.equal(calls.get(task.id), task.stage === "attribution-compact" ? undefined : previous ? previousCalls.get(task.id) : (previousCalls.get(task.id) ?? 0) + 1);
       assert.equal(receipt.evaluatorVersion, previous ? previous.evaluatorVersion : "fixture-2");
-      assert.equal(receipt.judge, previous ? previous.judge : "changed-model");
+      assert.equal(receipt.judge, previous ? previous.judge : task.stage === "attribution-compact" ? "code" : "changed-model");
       if (previous) assert.equal(receipt.submissionId, previous.submissionId);
     }
     assert.deepEqual(complete.evaluator_versions, [fakeEvaluatorVersion, "fixture-2"].sort());
@@ -500,7 +503,9 @@ for (const reportedContent of [0, undefined]) test(`a worker's ${reportedContent
         assert.equal(options.spec.policy.repairAttempts, 0,
           "a confirmed inspection at count three leaves exactly one final submission within the cap of four");
       }
-      const value = options.spec.evaluation.profile === "component" ? { problems: [] } : taskResult(options.spec);
+      const value = taskResult(options.spec);
+      if (options.spec.evaluation.id === "attribution" && ["trace", "single"].includes(options.spec.evaluation.profile))
+        (value as { problems: unknown[] }).problems = [];
       const result = await submitFor(options, draftFor(options.spec, value));
       assert.equal(result.isError, undefined, JSON.stringify(result));
     }, async abort() {}, async dispose() {} };

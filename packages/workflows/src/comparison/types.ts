@@ -40,7 +40,7 @@ export interface BatchPreflight {
   skipped_groups: number;
   input_issues: number;
 }
-export type Stage = "criteria" | "attribution-component" | "attribution-trace" | "attribution-session" |
+export type Stage = "criteria" | "attribution-compact-field" | "attribution-compact" | "attribution-trace" | "attribution-session" |
   "comparison" | "rewrite" | "clustering" | import("../review/dimensions.js").DimensionAttributionStage;
 /** The accepted result a rewrite task polishes. */
 export interface RewriteSource {
@@ -116,4 +116,4 @@ export interface TaskData {
   revision?: number;
 }
 export type { Finding, TaskAnalysis, ComparisonResult } from "@eval/agents/comparison";
-export type { ComponentReviewResult, SessionAttributionResult, SessionProblem, TraceAttributionResult } from "@eval/agents/attribution";
+export type { SessionAttributionResult, SessionProblem, TraceAttributionResult } from "@eval/agents/attribution";

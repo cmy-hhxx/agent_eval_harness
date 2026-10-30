@@ -880,6 +880,44 @@ test("Worker shutdown failure still checkpoints an interrupted run and closes it
   await assert.rejects(readFile(path.join(directory, "shutdown/.run-lock")), { code: "ENOENT" });
 });
 
+test("Worker capacity disappears during preparation without becoming a missing-tool failure", async t => {
+  const directory = await mkdtemp(path.join(tmpdir(), "eval-preparation-worker-exit-"));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  let modelCalls = 0, bindings = 0, interrupted = false;
+  const worker = await startWorker({ identity, async createSession(options) { return {
+    async run() { modelCalls++; assert(!(await options.execute("submit_evaluation", { score: 1 })).isError); },
+    async abort() {}, async dispose() {},
+  }; } }, path.join(directory, "worker"));
+  class Supervisor extends WorkerSupervisor {
+    replacement: WorkerSupervisor["slots"] = [];
+    override setDemand(_run: string, count: number) {
+      if (count && this.replacement.length) this.slots.push(...this.replacement.splice(0));
+    }
+  }
+  const supervisor = new Supervisor({ identity, runtime: { root: directory, workerEntry: "unused" },
+    directory, retries: 0, retryDelaySeconds: 0, wake() {}, event() {} });
+  supervisor.slots.push({ url: worker.url, health: { identity, tools: [], activeAttempt: null } });
+  try {
+    await runEvaluation({ agents: new AgentRegistry([agent]), taskSource: { ...workflow,
+      bind(...args) { bindings++; return workflow.bind(...args); } }, repository,
+      runtime: { root: directory, workerEntry: "unused" }, workerSupervisor: supervisor,
+      runId: "capacity-exit", output: { kind: "directory", path: directory }, engine: "pi", identity,
+      evaluatorVersion: "test", config: {}, plan: { ...plan, tasks: plan.tasks.slice(0, 1) }, policy: DEFAULT_POLICY,
+      modelForStage: () => model, concurrency: 1, retries: 0, retryDelaySeconds: 0, signal: AbortSignal.timeout(5000),
+      onProgress(message) {
+        if (!interrupted && message.startsWith("preparing ")) {
+          interrupted = true;
+          supervisor.replacement.push(...supervisor.slots.splice(0));
+        }
+      } });
+    const saved = await repository.readRun(path.join(directory, "capacity-exit"));
+    assert.equal(saved.manifest.states["task-1"].status, "succeeded");
+    assert.equal(saved.manifest.states["task-1"].attempts, 1);
+    assert.equal(modelCalls, 1);
+    assert.equal(bindings, 1, "lost capacity must be detected before loading task materials");
+  } finally { await supervisor.close(); await worker.close(); }
+});
+
 test("a Host storage error remains fatal even when the corresponding Worker is lost", async t => {
   const directory = await mkdtemp(path.join(tmpdir(), "eval-lost-worker-storage-"));
   const worker = await startWorker({ identity, async createSession() { throw new Error("must not dispatch after storage failure"); } }, path.join(directory, "worker"));

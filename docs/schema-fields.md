@@ -15,11 +15,13 @@
 | requirements / scoring_points / red_flags | Criteria | Attribution、Comparison | 有不同验收含义；统一作用域和来源绑定避免私规外溢。 |
 | is_correct / correct_reason | Attribution | 标准一致性核对 | 只判断与给定标准答案是否一致，独立于问题归因；无标准时两者固定 null。 |
 | Problem / text / reason / evidence_status | Attribution | Comparison、Score、Clustering、报告 | 正式问题及依据、实际影响与缺陷确定性；允许充分评审后的空数组，摘要不替代问题。 |
-| Problem.severity / severity_reason | Attribution 的 Component、Session | 正式归因结果、报告 | 标注每条问题对本次最终交付的已确认影响及分级依据；不参与 Comparison 判胜或聚类身份。 |
-| component / attribution_reason | 模型选边界并解释，程序解析主体 | 归责与导出 | 绑定真实调用，区分事实偏离与机制推断；主体未知不撤销缺陷。 |
+| Problem.severity / severity_reason | Attribution 的 Trace、Session | 正式归因结果、报告 | 标注每条问题对本次最终交付的已确认影响及分级依据；不参与 Comparison 判胜或聚类身份。 |
+| component / attribution_reason | 模型选择责任条目及来源主体，程序解析名称 | 归责与导出 | 推理错误用具体 reasoning 环节，外部故障用工具、脚本或 skill 名称；模型名只说明来源。 |
 | accepted_attribution / problem_assignments | Workflow、Score | 单次评分及程序导出 | 完成情况、已确认或待核的问题和恢复状态来自接受收据；模型用 finding_index 映射选档，程序保留源问题、责任确定性及证据。 |
 | evidence / calculations / uncertainties | 模型选证据与必要计算 | 程序核查与复算 | 用途为问题、归因或两者；原文去重。计算保留单位、期间、分母和假设；真实缺口直接记录。 |
 | evidence_id / evidence refs | Agent 与 Host | 引用校验、复核、查看原文 | 可解析坐标，必需；位置合法不证明语义正确。 |
+| compact.components | 原始模型、工具记录及字段 Agent 提取的脚本、skill 名称 | 真实链路组件导航 | 保留 component_index、具体名称、类型、调用位置和可解析原文；目录只证明组件存在，不证明有错。 |
+| compact.source_evidence / summary_origin | 代码解析模型的局部选择 | Compact → Attribution 原文复用 | 模型概述与代码回填引文分开；源 UUID、展平消息、字段路径、UTF-16 片段范围与后续阶段一致，内部其他结构开放。 |
 | numeric references / table checks | 程序材料导航 | 疑点定位 | 仅作为核查线索，正式判断及必要计算写入对应 Problem。 |
 | comparisons[].slot_index / kind / assessments | Comparison | 排名派生、逐项展示 | 槽位与候选身份显式提交，不依赖数组顺序或动态对象键；共同且可比的差异是判决依据，不能靠问题数替代。 |
 | assessments[].summary / tradeoff | Comparison 内部提交 | 正式总评及 decision_basis.tradeoff | 两方摘要描述各自交付；单一 tradeoff 解释整场取舍，避免拼接自相矛盾的两段理由。 |
@@ -48,7 +50,7 @@
 
 推理与交付阶段的 generation_message_index 仅是内部来源关联，不是业务名称或新身份；reasoning_blocks 保存程序提取的短原文与坐标，支持定位首次引入，不能把共享名称当作同一责任。
 
-Attribution 正式文件一行对应一个 session；component 与 trace 是内部任务，只保存在状态和收据中。程序不证明摘要无漏项或机制解释无过度推断，真实样本抽审仍是质量验收依据。
+Attribution 正式文件一行对应一个 session；compact 独立导出过程摘要，trace 是内部任务，只保存在状态和收据中。程序不证明摘要无漏项或机制解释无过度推断，真实样本抽审仍是质量验收依据。
 
 每个 Problem 使用 `problem_id/component/label/definition/problem_phenomena/reason/severity/severity_reason/evidence/calculations`。`evidence` 单项包含 `position/component/quote/reason`；`quote` 最多 400 字且必须精确连续。`calculations` 只保留文字点评。严重程度语义见[Session 归因](attribution.md#正式契约)。
 

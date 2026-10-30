@@ -1,3 +1,4 @@
+import { compactReceipt } from "../../fixtures/compact.js";
 import test from "node:test";
 import assert from "node:assert/strict";
 import { readFile, rm } from "node:fs/promises";
@@ -10,9 +11,9 @@ test("an interrupted Comparison report retains internal receipts without treatin
   const f = await fixtureConfig([[raw()], [], [raw()], []]);
   t.after(() => rm(f.directory, { recursive: true, force: true }));
   const plan = await buildPlan(f.config), runId = "partial-components", run = path.join(f.config.output.path, runId);
-  const component = plan.tasks.find(task => task.stage === "attribution-component")!;
+  const component = plan.tasks.find(task => task.stage === "attribution-compact")!;
   assert(component);
-  const evaluation = { component: (component.data as { component: string }).component, problems: [] };
+  const evaluation = compactReceipt().evaluation;
   const state: RunState = { manifest: { format: "evaluation-run", debug: false, runId, status: "interrupted",
     engine: fakeIdentity, evaluatorVersion: fakeEvaluatorVersion, config: f.config, tasks: plan.tasks,
     inputCatalog: plan.catalog, inputs: {}, preflight: plan.summary, startedAt: 1,
@@ -26,7 +27,7 @@ test("an interrupted Comparison report retains internal receipts without treatin
   assert.deepEqual(saved.receipts[component.id].evaluation, evaluation);
   assert.equal(saved.manifest.states[component.id].status, "succeeded");
   const report = await readFile(path.join(run, "task_summaries.md"), "utf8");
-  assert(!report.includes("（attribution-component）"));
+  assert(!report.includes("（attribution-compact）"));
   assert(!report.includes("（attribution-trace）"));
   assert(report.includes("（comparison）"));
 });

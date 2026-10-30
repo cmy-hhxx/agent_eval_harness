@@ -1,3 +1,6 @@
+import { compactAgent } from "@eval/agents/compact";
+import { compactReceipt } from "./compact.js";
+import { compactFieldResult } from "@eval/workflows/attribution";
 import { attributionDimensions } from "@eval/workflows/review";
 import { services as appServices } from "@eval/host-app/composition";
 import path from "node:path";
@@ -17,10 +20,18 @@ import {
 } from "@eval/workflows/comparison";
 import type { PlannedTask, SubmissionReceipt, ToolAudit } from "@eval/contracts";
 export const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../..");
-export const agents = new AgentRegistry([...Object.values(attributionDimensions).map(dimension => dimension.agent),
+export const agents = new AgentRegistry([compactAgent,...Object.values(attributionDimensions).map(dimension => dimension.agent),
   criteriaAgent, comparisonAgent, attributionAgent, rewriteAgent, clusteringAgent]);
 /** A fixed rubric for focused binding tests that do not schedule its preparation. */
 function testDependencies(task: PlannedTask, inputs: Record<string, unknown>, dependencies: Record<string, SubmissionReceipt | undefined>) {
+  if (task.stage === "attribution-compact") {
+    const count = ((task.data as { candidate?: { turns?: unknown[] } }).candidate?.turns?.length ?? 1), receipt = compactReceipt(count);
+    dependencies = { ...Object.fromEntries(Object.entries(task.dependencies).map(([label,id]) => {
+      const [index, field] = label.includes(":") ? label.split(":") : [undefined, label];
+      return [label, { ...receipt, taskId: id, evaluation: compactFieldResult(receipt.evaluation as Record<string, unknown>, field!, index === undefined ? undefined : Number(index)) }];
+    })), ...dependencies };
+  }
+  if (task.dependencies.compact && !dependencies.compact) dependencies = { ...dependencies, compact: compactReceipt() };
   if (!task.dependencies.criteria || dependencies.criteria?.evaluation && "requirements" in (dependencies.criteria.evaluation as object)) return dependencies;
   return { ...dependencies, criteria: { taskId: task.dependencies.criteria, attemptId: "criteria", submissionId: "criteria",
     status: "succeeded", acceptedAt: 1, evaluatorVersion: fakeEvaluatorVersion, judge: fakeJudge,

@@ -1,6 +1,6 @@
 # 单样本归因与评分
 
-Attribution 使用独立 `workflow: attribution`，问财和 AIME 共用 component → trace → session 三段逻辑。一个输入记录输出一行 `attribution.jsonl`。字段、运行与恢复契约见 [Session 归因](attribution.md) 和 [使用指南](usage.md)。
+Attribution 使用独立 `workflow: attribution`，问财和 AIME 共用 compact → trace → session 三段逻辑。一个输入记录分别输出一行 `compact.jsonl` 和 `attribution.jsonl`。字段、运行与恢复契约见 [Session 归因](attribution.md) 和 [使用指南](usage.md)。
 
 ## 归因职责与材料
 

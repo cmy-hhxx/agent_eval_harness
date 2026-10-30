@@ -1,3 +1,4 @@
+import { compactReceipt } from "../../../../tests/fixtures/compact.js";
 import test from "node:test";
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
@@ -36,7 +37,7 @@ test("main attribution excludes private rules from both prompt and readable sour
     { type:"final_answer", role: "assistant", content: "现货金价为3690美元。" },
   ] };
   const candidate = { input_id: id, question, final_index: 6, reference: null, answer_timing: { finish_seconds: null } } as Candidate;
-  const before = structuredClone(raw), binding = bindAttributionMaterial(candidate, raw);
+  const before = structuredClone(raw), binding = bindAttributionMaterial(candidate, raw, undefined, { compact: compactReceipt().evaluation as never });
   const modelText = JSON.stringify(binding.modelInput), requestText = JSON.stringify(binding.request);
   for (const text of [modelText, requestText])
     for (const secret of ["SYS_PRIVATE_SENTINEL", "DEV_PRIVATE_SENTINEL", "SKILL_PRIVATE_SENTINEL"]) assert(!text.includes(secret));

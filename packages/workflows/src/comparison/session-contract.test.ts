@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import type { SessionAttributionResult } from "@eval/agents/attribution";
 import { comparisonAttribution } from "./comparison-attribution.js";
-import { sessionComparisonInput } from "../inputs/session.js";
+import { sessionSource } from "../inputs/session.js";
 import type { Candidate, RawInput } from "../inputs/types.js";
 
 const result: SessionAttributionResult = {
@@ -35,9 +35,10 @@ test("Comparison consumes the whole session and maps its accepted problems witho
     trace_id: "session-1", source: "fixture", line: 1, question: "Q1", final_index: 1,
     answer_timing: { first_token_seconds: null, first_answer_seconds: null, finish_seconds: null,
       source_unit: "ms", source_values: {}, source_fields: {} }, reference: null, llm: null,
-    turns: [{ trace_index: 0, trace_id: "t1", question: "Q1", final_index: 1, component_scopes: [] },
-      { trace_index: 1, trace_id: "t2", question: "Q2", final_index: 1, component_scopes: [] }] };
-  const material = sessionComparisonInput(raw, candidate);
-  assert.match(String(material.messages[0]!.content), /Q1: Q1[\s\S]*Q2: Q2/u);
-  assert.match(String(material.messages[1]!.content), /A1: A1[\s\S]*A2: A2/u);
+    turns: [{ trace_index: 0, trace_id: "t1", question: "Q1", final_index: 1 },
+      { trace_index: 1, trace_id: "t2", question: "Q2", final_index: 1 }] };
+  const material = sessionSource(raw);
+  assert.equal(candidate.turns!.length, 2);
+  assert.deepEqual(material.raw.messages.map(message => message.content), ["Q1", "A1", "Q2", "A2"]);
+  assert.deepEqual(material.positions, [{trace_index:0,message_index:0},{trace_index:0,message_index:1},{trace_index:1,message_index:0},{trace_index:1,message_index:1}]);
 });

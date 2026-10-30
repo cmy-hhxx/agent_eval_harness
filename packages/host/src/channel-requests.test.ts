@@ -4,7 +4,7 @@ import { createChannelRequests } from "./channel-requests.js";
 import type { ModelRequestContext } from "./model-requests.js";
 
 const context = (channel: string, callId: string, runId = "one") => ({
-  callId, runId, taskId: "task", stage: "attribution-component", model: { provider: channel },
+  callId, runId, taskId: "task", stage: "attribution-compact", model: { provider: channel },
 }) as ModelRequestContext;
 
 test("two channels enforce 200 live requests each across runs and release exactly once", async () => {
@@ -43,8 +43,8 @@ test("downstream priority applies within the weighted lane and preserves FIFO ti
   const call = (id: string, group: string, stage: string) => control.acquire({
     ...context("channel", id), trafficGroup: group, stage,
   }, signal).then(release => { order.push(id); return release; });
-  const release = await call("active", "wencai", "attribution-component");
-  const component = call("component", "wencai", "attribution-component");
+  const release = await call("active", "wencai", "attribution-compact");
+  const component = call("component", "wencai", "attribution-compact");
   const first = call("first", "wencai", "attribution-session");
   const second = call("second", "wencai", "attribution-session");
   const other = call("other", "aime", "attribution-session");

@@ -1,3 +1,4 @@
+import { compactReceipt } from "../../../../tests/fixtures/compact.js";
 import test from "node:test";
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
@@ -162,15 +163,15 @@ test("deferred answer paragraphs retain context previews and candidate-specific 
     data: { stage: "criteria", candidates: { A: candidate }, reference: null } satisfies TaskData };
   const receipt: SubmissionReceipt = { taskId: criteriaId, attemptId: randomUUID(), submissionId: randomUUID(), acceptedAt: 1,
     status: "succeeded", evaluatorVersion: "fixture", judge: "fixture", evaluation: criteriaResult(), audit: emptyAudit(), usage: emptyUsage() };
-  const task: PlannedTask = { id: randomUUID(), stage: "attribution-component", inputIds: { answer: inputId }, dependencies: { criteria: criteriaId },
-    data: { stage: "attribution-component", candidate, candidates: { A: candidate }, reference: null } satisfies TaskData };
-  const binding = bindTask(task, { [inputId]: raw }, { criteria: receipt }, { tasks: [criteriaTask, task] });
+  const task: PlannedTask = { id: randomUUID(), stage: "attribution-trace", inputIds: { answer: inputId }, dependencies: { compact: "compact", criteria: criteriaId },
+    data: { stage: "attribution-trace", candidate, candidates: { A: candidate }, reference: null } satisfies TaskData };
+  const binding = bindTask(task, { [inputId]: raw }, { compact: compactReceipt(), criteria: receipt }, { tasks: [criteriaTask, task] });
   const original = citationInventory(raw, inputId, 2).references[0];
   const shown = binding.modelInput!.answer as { final_evidence: { quote: string }[];
     final_context: { partial: boolean; continuations: { read_request: { candidate: string; offset: number; max_chars: number }; end_offset: number }[] } };
   const deferred = shown.final_context.continuations[0];
   const prefix = shown.final_evidence.map(entry => entry.quote).join("");
-  assert.equal(prefix, paragraph.slice(0, 1600));
+  assert.equal(prefix, paragraph.slice(0, 6400));
   assert.equal(deferred.read_request.candidate, "answer");
   assert.equal(deferred.read_request.offset, prefix.length);
   assert.equal(deferred.end_offset, paragraph.length);

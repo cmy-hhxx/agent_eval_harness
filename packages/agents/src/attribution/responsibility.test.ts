@@ -1,23 +1,25 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { ValidationError } from "@eval/contracts";
 import { attributionComponentLabel } from "./responsibility.js";
 
-test("taxonomy component codes resolve before aliases and the unknown fallback", () => {
-  assert.equal(attributionComponentLabel("planner-finquery"), "planner-finquery 取数规划子模型");
-  assert.equal(attributionComponentLabel("planner-search"), "planner-search 检索规划子模型");
-});
-
-test("complete display labels remain idempotent", () => {
-  for (const label of ["planner-finquery 取数规划子模型", "planner-search 检索规划子模型", "finquery 取数服务"])
-    assert.equal(attributionComponentLabel(label), label);
-});
-
-test("existing aliases and unknown names retain their current mapping", () => {
-  assert.equal(attributionComponentLabel("finquery.py"), "finquery.py 脚本（经 shell）");
-  assert.equal(attributionComponentLabel("web_search"), "web_search 网页检索");
-  assert.equal(attributionComponentLabel("unlisted-tool"), "其他工具（unlisted-tool）");
-  assert.equal(attributionComponentLabel("责任主体未确定"), "责任主体未确定");
-  assert.equal(attributionComponentLabel("llm-call-7"), "中间推理处理");
-  assert.equal(attributionComponentLabel("span-4f26f1fabe23fc3c"), "流程处理");
-  assert.equal(attributionComponentLabel("中间推理处理"), "中间推理处理");
+test("responsibility separates reasoning steps from source actors and names concrete external components", () => {
+  const components = [
+    { component_index: 1, kind: "model", name: "AIME-Atlas" },
+    { component_index: 2, kind: "tool", name: "finquery" },
+    { component_index: 3, kind: "script", name: "/opt/skills-aime/aime-finquery/scripts/finquery.py" },
+    { component_index: 4, kind: "script", name: "/harness/workdir/memo/build_memo.py" },
+    { component_index: 5, kind: "skill", name: "pdf" },
+  ];
+  assert.equal(attributionComponentLabel("arithmetic-calculation", 1, components), "算术运算");
+  assert.equal(attributionComponentLabel("period-interpretation", 1, components), "期间口径判断");
+  assert.equal(attributionComponentLabel("finquery", 2, components), "finquery");
+  assert.equal(attributionComponentLabel("finquery-script", 3, components), components[2]!.name);
+  assert.equal(attributionComponentLabel("session-script", 4, components), components[3]!.name);
+  assert.equal(attributionComponentLabel("skill-content", 5, components), "pdf");
+  for (const code of ["limitation-disclosure", "model-call", "script-command", "llm-call-7", "__proto__"])
+    assert.throws(() => attributionComponentLabel(code, 1, components), ValidationError);
+  assert.throws(() => attributionComponentLabel("finquery", 1, components), ValidationError);
+  assert.throws(() => attributionComponentLabel("arithmetic-calculation", 2, components), ValidationError);
+  assert.throws(() => attributionComponentLabel("period-interpretation", 99, components), ValidationError);
 });

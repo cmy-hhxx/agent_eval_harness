@@ -28,7 +28,7 @@ export async function attributionPilotFixture() {
       data: { stage: "criteria", candidates, reference: same[0].reference, criteriaScope } satisfies TaskData };
     tasks.push(criteria);
     for (const candidate of same) {
-      const unit = planAttributionUnit(candidate, { data: { stage: "attribution-component", candidates: { A: candidate },
+      const unit = planAttributionUnit(candidate, { data: { stage: "attribution-compact", candidates: { A: candidate },
         reference: candidate.reference, criteriaScope }, dependencies: { criteria: criteria.id }, identity: criteria.id });
       tasks.push(...unit.tasks, attributionRewritePlaceholder(unit.session.id, { rewriteNames: { A: candidate.name },
         case: { batch_id: candidate.batch_id, case_id: candidate.case_id, question: candidate.question } }));

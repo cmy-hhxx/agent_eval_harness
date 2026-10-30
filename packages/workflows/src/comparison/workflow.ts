@@ -11,6 +11,7 @@ const isDeferred = (stage: string) => stage === "rewrite" || stage === "clusteri
 
 export const comparisonWorkflow: WorkflowDefinition = {
   id: "comparison",
+  isComputedTask: task => task.stage === "attribution-compact",
   plan: (config, options) => buildPlan(config as EvalConfig, undefined, options as PlanOptions),
   reconcile: reconcileRun,
   bind: bindTask,
@@ -20,7 +21,7 @@ export const comparisonWorkflow: WorkflowDefinition = {
     stagePriority: stage => {
       if (attributionDimension(stage)) return 5;
       return ({ comparison: 0, "attribution-session": 1, "attribution-trace": 2,
-        "attribution-component": 3, criteria: 4, rewrite: 6, clustering: 7 } as Record<string, number>)[stage] ?? 4;
+        "attribution-compact": 3, criteria: 4, rewrite: 6, clustering: 7 } as Record<string, number>)[stage] ?? 4;
     },
   },
   canStart: (task, manifest) => task.stage === "comparison"

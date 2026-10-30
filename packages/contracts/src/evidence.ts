@@ -29,6 +29,37 @@ export function parseEvidenceCoordinates(id: string): EvidenceCoordinates | unde
       start: Number(match[4]), end: Number(match[5]), path: match[6]! } : undefined;
 }
 
+/** Keep the public Attribution shape while retaining the complete reusable coordinate in position. */
+export function attributionEvidencePosition(traceIndex: number, messageIndex: number, id: string): string {
+  const point = parseEvidenceCoordinates(id);
+  if (!point) throw new RangeError("Invalid attribution evidence coordinate");
+  return `trace_index ${traceIndex} / message_index ${messageIndex} / path ${point.kind === "image" ? "image" : point.path || "root"} / evidence_id ${id}`;
+}
+export function attributionPositionReference(position: string): { evidence_id: string } | undefined {
+  const id = / \/ evidence_id (ev_[\s\S]+)$/u.exec(position)?.[1];
+  return id && parseEvidenceCoordinates(id) ? { evidence_id: id } : undefined;
+}
+
+/** Copy source metadata; the content of a model statement never becomes an execution observation. */
+export function evidenceOrigin(message: unknown, path: string) {
+  const row = (value: unknown): Record<string, unknown> => value && typeof value === "object" && !Array.isArray(value)
+    ? value as Record<string, unknown> : {};
+  const root = row(message), origin: Record<string, string> = { field_path: path };
+  for (const key of ["type", "role", "name", "model"])
+    if (typeof root[key] === "string") origin[key] = root[key];
+  let value: unknown = message;
+  for (const part of path.split("/").slice(1)) {
+    if (!value || typeof value !== "object") break;
+    value = (value as Record<string, unknown>)[part.replaceAll("~1", "/").replaceAll("~0", "~")];
+    const nested = row(value);
+    if (typeof nested.role === "string" && Object.hasOwn(nested, "content")) {
+      origin.enclosing_role = nested.role;
+      if (typeof nested.name === "string") origin.enclosing_name = nested.name;
+    }
+  }
+  return origin;
+}
+
 export const imagePlaceholder = "[图像数据，请使用 view_image]";
 /** Also reject pages that cut through a placeholder rather than containing it in full. */
 export function overlapsImagePlaceholder(text: string, start: number, end: number): boolean {

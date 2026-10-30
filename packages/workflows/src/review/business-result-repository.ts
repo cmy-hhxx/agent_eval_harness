@@ -9,7 +9,7 @@ import { answerBusinessKey, businessAnswer, businessCandidates, businessDestinat
 import { loadRunInputs } from "../inputs/load.js";
 import type { Candidate, EvaluationConfig } from "../inputs/types.js";
 
-const reusable = new Set(["criteria", "attribution-session", "comparison"]);
+const reusable = new Set(["criteria", "attribution-compact", "attribution-session", "comparison"]);
 type BusinessTaskData = { comparisonId?: string; attributionIdentity?: string; rewriteOf?: { taskId: string } };
 function prefer(first: BusinessResult | undefined, next: BusinessResult) {
   return !first || next.complete && !first.complete || next.complete === first.complete &&
@@ -141,6 +141,32 @@ export function businessResultRepository(repository: RunRepository, adapters: {
             candidate.answer_id = matching[0].answers.find(answer => answerBusinessKey(answer) === answerBusinessKey(businessAnswer(candidate)))!.id;
             blocks.delete(candidate.input_id); matches.set(candidate.input_id, matching);
           }
+        }
+        // Exact original bodies and receipts have matched. Fresh work uses that persistent
+        // source UUID so reused compact references and new trace/comparison references agree.
+        // Never change a source namespace after this run has already accepted work in it.
+        const identities = new Map(catalog.flatMap(candidate => candidate.answer_id && candidate.answer_id !== candidate.input_id &&
+          !state.manifest.tasks.some(task => state.receipts[task.id] && Object.values(task.inputIds).includes(candidate.input_id))
+          ? [[candidate.input_id, candidate.answer_id] as const] : []));
+        for (const [previous, retained] of identities) {
+          if (Object.hasOwn(inputs, retained)) throw new Error("已核实原始来源 UUID 冲突");
+          Object.defineProperty(inputs, retained, Object.getOwnPropertyDescriptor(inputs, previous)!);
+          delete inputs[previous];
+          const input = state.manifest.inputs[previous];
+          state.manifest.inputs[retained] = { ...input, id: retained, name: retained };
+          delete state.manifest.inputs[previous];
+          for (const map of [matches, blocks] as const) {
+            if (!map.has(previous)) continue;
+            if (map === matches) matches.set(retained, matches.get(previous)!);
+            else blocks.set(retained, blocks.get(previous)!);
+            map.delete(previous);
+          }
+        }
+        const retain = (candidate: Candidate) => { candidate.input_id = identities.get(candidate.input_id) ?? candidate.input_id; };
+        catalog.forEach(retain);
+        for (const task of state.manifest.tasks) {
+          task.inputIds = Object.fromEntries(Object.entries(task.inputIds).map(([label, id]) => [label, identities.get(id) ?? id]));
+          businessCandidates(task, state).forEach(retain);
         }
         // Different run UUIDs converge only after the original input bodies have matched.
         const verified: BusinessResult[] = [];
@@ -289,7 +315,10 @@ export function businessResultRepository(repository: RunRepository, adapters: {
         }
         for (const task of state.manifest.tasks) {
           const data = task.data as BusinessTaskData;
-          if (["attribution-component", "attribution-trace"].includes(task.stage) && reusedAttributions.some(source =>
+          const compactId = (task.data as Record<string, unknown>).compactTaskId;
+          if (task.stage === "attribution-compact-field" && typeof compactId === "string" &&
+            reused.has(replacements.get(compactId) ?? compactId)) removed.add(task.id);
+          if (task.stage === "attribution-trace" && reusedAttributions.some(source =>
             businessCandidates(source, state)[0]?.input_id === businessCandidates(task, state)[0]?.input_id &&
             (source.data as Record<string, unknown>).attributionIdentity === data.attributionIdentity)) removed.add(task.id);
           if (task.stage === "rewrite" && data.rewriteOf && reused.has(data.rewriteOf.taskId)) removed.add(task.id);

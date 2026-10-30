@@ -1,3 +1,7 @@
+import { isTraceAttributionTask } from "@eval/workflows/attribution";
+import { parseEvidenceCoordinates } from "@eval/tools";
+import { compactAgent } from "@eval/agents/compact";
+import { compactReceipt } from "../fixtures/compact.js";
 import test from "node:test";
 import assert from "node:assert/strict";
 import { rm } from "node:fs/promises";
@@ -143,7 +147,7 @@ for (const borrow of [false, true])
     });
 
 
-test("pi: component attribution submits and repairs original evidence without a draft file", { timeout: 60000 }, async t => {
+test("pi: process attribution submits and repairs original evidence without a draft file", { timeout: 60000 }, async t => {
   const f = await fixtureConfig([[{ batch_id: "batch", case_id: "inline", messages: [
     { type: "user_question", role: "user", content: "2+2等于多少？" },
     { type: "final_answer", role: "assistant", content: "2+2=5。" },
@@ -151,11 +155,16 @@ test("pi: component attribution submits and repairs original evidence without a 
   t.after(() => rm(f.directory, { recursive: true, force: true }));
   f.config.inputs.versions[0]!.adapter = "b";
   const config = { ...f.config, workflow: "attribution" as const, inputs: { ...f.config.inputs, versions: f.config.inputs.versions.slice(0, 1) } };
-  const plan = await planAttribution(config), task = plan.tasks.find(task => task.stage === "attribution-component")!;
-  const agents = new AgentRegistry([attributionAgent]);
-  const prepared = agents.prepare(attributionWorkflow.bind(task, plan.inputs, {}, { tasks: plan.tasks }));
+  const plan = await planAttribution(config), task = plan.tasks.find(task => isTraceAttributionTask(task))!;
+  const agents = new AgentRegistry([compactAgent, attributionAgent]);
+  const prepared = agents.prepare(attributionWorkflow.bind(task, plan.inputs, { compact: compactReceipt() }, { tasks: plan.tasks }));
   assert.equal(prepared.evaluation.fileSubmission, false, "component judgments must not depend on creating a filesystem draft");
-  let requests = 0;
+  const finalEvidenceIndex = prepared.evidenceBank.findIndex(id => {
+    const point = parseEvidenceCoordinates(id);
+    return point?.message_index === 1 && point.kind === "text" && point.path === "/content";
+  }) + 1;
+  assert(finalEvidenceIndex > 0);
+  let requests = 0, traceRequests = 0;
   const errors: string[] = [];
   const gateway = await listen(async (req, res) => {
     try {
@@ -163,11 +172,18 @@ test("pi: component attribution submits and repairs original evidence without a 
       const definitions = payload.tools as Record<string, unknown>[];
       assert(definitions.some(tool => tool.name === "submit_evaluation"));
       assert(!definitions.some(tool => tool.name === "submit_evaluation_file"));
-      assert(++requests <= 2);
-      const args = { problems: [{ label: "基本算术计算错误", definition: "基本运算的最终结果与正确数值不符。",
+      assert(++requests <= plan.tasks.filter(task => task.stage === "attribution-compact-field").length + 3);
+      const context = JSON.stringify(payload);
+      const compact = context.includes("你是会话过程整理 Agent"), session = context.includes("你是会话跨轮归因 Agent");
+      if (!compact && !session) traceRequests++;
+      const parameters = object(definitions.find(tool => tool.name === "submit_evaluation")!.parameters);
+      const valueType = object(object(parameters.properties).value ?? {}).type;
+      const compactDraft = { value: valueType === "array" ? [] : { summary: "原会话已完成。" } };
+      const args = compact ? compactDraft : session ? { session_summary: "已完成过程归因。", session_problem: [] }
+        : { summary: "计算错误。", problems: [{ component: "result-interpretation", actor_index: 1, label: "基本算术计算错误", definition: "基本运算的最终结果与正确数值不符。",
         problem_phenomena: "回答把2加2写成5。", reason: "2加2等于4，最终给出的5错误。",
         severity: "P0", severity_reason: "核心计算结果错误，回答不可采信。",
-        evidence: [{ index: requests === 1 ? 99999 : 1, reason: "原文直接给出错误算式。" }] }] };
+        evidence: [{ index: traceRequests === 1 ? 99999 : finalEvidenceIndex, reason: "原文直接给出错误算式。" }] }] };
       const call = { type: "function_call", id: `fc_${requests}`, call_id: `call_${requests}`,
         name: "submit_evaluation", arguments: JSON.stringify(args) };
       res.writeHead(200, { "content-type": "text/event-stream" });
@@ -182,8 +198,8 @@ test("pi: component attribution submits and repairs original evidence without a 
   const keyName = "EVAL_CHANNEL_KEY_evaluation_Hgateway", previous = process.env[keyName];
   process.env[keyName] = "local-fixture-secret";
   try {
-    const runId = "inline-component";
-    await runEvaluation({ runId, output: config.output, config, plan: { ...plan, tasks: [task] },
+    const runId = "inline-process";
+    await runEvaluation({ runId, output: config.output, config, plan,
       engine: "pi", evaluatorVersion: "fixture", modelForStage: () => ({ ...f.models.models.judge!, baseUrl: gateway.url + "/v1", thinking: "off", model: "fixture", contextWindow: 100000, maxOutputTokens: 10000 }),
       policy: { ...config.execution, repairAttempts: 1, maxToolCalls: 1 }, concurrency: 1, retries: 0, retryDelaySeconds: 0,
       agents, repository: attributionRepository, taskSource: attributionWorkflow, runtime: services.runtime });
@@ -191,14 +207,15 @@ test("pi: component attribution submits and repairs original evidence without a 
     const saved = await attributionRepository.readRun(path.join(config.output.path, runId));
     const receipt = saved.receipts[task.id]!;
     assert.equal(saved.manifest.states[task.id].status, "succeeded", JSON.stringify(saved.manifest.states[task.id]));
-    assert.equal(requests, 2, "invalid evidence still consumes one content repair");
+    assert.equal(traceRequests, 2, "invalid evidence still consumes one content repair");
     assert.equal(receipt.submissionStats?.contentSubmissions, 2);
     assert.equal(receipt.submissionStats?.fileErrors, 0);
     assert.equal(receipt.audit.calls, 0, "submission needs neither code execution nor a draft file");
-    const problem = (receipt.evaluation as { problems: { severity: string; severity_reason: string }[] }).problems[0];
+    assert.equal(requests, plan.tasks.filter(task => task.stage === "attribution-compact-field").length + 2, "field sessions submit once; compact and single-turn session assembly make no model request");
+    const problem = (receipt.evaluation as { turns: { problem: { severity: string; severity_reason: string }[] }[] }).turns[0]!.problem[0];
     assert.equal(problem.severity, "P0");
     assert.equal(problem.severity_reason, "核心计算结果错误，回答不可采信。");
-    assert.equal((receipt.evaluation as { problems: { evidence: { quote: string }[] }[] }).problems[0].evidence[0].quote, "2+2=5。");
+    assert.equal((receipt.evaluation as { turns: { problem: { evidence: { quote: string }[] }[] }[] }).turns[0]!.problem[0].evidence[0].quote, "2+2=5。");
   } finally {
     if (previous === undefined) delete process.env[keyName]; else process.env[keyName] = previous;
     await gateway.close(); await rm(f.directory, { recursive: true, force: true });

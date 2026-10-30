@@ -1,10 +1,20 @@
 import { isToolSpan } from "../inputs/adapters.js";
-import { canonical } from "@eval/contracts";
 import { traceExchanges } from "@eval/tools";
 import type { RawInput } from "../inputs/types.js";
 
 /** Link tool returns to their preceding invocation without guessing from nearby messages. */
-export function traceCatalog(raw: RawInput) {
+export function traceCatalog(raw: RawInput, positions?: { trace_index: number; message_index: number }[]): {
+  message_index: number; type: string; semantic_role: string; role?: string; name?: string;
+  call_message_index?: number; invoking_model_message_index?: number; chars: number;
+}[] {
+  if (positions) return [...new Set(positions.map(point => point.trace_index))].flatMap(trace_index => {
+    const indices = positions.flatMap((point, index) => point.trace_index === trace_index ? [index] : []);
+    return traceCatalog({ messages: indices.map(index => raw.messages[index]!) }).map(row => ({ ...row,
+      message_index: indices[row.message_index]!,
+      ...(row.call_message_index === undefined ? {} : { call_message_index: indices[row.call_message_index] }),
+      ...(row.invoking_model_message_index === undefined ? {} : { invoking_model_message_index: indices[row.invoking_model_message_index] }),
+    }));
+  });
   const returns = new Map(traceExchanges(raw.messages).flatMap(exchange => exchange.return_indices.map(index =>
     [index, { index: exchange.request_index, name: raw.messages[exchange.request_index].name }] as const)));
   const modelSpans = new Map<string, number[]>();
@@ -26,7 +36,7 @@ export function traceCatalog(raw: RawInput) {
       name: message.name || linked?.name,
       ...(linked ? { call_message_index: linked.index } : {}),
       ...(invoking?.length === 1 && invoking[0] < index ? { invoking_model_message_index: invoking[0] } : {}),
-      chars: canonical(message).length,
+      chars: JSON.stringify(message).length,
     };
   });
 }

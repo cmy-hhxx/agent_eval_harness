@@ -1,3 +1,4 @@
+import { compactReceipt } from "../../fixtures/compact.js";
 import test from "node:test";
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
@@ -124,7 +125,7 @@ async function registerAccepted(config: EvalConfig, compare = (data: TaskData) =
   let accepted: Record<string, SubmissionReceipt> = {};
   const source = await register(config, async (state, plan) => {
     for (const task of plan.tasks) {
-      const evaluation = task.stage === "criteria" ? criteriaResult() : task.stage.startsWith("attribution-") ? attributionResult()
+      const evaluation = task.stage === "criteria" ? criteriaResult() : task.stage === "attribution-compact" ? compactReceipt().evaluation : task.stage.startsWith("attribution-") ? attributionResult()
         : compare(task.data as TaskData);
       state.receipts[task.id] = { taskId: task.id, attemptId: task.id, submissionId: randomUUID(), evaluation,
         evaluatorVersion: fakeEvaluatorVersion, judge: fakeJudge, audit: emptyAudit(), usage: emptyUsage(), status: "succeeded", acceptedAt: 0 };

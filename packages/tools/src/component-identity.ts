@@ -1,6 +1,6 @@
 import { cite, evidenceSources,selectEvidenceSource } from "./evidence.js";
 import {parseEvidenceCoordinates} from '@eval/contracts';
-import {traceCallOrigins} from './trace-exchanges.js';
+import {traceCallOrigins, isComponentLocator} from './trace-exchanges.js';
 
 export interface TraceComponentIdentity {
   component: string;
@@ -37,15 +37,6 @@ export function traceComponentOwnsEvidence(raw:{messages:unknown[]},actor:TraceC
   const generated=record(raw.messages[point.message_index]),outputs=Array.isArray(generated.output)?generated.output:[];
   return outputs.length===1&&typeof record(outputs[0]).content==='string'&&actor.message_indices.some(index=>
     record(raw.messages[index]).content===record(outputs[0]).content)&&inSource(raw,point,'/output/0/content');
-}
-
-/** These values locate executions; they do not name the actor responsible for them. */
-export function isComponentLocator(value: string): boolean {
-  return /^llm[-_]?call[-_: /]/iu.test(value) ||
-    /^(?:span|trace|call|request|invocation|session|run|node|agent)[-_: /](?:\d+|[a-f\d-]{8,})$/iu.test(value) ||
-    /^\d+$/u.test(value) ||
-    /^(?:[a-f\d]{8,}|[a-f\d]{8}(?:-[a-f\d]{4}){3}-[a-f\d]{12})$/iu.test(value) ||
-    /^ev_/u.test(value);
 }
 
 const record = (value: unknown): Record<string, unknown> =>

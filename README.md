@@ -2,7 +2,7 @@
 
 TypeScript Host 编排评测任务，Pi Worker 执行模型与工具调用。通过 CLI 显式选择输入、启动与续跑评测；Eris 提供已有结果的只读分析。
 
-评测能力包括 Criteria、Attribution、指令遵循归因、Score、Comparison、Clustering 和 Rewrite。Attribution 按 component → trace → session 三段归因；Comparison 对整场 session 做两两比较。开发先读 [AGENTS.md](AGENTS.md)，当前行为以源码、配置和 Schema 为准。
+评测能力包括 Criteria、Attribution、指令遵循归因、Score、Comparison、Clustering 和 Rewrite。Attribution 按 compact → trace → session 三段归因；Comparison 对整场 session 做两两比较。开发先读 [AGENTS.md](AGENTS.md)，当前行为以源码、配置和 Schema 为准。
 
 ## 运行边界
 
@@ -16,7 +16,7 @@ TypeScript Host 编排评测任务，Pi Worker 执行模型与工具调用。通
 
 Eris 读取已有产物：Comparison 的结构化统计与案例使用运行查询，独立 Attribution 结果及历史快照使用公开资产查询。各次运行可能包含重复样本，统计不能直接相加。Score 保留独立 Agent 契约，尚未接入 session workflow。
 
-可选独立核验的已知证据映射问题见[当前限制](docs/usage.md#当前限制)；常规 Comparison 与独立 Attribution 的使用方式见下文。
+Compact、Attribution、Comparison 和可选独立核验共用原始来源坐标与引用解析；摘要导航和正式引文的边界见[数据契约](docs/contract.md)。使用方式见下文。
 
 ## 本地开发
 

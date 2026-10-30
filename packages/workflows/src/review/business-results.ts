@@ -23,6 +23,7 @@ export function answerBusinessKey(value: Pick<BusinessAnswer, "batch" | "caseId"
 /** Conditions that change the evaluated material, excluding run IDs and evaluator settings. */
 export function businessScope(task: PlannedTask) {
   const data = task.data as Record<string, unknown>;
+  if (task.stage === "attribution-compact") return {};
   return { hasReference: data.reference !== null && data.reference !== undefined,
     hasReviewQuestions: Array.isArray(data.reviewQuestions) && data.reviewQuestions.length > 0,
     criteriaScope: data.criteriaScope ?? null,

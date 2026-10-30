@@ -20,8 +20,6 @@ npm run eval -- validate --run /mnt/fin_bench/eval_data/0_wencai/3_eval_output/0
 
 ## 当前限制
 
-`verify-comparisons` 的可选独立核验存在 session 归因证据映射缺陷：来源包含非空归因问题时，材料准备可能报“归因证据的完整坐标与原输入不一致”，在模型执行前失败。当前 [Comparison 归因投影](../packages/workflows/src/comparison/comparison-attribution.ts)生成的问题证据标识不能直接通过[核验材料](../packages/workflows/src/comparison/verification-presentation.ts)的完整坐标检查。修复前，该路径不能作为正式核验验收依据；任务失败不替换已接受的主线判词。常规 Comparison 与独立 Attribution 不使用这段核验材料投影。
-
 Eris 的结构化运行查询当前读取带 `overview.json` 的 Comparison 产物。独立 Attribution 与历史材料通过 `list_assets` / `read_asset` 读取正式 JSONL、报告和快照；不提供旧 Answer-review 的分阶段评分查询。具体引用与统计范围见 [Eris 数据工具](../agent/README.md#数据与只读工具)。
 
 ## 环境与配置
@@ -385,6 +383,7 @@ npm run eval -- rewrite-comparisons --run /mnt/fin_bench/eval_data/0_wencai/3_ev
 | progress.jsonl | 检查点之后的增量状态与收据；检查点成功落盘后压缩已覆盖事件，保留序号边界 |
 | overview.json | 运行目录与预计算统计：正式战绩、比例和结果引用，不保存正文 |
 | results/criteria.jsonl | 共同标准 |
+| results/compact.jsonl | 会话过程摘要，作为归因必需输入 |
 | results/attribution.jsonl | 单回答归因与证据 |
 | results/comparison.jsonl | 已决的正式两两对比 |
 | results/comparison-review.jsonl | 主线待核，不计对战结果 |

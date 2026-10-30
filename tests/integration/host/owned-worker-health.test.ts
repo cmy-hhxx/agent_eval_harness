@@ -41,9 +41,16 @@ process.once("disconnect",async()=>{await worker.close();process.exit(0);});
       plan: await buildPlan(config), policy: config.execution, modelForStage, concurrency: slots, retries: 0, retryDelaySeconds: 0,
       signal: AbortSignal.timeout(20000) });
     const state = await readRunState(path.join(config.output.path, runId));
-    assert(Object.values(state.manifest.states).every(s => s.status === "succeeded" && s.attempts === 1));
+    const states = Object.values(state.manifest.states);
+    assert(states.every(s => s.status === "succeeded"), JSON.stringify(state.manifest.states));
+    // A live process is retained on observation failure. Actual pool exit can interrupt up to one attempt per slot.
+    assert(states.every(s => s.attempts >= 1 && s.attempts <= (crash ? 2 : 1)), JSON.stringify(state.manifest.states));
+    assert(states.filter(s => s.attempts === 2).length <= (crash ? slots : 0));
+    assert.equal(Object.keys(state.receipts).length, states.length);
+    assert(Object.values(state.receipts).every(receipt => receipt.judge === "code" || receipt.submissionStats?.contentSubmissions === 1),
+      "replacing the pool preserves accepted work and never repeats an accepted content submission");
     assert.equal((await readFile(starts, "utf8")).trim().split("\n").length, crash ? 2 : 1,
-      "an observation failure must not kill a live Worker or spend task attempts");
+      "an observation failure retains the live Worker; a confirmed exit replaces its pool exactly once");
     assert((await readFile(starts, "utf8")).trim().split("\n").every(line => JSON.parse(line).slots === slots),
       "replacing a process must preserve its whole pool instead of launching one process per lost slot");
   } finally { globalThis.fetch = original; await rm(directory, { recursive: true, force: true }); }

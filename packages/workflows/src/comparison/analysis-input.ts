@@ -1,5 +1,6 @@
 import { readJson, locateRun } from "@eval/data";
 import { locateRecordStream } from "../inputs/records.js";
+import { sessionSource } from "../inputs/session.js";
 import type { Checkpoint } from "./checkpoint.js";
 import type { EvalConfig } from "./types.js";
 
@@ -22,5 +23,5 @@ export async function readAnalysisInput(locator: Awaited<ReturnType<typeof locat
   const { candidate, config } = locator;
   const version = config.inputs.versions.find((entry) => entry.id === candidate.version);
   if (!version) throw new Error("输入版本未登记：" + candidate.version);
-  return (await locateRecordStream(candidate.source, candidate, version, config.inputs.default_batch_id)).raw;
+  return sessionSource((await locateRecordStream(candidate.source, candidate, version, config.inputs.default_batch_id)).raw).raw;
 }

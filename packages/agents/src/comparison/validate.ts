@@ -1,3 +1,4 @@
+import { finalIndices } from "./final-indices.js";
 import { isDeepStrictEqual } from "node:util";
 import { Ajv2020 } from "ajv/dist/2020.js";
 import {
@@ -17,11 +18,11 @@ export function comparisonFinalImageIssues(request: AgentRequest, audit: ToolAud
   const input = request.input as unknown as ComparisonInput;
   return Object.entries(input.candidates).flatMap(([label, candidate]) => {
     const raw = request.sources[label]?.value as { messages?: unknown[] } | undefined;
-    return images(raw?.messages?.[candidate.final_message_index]).length &&
-      !audit.viewedImages.includes(`${label}:${candidate.final_message_index}`)
+    return finalIndices(candidate).flatMap(index => images(raw?.messages?.[index]).length &&
+      !audit.viewedImages.includes(`${label}:${index}`)
       ? [{ category: "evidence" as const, code: "final_image_not_viewed", path: `/candidates/${label}`, candidate: label,
-        message: `最终回答含图片，必须先 view_image(candidate="${label}", message_index=${candidate.final_message_index}) 查看完整交付。` }]
-      : [];
+        message: `最终回答含图片，必须先 view_image(candidate="${label}", message_index=${index}) 查看完整交付。` }]
+      : []);
   });
 }
 

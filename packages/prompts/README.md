@@ -10,9 +10,12 @@
 |---|---|
 | `resources/score/skill/` | 原skill评分规则、分档、校准与固定目录 |
 | `resources/attribution/taxonomy.json` | 责任技术域、功能组件、出错环节与八步业务调查的唯一目录 |
-| `resources/attribution/problem-output.md` | Component、Session 共用的问题表达、字段分工与严重程度口径 |
+| `resources/attribution/problem-output.md` | Trace、Session 共用的问题表达、字段分工与严重程度口径 |
+| `resources/attribution/component-choice.md` | 具体动作定责、工具契约边界及相邻组件的选择规则 |
 | `resources/instruction-review/default/` | 后置独立内部指令核验 |
-| `resources/<stage>/default/` | Criteria、Attribution、Comparison、Rewrite、Clustering 规则 |
+| `resources/compact/` | 独立字段任务、value 类型示例、局部选号及代码回填引用约定 |
+| `resources/compact/submit_evaluation.md` | 字段专用提交说明，明确空值也调用工具，不混入候选项规则 |
+| `resources/<stage>/default/` | Criteria、Comparison、Rewrite、Clustering 默认规则 |
 | `resources/comparison/verification/` | 独立首查与揭示后核验 |
 | `resources/attribution/standard-*.md` | 显式开启标准答案复核时的规则 |
 | `resources/attribution/conditional/` | 按本次材料发送的标准答案、数值、表格疑点与视觉规则 |
@@ -22,7 +25,7 @@
 | `resources/eris/` | Eris 系统、预测、核对及工具规则 |
 | [src/index.ts](src/index.ts) | 加载、渲染与公开入口 |
 
-固定规则在系统提示词中发送一次。Attribution 将需要的点评和证据原则合并进五步流程，不再次叠加共享文案；组件目录、责任链结构和字段填写细节不重复进入固定提示词。任务消息只追加本次适用的条件规则、焦点、材料、预算和恢复信息。可信请求与模型展示投影分开，展示精简不改变业务校验或证据。装配与规则归属见[归因提示词](../../docs/attribution-prompt.md)。
+固定规则在系统提示词中发送一次。Attribution 分别说明本轮审查与跨轮审查要读的材料、判断方法及输出；具体 taxonomy 组件目录在 Trace、Session 系统提示词中提供一次，由模型沿过程选择责任。Compact 只提取当前字段，明确 value 类型和提交示例，内部结构保持开放。任务消息只追加本次适用的条件规则、焦点、材料、预算和恢复信息。可信请求与模型展示投影分开，展示精简不改变业务校验或证据。装配与规则归属见[归因提示词](../../docs/attribution-prompt.md)。
 
 Agent Profile 向 `agentPrompt` 显式传入 `fileSubmission`、`draftWriteInCallLimit` 与可选 `profile`；本模块据此渲染工具和预算，不根据阶段名称决定运行策略。
 

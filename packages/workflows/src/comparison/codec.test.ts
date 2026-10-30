@@ -1,7 +1,8 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { emptyUsage, type RunState } from "@eval/contracts";
-import { comparisonCodec, restore } from "./codec.js";
+import { comparisonCodec } from "./codec.js";
+import { restore } from "@eval/contracts";
 
 test("repeated checkpoints reuse immutable submission differences and refresh replaced bodies", () => {
   let reads = 0;

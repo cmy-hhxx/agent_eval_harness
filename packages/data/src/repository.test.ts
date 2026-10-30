@@ -68,6 +68,31 @@ test("concurrent checkpoint and outbox projections retain distinct row reference
   }
 });
 
+test("reopening an indexed writer preserves accepted row order independently of plan order", async t => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), "eval-indexed-order-"));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  const tasks = ["one", "two"].map(id => ({ id, stage: "result", inputIds: {}, dependencies: {}, data: {} }));
+  const snapshot: RunState = { ...structuredClone(state), manifest: { ...state.manifest, tasks, states: {} }, receipts: {} };
+  const codec: RunCodec<RunState> = { encode: value => value, resultId: row => row.identity as string,
+    references: value => Object.values(value.receipts).map(receipt => receipt.exported!),
+    decode(value, read) { for (const receipt of Object.values(value.receipts)) receipt.evaluation = read(receipt.exported!); return value; } };
+  const repository = createRunRepository(codec, (task, value) => ({ id: task.id, file: "results.jsonl",
+    row: value.receipts[task.id]!.evaluation as { identity: string } }), { indexedFiles: ["results.jsonl"], appendOnly: true });
+  const write = repository.createResultWriter(directory, {});
+  for (const task of tasks.toReversed()) {
+    snapshot.receipts[task.id] = { taskId: task.id, attemptId: task.id, submissionId: task.id, status: "succeeded",
+      acceptedAt: 1, evaluatorVersion: "test", judge: "test", evaluation: { identity: task.id }, usage: emptyUsage(),
+      audit: { calls: 0, requiredReadCalls: 0, traceReads: [], viewedImages: [], calculations: [], artifacts: [] } };
+    await write(snapshot);
+  }
+  await repository.writeRun(directory, snapshot);
+  const before = await readFile(path.join(directory, "results/results.jsonl"), "utf8"), restored = await repository.readRun(directory);
+  await repository.createResultWriter(directory, {})(restored);
+  assert.equal(await readFile(path.join(directory, "results/results.jsonl"), "utf8"), before);
+  assert.equal(restored.receipts.two!.exported!.line, 1);
+  assert.equal(restored.receipts.one!.exported!.line, 2);
+});
+
 test("repository checkpoint saves refresh the overview through running, finished and resumed states", async t => {
   const directory = await mkdtemp(path.join(os.tmpdir(), "eval-overview-save-")), run = path.join(directory, "run");
   t.after(() => rm(directory, { recursive: true, force: true }));

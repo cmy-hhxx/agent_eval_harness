@@ -18,11 +18,11 @@ test("disabled guard clears saved pauses and never pauses on content or Host fau
 test("a Host submission fault pauses its stage immediately while transport outages keep the threshold", () => {
   for (const code of ["host_submission_failed", "host_inspection_failed"]) {
     const guard = new FailureGuard([], { windowSize: 10000, threshold: 10000 });
-    assert.equal(guard.observe("attribution-component", "network", [{ category: "transport", code, path: "/" }]), undefined);
-    const pause = guard.observe("attribution-component", "host", [{ category: "interruption", code, path: "/" }]);
+    assert.equal(guard.observe("attribution-compact", "network", [{ category: "transport", code, path: "/" }]), undefined);
+    const pause = guard.observe("attribution-compact", "host", [{ category: "interruption", code, path: "/" }]);
     assert.equal(pause?.code, code);
     assert.deepEqual(pause?.taskIds, ["host"]);
-    assert.equal(guard.paused("attribution-component"), true);
+    assert.equal(guard.paused("attribution-compact"), true);
     assert.equal(guard.paused("criteria"), false);
   }
 });

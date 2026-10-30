@@ -108,6 +108,8 @@ export class AgentRegistry {
   }
   prepare(binding: AgentBinding) {
     const { profile } = this.get(binding);
+    if (profile.maxToolCalls !== undefined && (!Number.isSafeInteger(profile.maxToolCalls) || profile.maxToolCalls < 0))
+      throw new Error("Profile maxToolCalls must be a nonnegative integer");
     const modelInput = binding.modelInput ?? binding.request.input;
     if (profile.inspection && (!binding.modelInput || !binding.inspectionInput || !profile.toolNames.includes("inspect_material")))
       throw new Error(`Inspection requires separate primary and secondary material: ${binding.agent}/${binding.profile}`);
@@ -128,6 +130,7 @@ export class AgentRegistry {
       binding.projectModelInput?.(input, evidenceBank) ?? input);
     const outputSchema = profile.modelSubmissionSchema?.(binding.request) ?? profile.submissionSchema;
     return {
+      maxToolCalls: profile.maxToolCalls,
       evidenceBank,
       evaluation: {
         id: binding.agent,

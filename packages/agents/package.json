@@ -30,6 +30,10 @@
     "./instruction-review": {
       "types": "./instruction-review.d.ts",
       "import": "./instruction-review.js"
+    },
+    "./compact": {
+      "types": "./compact.d.ts",
+      "import": "./compact.js"
     }
   }
 }

@@ -1,3 +1,4 @@
+import { finalIndices } from "./final-indices.js";
 import { isDeepStrictEqual } from "node:util";
 import { Ajv2020 } from "ajv/dist/2020.js";
 import { schemaIssues, resolveEvidenceSelections, evidenceSelectionSchema, ValidationError, type AgentRequest, type EvidenceReference, type ToolAudit, type ValidationIssue } from "@eval/contracts";
@@ -132,9 +133,10 @@ function actualAnswerScope(request: AgentRequest, candidate: string, observation
   const bind = (index: number, paths: string[]) => evidenceSources(raw.messages[index]).flatMap(leaf =>
     leaf.kind === "text" && paths.includes(leaf.path) && leaf.text.length
       ? [{ evidence_id: evidenceId(source.id, index, "text", leaf.path, 0, leaf.text.length) }] : []);
-  const references: EvidenceReference[] = bind(material.final_message_index, finalTextPaths(final.content));
-  if (images(final.content).length) references.push({ evidence_id: evidenceId(source.id, material.final_message_index, "image"),
-    observation }); // Preserve the model's own inspection observation; never manufacture a visual fact.
+  const references: EvidenceReference[] = finalIndices(material).flatMap(index => {
+    const content = (raw.messages[index] as { content?: unknown }).content;
+    return [...bind(index, finalTextPaths(content)), ...(images(content).length ? [{ evidence_id: evidenceId(source.id, index, "image"), observation }] : [])];
+  }); // Preserve the model's own inspection observation; never manufacture a visual fact.
   const generation = material.answer_generation;
   if (generation) {
     const index = answerTurnContexts(raw, material.final_message_index).at(-1)?.message_index;
@@ -165,15 +167,14 @@ function answerEvidenceIssues(request: AgentRequest, candidate: string, referenc
   const actualGenerationIndex = generation && generation.captured_final_message_index === material.final_message_index
     ? answerTurnContexts(raw, material.final_message_index).at(-1)?.message_index : undefined;
   const generationPaths = generatedTextPaths(raw, actualGenerationIndex);
-  const finalContent = (raw.messages[material.final_message_index] as { content?: unknown })?.content;
-  const finalPaths = finalTextPaths(finalContent);
   for (const [evidenceIndex, reference] of references.entries()) {
     const evidencePath = `${path}/${evidenceIndex}`;
     // The public resolver owns UUID/source/range/image validation; its coordinate parser only locates the answer layer.
     try { resolveEvidence(raw, reference, candidate, audit, evidencePath, source.id); }
     catch (error) { if (!(error instanceof ValidationError)) throw error; issues.push(...error.issues!); continue; }
     const coordinates = parseEvidenceCoordinates(reference.evidence_id)!;
-    const isFinal = coordinates.message_index === material.final_message_index;
+    const isFinal = finalIndices(material).includes(coordinates.message_index);
+    const finalPaths = finalTextPaths((raw.messages[coordinates.message_index] as { content?: unknown })?.content);
     const isGeneration = generation?.available === true && actualGenerationIndex === generation.message_index &&
       coordinates.message_index === generation.message_index;
     let isAnswer = isFinal && coordinates.kind === "image";

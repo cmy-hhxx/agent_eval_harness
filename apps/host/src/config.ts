@@ -34,7 +34,7 @@ const CLUSTERING_DEFAULTS: EvalConfig["clustering"] = {
   enabled: false,
   maxClassesPerModel: 40,
   maxNewClassesPerTask: 3,
-  maxComponentsPerModel: 12,
+  maxComponentsPerModel: 49,
   consolidateAt: 30,
   minSupport: 3,
   maxCasesPerTask: 30,

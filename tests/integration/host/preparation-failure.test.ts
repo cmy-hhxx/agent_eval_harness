@@ -13,7 +13,7 @@ for (const failure of ["binding", "profile"] as const)
   test(`a ${failure} preparation error fails only its task and survives two resumes`, async t => {
     const { directory, config, modelForStage } = await fixtureConfig([[raw("q1"), raw("q2")], [], [raw("q1"), raw("q2")], []]);
     t.after(() => rm(directory, { recursive: true, force: true }));
-    const plan = await buildPlan(config), failed = plan.tasks.find(task => task.stage === "attribution-component")!;
+    const plan = await buildPlan(config), failed = plan.tasks.find(task => task.stage === "attribution-compact")!;
     const executed: string[] = [];
     const backend: AgentBackend = { identity: fakeIdentity, async createSession(options) { return {
       async run() {
@@ -40,8 +40,9 @@ for (const failure of ["binding", "profile"] as const)
     assert.match(state.manifest.states[failed.id]!.reason!, /prepar|profile/i);
     assert(!executed.includes(failed.id));
     const sessions = state.manifest.tasks.filter(task => task.stage === "attribution-session");
-    assert.equal(sessions.filter(task => state.receipts[task.id]?.status === "succeeded").length, 4);
-    assert.equal(sessions.filter(task => state.receipts[task.id]?.incompleteDependencies?.length).length, 1);
+    assert.equal(sessions.filter(task => state.receipts[task.id]?.status === "succeeded").length, 3);
+    assert.equal(sessions.filter(task => state.manifest.states[task.id]?.status === "blocked").length, 1);
+    assert.equal(sessions.filter(task => state.receipts[task.id]?.incompleteDependencies?.length).length, 0);
     const counts = [...executed];
     for (let round = 0; round < 2; round++) {
       await runEvaluation({ ...options, skipFailed: true, plan: { tasks: [], inputs: {}, summary: {} } });

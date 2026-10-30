@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { traceComponentIdentities, isComponentLocator, traceComponentOwnsEvidence } from "./component-identity.js";
+import { traceComponentIdentities, traceComponentOwnsEvidence } from "./component-identity.js";
+import { isComponentLocator } from "./trace-exchanges.js";
 import { resolveEvidence, cite, evidenceSources } from "./evidence.js";
 import { emptyAudit } from "../../../tests/fixtures/comparison.js";
 

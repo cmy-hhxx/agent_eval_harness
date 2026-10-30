@@ -20,7 +20,7 @@ test("attribution CLI skip-failed clears the requested pause without retrying fa
     engine: fakeIdentity, evaluatorVersion: fakeEvaluatorVersion, config, tasks: plan.tasks, inputCatalog: plan.catalog,
     inputs: {}, states: Object.fromEntries(plan.tasks.map((task, index) => [task.id, {
       status: statuses[index % statuses.length], attempts: index + 1,
-    }])), preflight: plan.summary, startedAt: 1, pausedStages: [{ stage: "attribution-component",
+    }])), preflight: plan.summary, startedAt: 1, pausedStages: [{ stage: "attribution-compact",
       category: "interruption", code: "attempt_interrupted", path: "/", taskIds: [], at: 1 }] },
     receipts: {}, usage: emptyUsage(), recordedAttempts: 0 };
   await attributionRepository.writeRun(run, state);
@@ -35,7 +35,7 @@ test("attribution CLI skip-failed clears the requested pause without retrying fa
   let code: unknown, diagnostic = "";
   try {
     await promisify(execFile)(process.execPath, [new URL("../../../apps/host/src/cli.js", import.meta.url).pathname,
-      "run", "--run-id", runId, "--config", configFile, "--skip-failed", "--resume-stage", "attribution-component"], {
+      "run", "--run-id", runId, "--config", configFile, "--skip-failed", "--resume-stage", "attribution-compact"], {
       env: { ...process.env, EVAL_CONFIG_FILE: process.env.EVAL_CONFIG_FILE!, EVAL_LOG_DIR: path.join(f.directory, "log"),
         EVAL_LOG_LOCK_DIR: path.join(f.directory, "log-lock"), EVAL_HOT_STATE_ROOT: path.join(f.directory, "hot") },
       timeout: 6000, killSignal: "SIGKILL",

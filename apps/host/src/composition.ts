@@ -1,9 +1,10 @@
+import { compactAgent, compactProfile, compactFieldProfiles } from "@eval/agents/compact";
 import { scoreAgent } from "@eval/agents/score";
 import { attributionDimensions } from "@eval/workflows/review";
 import { configurationSecrets } from "./settings.js";
 import { AgentRegistry } from "@eval/host";
 import { comparisonAgent, comparisonProfile } from "@eval/agents/comparison";
-import { attributionAgent, componentAttributionProfile, sessionAttributionProfile, traceAttributionProfile } from "@eval/agents/attribution";
+import { attributionAgent, singleSessionAttributionProfile, sessionAttributionProfile, traceAttributionProfile } from "@eval/agents/attribution";
 import { rewriteAgent, rewriteProfile } from "@eval/agents/rewrite";
 import { clusteringAgent, clusteringProfile } from "@eval/agents/clustering";
 import { criteriaAgent, criteriaProfile } from "@eval/agents/criteria";
@@ -23,7 +24,7 @@ export async function initializeServices() {
   services.logger = logger;
   if (!await logger.initialize()) throw new Error("Runtime/evaluation log initialization failed");
 }
-export const agents = new AgentRegistry([scoreAgent, ...Object.values(attributionDimensions).map(dimension => dimension.agent),
+export const agents = new AgentRegistry([compactAgent, scoreAgent, ...Object.values(attributionDimensions).map(dimension => dimension.agent),
   criteriaAgent, comparisonAgent, attributionAgent, rewriteAgent, clusteringAgent]);
 export const services = {
   logger,
@@ -40,13 +41,16 @@ export const services = {
         Object.entries({
           ...Object.fromEntries(Object.entries(attributionDimensions).map(([stage, dimension]) => [stage, dimension.agent.profiles.default])),
           criteria: criteriaProfile,
-          "attribution-component": componentAttributionProfile,
+          "attribution-compact": compactProfile,
+          ...Object.fromEntries(Object.entries(compactFieldProfiles).map(([field, profile]) => [`attribution-compact-${field}`, profile])),
           "attribution-trace": traceAttributionProfile,
           "attribution-session": sessionAttributionProfile,
+          "attribution-session-single": singleSessionAttributionProfile,
           comparison: comparisonProfile,
           rewrite: rewriteProfile,
           clustering: clusteringProfile,
         }).map(([stage, profile]) => [stage, {
+          maxToolCalls: profile.maxToolCalls,
           systemPrompt: profile.systemPrompt,
           instructions: profile.instructions,
           submissionNudge: profile.submissionNudge,

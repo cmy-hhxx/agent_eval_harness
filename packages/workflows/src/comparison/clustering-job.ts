@@ -76,7 +76,7 @@ export async function loadClusteringJobInputs(config: ClusteringJobConfig, readS
   for (const ref of config.clusteringJob.recall ?? []) {
     const finding = sessionProblems(states.get(ref.attribution.run)!.receipts[ref.attribution.task_id].evaluation as SessionAttributionResult)
       .find(item => item.problem_id === ref.finding_id);
-    if (!finding || canonical(finding.component.split(" / ")) !== canonical(ref.components))
+    if (!finding || canonical([finding.component]) !== canonical(ref.components))
       throw new Error("待观察引用的原发现已缺失或改变：" + ref.input_id + "/" + ref.finding_id);
   }
   for (const model of [...new Set(config.clusteringJob.sources.map(source => source.model))].sort()) {
@@ -88,7 +88,7 @@ export async function loadClusteringJobInputs(config: ClusteringJobConfig, readS
         input_id: source.input_id, finding_id: finding.problem_id, batch_id: source.batch_id, case_id: source.case_id,
         source: source.source, attribution: { run: source.run, run_id: source.run_id, task_id: source.task_id,
           submission_id: source.submission_id, evaluator_version: source.evaluator_version },
-        components: finding.component.split(" / "), evidence_status: "已确认",
+        components: [finding.component], evidence_status: "已确认",
         summary: finding.problem_phenomena });
       return {
       input_id: source.input_id, case_id: source.case_id, batch_id: source.batch_id, source: source.source,

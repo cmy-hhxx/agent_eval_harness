@@ -79,7 +79,7 @@ function chain(candidates: Record<string, Candidate>, reference: unknown, trial:
   const criteriaScope = canonical([trial.case_key, trial.purpose, trial.repeat]);
   const criteria = task("criteria", candidates, reference, {}, trial, { criteriaScope });
   const attributes = Object.entries(candidates).map(([label, candidate]) => {
-    const unit = planAttributionUnit(candidate, { data: { stage: "attribution-component", candidates: { A: candidate }, reference,
+    const unit = planAttributionUnit(candidate, { data: { stage: "attribution-compact", candidates: { A: candidate }, reference,
       criteriaScope, initialContextChars: config.execution.initialContextChars, standardAnswerReview: false },
       dependencies: { criteria: criteria.id }, identity: criteria.id });
     for (const task of unit.tasks) task.data = { ...(task.data as object), stability: structuredClone(trial) };

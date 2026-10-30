@@ -1,9 +1,10 @@
+import { compactReceipt } from "../../../../tests/fixtures/compact.js";
 import test from "node:test";
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
 import { emptyUsage, type PlannedTask, type SubmissionReceipt, type TaskAnalysis } from "@eval/contracts";
 import { agentPrompt } from "@eval/prompts";
-import { componentAttributionProfile } from "@eval/agents/attribution";
+import { traceAttributionProfile } from "@eval/agents/attribution";
 import { parseEvidenceCoordinates, resolveEvidence } from "@eval/tools";
 import { comparisonWorkflow } from "../comparison/workflow.js";
 import { taskAnalysisPresentation, taskFocus } from "./task-focus.js";
@@ -110,19 +111,19 @@ test("public judgment bindings keep global indices and separate blind originals 
     evaluation, audit: emptyAudit(), usage: emptyUsage() });
   const criterionReceipt = receipt(criteriaTask.id, analysis);
   for (const mode of ["attribution", "comparison", "verification"] as const) {
-    const stage = mode === "attribution" ? "attribution-component" : "comparison";
+    const stage = mode === "attribution" ? "attribution-trace" : "comparison";
     const chosen = mode === "attribution" ? { A: candidates.A! } : candidates;
-    const task: PlannedTask = { id: randomUUID(), stage, dependencies: { criteria: criteriaTask.id },
+    const task: PlannedTask = { id: randomUUID(), stage, dependencies: { compact: "compact", criteria: criteriaTask.id },
       inputIds: mode === "attribution" ? { answer: candidates.A!.input_id }
         : Object.fromEntries(Object.entries(chosen).map(([label, candidate]) => [label, candidate.input_id])),
       data: { stage, candidate: candidates.A!, candidates: chosen, reference: null, ...(stage === "comparison" ? { group: ["version-A", "version-B"] } : {}) } satisfies TaskData };
-    const dependencies: Record<string, SubmissionReceipt> = { criteria: criterionReceipt };
+    const dependencies: Record<string, SubmissionReceipt> = { compact: compactReceipt(), criteria: criterionReceipt };
     const contextTasks = [criteriaTask, task];
     if (stage === "comparison") for (const label of ["A", "B"]) {
       const sourceId = randomUUID();
       task.dependencies[label] = sourceId;
       const attribution = attributionResult(true, `${label} 完整最终回答。`, false, candidates[label]!.input_id);
-      contextTasks.push({ id: sourceId, stage: "attribution-session", dependencies: { criteria: criteriaTask.id }, inputIds: {},
+      contextTasks.push({ id: sourceId, stage: "attribution-session", dependencies: { compact: "compact", criteria: criteriaTask.id }, inputIds: {},
         data: { stage: "attribution-session", candidate: candidates[label]!, candidates: { [label]: candidates[label]! }, reference: null } });
       dependencies[label] = receipt(sourceId, attribution);
     }
@@ -156,7 +157,7 @@ test("public judgment bindings keep global indices and separate blind originals 
         analysis.requirements.filter((_, index) => index !== 1), "full common conditions and acceptance rules precede upstream conclusions");
       for (const label of ["A", "B"]) {
         const answer = sections[0].materials!.find(material => material.kind === "answer" && material.candidate === label)!;
-        assert.equal(answer.final_answer, `A1: ${label} 完整最终回答。`);
+        assert.equal(answer.final_answer, `${label} 完整最终回答。`);
         assert.equal(answer.original_user_timestamp, "2026-09-24T22:07:25.270Z");
         assert.equal(answer.original_user_timestamp_utc, "2026-09-24T22:07:25.270Z");
         const refs = answer.final_evidence as { reference: { evidence_id: string } }[];
@@ -164,7 +165,7 @@ test("public judgment bindings keep global indices and separate blind originals 
         for (const item of refs) {
           assert.equal(parseEvidenceCoordinates(item.reference.evidence_id)!.input_id, candidates[label].input_id);
           assert.equal(resolveEvidence(binding.request.sources[label].value as { messages: unknown[] }, item.reference, label, emptyAudit(), "/evidence", candidates[label].input_id).quote,
-            `A1: ${label} 完整最终回答。`);
+            `${label} 完整最终回答。`);
         }
       }
       assert.equal(sections[1].requirement_catalog!.A.find(item => item.criterion_id === "r2")!.requirement_index, 1);
@@ -186,7 +187,7 @@ test("public judgment bindings keep global indices and separate blind originals 
     const finalAnswer = mode === "attribution" ? answer!.final_evidence.map(item => item.quote).join("")
       : (shown.candidates as Record<string, { final_answer: string }>).A.final_answer;
     const question = mode === "attribution" ? answer!.question : focus!.question;
-    assert.equal(finalAnswer, mode === "attribution" ? "A 完整最终回答。" : "A1: A 完整最终回答。");
+    assert.equal(finalAnswer, "A 完整最终回答。");
     if (mode === "attribution") assert.deepEqual((shown.task_focus as { question: string }).question, question);
     else {
       assert(!Object.hasOwn(focus!, "goal"));
@@ -194,7 +195,7 @@ test("public judgment bindings keep global indices and separate blind originals 
       assert(!JSON.stringify(focus).includes(analysis.requirements[1]!.text));
       assert.equal(focus!.answers.A!.question_timestamp, "2026-09-24T22:07:25.270Z");
     }
-    const profile = mode === "attribution" ? componentAttributionProfile : agentPrompt("comparison", [], { fileSubmission: false });
+    const profile = mode === "attribution" ? traceAttributionProfile : agentPrompt("comparison", [], { fileSubmission: false });
     const prompt = profile.renderPrompt(shown);
     assert(profile.systemPrompt.includes(profile.instructions), "fixed stage instructions belong to the system prompt");
     assert(prompt.indexOf(JSON.stringify(question)) >= 0);

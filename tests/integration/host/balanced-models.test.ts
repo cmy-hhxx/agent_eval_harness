@@ -21,19 +21,21 @@ test("evaluation balancing selects only Responses channels by default and reject
   } finally { await rm(directory, { recursive: true, force: true }); }
 });
 
-test("attribution fan-out stages resolve through the configured attribution binding", async () => {
+test("compact keeps its inexpensive exact binding while judgment stages inherit attribution", async () => {
   const { directory, models } = await fixtureConfig();
   try {
-    assert.equal(models.bindings["attribution-component"], undefined);
+    models.bindings.attribution.thinking = "high";
+    assert.equal(models.bindings["attribution-compact"].thinking, "off");
     assert.equal(models.bindings["attribution-trace"], undefined);
     assert.equal(models.bindings["attribution-session"], undefined);
     const routing = createBalancedModels(models), base = routing.modelForStage("attribution");
-    for (const [index, stage] of ["attribution-component", "attribution-trace", "attribution-session"].entries()) {
+    for (const [index, stage] of ["attribution-compact", "attribution-trace", "attribution-session"].entries()) {
       const task = { id: `attribution-stage-${index}`, stage } as PlannedTask;
       assert.equal(routing.modelForTask(task).model, base.model);
-      assert.equal(routing.modelForTask(task).thinking, base.thinking);
+      const thinking = stage === "attribution-compact" ? "off" : base.thinking;
+      assert.equal(routing.modelForTask(task).thinking, thinking);
       assert.equal(routing.modelForStage(stage).model, base.model);
-      assert.equal(routing.modelForStage(stage).thinking, base.thinking);
+      assert.equal(routing.modelForStage(stage).thinking, thinking);
     }
   } finally { await rm(directory, { recursive: true, force: true }); }
 });
@@ -104,6 +106,11 @@ test("balanced tasks keep their channel and stage parameters, and quota exhausti
     const saved = await readRunState(path.join(config.output.path, options.runId));
     for (const task of plan.tasks) {
       assert.equal(saved.manifest.states[task.id].status, "succeeded");
+      if (task.stage === "attribution-compact") {
+        assert.equal(saved.receipts[task.id].judge, "code");
+        assert.equal(saved.receipts[task.id].usage.totalTokens, 0);
+        continue;
+      }
       assert.equal(saved.manifest.states[task.id].channel, seen.filter(item => item.task === task.id).at(-1)!.channel);
       assert.equal(saved.receipts[task.id].submissionStats?.contentSubmissions, 1);
       assert.equal(saved.manifest.states[task.id].attempts, failed.has(task.id) ? 2 : 1);

@@ -25,7 +25,7 @@ function taskKey(task: PlannedTask): string {
   if (task.stage.startsWith("attribution-")) {
     const attribution = task.data as AttributionTaskData;
     return canonical(["attribution-unit", attribution.candidate.input_id, task.stage,
-      attribution.traceIndex ?? null, attribution.component ?? null, data.criteriaScope ?? null]);
+      attribution.traceIndex ?? null, data.criteriaScope ?? null]);
   }
   const comparisonRole = data.verificationAudit ? "audit" : "standalone";
   if (data.reviewOf) return canonical(["review", data.reviewOf.taskId, task.stage, data.group ?? Object.values(data.candidates).map((c) => c.version)]);
@@ -309,7 +309,7 @@ export async function buildPlan(
         }
         const reviewQuestions = config.reviewQuestions?.find(item => item.batch_id === batch && item.case_id === id)?.questions;
         const data: TaskData & { revision?: number } = {
-          stage: "attribution-component",
+          stage: "attribution-compact",
           candidates: { A: record },
           standardAnswerReview: config.standardAnswerReview === true,
           reference,
@@ -329,7 +329,7 @@ export async function buildPlan(
                 !isDeepStrictEqual(oldCheck.reviewQuestions, data.reviewQuestions) ||
                 oldCheck.candidates.A.input_id !== record.input_id),
           );
-        const unit = planAttributionUnit(record, { data: { ...data } as Record<string, unknown>, dependencies: { criteria: criteria.id }, previousTasks: previous?.tasks,
+        const unit = planAttributionUnit(record, { data: { ...data } as Record<string, unknown>, dependencies: { criteria: criteria.id }, previousTasks: previous?.tasks, acceptedTaskIds: accepted,
           identity: criteria.id });
         stats.attribution_tasks++;
         checks.set(checkKey, unit); attributionTasks.push(...unit.tasks);
@@ -398,9 +398,9 @@ export async function buildPlan(
         reference: record.reference, criteriaScope } satisfies TaskData };
     criteriaTasks.set(criteriaScope, criteria);
     const key = canonical([record.batch_id, record.case_id, "attribution", [record.version], criteriaScope]);
-    const unit = planAttributionUnit(record, { data: { stage: "attribution-component", candidates: { A: record }, standalone: true, reference: record.reference,
+    const unit = planAttributionUnit(record, { data: { stage: "attribution-compact", candidates: { A: record }, standalone: true, reference: record.reference,
       criteriaScope, initialContextChars: config.execution.initialContextChars,
-      standardAnswerReview: config.standardAnswerReview === true }, dependencies: { criteria: criteria.id }, previousTasks: previous?.tasks,
+      standardAnswerReview: config.standardAnswerReview === true }, dependencies: { criteria: criteria.id }, previousTasks: previous?.tasks, acceptedTaskIds: accepted,
       identity: criteria.id });
     checks.set(key, unit); attributionTasks.push(...unit.tasks);
     batchStats(record.batch_id).attribution_tasks++;
