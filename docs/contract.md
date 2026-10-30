@@ -13,7 +13,7 @@
 | 阶段请求、提交和结果 | [schemas/](../schemas/README.md)、[Agent 公开入口](modules/README.md) |
 | 共用评审材料与证据投影 | [共享材料入口](../packages/workflows/src/review/index.ts) |
 | 对战材料组合与正式导出 | [binding.ts](../packages/workflows/src/comparison/binding.ts)、[schema.ts](../packages/workflows/src/comparison/schema.ts) |
-| 报告与回溯 | [report.ts](../packages/workflows/src/comparison/report.ts)、[annotations.ts](../packages/workflows/src/comparison/annotations.ts) |
+| 报告与回溯 | [report.ts](../packages/workflows/src/comparison/report.ts) |
 
 ### 评测器版本标识
 
@@ -236,11 +236,11 @@ Rewrite 只接收选定文本槽位，不接触原题、原始消息或证据。
 
 ### 数值与实体核验
 
-数值线索来自真实标准或材料。必要计算仅在具体 Problem 的 calculations 内提交原数证据、单位、期间、分母和公式，程序复算；算术相等不证明业务口径或标准一致性。
+数值线索来自真实标准或材料，标准中的数值目录由 [units.ts](../packages/agents/src/attribution/units.ts)整理。必要计算通过计算或代码工具核对，具体 Problem 的 `calculations` 只保存文字点评，不提交结构化操作数或触发自动复算。
 
-单位、对象、期间和舍入须按原文解释；只在明确唯一且同维时硬校验倍率。原始计算与展示值分开，不能二次舍入制造差异或反推缺失原值。实现见 [units.ts](../packages/agents/src/attribution/units.ts)。
+单位、对象、期间和舍入须按原文解释；算术相等不证明业务口径或标准一致性。原始计算与展示值分开，不能二次舍入制造差异或反推缺失原值。
 
-[表格核验](../packages/agents/src/attribution/table-review.ts)只覆盖可解析的标准 Markdown 表及可比来源。unverified / conflict / ambiguous 是核查线索，不直接判错。相关行与来源保留在问题证据闭环，不再强制提交独立 table_resolutions 调查表。
+[表格核验工具](../packages/tools/src/table-correspondence.ts)按显式列对应核对可解析的标准 Markdown 表及可比来源。unverified / conflict / ambiguous 是核查线索，不直接判错。相关行与来源保留在问题证据闭环。
 
 ### 文案校验
 

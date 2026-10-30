@@ -36,8 +36,6 @@ test("all stage texts come from one resource tree; tool descriptions are complet
 test('Score has one attribution-based submission-only profile',()=>{
  const prompt=agentPrompt('score',[],{profile:'default',fileSubmission:false});
  assert.deepEqual(Object.keys(prompt.toolDescriptions),['submit_evaluation']);
- assert.match(prompt.systemPrompt,/归因/);
- assert.throws(()=>agentPrompt('score',[],{profile:'axis',fileSubmission:false}));
 });
 
 test("submission-only stages expose only their direct submission tool", () => {
@@ -170,16 +168,6 @@ test("attribution sends only applicable rule resources and does not repeat share
   assert(!prompt.toolDescriptions.execute_code.includes('edit_json'));
   const focused=prompt.renderPrompt({task_focus:{question:'核查实际交付。'}});
   assert(!focused.includes('候选私有规范'));
-});
-
-test("attribution selects a precise taxonomy responsibility from observed process and requires Chinese prose", () => {
-  const prompt = agentPrompt("attribution", ["read_trace", "search_trace"], { profile: "trace", fileSubmission: false });
-  assert.match(prompt.systemPrompt, /component.*ID/u);
-  assert.match(prompt.systemPrompt, /最具体/u);
-  assert.match(prompt.systemPrompt, /label、definition/u);
-  assert.match(prompt.systemPrompt, /引文与原文一致/u);
-  assert(prompt.systemPrompt.includes("actor_index"));
-  assert(!prompt.systemPrompt.includes('"limitation-disclosure":'));
 });
 
 test("taxonomy components carry one group, stage and definition", () => {

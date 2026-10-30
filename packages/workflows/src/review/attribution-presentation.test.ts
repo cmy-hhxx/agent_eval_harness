@@ -1,16 +1,11 @@
-import { compactReceipt } from "../../../../tests/fixtures/compact.js";
 import test from "node:test";
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
 import { canonicalEvidence } from "../../../../tests/fixtures/evidence.js";
-import { emptyUsage, type CriteriaInput, type PlannedTask, type SubmissionReceipt } from "@eval/contracts";
-import { attributionTableChecks } from "@eval/agents/attribution";
-import { parseTraceTables, evidenceSources, parseEvidenceCoordinates, resolveEvidence, selectEvidenceSource } from "@eval/tools";
-import { criteriaResult, emptyAudit } from "../../../../tests/fixtures/comparison.js";
-import { attributionPresentation, tableChecksPresentation } from "./attribution-presentation.js";
-import { bindTask } from "../comparison/binding.js";
-import type { Candidate, RawInput } from "../inputs/types.js";
-import type { TaskData } from "../comparison/types.js";
+import { evidenceSources, parseEvidenceCoordinates, resolveEvidence, selectEvidenceSource } from "@eval/tools";
+import { emptyAudit } from "../../../../tests/fixtures/comparison.js";
+import { attributionPresentation } from "./attribution-presentation.js";
+import type { RawInput } from "../inputs/types.js";
 
 const evidenceInputId = "7ebfa07b-55d4-4e19-80d0-545eb576289a";
 
@@ -98,46 +93,4 @@ test("foreign evidence previews and reads the actual peer input under its anonym
   assert.equal(evidence.read_request.candidate, "B");
   assert.equal(resolveEvidence(peer, evidence.reference, "B", emptyAudit(), "/evidence", peerId).quote, quote);
   assert.deepEqual(result, before);
-});
-
-test("canonical component table views use own full-directory ordinals while trusted checks remain exact", () => {
-  const question = "列出股票名称与代码。", table = (code: string) => `| 股票代码 | 股票简称 |\n|---|---|\n| ${code} | Alpha |`;
-  const traces: Record<string, RawInput> = {
-    A: { messages: [{ role: "user", content: question }, { role: "tool", content: table("000001") }, { role: "assistant", content: table("000002") }] },
-    B: { messages: [{ role: "user", content: question }, { role: "tool", content: "| 键 | 数值 |\n|---|---|\n| k | v |" },
-      { role: "tool", content: table("000001") }, { role: "assistant", content: table("000002") }] },
-  };
-  const candidates: Record<string, Candidate> = Object.fromEntries(["A", "B"].map(label => [label, {
-    batch_id: "b1", case_id: "tables", version: label.toLowerCase() + "_fast", name: label + "组Fast", input_id: randomUUID(),
-    trace_id: null, source: "fixture", line: 1, llm: null, question, final_index: traces[label].messages.length - 1, reference: null,
-    answer_timing: { first_token_seconds: null, first_answer_seconds: null, finish_seconds: 1,
-      source_unit: "seconds", source_values: {}, source_fields: {} },
-  }]));
-  const inputs = Object.fromEntries(Object.entries(candidates).map(([label, candidate]) => [candidate.input_id, traces[label]]));
-  const criteriaTask: PlannedTask = { id: randomUUID(), stage: "criteria", dependencies: {},
-    inputIds: Object.fromEntries(Object.entries(candidates).map(([label, candidate]) => [label, candidate.input_id])),
-    data: { stage: "criteria", candidates, reference: null } satisfies TaskData };
-  const criteriaBinding = bindTask(criteriaTask, inputs, {}, { tasks: [criteriaTask] });
-  const rubric = criteriaResult(criteriaBinding.request.input as unknown as CriteriaInput);
-  const receipt: SubmissionReceipt = { taskId: criteriaTask.id, attemptId: randomUUID(), submissionId: randomUUID(), acceptedAt: 1,
-    status: "succeeded", evaluatorVersion: "fixture", judge: "fixture", evaluation: rubric, audit: emptyAudit(), usage: emptyUsage() };
-  const task: PlannedTask = { id: randomUUID(), stage: "attribution-trace", dependencies: { compact: "compact", criteria: criteriaTask.id },
-    inputIds: { answer: candidates.A.input_id },
-    data: { stage: "attribution-trace", candidate: candidates.A, candidates: { A: candidates.A }, reference: null } satisfies TaskData };
-  const before = structuredClone(inputs);
-  bindTask(task, inputs, { compact: compactReceipt(), criteria: receipt }, { tasks: [criteriaTask, task] });
-  const own = { table_check_results: attributionTableChecks(traces.A, candidates.A.input_id, candidates.A.final_index) };
-  const shown = { answer: { table_check_results: tableChecksPresentation(own.table_check_results, traces.A, candidates.A.input_id) } };
-  assert.equal(shown.answer.table_check_results[0].answer_table_index, 2);
-  assert.equal(shown.answer.table_check_results[0].rows[0].sources[0].table_index, 1);
-  for (const checks of [shown.answer.table_check_results]) {
-    assert(checks.every((check: any) => !Object.hasOwn(check, "answer_table_id")));
-    assert(checks.flatMap((check: any) => check.rows).flatMap((row: any) => row.sources).every((source: any) => !Object.hasOwn(source, "table_id")));
-  }
-  assert.deepEqual(own.table_check_results, attributionTableChecks(traces.A, candidates.A.input_id, candidates.A.final_index));
-  assert.equal(own.table_check_results[0].answer_table_id, parseTraceTables(traces.A, candidates.A.input_id)[1].table_id);
-  assert.deepEqual(inputs, before);
-  const foreign = structuredClone(own.table_check_results);
-  foreign[0].answer_table_id = parseTraceTables(traces.B, candidates.B.input_id)[1].table_id;
-  assert.throws(() => tableChecksPresentation(foreign, traces.A, candidates.A.input_id), /本方真实表格目录/);
 });

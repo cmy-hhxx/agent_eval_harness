@@ -1,4 +1,4 @@
-import { canonical, ValidationError, type AgentRequest, type TaskAnalysis, type ValidationIssue } from "@eval/contracts";
+import { ValidationError, type AgentRequest, type TaskAnalysis } from "@eval/contracts";
 import { cite, evidenceCovers, evidenceSources, sourceContentBlocks } from "@eval/tools";
 import { instructionEvidenceContext } from "./instructions.js";
 import type { Evidence } from "./types.js";
@@ -9,8 +9,6 @@ export interface AttributionNorm {
   requirement_index: number | null;
   evidence: Evidence[];
 }
-const object = (value: unknown): Record<string, unknown> | undefined =>
-  value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : undefined;
 
 /** Original physical blocks and trusted criterion bindings; never infer normative meaning from prose. */
 export function attributionNormDirectory(request: AgentRequest): AttributionNorm[] {
@@ -49,12 +47,4 @@ export function attributionNormDirectory(request: AgentRequest): AttributionNorm
     }
   }
   return directory.map((item, norm_index) => ({ norm_index, ...item }));
-}
-
-export function normDirectoryIssues(request: AgentRequest): ValidationIssue[] {
-  const directory = attributionNormDirectory(request);
-  return canonical(object(request.input.answer)?.norm_directory) === canonical(directory) ? [] : [{
-    category: "evidence", code: "norm_directory_invalid", path: "/answer/norm_directory",
-    message: "规范目录必须由本方真实原材料与可信 criterion 绑定完整生成，不能缺省、改写或重排。", expected: directory,
-  }];
 }

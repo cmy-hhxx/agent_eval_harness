@@ -14,7 +14,6 @@ export * from "./report.js";
 export * from "./model-behavior.js";
 export * from "./results.js";
 export * from "./commentary.js";
-export * from "./annotations.js";
 export * from "./validate.js";
 export { outputSchema, clusteringSchema } from "./schema.js";
 export * from "./problem-library.js";

@@ -1,6 +1,5 @@
 import { isTraceAttributionTask } from "@eval/workflows/attribution";
 import { testSettings } from "../../fixtures/settings.js";
-import { canonicalEvidence } from "../../fixtures/evidence.js";
 import { services as appServices } from "@eval/host-app/composition";
 import test from "node:test";
 import { agentPrompt } from "@eval/prompts";
@@ -13,8 +12,6 @@ import { loadComparisonConfig, createModelResolver } from "@eval/host-app/config
 import { adapt, inputAdapterIds, inputAdapters } from "@eval/workflows/inputs";
 import { buildPlan, expandComparisonPairs, reconcileRun } from "@eval/workflows/comparison";
 import { prepare, validateEvaluation } from "../../fixtures/services.js";
-import { annotateFindings } from "@eval/workflows/comparison";
-import type { Finding } from "@eval/workflows/comparison";
 import type { TaskData } from "@eval/workflows/comparison";
 import type { RawInput } from "@eval/workflows/inputs";
 import { emptyAudit, fakeEvaluatorVersion, fakeIdentity, fakeJudge, fixtureConfig, attributionResult, comparisonResult, criteriaResultForTask, raw } from "../../fixtures/comparison.js";
@@ -649,39 +646,6 @@ test("initial material discloses only projected content within its budget", asyn
   } finally {
     await rm(directory, { recursive: true, force: true });
   }
-});
-
-test("provenance resolves only references in the finding quote", () => {
-  const input = raw();
-  input.messages = [
-    { type: "message", role: "user", content: "问题" },
-    { type: "function_call", name: "FinQuery", call_id: "f" },
-    {
-      type: "function_call_output",
-      call_id: "f",
-      output: "<referencable-result>\nID: 1\n财务数据\n</referencable-result>",
-    },
-    { type: "function_call", name: "web_search", call_id: "s" },
-    {
-      type: "function_call_output",
-      call_id: "s",
-      output: "<referencable-result>\nID: 2\n新闻\n</referencable-result>",
-    },
-    { type: "message", role: "assistant", content: "财务数据[^1]。新闻[^2]。" },
-  ];
-  const finding = {
-    evidence: [canonicalEvidence("11111111-1111-4111-8111-111111111111", 5, "财务数据[^1]")],
-  } as Finding;
-  assert.deepEqual(annotateFindings(input, "11111111-1111-4111-8111-111111111111", [finding])[0], {
-    tools: ["FinQuery"],
-    confidence: "high",
-    source: "quote_reference",
-    locations: [{ message_index: 2, tool_name: "FinQuery" }],
-  });
-  finding.evidence[0] = canonicalEvidence("11111111-1111-4111-8111-111111111111", 5, "财务数据");
-  const trace = annotateFindings(input, "11111111-1111-4111-8111-111111111111", [finding])[0];
-  assert.deepEqual(trace.tools, []);
-  assert.deepEqual(trace.candidate_tools, ["FinQuery", "Search"]);
 });
 
 test("submission feedback locates invalid comparison references", async () => {

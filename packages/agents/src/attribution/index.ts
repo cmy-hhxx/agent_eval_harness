@@ -5,7 +5,6 @@ export { attributionNormDirectory, type AttributionNorm } from "./norm-directory
 export { numericReferenceDirectory } from "./units.js";
 export * from "./types.js";
 export { sessionProblems, evidenceMessageIndex, sessionCorrectness } from "./session.js";
-export { attributionTableChecks } from "./table-review.js";
 export { attributionComponentLabel } from "./responsibility.js";
 export { singleSessionAttributionProfile, sessionAttributionProfile, sessionAttributionResultSchema, traceAttributionProfile } from "./session-profiles.js";
 export const attributionAgent: AgentDefinition = {

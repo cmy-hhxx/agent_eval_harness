@@ -1,5 +1,5 @@
 import type { ResolvedEvidence } from "@eval/contracts";
-import { displayEvidence, evidenceSources, parseEvidenceCoordinates, parseTraceTables, type TableCheckResult } from "@eval/tools";
+import { displayEvidence, evidenceSources, parseEvidenceCoordinates } from "@eval/tools";
 import type { RawInput } from "../inputs/types.js";
 
 type Evidence = ResolvedEvidence & { source?: string; source_input_id?: string };
@@ -37,19 +37,4 @@ export function attributionPresentation<T extends AttributionEvidenceView>(resul
   const entries = <U extends EvidenceEntry>(items: U[]) => items.map(item => ({ ...item, evidence: evidence(item.evidence),
     ...(item.context_evidence ? { context_evidence: evidence(item.context_evidence) } : {}) }));
   return { ...result, Problem: entries<T["Problem"][number]>(result.Problem) };
-}
-
-/** Display fixed table ordinals only in generated check envelopes; canonical checks and raw messages stay intact. */
-export function tableChecksPresentation(checks: TableCheckResult[], raw: RawInput, inputId: string) {
-  const indices = new Map(parseTraceTables(raw, inputId).map((table, index) => [table.table_id, index + 1]));
-  const tableIndex = (id: string) => {
-    const index = indices.get(id);
-    if (index === undefined) throw new Error("表格核验材料的 table_id 不属于本方真实表格目录。");
-    return index;
-  };
-  return checks.map(({ answer_table_id, ...check }) => ({
-    ...check, answer_table_index: tableIndex(answer_table_id),
-    rows: check.rows.map(row => ({ ...row, sources: row.sources.map(({ table_id, ...source }) =>
-      ({ ...source, table_index: tableIndex(table_id) })) })),
-  }));
 }

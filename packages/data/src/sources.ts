@@ -1,5 +1,4 @@
-import { stat, readFile, readdir, link, unlink } from "node:fs/promises";
-import { randomUUID } from "node:crypto";
+import { stat, readdir } from "node:fs/promises";
 import { createReadStream, openSync, closeSync, readSync, fstatSync, statSync, type BigIntStats } from "node:fs";
 import path from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
@@ -26,23 +25,6 @@ export function assertSourceRevision(source: string, expected: string): void {
     throw new Error("读取期间输入文件发生变化，请重试：" + source);
 }
 
-/** Capture a complete input group while the caller holds its short promotion lock. */
-export async function pinInputSources(sources: readonly string[]) {
-  const files = new Map<string, string>();
-  const close = async () => {
-    const pinned = [...files.values()]; files.clear();
-    await Promise.all(pinned.map(file => unlink(file)));
-  };
-  try {
-    for (const source of new Set(sources)) {
-      const pinned = path.join(path.dirname(source), `.publication-${randomUUID()}`);
-      await link(source, pinned);
-      files.set(source, pinned);
-    }
-    return { files, close };
-  } catch (error) { await close(); throw error; }
-}
-
 /** Short source-promotion contention is retryable; unrelated filesystem failures are not. */
 export async function waitForRunLock(directory: string, signal: AbortSignal) {
   const deadline = Date.now() + 10_000;
@@ -55,15 +37,6 @@ export async function waitForRunLock(directory: string, signal: AbortSignal) {
       await delay(25, undefined, { signal });
     }
   }
-}
-
-/** Read a file once, rejecting a read that raced a concurrent write. */
-export async function readInputSource(source: string): Promise<string> {
-  const revision = await fileRevision(source),
-    text = await readFile(source, "utf8");
-  if ((await fileRevision(source)) !== revision)
-    throw new Error("读取期间输入文件发生变化，请重试：" + source);
-  return text;
 }
 
 /** Read one already indexed record without retaining the source file in memory. */

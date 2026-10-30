@@ -1,6 +1,12 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { traceExchanges, traceExecutionLinks } from "./trace-exchanges.js";
+import { isComponentLocator, traceExchanges, traceExecutionLinks } from "./trace-exchanges.js";
+
+test("bare execution locators are not component display names", () => {
+  for (const locator of ["llm-call-0", "span-4f26f1fabe23fc3c", "4f26f1fabe23fc3c", "a49b50c9-d2cb-42ea-8995-5f588b93d0b0"])
+    assert(isComponentLocator(locator), locator);
+  for (const name of ["planner-finquery", "request-router", "trace-search", "finquery", "display", "最终作答节点"]) assert(!isComponentLocator(name), name);
+});
 
 test("unique returned query links an anonymous invocation and its actual planner, without pairing neighboring nodes", () => {
   const messages = [{ type: "llm_turn", name: "planner-finquery", parent_span: "p" },

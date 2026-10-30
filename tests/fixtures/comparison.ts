@@ -1,9 +1,9 @@
 import { testSettings, writeTestSettings } from "./settings.js";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp } from "node:fs/promises";
 import { randomUUID } from "node:crypto";
 import os from "node:os";
 import path from "node:path";
-import { DEFAULT_POLICY, emptyUsage, type AttemptSpec, EngineIdentity, ToolAudit, TaskAnalysis, CriteriaInput, PlannedTask, AgentBackend, RunState, SubmissionReceipt } from "@eval/contracts";
+import { type AttemptSpec, EngineIdentity, ToolAudit, TaskAnalysis, CriteriaInput, PlannedTask, AgentBackend } from "@eval/contracts";
 import { criteriaProfile, criteriaSources, type CriterionSource, type CriteriaSubmission } from "@eval/agents/criteria";
 import { hasSourceTextBlock } from "@eval/tools";
 import { ROOT } from "./services.js";
@@ -451,39 +451,4 @@ export function invalidDraft(spec: Pick<AttemptSpec, "evaluation" | "inputs" | "
   if ("session_overview" in draft) (draft as Record<string, unknown>).session_overview = 42;
   else if ("session_summary" in draft) draft.session_summary=42; else draft.summary=42;
   return draft;
-}
-
-/** Create hand-seeded restore receipts through the same public inspection and acceptance gates as live tasks. */
-export async function inspectedReceiptFor(task: PlannedTask, state: RunState, inputs: Record<string, unknown>): Promise<SubmissionReceipt> {
-  const { RunStore } = await import("@eval/host");
-  const { services } = await import("./services.js");
-  const directory = await mkdtemp(path.join(os.tmpdir(), "inspection-receipt-test-"));
-  const scratch = structuredClone(state);
-  delete scratch.receipts[task.id];
-  scratch.manifest.states[task.id] = { status: "pending", attempts: 0 };
-  scratch.manifest.engine = fakeIdentity;
-  scratch.manifest.evaluatorVersion = fakeEvaluatorVersion;
-  const store = new RunStore(directory, scratch, inputs, services);
-  try {
-    const dependencies = Object.fromEntries(Object.entries(task.dependencies).map(([key, id]) => [key, scratch.receipts[id]]));
-    const binding = comparisonWorkflow.bind(task, inputs, dependencies, { tasks: scratch.manifest.tasks });
-    const prepared = services.agents.prepare(binding);
-    const spec: AttemptSpec = { ...prepared, taskId: task.id, attemptId: crypto.randomUUID(), runId: scratch.manifest.runId,
-      inputRevision: 1, engine: fakeIdentity, model: { provider: "fixture", baseUrl: "http://127.0.0.1:1", api: "openai-completions",
-        apiKeyEnv: "FIXTURE_KEY", model: fakeJudge, thinking: "off", contextWindow: 10000, maxOutputTokens: 1000 },
-      policy: DEFAULT_POLICY, inputs: Object.entries(task.inputIds).map(([name, id]) => ({ name, id })),
-      deadline: Date.now() + 60000, hostUrl: "http://127.0.0.1:1" };
-    await store.activate(spec);
-    const audit: ToolAudit = { ...emptyAudit(), evidenceBank: [...prepared.evidenceBank] };
-    const inspected = await store.inspect({ taskId: task.id, attemptId: spec.attemptId, inspectionId: crypto.randomUUID(),
-      value: inspectionDraft(spec) as import("@eval/contracts").JsonObject, audit, contentSubmissions: 1 });
-    audit.inspection = inspected.inspection;
-    audit.evidenceBank = [...inspected.evidenceBank];
-    const receipt = await store.accept({ taskId: task.id, attemptId: spec.attemptId, submissionId: crypto.randomUUID(),
-      evaluation: draftFor(spec, taskResult(spec, inspected.material), inspected.material), audit, usage: emptyUsage(),
-      submissionStats: { contentSubmissions: 2, fileErrors: 0 } });
-    const complete = structuredClone(receipt);
-    delete complete.exported;
-    return complete;
-  } finally { await rm(directory, { recursive: true, force: true }); }
 }

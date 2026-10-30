@@ -2,7 +2,7 @@ import { processMaterial } from "./process-material.js";
 import { processComponents, actorCatalog } from "./components.js";
 import { initialAttributionMaterial } from "./attribution-navigation.js";
 import { type AgentBinding, type TaskAnalysis, type JsonObject } from "@eval/contracts";
-import { cite, images, displayEvidence, evidenceSources, parseEvidenceCoordinates, sourceTextBlocks, visualCaptureMarkers, type InstructionSource, type TableCheckResult, type TraceComponentIdentity } from "@eval/tools";
+import { cite, images, displayEvidence, evidenceSources, parseEvidenceCoordinates, sourceTextBlocks, visualCaptureMarkers, type InstructionSource } from "@eval/tools";
 import { presentedMaterialReads, projectComparisonEvidence, compactNavigation } from "./evidence-presentation.js";
 import type { RawInput, Candidate } from "../inputs/types.js";
 import { attributionTrace } from "./public-trace.js";
@@ -10,7 +10,6 @@ import { attributionNormDirectory } from "@eval/agents/attribution";
 import { traceOverview } from "./trace-overview.js";
 import { citationInventory, citationSourceParts, type CitationContext, type CitationInventory } from "./citations.js";
 import { criterionInstructionSources } from "./instruction-bindings.js";
-import { tableChecksPresentation } from "./attribution-presentation.js";
 import { taskAnalysisPresentation } from "./task-focus.js";
 import { answerGenerationPresentation, type AnswerGeneration } from "./answer-generation.js";
 
@@ -21,7 +20,6 @@ export function modelMaterial(material: Record<string, unknown>, candidate: stri
   const shown = <T extends { evidence_id: string }>(value: T) => displayEvidence(value);
   const finalEvidence = material.final_evidence as ReturnType<typeof cite>[];
   const initial = material.initial_material as { message_index: number; value: unknown; evidence: ReturnType<typeof cite>[] }[];
-  const tables = material.table_check_results as TableCheckResult[] | undefined;
   const instructions = material.instruction_sources as InstructionSource[];
   const citations = material.citation_inventory as CitationInventory;
   const normBindings = material.criterion_instruction_sources as Record<string, {
@@ -96,9 +94,6 @@ export function modelMaterial(material: Record<string, unknown>, candidate: stri
   }).map((section, index) => ({ section_index: index + 1, ...section })) : [];
   return {
     ...anonymous,
-    ...(material.component_catalog ? { component_catalog: (material.component_catalog as TraceComponentIdentity[]).map(actor => ({ ...actor,
-      identity_evidence: actor.identity_evidence.map(shown),
-    })) } : {}),
     ...(captureGaps.length ? { capture_gaps: captureGaps } : {}),
     ...(imageCount ? { final_images: { image_count: imageCount,
       view_request: { candidate, message_index: finalIndex } } } : {}),
@@ -159,14 +154,6 @@ export function modelMaterial(material: Record<string, unknown>, candidate: stri
           quote_preview: full.quote.slice(0, 200), has_more: true }),
           reference: { evidence_id: full.evidence_id }, ...instructionNavigation(entry.message_index, entry.path, location.start, location.end) };
       })])) } : {}),
-    ...(tables ? { table_check_results: tableChecksPresentation(tables, raw, inputId).map((table) => ({
-      ...table,
-      rows: table.rows.map((row) => ({
-        ...row,
-        answer: { ...row.answer, evidence: shown(row.answer.evidence) },
-        sources: row.sources.map((source) => ({ ...source, evidence: shown(source.evidence) })),
-      })),
-    })) } : {}),
   };
 }
 

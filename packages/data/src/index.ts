@@ -8,7 +8,6 @@ export * from "./sources.js";
 export * from "./input-catalog.js";
 export * from "./logging.js";
 export * from "./assistant-store.js";
-export * from "./run-artifacts.js";
 export * from "./assistant-auth.js";
 export * from "./assistant-runs.js";
 export * from "./evaluation-collections.js";

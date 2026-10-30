@@ -1,9 +1,8 @@
-import path from "node:path";
 import { randomUUID } from "node:crypto";
 import { Ajv2020 } from "ajv/dist/2020.js";
 import { canonical, difference, restore, projectEvidenceReferences, resolveEvidenceSelection, type AgentBinding, type JsonObject, type PlannedTask, type RunManifest, type RunState, type SubmissionReceipt, type TaskAnalysis, type WorkflowDefinition, type WorkflowScheduling } from "@eval/contracts";
 import { cite, messageContentSources, parseEvidenceCoordinates } from "@eval/tools";
-import { createRunRepository, readJson, type RunCodec } from "@eval/data";
+import { createRunRepository, type RunCodec } from "@eval/data";
 import { compactFields, compactResultSchema, type SessionCompact } from "@eval/agents/compact";
 import type { TraceAttributionResult } from "@eval/agents/attribution";
 import { collectInputs, contentText, structuredQuestion, loadRunInputs, normalizeInput, normalizeTraceInput, sessionSource, type Candidate, type EvaluationConfig, type RawInput } from "@eval/workflows/inputs";
@@ -397,10 +396,4 @@ export async function validateAttributionRun(state: RunState) {
     if (!["attribution-session", "attribution-compact"].includes(task.stage) && receipt.exported) throw new Error("内部任务不能导出正式行");
     if (["attribution-session", "attribution-compact"].includes(task.stage) && !receipt.exported) throw new Error("session 任务缺少正式导出"); }
   return { valid: true, receipts: Object.keys(state.receipts).length };
-}
-
-export async function attributionProgress(run: string) {
-  const checkpoint = await readJson<Checkpoint>(path.join(run, "state.json"));
-  return Object.entries(checkpoint.tasks).map(([id, task]) => ({ id, stage: task.task.stage,
-    inputId: task.data.input_id, status: task.state.status, attempts: task.state.attempts }));
 }

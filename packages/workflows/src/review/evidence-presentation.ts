@@ -104,14 +104,6 @@ function materialEvidence(value: unknown, bank: EvidenceBank, shown?: Set<string
   });
   const citations = object(material.citation_inventory);
   if (citations) result.citation_inventory = { ...citations, references: project(citations.references) };
-  if (Array.isArray(material.table_check_results)) result.table_check_results = material.table_check_results.map(entry => {
-    const table = object(entry)!;
-    return { ...table, rows: array(table.rows).map(entry => {
-      const row = object(entry)!, answer = object(row.answer)!;
-      return { ...row, answer: { ...answer, evidence: project(answer.evidence) },
-        sources: array(row.sources).map(entry => { const source = object(entry)!; return { ...source, evidence: project(source.evidence) }; }) };
-    }) };
-  });
   return result;
 }
 const materialMap = (value: unknown, bank: EvidenceBank, maxQuoteChars?: number) => object(value)

@@ -1,24 +1,5 @@
 import type { AgentRequest } from '@eval/contracts';
-import { comparisonSlots, verificationCheckAspects, type ComparisonMaterialInspection, type ComparisonVerificationInput,
- type ComparisonResult, type ComparisonSlot, type ComparisonSubmission, type ComparisonVerificationSubmission } from '@eval/agents/comparison';
-
-/** Fixed subcheck positions are model choices; canonical checkpoints retain one result per rule. */
-export function comparisonInspectionSubmission(request: AgentRequest, value: ComparisonMaterialInspection) {
- if (!Array.isArray(value.checks) || !Array.isArray(value.concerns)) return value;
- const input = request.input as unknown as ComparisonVerificationInput;
- return { checks: value.checks.flatMap(({ candidate: _candidate, criterion_id: _criterion, answer_evidence: _scope, ...check }) =>
-   verificationCheckAspects.map(() => structuredClone(check))),
-  concerns: value.concerns.map(({ criterion_ids, ...concern }) => ({ ...concern,
-   requirement_indices: criterion_ids.map(id => {
-    const index = input.task_analysis.requirements.findIndex(criterion => criterion.id === id);
-    return index < 0 ? Number.MAX_SAFE_INTEGER : index;
-   }) })) };
-}
-
-/** Verification choices are explicit; never infer them from an upstream verdict. */
-export function comparisonVerificationSubmission(selections: Partial<ComparisonVerificationSubmission> = {}): ComparisonVerificationSubmission {
- return { concern_matches: [], source_reviews: [], ...selections };
-}
+import { comparisonSlots, type ComparisonResult, type ComparisonSlot, type ComparisonSubmission } from '@eval/agents/comparison';
 
 /** Fixtures use the current thin submission; the canonical result remains a separate contract. */
 export function comparisonSubmission(result: ComparisonResult, slots: ComparisonSlot[]): ComparisonSubmission {
