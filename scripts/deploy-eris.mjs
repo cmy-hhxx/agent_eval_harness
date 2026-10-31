@@ -3,11 +3,12 @@ import { spawn } from "node:child_process";
 import { parseArgs } from "node:util";
 import path from "node:path";
 
-const deploymentRoot = "/mnt/fin_bench/sync_datasets/code/1_eval_harnes";
+const codeRoot = "/opt/eval_harness";
+const runtimeRootPath = "/mnt/fin_bench/sync_datasets/code/1_eval_harnes/runtime";
 const { values } = parseArgs({ options: {
   config: { type: "string", default: ".servers.conf" }, branch: { type: "string", default: "main" },
-  "code-path": { type: "string", default: `${deploymentRoot}/eris-code` },
-  "runtime-root": { type: "string", default: `${deploymentRoot}/runtime` },
+  "code-path": { type: "string", default: `${codeRoot}/eris-code` },
+  "runtime-root": { type: "string", default: runtimeRootPath },
   "collections-file": { type: "string" },
   "source-ini": { type: "string" },
   start: { type: "boolean", default: false },
@@ -15,10 +16,10 @@ const { values } = parseArgs({ options: {
 for (const key of ["code-path", "runtime-root", "collections-file", "source-ini"])
   if (!values[key] || !path.isAbsolute(values[key])) throw new Error(`Provide an absolute --${key} on the server`);
 const codePath = path.posix.normalize(values["code-path"]), runtimeRoot = path.posix.normalize(values["runtime-root"]);
-if (!codePath.startsWith(`${deploymentRoot}/`) || codePath === `${deploymentRoot}/runtime` || codePath.startsWith(`${deploymentRoot}/runtime/`))
-  throw new Error(`Deploy code in a checkout below ${deploymentRoot}, outside runtime/`);
-if (runtimeRoot !== `${deploymentRoot}/runtime`)
-  throw new Error(`Use --runtime-root ${deploymentRoot}/runtime`);
+if (!codePath.startsWith(`${codeRoot}/`) || codePath === runtimeRootPath || codePath.startsWith(`${runtimeRootPath}/`))
+  throw new Error(`Deploy code in a checkout below ${codeRoot}, outside the shared runtime`);
+if (runtimeRoot !== runtimeRootPath)
+  throw new Error(`Use --runtime-root ${runtimeRootPath}`);
 const configFile = path.resolve(values.config), entries = new Map(); let section = "";
 for (const raw of (await readFile(configFile, "utf8")).split(/\r?\n/)) {
   const line = raw.trim(), header = /^\[([^\]]+)\]$/.exec(line), pair = /^([^=]+)=(.*)$/.exec(line);

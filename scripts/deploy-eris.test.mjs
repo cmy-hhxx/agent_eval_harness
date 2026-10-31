@@ -8,7 +8,8 @@ import { root } from "./lib.mjs";
 import { parseSettings } from "../dist/apps/host/src/settings.js";
 import { assistantModelConfiguration } from "../dist/apps/host/src/assistant-models.js";
 
-const deploymentRoot = "/mnt/fin_bench/sync_datasets/code/1_eval_harnes";
+const codeRoot = "/opt/eval_harness";
+const runtimeRoot = "/mnt/fin_bench/sync_datasets/code/1_eval_harnes/runtime";
 
 test("Eris initializes only its own configuration with the DeepSeek V4.1 supported reasoning levels", async t => {
   const directory = await mkdtemp(path.join(tmpdir(), "eris-init-")); t.after(() => rm(directory, { recursive: true, force: true }));
@@ -49,8 +50,8 @@ test("Eris deployment sends secrets only through stdin and distributes isolated 
   assert(!args.includes("fixture-secret")); assert(!output.includes("fixture-secret"));
   assert(script.includes("export ERIS_ADMIN_PASSWORD='fixture-secret'"));
   assert(script.indexOf("npm run build") < script.indexOf("export ERIS_ADMIN_PASSWORD="));
-  assert(script.includes(`CODE='${deploymentRoot}/eris-code'`)); assert(script.includes("BRANCH='codex/test'"));
-  assert(script.includes(`RUNTIME='${deploymentRoot}/runtime'`));
+  assert(script.includes(`CODE='${codeRoot}/eris-code'`)); assert(script.includes("BRANCH='codex/test'"));
+  assert(script.includes(`RUNTIME='${runtimeRoot}'`));
   assert(script.includes("COLLECTIONS='/custom/collections.json'"));
   assert(script.includes('--source-ini "$SOURCE_INI" --collections-file "$COLLECTIONS"'));
   assert(script.includes("git -c credential.helper=")); assert(script.includes("tmux new-session -d -s eris"));
@@ -60,9 +61,9 @@ test("Eris deployment sends secrets only through stdin and distributes isolated 
 test("Eris deployment rejects code outside the deployment root and a separate runtime before SSH", async () => {
   for (const args of [
     ["--code-path", "/mnt/aigc_team/user_workspace/chenmingyang/eval_harness/eris-code"],
-    ["--code-path", `${deploymentRoot}/../other/eris-code`],
-    ["--code-path", deploymentRoot],
-    ["--code-path", `${deploymentRoot}/runtime/checkout`],
+    ["--code-path", `${codeRoot}/../other/eris-code`],
+    ["--code-path", codeRoot],
+    ["--code-path", `${runtimeRoot}/checkout`],
     ["--runtime-root", "/custom/runtime"],
   ]) {
     const child = spawn(process.execPath, [path.join(root, "scripts/deploy-eris.mjs"),

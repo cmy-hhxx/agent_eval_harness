@@ -56,10 +56,10 @@ Eris 的 `collectionsFile` 指向独立 JSON 清单，格式见[清单示例](..
 
 | 内容 | 路径 |
 |---|---|
-| 代码部署根目录 | `/mnt/fin_bench/sync_datasets/code/1_eval_harnes/` |
-| main checkout | `/mnt/fin_bench/sync_datasets/code/1_eval_harnes/main` |
-| Eris checkout | `/mnt/fin_bench/sync_datasets/code/1_eval_harnes/eris-code` |
-| 外部运行目录 | `/mnt/fin_bench/sync_datasets/code/1_eval_harnes/runtime` |
+| 代码部署根目录（系统盘） | `/opt/eval_harness/` |
+| main checkout | `/opt/eval_harness/main` |
+| Eris checkout | `/opt/eval_harness/eris-code` |
+| 外部运行目录（共享盘） | `/mnt/fin_bench/sync_datasets/code/1_eval_harnes/runtime` |
 | 数据源 | `/mnt/fin_bench/eval_data` |
 | 日常评测产物 | `/mnt/fin_bench/eval_data/{source}/3_eval_output/0_daily_eval/` |
 | 流失样本产物 | `/mnt/fin_bench/eval_data/{source}/3_eval_output/3_lost_user_eval/` |
@@ -69,9 +69,11 @@ Eris 的 `collectionsFile` 指向独立 JSON 清单，格式见[清单示例](..
 | 状态与锁 | `runtime/state/` |
 | 日志 | `runtime/log/runtime.log`、`runtime/log/evaluation.log` |
 
+代码部署在系统盘 `/opt/eval_harness/`，不在共享盘（ceph-fuse）保留 checkout：共享盘的小文件写入、重命名和删除延迟明显高于系统盘，会拖慢构建、Worker 启动和依赖更新。代码随时可从 Git 重新拉取，因此可以直接清理和重建；配置、密钥、状态、日志和评测产物继续放在共享盘的外部运行目录与数据目录，不随 checkout 移动。
+
 `source` 使用实际来源目录，例如 `0_wencai`、`1_aime`、`2_ifind`。配置、输入、账号和结果独立于 checkout。正式归因为 `<模型>/<模型>_attribution-YYYY-MM-DD.jsonl`，摘要为 `<模型>/compact/<模型>_compact-YYYY-MM-DD.jsonl`；问财对局为 `comparison/<模型对>/<模型对>-YYYY-MM-DD.jsonl`。恢复账本与来源结果放在同一配置输出根下的 `.runs/<run ID>/`，不另存到 checkout 或 `runtime/data/runs`，也不作为默认交付入口。业务日期沿用输入完整的日期型 batch_id，不从运行或整理时间推导。
 
-所有分支、提交或专项用途的代码均部署在上述代码根目录的独立子目录，目录名由操作者按用途指定；`runtime/` 专用于持久配置、密钥、账号、聊天、状态和日志，不存放 checkout。停止使用 `user_workspace` 下的代码和运行目录，不保留指向旧位置的软链接。不同 checkout 共用外部配置时仍须遵守实例锁，更新代码不会自动启动评测或调度任务。
+所有分支、提交或专项用途的代码均部署在上述系统盘代码根目录的独立子目录，目录名由操作者按用途指定；外部 `runtime/` 专用于持久配置、密钥、账号、聊天、状态和日志，不存放 checkout。停止使用 `user_workspace` 下的代码和运行目录，不保留指向旧位置的软链接。不同 checkout 共用外部配置时仍须遵守实例锁，更新代码不会自动启动评测或调度任务。
 
 废弃的进程、checkout、一次性脚本、实验配置与状态、历史输入副本、旧运行日志及迁移备份直接清理，不留档。保留当前服务配置、密钥、账号与聊天、跨 run 问题库及统计记录；数据源的原始输入和正式评测结果不属于部署清理范围。
 
@@ -95,7 +97,11 @@ Worker 启动期限保持 60 秒，由 Supervisor 异步、小批预热并统一
 
 ## 更新代码
 
-先停止对应 Host 或 Eris 进程并等待保存完成，再在服务器对应 checkout（主线为 `/mnt/fin_bench/sync_datasets/code/1_eval_harnes/main`）执行 `git pull --ff-only`。依赖、vendor 或工具链有变化时重新执行 `npm run bootstrap`，随后 `npm run build`、`npm run doctor`。更新完成后手动启动所需入口。
+先停止对应 Host 或 Eris 进程并等待保存完成，再在服务器对应 checkout（主线为 `/opt/eval_harness/main`）执行 `git pull --ff-only`。checkout 缺失或损坏时直接从 Git 重新克隆，不恢复共享盘旧副本。
+
+依赖安装只在下列情况执行 `npm run bootstrap`：首次部署或 checkout 缺少 `node_modules` / `.venv`；`package.json`、根 `package-lock.json` 或 `vendor/pi/package-lock.json` 变化；Node/npm/Python/uv 工具链版本变化；依赖目录损坏。普通代码更新不重新安装依赖，直接 `npm run build`；未改动 `vendor/pi` 时可执行 `npm run build:app` 跳过 Pi 重建。
+
+`npm ci` 按锁文件删除并重建 `node_modules`，用于还原精确依赖或排查依赖损坏，不是每次部署步骤；`npm run build` 不安装依赖。是否需要安装只看锁文件和工具链是否变化，不看部署次数或时间间隔。依赖、vendor 或工具链有变化时重新执行 `npm run bootstrap`，随后 `npm run build`、`npm run doctor`。更新完成后手动启动所需入口。
 
 代码由服务器通过 Git 获取，凭据保存在 checkout 外，权限 `600`；密钥不进入 origin、命令参数或 Git。服务器配置继续保存在外部运行目录。
 
@@ -108,7 +114,7 @@ git -c credential.helper='store --file=/mnt/fin_bench/sync_datasets/code/1_eval_
 
 ## Eris 只读分析助手
 
-Eris 使用独立代码目录 `/mnt/fin_bench/sync_datasets/code/1_eval_harnes/eris-code`，持久目录为同一部署根目录下的 `runtime/`；评测与分析使用各自的启动入口。
+Eris 使用系统盘上的独立代码目录 `/opt/eval_harness/eris-code`，持久目录为共享盘的 `runtime/`；评测与分析使用各自的启动入口。
 
 使用[服务配置示例](../configs/eris.example.json)准备服务器外置配置和产物清单。部署脚本默认使用上述 Eris checkout 与运行目录，必须显式提供渠道配置和产物清单路径：
 
@@ -123,7 +129,7 @@ unset ERIS_ADMIN_PASSWORD
 
 密码应通过私密环境输入提供，不写入命令历史。部署脚本通过 SSH stdin 传递初始化密码，代码由服务器从集群 Git 读取；复用既有只读 Git 凭据，不传输本机输入、结果、聊天或 checkout。
 
-需要部署其他分支时显式传入 `--branch` 和 `--code-path /mnt/fin_bench/sync_datasets/code/1_eval_harnes/<用途>`。脚本拒绝根目录之外、`runtime/` 内或经软链接跳转的代码路径；`--runtime-root` 只接受固定的外部运行目录。
+需要部署其他分支时显式传入 `--branch` 和 `--code-path /opt/eval_harness/<用途>`。脚本拒绝系统盘代码根目录之外、外部 `runtime/` 内或经软链接跳转的代码路径；`--runtime-root` 只接受固定的共享盘外部运行目录。
 
 部署优先使用 mise；服务器已通过系统路径安装同一组锁定版本时直接复用，启动和部署均校验 Node/npm/Python/uv 的精确版本，不允许版本降级。
 

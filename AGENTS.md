@@ -37,7 +37,7 @@
 ## 数据与运行
 
 - 评测服务与 Eris 运行在服务器；本地只做代码开发、构建、模拟测试及 Git 提交推送。真实模型评测、数据读取与正式产物写入均在服务器完成。
-- 服务器代码统一部署在 `/mnt/fin_bench/sync_datasets/code/1_eval_harnes/` 的独立子目录：主线 `main/`、Eris `eris-code/`，其他分支或用途另建子目录；共享外部运行目录为 `runtime/`，其中不放 checkout。不再使用 `user_workspace` 部署，不保留旧路径软链接。废弃任务的进程、checkout、一次性脚本、实验配置与状态、历史输入副本、旧运行日志和迁移备份直接清理，不留档；保留当前配置、密钥、账号、聊天、问题库与统计记录，数据源原始输入和正式评测结果不得随部署清理删除。
+- 服务器代码统一部署在系统盘 `/opt/eval_harness/` 的独立子目录：主线 `main/`、Eris `eris-code/`，其他分支或用途另建子目录；代码从 Git 拉取，不在共享盘保留 checkout。共享外部运行目录为 `/mnt/fin_bench/sync_datasets/code/1_eval_harnes/runtime/`，其中不放 checkout。不再使用 `user_workspace` 部署，不保留旧路径软链接。废弃任务的进程、checkout、一次性脚本、实验配置与状态、历史输入副本、旧运行日志和迁移备份直接清理，不留档；保留当前配置、密钥、账号、聊天、问题库与统计记录，数据源原始输入和正式评测结果不得随部署清理删除。
 - 服务器数据根目录为 `/mnt/fin_bench/eval_data/`，来源为 `0_wencai`、`1_aime`、`2_ifind`。数据排查、分析与材料准备优先读取各来源的 `2_eval_input/`、`3_eval_output/`，以及 `4_user_kyc_data/{source}/`；默认不查看或遍历 `0_archive/`、`1_7z_data/`，只有用户明确要求处理归档或压缩包时才进入。目录约定见[部署指南](docs/deployment.md#服务器数据目录)。
 - 业务数据根目录、来源清单和输入/输出/KYC 目录只在外部配置中声明，禁止写死在 TypeScript、JavaScript 或脚本中。Host 使用显式输入路径、`output.path` 与 `output.testPath`；Eris 使用配置的业务 ID 与产物目录映射，不从目录名推导来源或测试范围。配置样例可展示服务器约定，运行时不得回退到内置路径。
 - 真实评测产物只能放在 `/mnt/fin_bench/eval_data/{source}/3_eval_output/`：日常在 `0_daily_eval/`，专项在 `1_task_eval/<任务>/`；任何小样本、试跑、benchmark 和稳定性验证都在同来源的 `test_eval/`。不得写入 checkout 或 `runtime/data/runs`，不保留旧位置副本或软链接。配置、运行状态与统一日志继续使用各自既定目录。

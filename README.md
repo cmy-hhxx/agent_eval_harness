@@ -8,7 +8,7 @@ TypeScript Host 编排评测任务，Pi Worker 执行模型与工具调用。通
 
 评测服务与 Eris 均在服务器运行；本地只做代码开发、构建、模拟测试和 Git 提交推送。服务器拉取代码后安装、构建并启动服务，真实数据与评测产物留在服务器。
 
-服务器代码统一部署在 `/mnt/fin_bench/sync_datasets/code/1_eval_harnes/` 下：主线为 `main/`，Eris 为 `eris-code/`，其他分支或用途使用独立子目录；持久运行目录为 `runtime/`。不再向 `user_workspace` 部署代码或运行脚本，完整约定见[部署目录](docs/deployment.md#目录)。
+服务器代码统一部署在系统盘 `/opt/eval_harness/` 下：主线为 `main/`，Eris 为 `eris-code/`，其他分支或用途使用独立子目录。代码从 Git 重新拉取，不在共享盘保留 checkout；持久运行目录仍为共享盘上的 `/mnt/fin_bench/sync_datasets/code/1_eval_harnes/runtime/`。不再向 `user_workspace` 部署代码或运行脚本，完整约定见[部署目录](docs/deployment.md#目录)。
 
 输入由仓库外准备，Host 接收显式配置的文件或目录，通过 CLI 预检、执行、续跑并保存正式结果。显式批次入口统一网关额度、Worker 池和多路完成接力；配置见[批次调度](docs/usage.md#批次调度)。收包清洗、网页工作台、目录监控、日夜定时触发、MongoDB 同步和统计上传不在本仓库的运行链路中。
 
