@@ -83,6 +83,16 @@ test("hot journal is durable, replayable and rejects cross-task submission id re
   reopened.close();
 });
 
+test("outbox batches honor a byte budget so a large backlog cannot all enter memory", () => {
+  const hot = new RunHotStore(":memory:", "byte-budget");
+  try {
+    hot.append({ at: 1, manifest: { inputCatalog: ["x".repeat(100_000)] } });
+    hot.append({ at: 2, manifest: { inputCatalog: ["y".repeat(100_000)] } });
+    assert.deepEqual(hot.pending(10, 150_000).map(event => event.seq), [1]);
+    assert.deepEqual(hot.pending(10, 250_000).map(event => event.seq), [1, 2]);
+  } finally { hot.close(); }
+});
+
 test("progress journal appends ordered events and replays only after the checkpoint sequence", async t => {
   const root = await mkdtemp(path.join(os.tmpdir(), "eval-progress-"));
   t.after(() => rm(root, { recursive: true, force: true }));

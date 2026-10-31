@@ -184,6 +184,22 @@ export async function claimBusinessPartitions(root: string, partitions: { date: 
   } catch (error) { for (const unlock of unlocks.reverse()) await unlock(); throw error; }
 }
 
+const publicationQueues = new Map<string, Promise<void>>();
+
+/** runLock only excludes other processes; same-process runs must queue fairly behind one publisher. */
+async function queuePublication(root: string): Promise<() => void> {
+  const previous = publicationQueues.get(root) ?? Promise.resolve();
+  let release!: () => void;
+  const current = new Promise<void>(resolve => { release = resolve; });
+  const tail = previous.then(() => current);
+  publicationQueues.set(root, tail);
+  await previous;
+  return () => {
+    release();
+    if (publicationQueues.get(root) === tail) publicationQueues.delete(root);
+  };
+}
+
 /** The public view is recoverable from immutable formal rows and its provenance journal. */
 export function createBusinessPublisher(root: string) {
   const cache = new Map<string, { revision: string; records: BusinessResult[] }>();
@@ -199,8 +215,10 @@ export function createBusinessPublisher(root: string) {
     const current = { revision, bytes, spans }; views.set(file, current); return current;
   };
   return async (record: Omit<BusinessResult, "line" | "published">, row: JsonObject, refresh = false, existingLine?: number) => {
-    const unlock = await waitForRunLock(path.join(root, ".delivery", "publication"), AbortSignal.timeout(10_000));
+    const release = await queuePublication(root);
+    let unlock: (() => Promise<void>) | undefined;
     try {
+      unlock = await waitForRunLock(path.join(root, ".delivery", "publication"), AbortSignal.timeout(10_000));
       const journal = path.join(root, ".delivery", "provenance", record.date + ".jsonl");
       const revision = async () => stat(journal).then(info => [info.ino, info.size, info.mtimeMs].join(":"), error => {
         if (error.code !== "ENOENT") throw error;
@@ -294,6 +312,8 @@ export function createBusinessPublisher(root: string) {
       await appendJsonl(journal, [published]);
       saved.records.push(published);
       saved.revision = await revision();
-    } finally { await unlock(); }
+    } finally {
+      try { await unlock?.(); } finally { release(); }
+    }
   };
 }

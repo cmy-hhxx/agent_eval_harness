@@ -1012,7 +1012,8 @@ export async function runEvaluation(options: RunOptions): Promise<Record<string,
           supervisor?.retire(worker, "Worker did not become reusable");
         deferWorker(worker);
       }));
-      let scheduled = false, blocked = false;
+      let scheduled = false;
+      const blockedStates = new Set<string>();
       const scheduledAtCompletion = completions;
       let reschedule = false;
       for (const task of scheduleTasks(manifest.tasks.filter(dispatchable), manifest.states, options.taskSource.scheduling?.stagePriority)) {
@@ -1028,7 +1029,7 @@ export async function runEvaluation(options: RunOptions): Promise<Record<string,
           !["pending", "running", "succeeded"].includes(manifest.states[id].status))) {
           manifest.states[task.id].status = "blocked";
           manifest.states[task.id].reason = "Dependency did not succeed";
-          blocked = true;
+          blockedStates.add(task.id);
           continue;
         }
         if (dependencies.some(([label]) => !dependencyReady(task, label, manifest.states, running))) continue;
@@ -1046,7 +1047,7 @@ export async function runEvaluation(options: RunOptions): Promise<Record<string,
           if (reason) {
             manifest.states[task.id].status = "blocked";
             manifest.states[task.id].reason = reason;
-            blocked = true;
+            blockedStates.add(task.id);
             continue;
           }
           preparing.add(task.id);
@@ -1129,7 +1130,7 @@ export async function runEvaluation(options: RunOptions): Promise<Record<string,
         // make progress before preparing the next task in a large cohort.
         await yieldToIO();
       }
-      if (blocked) await current.save(undefined, { manifest: true, all: true });
+      if (blockedStates.size) await current.save(undefined, { manifest: true, stateIds: [...blockedStates] });
       if (reschedule) continue;
       const retryDeadlines = manifest.tasks.filter(task => !executionStopReason(manifest) && dispatchable(task) &&
         manifest.states[task.id].status === "pending" && (manifest.states[task.id].nextRetryAt ?? 0) > Date.now())

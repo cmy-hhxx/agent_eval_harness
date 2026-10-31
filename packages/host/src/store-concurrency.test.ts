@@ -73,6 +73,28 @@ for (const debug of [false, true]) test(`two hundred independent activations and
   assert(p95 < 1000, `acceptance p95 must stay below one second, received ${p95.toFixed(1)}ms`);
 });
 
+test("blocked scheduler subsets persist only the newly blocked states", async t => {
+  const run = await mkdtemp(path.join(os.tmpdir(), "eval-blocked-states-"));
+  t.after(() => rm(run, { recursive: true, force: true }));
+  const state: RunState = { manifest: { format: "evaluation-run", debug: false, runId: "blocked", status: "running",
+    engine: { engine: "pi", version: "test", commit: "test", buildId: "test" }, evaluatorVersion: "test",
+    config: {}, tasks: [], inputs: {}, states: {
+      a: { status: "blocked", attempts: 0 }, b: { status: "pending", attempts: 0 }, c: { status: "blocked", attempts: 0 },
+    }, preflight: {}, startedAt: 1 }, receipts: {}, usage: emptyUsage(), recordedAttempts: 0 };
+  const repository: RunRepository = {
+    async readRun() { return structuredClone(state); }, async readTasks() { return structuredClone(state); },
+    async writeRun() {}, createResultWriter() { return async () => {}; },
+  };
+  const hot = new RunHotStore(":memory:", runJournalIdentity(state));
+  const store = new RunStore(run, state, {}, { agents: new AgentRegistry([]),
+    taskSource: { id: "fixture", bind(): never { throw new Error("unused"); } }, repository }, undefined, hot);
+  t.after(() => store.close());
+  await store.save(undefined, { manifest: true, stateIds: ["a", "c"] });
+  const pending = hot.pending();
+  assert.equal(pending.length, 1);
+  assert.deepEqual(Object.keys(pending[0]!.event.states!), ["a", "c"]);
+});
+
 test("two cold restores retain unfinished drafts and inspection proof after journal compaction", async t => {
   const run = await mkdtemp(path.join(os.tmpdir(), "eval-recovery-checkpoint-"));
   t.after(() => rm(run, { recursive: true, force: true }));

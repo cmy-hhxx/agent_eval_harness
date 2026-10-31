@@ -125,13 +125,18 @@ export class RunHotStore {
     }));
   }
 
-  pending(limit = 500): StoredRunJournalEvent[] {
-    return (this.database.prepare(
-      "SELECT seq, payload FROM events WHERE delivered = 0 ORDER BY seq LIMIT ?",
-    ).all(limit) as { seq: number; payload: string }[]).map(row => ({
-      seq: Number(row.seq),
-      event: JSON.parse(row.payload) as RunJournalDelta,
-    }));
+  pending(limit = 500, maxBytes = 32 * 1024 * 1024): StoredRunJournalEvent[] {
+    const pending: StoredRunJournalEvent[] = [];
+    let bytes = 0;
+    const rows = this.database.prepare(
+      "SELECT seq, payload, length(payload) AS bytes FROM events WHERE delivered = 0 ORDER BY seq LIMIT ?",
+    ).iterate(limit) as Iterable<{ seq: number; payload: string; bytes: number }>;
+    for (const row of rows) {
+      if (pending.length && bytes + Number(row.bytes) > maxBytes) break;
+      pending.push({ seq: Number(row.seq), event: JSON.parse(row.payload) as RunJournalDelta });
+      bytes += Number(row.bytes);
+    }
+    return pending;
   }
 
   markDelivered(sequences: readonly number[]): void {

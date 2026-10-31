@@ -41,6 +41,30 @@ test("business publication keeps the latest complete verdict and can repair a mi
   assert(provenance.every(entry => !Object.hasOwn(entry.origin.reference, "row")), "provenance never duplicates verdict bodies");
 });
 
+test("concurrent publishers on one root queue and release after a failed publication", async t => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "business-queue-"));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const record = (id: string, date: string): Omit<BusinessResult, "line" | "published"> => ({
+    id, date, file: `aime_fast/aime_fast_attribution-${date}.jsonl`, stage: "attribution-session", scope: {},
+    answers: [{ id: `answer-${id}`, batch: date, caseId: "case", model: "aime_fast", session: "session",
+      traces: ["trace"], source: "/source/input.jsonl", line: 1 }],
+    acceptedAt: 1, evaluatorVersion: "r513", judge: "judge", submissionId: id, complete: true,
+    origin: { run: path.join(root, `run-${id}`), taskId: id, reference: { id, file: "attribution.jsonl", line: 1 } },
+  });
+  const first = createBusinessPublisher(root), second = createBusinessPublisher(root);
+  await writeJsonl(path.join(root, "aime_fast/aime_fast_attribution-2026-10-01.jsonl"), [{ existing: true }]);
+  await assert.rejects(first(record("bad", "2026-10-01"), { existing: true }), /缺少可核实的整理映射/);
+  await Promise.all(Array.from({ length: 20 }, (_, index) => {
+    const date = `2026-10-${String(index + 2).padStart(2, "0")}`;
+    return (index % 2 ? second : first)(record(`answer-${index}`, date), { value: index });
+  }));
+  for (let index = 0; index < 20; index++) {
+    const date = `2026-10-${String(index + 2).padStart(2, "0")}`, rows = [];
+    for await (const row of readJsonl(path.join(root, `aime_fast/aime_fast_attribution-${date}.jsonl`))) rows.push(row);
+    assert.deepEqual(rows, [{ value: index }]);
+  }
+});
+
 test("organized existing rows are indexed in place and unrelated unindexed rows survive replacement", async t => {
   const root = await mkdtemp(path.join(os.tmpdir(), "organized-results-"));
   t.after(() => rm(root, { recursive: true, force: true }));

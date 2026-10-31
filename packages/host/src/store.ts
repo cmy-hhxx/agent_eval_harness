@@ -119,6 +119,7 @@ export interface EvaluationServices {
 
 interface SaveOptions {
   all?: boolean;
+  stateIds?: readonly string[];
   tasks?: readonly PlannedTask[];
   taskOrder?: string[];
   manifest?: boolean;
@@ -171,6 +172,8 @@ export class RunStore {
     const states: Record<string, TaskState> = {};
     if (options.all) {
       for (const id of Object.keys(this.manifest.states)) states[id] = structuredClone(this.manifest.states[id]);
+    } else if (options.stateIds) {
+      for (const id of options.stateIds) if (this.manifest.states[id]) states[id] = structuredClone(this.manifest.states[id]);
     } else if (taskId && this.manifest.states[taskId]) {
       states[taskId] = structuredClone(this.manifest.states[taskId]);
     }
