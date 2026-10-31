@@ -41,6 +41,30 @@ test("business publication keeps the latest complete verdict and can repair a mi
   assert(provenance.every(entry => !Object.hasOwn(entry.origin.reference, "row")), "provenance never duplicates verdict bodies");
 });
 
+test("a journaled result whose row write was interrupted is rebuilt before the next publication", async t => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "business-recovery-"));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const file = path.join(root, "aime_fast/aime_fast_attribution-2026-10-26.jsonl"), journal = path.join(root, ".delivery/provenance/2026-10-26.jsonl");
+  const first = { session_summary: "已完成判词" }, interrupted = { session_summary: "中断前已入索引" }, next = { session_summary: "下一条判词" };
+  const record = (id: string, run: string, acceptedAt: number): Omit<BusinessResult, "line" | "published"> => ({
+    id, date: "2026-10-26", file: "aime_fast/aime_fast_attribution-2026-10-26.jsonl", stage: "attribution-session", scope: {}, answers: [],
+    acceptedAt, evaluatorVersion: "r513", judge: "judge", submissionId: id, complete: true,
+    origin: { run: path.join(root, run), taskId: id, reference: { id, file: "attribution.jsonl", line: 1 } },
+  });
+  for (const [run, row] of [["first-run", first], ["interrupted-run", interrupted], ["next-run", next]] as const)
+    await writeJsonl(path.join(root, run, "results/attribution.jsonl"), [row]);
+  const publish = createBusinessPublisher(root);
+  await publish(record("first", "first-run", 1), first);
+  const saved = []; for await (const entry of readJsonl(journal)) saved.push(entry);
+  await writeJsonl(journal, [...saved, { ...record("interrupted", "interrupted-run", 2), line: 2, published: false }]);
+  await publish(record("next", "next-run", 3), next);
+  const rows = []; for await (const row of readJsonl(file)) rows.push(row);
+  assert.deepEqual(rows, [first, interrupted, next]);
+  const provenance = await readBusinessResults(root);
+  assert(provenance.some(entry => entry.id === "interrupted" && entry.published), "the rebuilt row is journalled as published");
+  assert(provenance.some(entry => entry.id === "next" && entry.published));
+});
+
 test("concurrent publishers on one root queue and release after a failed publication", async t => {
   const root = await mkdtemp(path.join(os.tmpdir(), "business-queue-"));
   t.after(() => rm(root, { recursive: true, force: true }));

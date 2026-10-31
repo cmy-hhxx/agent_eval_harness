@@ -245,7 +245,26 @@ export function createBusinessPublisher(root: string) {
       if (previous?.submissionId === record.submissionId && previous.published && !refresh &&
         await exists(path.join(previous.origin.run, "results", previous.origin.reference.file!)) &&
         await exists(destination(root, previous))) return;
-      const file = destination(root, record), current = await view(file);
+      const file = destination(root, record);
+      let current = await view(file);
+      if (current) {
+        // A crash between journaling a result and appending its row leaves a journaled
+        // tail the file never received. Rebuild that tail from the immutable formal rows
+        // before the next result claims the next line.
+        const journaled = [...latest.values()].filter(item => item.file === record.file);
+        const missing = journaled.filter(item => item.line > current!.spans.size).sort((a, b) => a.line - b.line);
+        if (missing.length) {
+          const lines = new Set(journaled.map(item => item.line));
+          if (missing.some(item => item.published) || lines.size !== journaled.length || lines.size !== Math.max(...lines))
+            throw new Error("交付结果索引缺行，不能补造或删除未索引结果");
+          await appendJsonl(file, await Promise.all(missing.map(readBusinessResultRow)));
+          const published = missing.map(item => ({ ...item, published: true }));
+          await appendJsonl(journal, published);
+          saved.records.push(...published);
+          saved.revision = await revision();
+          current = (await view(file))!;
+        }
+      }
       let adopted = false;
       if (!previous && current && existingLine !== undefined) {
         const span = current.spans.get(existingLine);

@@ -48,6 +48,7 @@ const fastFiles = [
   "dist/packages/data/src/material-pool.test.js",
   "dist/packages/data/src/evaluation-collections.test.js",
   "dist/packages/data/src/run-journal.test.js",
+  "dist/packages/data/src/business-results.test.js",
   "dist/packages/host/src/scheduling.test.js",
   "dist/packages/host/src/failure-guard.test.js",
   "dist/packages/host/src/store-concurrency.test.js",
