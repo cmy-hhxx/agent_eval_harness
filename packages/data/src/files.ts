@@ -152,6 +152,8 @@ export async function writeJsonl(file: string, rows: Iterable<unknown> | AsyncIt
 /** Append complete JSONL rows and make their bytes durable without rewriting existing rows. */
 export async function appendJsonl(file: string, rows: Iterable<unknown>): Promise<void> {
   await mkdir(path.dirname(file), { recursive: true });
+  // Appending never changes the directory entry, so only a newly created file needs its directory synced.
+  const created = !await exists(file);
   const handle = await open(file, "a");
   try {
     for (const row of rows) await handle.writeFile((JSON.stringify(row) ?? "null") + "\n");
@@ -159,6 +161,7 @@ export async function appendJsonl(file: string, rows: Iterable<unknown>): Promis
   } finally {
     await handle.close();
   }
+  if (!created) return;
   const directory = await open(path.dirname(file), "r");
   try { await syncFile(directory); } finally { await directory.close(); }
 }

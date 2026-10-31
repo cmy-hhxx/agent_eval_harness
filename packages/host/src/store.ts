@@ -223,7 +223,9 @@ export class RunStore {
     this.outboxFlush = (async () => {
       try {
         while (true) {
-          const pending = this.journal.pending(500);
+          // Publication costs one durable append per touched delivery file, not per row;
+          // a wider batch amortizes those appends instead of paying them every few hundred events.
+          const pending = this.journal.pending(2000);
           if (!pending.length) break;
           if (pending.some(event => Object.keys(event.event.receipts ?? {}).length))
             await this.writeResults(this.resultView());
@@ -238,6 +240,8 @@ export class RunStore {
           this.journal.markDelivered(pending.map(event => event.seq));
           this.lastDeliveredSequence = pending.at(-1)!.seq;
           this.outboxMetrics.delivered += pending.length;
+          // Sustained overload never empties the queue, so capacity must be re-evaluated per batch.
+          this.updateAdmission();
         }
         this.outboxMetrics.lastError = undefined;
         this.updateAdmission();
