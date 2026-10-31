@@ -168,6 +168,29 @@ test("an in-place answer change cannot inherit an older completed verdict", asyn
   } finally { await close(); }
 });
 
+test("a restarted writer republishes a journaled result whose delivery row never landed", async t => {
+  const f = await fixtureConfig([[input()], [], [], []]);
+  t.after(() => rm(f.directory, { recursive: true, force: true }));
+  const config = { ...f.config, workflow: "attribution", output: { ...f.config.output, layout: "business", reuseCompleted: true },
+    inputs: { ...f.config.inputs, batches: ["2026-10-26"], versions: f.config.inputs.versions.slice(0, 1) } } as AttributionConfig;
+  const finished = await completed(config, "interrupted-delivery", "fixture", "已完成判词", Date.now());
+  await businessAttributionRepository.createResultWriter(finished.run, finished.plan.inputs)(finished.state);
+  const journal = path.join(config.output.path, ".delivery", "provenance", "2026-10-26.jsonl");
+  const entries: { id: string; file: string; line: number; published: boolean }[] = [];
+  for await (const entry of readJsonl(journal)) entries.push(entry as (typeof entries)[number]);
+  const pending = entries.findLast(entry => entry.published && entry.file.endsWith("_attribution-2026-10-26.jsonl"))!;
+  // Crash between journaling the result and appending its delivery row.
+  await writeJsonl(journal, entries.filter(entry => !(entry.id === pending.id && entry.published)));
+  const file = path.join(config.output.path, pending.file), delivered = [];
+  for await (const row of readJsonl(file)) delivered.push(row);
+  assert.equal(delivered.length, 1);
+  await writeJsonl(file, []);
+  // A restarted writer must not treat the journaled-but-unpublished submission as delivered.
+  await businessAttributionRepository.createResultWriter(finished.run, finished.plan.inputs)(finished.state);
+  const rebuilt = []; for await (const row of readJsonl(file)) rebuilt.push(row);
+  assert.deepEqual(rebuilt, delivered);
+});
+
 test("an accepted attribution without compact only schedules the missing summary and retains the original verdict", async t => {
   const f = await fixtureConfig([[input()], [], [], []]);
   t.after(() => rm(f.directory, { recursive: true, force: true }));

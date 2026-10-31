@@ -959,7 +959,7 @@ export async function runEvaluation(options: RunOptions): Promise<Record<string,
       }
     }
     const runningChannels = new Map<string, string>();
-    let completions = 0, persistencePaused = false;
+    let completions = 0, persistencePaused = false, scheduledCompletions = -1;
     while (true) {
       if (controller.signal.aborted) break;
       if (fatalError) {
@@ -967,17 +967,6 @@ export async function runEvaluation(options: RunOptions): Promise<Record<string,
         modelRequests.stopAdmission(error);
         await Promise.all(running.values());
         throw error;
-      }
-      admission = sessionAdmission ? sessionAdmissionSnapshot(manifest.tasks, manifest.states, sessionAdmission, manifest) : undefined;
-      readyDemand = manifest.tasks.filter(runnable).length;
-      taskConcurrency();
-      manifest.concurrency = desiredConcurrency();
-      if (supervisor) {
-        const demand = running.size + readyDemand;
-        supervisor.setDemand(options.runId, demand ? Math.min(taskConcurrency(), Math.max(options.runtime.workerSlots ?? 1, demand)) : 0);
-        eligible = supervisor.slots;
-        for (const slot of unavailable.keys()) if (supervisor.exited(slot.owner)) unavailable.delete(slot);
-        if (supervisor.exhausted() && !running.size && manifest.tasks.some(runnable)) { resourcePause = "worker_capacity_unavailable"; break; }
       }
       if (options.pauseSignal?.aborted) {
         await Promise.all(running.values());
@@ -994,6 +983,23 @@ export async function runEvaluation(options: RunOptions): Promise<Record<string,
         continue;
       }
       if (persistencePaused) { persistencePaused = false; options.onProgress?.("run_resumed persistence_recovered"); }
+      // Rebuilding the schedule over a large plan is expensive. At capacity with no
+      // completion since the last pass nothing can start; only quota growth reopens a
+      // slot, and taskConcurrency() below still observes it.
+      const saturated = completions === scheduledCompletions && running.size >= taskConcurrency();
+      if (!saturated) {
+        admission = sessionAdmission ? sessionAdmissionSnapshot(manifest.tasks, manifest.states, sessionAdmission, manifest) : undefined;
+        readyDemand = manifest.tasks.filter(runnable).length;
+      }
+      taskConcurrency();
+      manifest.concurrency = desiredConcurrency();
+      if (supervisor) {
+        const demand = running.size + readyDemand;
+        supervisor.setDemand(options.runId, demand ? Math.min(taskConcurrency(), Math.max(options.runtime.workerSlots ?? 1, demand)) : 0);
+        eligible = supervisor.slots;
+        for (const slot of unavailable.keys()) if (supervisor.exited(slot.owner)) unavailable.delete(slot);
+        if (supervisor.exhausted() && !running.size && manifest.tasks.some(runnable)) { resourcePause = "worker_capacity_unavailable"; break; }
+      }
       if (executionStopReason(manifest) && running.size === 0) break;
       changed = new Promise<void>((resolve) => {
         wake = resolve;
@@ -1016,7 +1022,7 @@ export async function runEvaluation(options: RunOptions): Promise<Record<string,
       const blockedStates = new Set<string>();
       const scheduledAtCompletion = completions;
       let reschedule = false;
-      for (const task of scheduleTasks(manifest.tasks.filter(dispatchable), manifest.states, options.taskSource.scheduling?.stagePriority)) {
+      for (const task of saturated ? [] : scheduleTasks(manifest.tasks.filter(dispatchable), manifest.states, options.taskSource.scheduling?.stagePriority)) {
         if (controller.signal.aborted || options.pauseSignal?.aborted || fatalError || current.admissionPaused() || executionStopReason(manifest)) break;
         // Worker startup and preparation yield while dependencies finish. Refresh
         // the stage order before admitting more of the old upstream backlog.
@@ -1135,8 +1141,9 @@ export async function runEvaluation(options: RunOptions): Promise<Record<string,
         await current.save(undefined, { manifest: false, stateIds: ids });
         blockedStates.clear();
       }
+      scheduledCompletions = completions;
       if (reschedule) continue;
-      const retryDeadlines = manifest.tasks.filter(task => !executionStopReason(manifest) && dispatchable(task) &&
+      const retryDeadlines = saturated ? [] : manifest.tasks.filter(task => !executionStopReason(manifest) && dispatchable(task) &&
         manifest.states[task.id].status === "pending" && (manifest.states[task.id].nextRetryAt ?? 0) > Date.now())
         .map(task => manifest.states[task.id].nextRetryAt!);
       if (running.size || retryDeadlines.length || supervisor && manifest.tasks.some(runnable) && !supervisor.exhausted()) {

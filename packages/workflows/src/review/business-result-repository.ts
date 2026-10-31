@@ -342,14 +342,21 @@ export function businessResultRepository(repository: RunRepository, adapters: {
     createResultWriter(run, inputs) {
       const write = repository.createResultWriter(run, inputs), seen = new Map<string, JsonObject>();
       let publisher: ReturnType<typeof createBusinessPublisher> | undefined;
+      let delivered: Set<string> | undefined;
       return async state => {
         await write(state);
         const config = state.manifest.config as EvaluationConfig;
         if (config.output.layout !== "business") return;
         publisher ??= createBusinessPublisher(config.output.path);
+        // A fresh process sees every committed receipt again. The provenance journal
+        // already records which accepted submissions reached a delivery file, so only
+        // unseen or newer verdicts need the serialized delivery lock.
+        delivered ??= new Set((await readBusinessResults(config.output.path))
+          .filter(record => record.published).map(record => record.submissionId));
         for (const task of state.manifest.tasks) {
-          const row = state.receipts[task.id]?.exported?.row;
+          const receipt = state.receipts[task.id], row = receipt?.exported?.row;
           if (!row || seen.get(task.id) === row || task.stage === "rewrite") continue;
+          if (delivered.has(receipt.submissionId)) { seen.set(task.id, row); continue; }
           const record = await describe(run, state, task);
           if (record) await publisher(record, row, seen.has(task.id));
           seen.set(task.id, row);
