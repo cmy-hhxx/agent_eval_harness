@@ -8,7 +8,6 @@ export interface InvestigationGroup {
   /** Stable within a turn: "delivery", or kind:name of the group's first catalog member. */
   key: string;
   delivery: boolean;
-  component_family: string;
   members: JsonObject[];
   /** Tool groups review their own invocations; delivery receives every invocation as checkable source. */
   links: JsonObject[];
@@ -24,30 +23,42 @@ export function invocationTarget(raw: RawInput, members: JsonObject[], requestIn
 }
 const escape = (text: string) => text.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&");
 
-/** The group family follows its first link's actual executor; a missing link never invents a tool name. */
-function groupComponentFamily(raw: RawInput, group: InvestigationGroup): string {
-  if (group.delivery) return "answer_synthesis";
-  const request = Number(group.links[0]?.request_message_index);
-  if (!Number.isSafeInteger(request) || !raw.messages[request]) return "other";
-  try { return normalizeComponentFamily(invocationTarget(raw, group.members, request)); }
-  catch { return "other"; }
+/** A member owns the targets of the calls it generated; groups are investigation scope, not identity. */
+function memberTargetFamilies(raw: RawInput, actors: JsonObject[], links: JsonObject[], member: JsonObject): string[] {
+  if (typeof member.component_target === "string" && member.component_target.trim())
+    return [normalizeComponentFamily(member.component_target)];
+  const owned = new Set((member.message_indices as number[] | undefined) ?? []), families = new Set<string>();
+  for (const link of links) {
+    if (!owned.has(Number(link.invoking_model_message_index))) continue;
+    const request = Number(link.request_message_index);
+    if (!Number.isSafeInteger(request) || !raw.messages[request]) continue;
+    try { families.add(normalizeComponentFamily(invocationTarget(raw, actors, request))); }
+    catch { /* Missing target names fall back to the member's own kind below. */ }
+  }
+  return [...families];
 }
 
 function memberComponentRole(member: JsonObject): ComponentRole {
   const role = member.role, kind = member.kind;
   if (role === "request_generation")
     return member.identity_basis === "program_request_generation" ? "request_generation" : "planning";
-  if (role === "skill" || role === "script" || role === "tool" || role === "delivery") return role;
+  if (role === "delivery")
+    return member.contains_final_generation === true || member.name === "答案合成" ? "delivery" : "planning";
+  if (role === "skill" || role === "script" || role === "tool") return role;
   if (kind === "skill" || kind === "script" || kind === "tool") return kind;
-  return "tool";
+  return kind === "model" ? "planning" : "tool";
 }
 
-function withComponentIdentity(raw: RawInput, group: InvestigationGroup): InvestigationGroup {
-  const groupFamily = groupComponentFamily(raw, group);
-  return { ...group, component_family: groupFamily, members: group.members.map(member => {
+function withComponentIdentity(raw: RawInput, actors: JsonObject[], links: JsonObject[], group: InvestigationGroup): InvestigationGroup {
+  return { ...group, members: group.members.map(member => {
     const component_role = memberComponentRole(member);
-    const ownsTarget = component_role === "script" || component_role === "tool";
-    return { ...member, component_family: ownsTarget ? normalizeComponentFamily(member.name) : groupFamily, component_role };
+    const families = component_role === "planning" || component_role === "request_generation"
+      ? memberTargetFamilies(raw, actors, links, member) : [];
+    const component_family = component_role === "delivery" ? "answer_synthesis"
+      : component_role === "planning" ? families.length === 1 ? families[0]! : "model"
+        : component_role === "request_generation" ? families.length === 1 ? families[0]! : "other"
+          : normalizeComponentFamily(member.name);
+    return { ...member, component_family, component_role };
   }) };
 }
 
@@ -83,7 +94,7 @@ export function investigationGroups(raw: RawInput, actors: JsonObject[], links: 
   executors.forEach((actor, index) => sets.set(root(index), [...sets.get(root(index)) ?? [], actor]));
   const groups: InvestigationGroup[] = [...sets.values()].map(members => {
     const covered = new Set(members.flatMap(actor => actor.message_indices as number[]));
-    return { key: `${members[0]!.kind}:${members[0]!.name}`, delivery: false, component_family: "other",
+    return { key: `${members[0]!.kind}:${members[0]!.name}`, delivery: false,
       members: members.map(actor => ({ ...actor, role: actor.kind as MemberRole })),
       links: links.filter(link => covered.has(Number(link.request_message_index)) ||
         (link.return_message_indices as number[]).some(index => covered.has(index))), errors: [] };
@@ -113,7 +124,7 @@ export function investigationGroups(raw: RawInput, actors: JsonObject[], links: 
       if (!name.trim() || generators.has(Number(link.invoking_model_message_index))) continue;
       tools.set(name, [...tools.get(name) ?? [], ...link.invoking_model_message_index === null ? [] : [Number(link.invoking_model_message_index)]]);
     }
-    for (const [tool, indices] of tools) group.members.push({ component_index: ++next, kind: "model", name: `${tool} 请求生成`, anonymous: true,
+    for (const [tool, indices] of tools) group.members.push({ component_index: ++next, kind: "model", name: `${tool} 请求生成`, component_target: tool, anonymous: true,
       role: "request_generation", identity_basis: "program_request_generation", message_indices: [...new Set(indices)], source_evidence: [] });
   }
   for (const error of errors) {
@@ -137,8 +148,8 @@ export function investigationGroups(raw: RawInput, actors: JsonObject[], links: 
   const members = delivery.flatMap(actor => !(named ? actor === named : finalOwner(actor)) ? [{ ...actor, role: "delivery" as MemberRole }]
     : finalCapabilities.map(([name, scope]) => ({ ...actor, component_index: ++next, name, components_content: scope,
       identity_basis: "program_final_capability", role: "delivery" as MemberRole, contains_final_generation: true })));
-  return [...groups, ...delivery.length ? [{ key: "delivery", delivery: true, component_family: "answer_synthesis", links, errors: [], members }] : []]
-    .map(group => withComponentIdentity(raw, group));
+  return [...groups, ...delivery.length ? [{ key: "delivery", delivery: true, links, errors: [], members }] : []]
+    .map(group => withComponentIdentity(raw, actors, links, group));
 }
 
 /** Capabilities of the final generation call, ordered by the earliest deviation they can explain. */

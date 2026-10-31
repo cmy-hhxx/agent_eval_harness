@@ -37,8 +37,10 @@ test("an anonymous main loop is linked by its generated arguments and named per 
   assert.equal(chain!.input.investigation_scope, "tool_chain");
   assert.deepEqual((chain!.input.invocations as { request_components: string[] }[]).map(link => link.request_components), [["finquery 请求生成"], ["finquery 请求生成"]]);
   assert.deepEqual(delivery!.raw.map(member => [member.name, member.role, member.contains_final_generation === true]),
-    [["规划", "delivery", false], ...finalCapabilities.map(([name]) => [name, "delivery", true])], "plan-level review and the final answer form the delivery group");
-  assert(delivery!.raw.every(member => member.component_family === "answer_synthesis" && member.component_role === "delivery"));
+    [["规划", "delivery", false], ...finalCapabilities.map(([name]) => [name, "delivery", true])], "plan-level review and the final answer share the delivery scope");
+  assert.deepEqual(delivery!.raw.map(member => [member.name, member.component_family, member.component_role]),
+    [["规划", "finquery", "planning"], ...finalCapabilities.map(([name]) => [name, "answer_synthesis", "delivery"])],
+    "only the final generation call owns the delivery identity; planning stays a planning model");
   assert.equal((delivery!.input.invocations as unknown[]).length, 2, "delivery checks the final answer against every invocation");
 });
 
@@ -66,10 +68,10 @@ test("a skill owns scripts under its directory, a planner answers for every tool
   for (const other of [skill, data, delivery]) assert.deepEqual(other!.errors, [], "delivery and unrelated chains never dispose another chain's error");
   const dataFields = new Map(data!.raw.map(member => [member.name, [member.component_family, member.component_role]]));
   assert.deepEqual(dataFields.get("finquery"), ["finquery", "tool"]);
-  assert.deepEqual(dataFields.get("planner-search"), ["finquery", "planning"]);
+  assert.deepEqual(dataFields.get("planner-search"), ["model", "planning"]);
   const searchFields = new Map(search!.raw.map(member => [member.name, [member.component_family, member.component_role]]));
   assert.deepEqual(searchFields.get("web_search"), ["web_search", "tool"]);
-  assert.deepEqual(searchFields.get("planner-search"), ["web_search", "planning"]);
+  assert.deepEqual(searchFields.get("planner-search"), ["model", "planning"]);
 });
 
 test("an expert finquery chain groups skill, planner, scripts and tool by the first invocation target", () => {
@@ -82,7 +84,7 @@ test("an expert finquery chain groups skill, planner, scripts and tool by the fi
     { type: "llm_turn", name: "答案合成", output: "A公司2025年营收100亿元。" }, { type: "final_answer", content: "A公司2025年营收100亿元。" },
   ] };
   const [chain] = groups(raw, ["shell"]), fields = new Map(chain!.raw.map(member => [member.name, [member.component_family, member.component_role]]));
-  assert.deepEqual(fields.get("aime-finquery"), ["finquery", "skill"]);
+  assert.deepEqual(fields.get("aime-finquery"), ["aime-finquery", "skill"]);
   assert.deepEqual(fields.get("finquery.py 请求生成"), ["finquery", "request_generation"]);
   assert.deepEqual(fields.get("planner-finquery"), ["finquery", "planning"]);
   assert.deepEqual(fields.get("/opt/skills/aime-finquery/finquery.py"), ["finquery", "script"]);
@@ -110,4 +112,44 @@ test("a direct web_fetch chain separates the tool from its program-named request
   const [chain] = groups(raw, ["web_fetch"]), fields = new Map(chain!.raw.map(member => [member.name, [member.component_family, member.component_role]]));
   assert.deepEqual(fields.get("web_fetch"), ["web_fetch", "tool"]);
   assert.deepEqual(fields.get("web_fetch 请求生成"), ["web_fetch", "request_generation"]);
+});
+
+test("a planning model takes the target it actually calls, not its group's first link", () => {
+  const raw: RawInput = { batch_id: "batch", case_id: "planner-target", messages: [
+    { type: "user_question", content: "查询行业数据。" },
+    { type: "llm_turn", name: "planner-search", parent_span: "p1", output: "搜索行业数据。" },
+    call("w", "web_search", { query: "行业数据" }, "p1"), result("w", "web_search", { items: [] }),
+    { type: "final_answer", content: "未找到数据。" },
+  ] };
+  const [chain] = groups(raw, ["web_search"]), fields = new Map(chain!.raw.map(member => [member.name, [member.component_family, member.component_role]]));
+  assert.deepEqual(fields.get("planner-search"), ["web_search", "planning"]);
+});
+
+test("a generic planning model with several targets has no single family", () => {
+  const raw: RawInput = { batch_id: "batch", case_id: "planning-mixed", messages: [
+    { type: "user_question", content: "取数并搜索。" },
+    { type: "llm_turn", name: "规划", parent_span: "p1", output: "先取数。" },
+    call("f", "finquery", { query: "A" }, "p1"), result("f", "finquery", "A=1"),
+    { type: "llm_turn", name: "规划", parent_span: "p2", output: "再搜索。" },
+    call("w", "web_search", { query: "A" }, "p2"), result("w", "web_search", { items: [] }),
+    { type: "final_answer", content: "A=1。" },
+  ] };
+  const [data, search] = groups(raw, ["finquery", "web_search"]);
+  for (const chain of [data!, search!]) {
+    const planner = chain.raw.find(member => member.name === "规划")!;
+    assert.deepEqual([planner.component_family, planner.component_role], ["model", "planning"]);
+  }
+});
+
+test("a view_skill group never copies its own family onto shell or inner-script request generation", () => {
+  const raw: RawInput = { batch_id: "batch", case_id: "view-skill-shell", messages: [
+    { type: "user_question", content: "查看 skill 目录。" },
+    call("v", "view_skill", { name: "aime-finquery" }), result("v", "view_skill", { content: "查询公司财务。" }),
+    call("s", "shell", { command: "ls /opt/skills/aime-finquery/" }), result("s", "shell", { exit_code: 0, stdout: "finquery.py" }),
+    { type: "final_answer", content: "目录已查看。" },
+  ] };
+  const [chain] = groups(raw, ["view_skill"]), fields = new Map(chain!.raw.map(member => [member.name, [member.component_family, member.component_role]]));
+  assert.deepEqual(fields.get("view_skill 请求生成"), ["view_skill", "request_generation"]);
+  assert.deepEqual(fields.get("shell 请求生成"), ["shell", "request_generation"]);
+  assert.deepEqual(fields.get("aime-finquery"), ["aime-finquery", "skill"]);
 });

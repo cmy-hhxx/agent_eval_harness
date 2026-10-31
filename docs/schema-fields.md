@@ -15,7 +15,7 @@
 | requirements / scoring_points / red_flags | Criteria | Attribution、Comparison | 有不同验收含义；统一作用域和来源绑定避免私规外溢。 |
 | is_correct / correct_reason | Attribution | 标准一致性核对 | 只判断与给定标准答案是否一致，独立于问题归因；无标准时 is_correct 固定 null，correct_reason 由程序填写未提供标准的说明。 |
 | Problem | Attribution | Comparison、Score、Clustering、报告 | 正式问题及依据、实际影响与严重程度；允许充分评审后的空数组，摘要不替代问题。 |
-| Problem.severity / severity_reason | Attribution 的组件调查、Session | 正式归因结果、报告 | 标注每条问题对本次最终交付的已确认影响及分级依据；不参与 Comparison 判胜或聚类身份。 |
+| Problem.severity / severity_reason | Attribution 的组件调查、Session | 正式归因结果、报告 | 标注每条问题对本次最终交付的已确认影响及分级依据；P4 仅用于已证实终稿未受影响的过程缺陷，证据须落到终稿、替代来源或修正回执，未确认影响不报 P4，也不参与 Comparison 判胜或聚类身份。 |
 | component / responsibilities[].attribution_reason | 程序绑定 Compact 组件，Workflow 投影聚类观察 | 归责、聚类与导出 | component 原样输出目录名称；聚类观察的 attribution_reason 来自 Problem.reason，不新增责任判断。 |
 | accepted_attribution / problem_assignments | Workflow、Score | 单次评分及程序导出 | 完成情况、已确认或待核的问题和恢复状态来自接受收据；模型用 finding_index 映射选档，程序保留源问题、责任确定性及证据。 |
 | Problem.evidence / calculations | 模型选证据与计算点评 | 程序解析引用、后续事实核对 | 引文保持原始坐标；calculations 只保留文字说明，不触发自动复算。 |

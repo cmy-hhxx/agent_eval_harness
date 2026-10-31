@@ -10,7 +10,7 @@ import componentSubmissionSchema from "../../../../schemas/attribution/component
 import componentResultSchema from "../../../../schemas/attribution/component-result.schema.json" with { type: "json" };
 import sessionResultSchema from "../../../../schemas/attribution/session-result.schema.json" with { type: "json" };
 import { resolveAttributionEvidence } from "./source-evidence.js";
-import { attributionComponentIdentity, validateComponentReview, type ComponentReview, type SubmittedProblem } from "./responsibility.js";
+import { attributionComponentIdentity, validateComponentReview, validateP4Problem, type ComponentReview, type SubmittedProblem } from "./responsibility.js";
 import type { SessionAttributionResult, SessionProblem, TraceAttributionResult } from "./types.js";
 
 const tools = ["read_trace", "search_trace", "view_image", "calculate", "execute_code", "read_artifact"];
@@ -99,11 +99,12 @@ function recoveryReceiptChoices(request: AgentRequest, audit: ToolAudit, after: 
 /** Each problem names one actor offered by this request; the program copies its catalog name. */
 function resolveProblems(request: AgentRequest, problems: SubmittedProblem[], audit: ToolAudit, field: string, offset = 0): SessionProblem[] {
   const raw = request.sources.answer.value as { messages: Record<string, unknown>[] };
-  const issues: ValidationIssue[] = [];
+  const issues: ValidationIssue[] = [], resolvedMessages: number[][] = [];
   const result = problems.map((problem, index) => {
     const identity = attributionComponentIdentity(problem.actor_index, request.input.components as JsonObject[], `${field}/${index + offset}/actor_index`);
     const { tool_error_indices: _errorIndices, actor_index: _actor, ...description } = problem;
-    return { ...description, component: identity.name, component_family: identity.component_family, component_role: identity.component_role,
+    const messages: number[] = [];
+    const resolved = { ...description, component: identity.name, component_family: identity.component_family, component_role: identity.component_role,
       evidence: problem.evidence.flatMap((selection, evidenceIndex) => {
         try {
           const path = `${field}/${index + offset}/evidence/${evidenceIndex}`;
@@ -120,6 +121,7 @@ function resolveProblems(request: AgentRequest, problems: SubmittedProblem[], au
           const position = (request.input.source_positions as { trace_index: number; message_index: number }[])[evidence.message_index];
           if (!point || !position) throw new ValidationError([{ category: "evidence", code: "evidence_position_invalid", path,
             message: "证据必须能定位到本次收到的原始消息。" }]);
+          messages.push(evidence.message_index);
           return [{ position: attributionEvidencePosition(position.trace_index, position.message_index, evidence.evidence_id),
             component: evidenceComponent(raw.messages[evidence.message_index] ?? {}, point.kind === "image" ? "image" : point.path, identity.name),
             quote: evidence.quote, reason: selection.reason }];
@@ -129,8 +131,21 @@ function resolveProblems(request: AgentRequest, problems: SubmittedProblem[], au
           return [];
         }
       }) };
+    resolvedMessages.push(messages);
+    return resolved;
   });
   if (issues.length) throw new ValidationError(issues);
+  const errorMessages = new Map<number, Set<number>>(((request.input.tool_errors as JsonObject[] | undefined) ?? []).map(error => [
+    Number(error.tool_error_idx), new Set((error.evidence as JsonObject[]).flatMap(item => {
+      const point = parseEvidenceCoordinates(String(item.evidence_id));
+      return point ? [point.message_index] : [];
+    }))]));
+  result.forEach((problem, index) => {
+    const submitted = problems[index]!;
+    validateP4Problem(submitted, resolvedMessages[index]!, { messages: raw.messages,
+      errorMessages: new Set(submitted.tool_error_indices.flatMap(id => [...errorMessages.get(id) ?? []])),
+      componentRole: problem.component_role }, `${field}/${index + offset}`);
+  });
   return result;
 }
 

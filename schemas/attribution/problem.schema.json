@@ -24,7 +24,7 @@
     "component_family": {
       "type": "string",
       "minLength": 1,
-      "description": "程序派生的组件族：按调用链目标归一化脚本或工具名，例如 finquery、web_fetch、web_search、shell、model、answer_synthesis、other；不改变原始 component 名称。"
+      "description": "程序派生的组件族：工具/脚本/skill 用自身名称，程序命名的请求生成用实际服务的 target，规划模型用自己发出的调用目标；只有一个目标时取该族，否则 model。不改变原始 component 名称，也不从调查组继承。"
     },
     "component_role": {
       "enum": ["planning", "request_generation", "skill", "script", "tool", "delivery"],
@@ -34,7 +34,7 @@
     "definition": { "type": "string", "minLength": 1, "description": "可复用的问题定义，写清同类偏差及适用条件。" },
     "problem_phenomena": { "type": "string", "minLength": 1, "description": "可独立读懂的个案说明：具体对象、应有情况与实际表现的偏差。" },
     "reason": { "type": "string", "minLength": 1, "description": "认定该偏差的依据，以及证据能确认的原因。" },
-    "severity": { "enum": ["P0", "P1", "P2", "P3", "P4"], "description": "P0–P3 为对最终交付的影响等级，P0 最严重；P4 为已恢复或不影响交付的过程缺陷。" },
+    "severity": { "enum": ["P0", "P1", "P2", "P3", "P4"], "description": "P0–P3 为对最终交付的影响等级，P0 最严重；P4 为已证实最终交付未受影响的过程缺陷，证据须落到终稿、替代来源或修正回执，未确认影响不报 P4。" },
     "severity_reason": { "type": "string", "minLength": 1, "description": "具体影响及其为何属于该等级；只写证据支持的影响。" },
     "evidence": {
       "type": "array",

@@ -1,8 +1,8 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { ValidationError, type JsonObject } from "@eval/contracts";
-import { attributionComponentLabel, componentFamilyRole, normalizeComponentFamily,
-  validateComponentReview, type ComponentReview, type SubmittedProblem } from "./responsibility.js";
+import { attributionComponentLabel, componentFamilyRole, normalizeComponentFamily, validateComponentReview,
+  validateP4Problem, type ComponentReview, type SubmittedProblem } from "./responsibility.js";
 
 const members: JsonObject[] = [
   { component_index: 1, kind: "script", name: "make.py" },
@@ -83,4 +83,16 @@ test("component family normalization and session-catalog roles always return a c
   assert.deepEqual(componentFamilyRole({ kind: "model" }), { component_family: "model", component_role: "planning" });
   assert.deepEqual(componentFamilyRole({ kind: "model", name: "planner-finquery", component_family: "finquery", component_role: "planning" }),
     { component_family: "finquery", component_role: "planning" });
+});
+
+test("P4 needs confirmed no-impact and a delivery or alternative receipt", () => {
+  const messages = [{ type: "final_answer" }, { type: "tool_result" }, { type: "tool_call" }];
+  const context = { messages, errorMessages: new Set<number>(), componentRole: "planning" as const };
+  assert.doesNotThrow(() => validateP4Problem(problem([], "P4"), [0], context, "/problems/0"));
+  assert.doesNotThrow(() => validateP4Problem(problem([], "P4"), [1], context, "/problems/0"));
+  assert.throws(() => validateP4Problem(problem([], "P4"), [2], context, "/problems/0"), /交付未受影响/);
+  assert.throws(() => validateP4Problem(problem([], "P4"), [0], { ...context, errorMessages: new Set([0]) }, "/problems/0"), /交付未受影响/);
+  assert.throws(() => validateP4Problem({ ...problem([], "P4"), severity_reason: "修复后影响未确认。" }, [0], context, "/problems/0"), /未确认/);
+  assert.throws(() => validateP4Problem(problem([], "P4"), [0], { ...context, componentRole: "delivery" }, "/problems/0"), /终稿问题/);
+  assert.doesNotThrow(() => validateP4Problem({ ...problem([], "P1"), severity_reason: "核心结果不可用。" }, [2], context, "/problems/0"));
 });

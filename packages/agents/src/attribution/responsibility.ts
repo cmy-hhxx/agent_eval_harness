@@ -63,6 +63,29 @@ export interface ComponentReview {
 }
 
 const deliveryImpact = new Set(["unresolved_impact", "recovered_impact"]);
+const uncertainP4Reason = /未确认|未核实|未查证|不确定|无法判断|无法确认|不清楚|未知|可能/u;
+
+/** P4 is a proven process defect, not a bucket for uncertain impact and not a success marker. */
+export function validateP4Problem(problem: SubmittedProblem, evidenceMessages: number[],
+  context: { messages: Record<string, unknown>[]; errorMessages: Set<number>; componentRole: ComponentRole }, path: string) {
+  if (problem.severity !== "P4") return;
+  if (context.componentRole === "delivery")
+    throw new ValidationError([{ category: "decision", code: "final_process_severity", path: `${path}/severity`,
+      message: "终稿问题都影响交付，按 P0–P3 定级；P4 只用于已证实不影响交付的过程缺陷。" }]);
+  if (uncertainP4Reason.test(problem.severity_reason))
+    throw new ValidationError([{ category: "decision", code: "p4_unconfirmed", path: `${path}/severity_reason`,
+      message: "P4 必须已证实最终交付未受影响；含未确认、未核实、可能或无法判断等表述时不要报 P4，先补齐终稿或替代来源证据，否则不报该问题。" }]);
+  const provesDelivery = evidenceMessages.some(index => {
+    if (context.errorMessages.has(index)) return false;
+    const message = context.messages[index];
+    return message?.role === "tool" || ["tool_result", "function_call_output", "final_answer"].includes(String(message?.type)) ||
+      message?.role === "assistant";
+  });
+  if (!provesDelivery)
+    throw new ValidationError([{ category: "evidence", code: "p4_delivery_proof", path: `${path}/evidence`,
+      message: "P4 须用终稿、替代来源或修正后的实际回执证明交付未受影响；只引用报错回执和请求本身不足以记 P4。",
+      expected: { required_evidence: "终稿、替代来源或修正后的实际回执" } }]);
+}
 
 /** Coverage is structural; responsibility and causality still require original-source judgment. */
 export function validateComponentReview(members: JsonObject[], review: ComponentReview, errors: JsonObject[]) {

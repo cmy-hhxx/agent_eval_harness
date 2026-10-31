@@ -14,9 +14,9 @@ Compact 字段 Agent 接收代码整理的消息目录、请求返回关系、�
 
 ## Trace
 
-`attribution/component` 每个任务只调查程序绑定的一个 Compact 组件。`invocations` 按实际调用配对参数/代码和回执，保留各次执行及修复顺序；逐次对照主体、期间、单位、字段和计算，不能用最后两次调用或成功状态代表全链路正确。相关工具契约、已加载 skill 原文、前序用户约束及必要替代路径可直接审查，长原文保留完整句段并提供补读入口，未核实须说明不确定。模型提交本组件 content/evidence/tool_error_reviews/problems，不提交 actor_index 或组件名；程序复制目录名称。content 与每条异常处置不超过600字，每条问题必须提交 tool_error_indices（无关联填 []）。异常处置区分未恢复/已恢复、有无剩余交付影响及是否已有报错后的实际工具回执；恢复反馈补列候选回执。终稿沿用已偏离请求的上游结果属于故障传播，终稿只承担自身新增错误。组件独立审查，允许分别记录同一故障的真实责任动作。
+`attribution/component` 每个任务只调查程序绑定的一个 Compact 组件。`invocations` 按实际调用配对参数/代码和回执，保留各次执行及修复顺序；逐次对照主体、期间、单位、字段和计算，不能用最后两次调用或成功状态代表全链路正确。相关工具契约、已加载 skill 原文、前序用户约束及必要替代路径可直接审查，长原文保留完整句段并提供补读入口，未核实须说明不确定。模型提交本组件 content/evidence/tool_error_reviews/problems，不提交 actor_index 或组件名；程序复制目录名称。content 与每条异常处置不超过600字，每条问题必须提交 tool_error_indices（无关联填 []）。异常处置区分未恢复/已恢复、有无剩余交付影响及是否已有报错后的实际工具回执；恢复反馈补列候选回执。P4 只表示已证实终稿未受影响的过程缺陷，问题证据须落到终稿、替代来源或修正回执，写明终稿未采用、已替代或已修正；只引用报错回执/请求或影响未确认时不报 P4，不能把 P4 当兜底。终稿沿用已偏离请求的上游结果属于故障传播，终稿只承担自身新增错误。组件独立审查，允许分别记录同一故障的真实责任动作。
 
-`attribution/trace` 在组件任务结束后只写简短 summary，有标准时附正确性判断；问题由程序按目录顺序合并。组件部分失败允许继续，摘要标明覆盖缺口；Trace 失败阻塞 Session。单轮 Session 由程序组装，多轮使用 `attribution/session` 一次轻量审查，接收有序 Trace 结论和必要原始问答，独立跨轮问题必须有至少两轮原文依据。模型提交 Schema 不变；正式 Problem 的 `component_family`/`component_role` 由程序按调用链目标和角色派生，模型不提交。
+`attribution/trace` 在组件任务结束后只写简短 summary，有标准时附正确性判断；问题由程序按目录顺序合并。组件部分失败允许继续，摘要标明覆盖缺口；Trace 失败阻塞 Session。单轮 Session 由程序组装，多轮使用 `attribution/session` 一次轻量审查，接收有序 Trace 结论和必要原始问答，独立跨轮问题必须有至少两轮原文依据。模型提交 Schema 不变；正式 Problem 的 `component_family`/`component_role` 由程序按成员自身来源或实际调用目标派生，模型不提交，也不从调查组继承。
 
 
 统计范围识别单独定位总体、子集、调整前后的实际混用；不同口径数值都正确且已说明差异时不报矛盾。结论一致性要求对象、时点、统计范围、调整方式和适用条件相同，不能把未展开的口径解释自动当作互相矛盾。
@@ -37,7 +37,7 @@ Compact 字段 Agent 接收代码整理的消息目录、请求返回关系、�
 - 关键观察用 evidence 选号，程序回填固定的 {evidence_id, quote}；key_data 直接复制所选终稿原文，不重写数字和单位。session_overview 与 tool_errors 的调用计数仅由程序填写，不另写共N次或第N次调用；其他字段可按原文动作概述次数。元信息和完整最终回复直接透传。字段来源先筛选再分配预算，保留完整短文与长文完整句段，预算不足时少写，不机械切首尾。组件的长命令另保留真实脚本和 skill 的原文导航。
 - 同一条完整 evidence_id 的原文在归因材料中只展示一次，重复处保留编号及来源；相同文字来自不同消息或范围时仍分别保留。该精简只作用于模型展示，不改写正式 compact 或归因结果。
 - 组件调查、Session 共用[问题表达与严重程度规则](../packages/prompts/resources/attribution/problem-output.md)。所有新生成描述使用中文，尤其 label/definition；不增加语言校验、语义复审或润色循环。
-- 正式问题的 `component_family`/`component_role` 由程序派生：轮级取调查组第一条调用链的目标和成员角色，会话级从 `processComponents` 联合目录按 kind/name 派生；缺失时回退 `other`/`tool`，不改变原始 component 名称，也不回填历史正式行。
+- 正式问题的 `component_family`/`component_role` 由程序按成员自身来源或实际调用目标派生：工具/脚本/skill 用自身名称，程序命名的请求生成用实际服务的 target，具名规划模型用自己发出的调用目标（无唯一目标时 `model/planning`），只有 `contains_final_generation`/「答案合成」记 `answer_synthesis/delivery`；调查组只是范围，`key`/`links` 不进入问题身份，成员不继承组 family。缺失时回退 `other`/`tool`，不改变原始 component 名称，也不回填历史正式行。
 - 组件任务由程序绑定 Compact 目录；Session 独立跨轮问题从联合目录选择已有编号。组件按[逐组件核查规则](../packages/prompts/resources/attribution/component-choice.md)。每条问题独立核对要求、实际动作和交付影响，不沿用上一条的责任、不强求类别分布；用户条件误读、具体数值动作、事实补写、内容转写、结论一致性分别定位。终稿引用未绑定选择引用绑定，有替换前后记录才能定位引用标签替换。不以缺值和成功状态同时出现推定服务错误，原因不明时不编造工具契约。
 - 恢复提示只说明本任务的错误路径和修正方法，Compact、Attribution 不接收 Comparison 的候选槽位规则。静态提示文本在进程内复用；来源整理按输入记录共享，关键数值按需提取，不建立跨运行正文缓存。
 - Compact 与 Session 各自接受后立即正式落盘，Trace 为内部任务。恢复通过收据、持久化任务 UUID 和 JSONL 行号关联，不重复保存摘要正文。
