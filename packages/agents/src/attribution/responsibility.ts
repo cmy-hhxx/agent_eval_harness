@@ -47,12 +47,15 @@ export function validateComponentReview(members: JsonObject[], review: Component
   for (const [index, error] of review.tool_error_reviews.entries())
     if ((error.status === "uncertain") === linked.includes(error.tool_error_idx))
       throw new ValidationError([{ category: "decision", code: "tool_error_disposition", path: `/tool_error_reviews/${index}`,
-        message: "除 uncertain 外，每条已确定处置的 tool_error 都必须关联一条组内问题：有剩余交付影响按 P0–P3，已恢复或不影响交付记 P4 过程缺陷；uncertain 不关联问题。" }]);
+        message: "除 uncertain 外，每条已确定处置的 tool_error 都必须关联一条组内问题：unresolved_impact/recovered_impact 按剩余交付影响定 P0–P3；recovered_no_impact/no_delivery_impact 记 P4 过程缺陷；uncertain 不关联问题。" }]);
   for (const [index, problem] of review.problems.entries()) {
-    const statuses = problem.tool_error_indices.map(id => dispositions.get(id)!.status);
-    if (statuses.length && statuses.some(status => deliveryImpact.has(status)) === (problem.severity === "P4"))
+    const linkedStatuses = problem.tool_error_indices.map(id => ({ tool_error_idx: id,
+      review_index: review.tool_error_reviews.findIndex(error => error.tool_error_idx === id), status: dispositions.get(id)!.status }));
+    const requiresDelivery = linkedStatuses.some(error => deliveryImpact.has(error.status));
+    if (linkedStatuses.length && requiresDelivery === (problem.severity === "P4"))
       throw new ValidationError([{ category: "decision", code: "tool_error_severity", path: `/problems/${index}/severity`,
-        message: "关联 unresolved_impact/recovered_impact 的问题按剩余交付影响定 P0–P3；只关联 recovered_no_impact/no_delivery_impact 的问题是过程缺陷，记 P4。", actual: problem.severity }]);
+        message: `问题 /problems/${index} 关联 ${linkedStatuses.map(item => `tool_error_reviews/${item.review_index}（tool_error_idx ${item.tool_error_idx}，${item.status}）`).join("、")}；${requiresDelivery ? "存在未消除的交付影响，按剩余交付影响定 P0–P3" : "均已恢复或交付不受影响，记 P4 过程缺陷"}。`,
+        actual: problem.severity, expected: { reviews: linkedStatuses, required_severity: requiresDelivery ? "P0–P3" : "P4" } }]);
     if (problem.severity === "P4" && members.find(member => member.component_index === problem.actor_index)?.contains_final_generation === true)
       throw new ValidationError([{ category: "decision", code: "final_process_severity", path: `/problems/${index}/severity`,
         message: "终稿问题都影响交付，按 P0–P3 定级；P4 只用于已恢复或不影响交付的过程缺陷。" }]);

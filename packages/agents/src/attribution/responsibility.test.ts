@@ -42,6 +42,20 @@ test("recovered or harmless errors become P4 process defects; only uncertain cau
   assert.doesNotThrow(() => validateComponentReview(members, review(disposed("no_delivery_impact"), [problem([1, 2], "P4")]), errors));
 });
 
+test("severity feedback names each linked review index and status", () => {
+  const rows = disposed("recovered_no_impact", [1]);
+  let issues: NonNullable<ValidationError["issues"]> = [];
+  assert.throws(() => validateComponentReview(members, review(rows, [problem([1], "P2")]), errors.slice(0, 1)), error => {
+    if (!(error instanceof ValidationError)) return false;
+    issues = error.issues!;
+    return true;
+  });
+  assert.equal(issues[0]!.code, "tool_error_severity");
+  assert.deepEqual(issues[0]!.expected, { reviews: [{ tool_error_idx: 1, review_index: 0, status: "recovered_no_impact" }],
+    required_severity: "P4" });
+  assert.match(String(issues[0]!.message), /tool_error_reviews\/0（tool_error_idx 1，recovered_no_impact）/);
+});
+
 test("errors with residual delivery impact require a P0–P3 problem", () => {
   const rows = disposed("recovered_impact", [1]);
   assert.throws(() => validateComponentReview(members, review(rows), errors.slice(0, 1)), /必须关联/);

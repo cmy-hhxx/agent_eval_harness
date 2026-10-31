@@ -73,6 +73,29 @@ function quoteRepair(request: AgentRequest, audit: ToolAudit, evidence: { eviden
     start, Math.min(point.end, start + limit)).evidence_id) };
 }
 
+/** Offer actual tool receipts after the failure so a recovery claim can select real follow-up output. */
+function recoveryReceiptChoices(request: AgentRequest, audit: ToolAudit, after: number, originMessages: Set<number>) {
+  const raw = request.sources.answer.value as { messages: Record<string, unknown>[] };
+  const positions = request.input.source_positions as { trace_index: number }[];
+  const traces = new Set([...originMessages].flatMap(index => positions[index] === undefined ? [] : [positions[index]!.trace_index]));
+  const bank = audit.evidenceBank ?? (audit.evidenceBank = []);
+  const choices: { evidence_id: string; evidence_index: number; message_index: number; quote: string }[] = [];
+  for (let index = after + 1; index < raw.messages.length && choices.length < 3; index++) {
+    const point = positions[index];
+    if (!point || !traces.has(point.trace_index)) continue;
+    const message = raw.messages[index]!;
+    if (message.role !== "tool" && !["tool_result", "function_call_output"].includes(String(message.type))) continue;
+    const sources = evidenceSources(message).filter(item => item.kind === "text" && item.quotable !== false && item.text.length);
+    const source = sources.find(item => /\/(?:output|content|result)(?:\/|$)/u.test(item.path)) ??
+      sources.sort((a, b) => b.text.length - a.text.length)[0];
+    if (!source) continue;
+    const receipt = cite(request.sources.answer.id, index, source, 0, Math.min(400, source.text.length));
+    choices.push({ evidence_id: receipt.evidence_id, evidence_index: selectEvidence(bank, receipt).evidence_index,
+      message_index: index, quote: receipt.quote });
+  }
+  return { suggested_evidence: choices.map(({ evidence_id: _id, ...visible }) => visible), append: choices.map(item => item.evidence_id) };
+}
+
 /** Each problem names one actor offered by this request; the program copies its catalog name. */
 function resolveProblems(request: AgentRequest, problems: SubmittedProblem[], audit: ToolAudit, field: string, offset = 0): SessionProblem[] {
   const raw = request.sources.answer.value as { messages: Record<string, unknown>[] };
@@ -134,8 +157,13 @@ function resolveComponentReview(request: AgentRequest, review: ComponentReview, 
       if (!proofs.some(proof => {
         const message = raw.messages[proof.message_index];
         return proof.message_index > lastError && (message?.role === "tool" || ["tool_result", "function_call_output"].includes(String(message?.type)));
-      })) throw new ValidationError([{ category: "evidence", code: "tool_error_recovery", path,
-        message: "已恢复的结论必须引用该次报错之后的实际工具回执，证明重试、修复或替代路径恢复；仅失败回执、计划或终稿自述不证明恢复。补选后续原文回执，无法确认则记 uncertain。" }]);
+      })) {
+        const repair = recoveryReceiptChoices(request, audit, lastError, messages);
+        throw new ValidationError([{ category: "evidence", code: "tool_error_recovery", path,
+          message: "recovered_no_impact/recovered_impact 必须选择该次报错之后的实际工具回执，证明重试、修复或替代路径恢复；仅失败回执、计划或终稿自述不证明恢复。若实际未恢复但交付不受影响，改记 no_delivery_impact 并说明理由；补选反馈中 suggested_evidence 的后续工具回执后重算剩余影响，仍无法确认则记 uncertain。",
+          expected: { recovery_receipt_after_message_index: lastError,
+            ...(repair.suggested_evidence.length ? { suggested_evidence: repair.suggested_evidence, append_evidence_ids: repair.append } : {}) } }]);
+      }
     }
   }
   return resolveProblems(request, review.problems, audit, "/problems");

@@ -43,12 +43,18 @@ test("key_data copies FDX final units and qualifiers without recomputing or corr
   assert.throws(() => f.registry.resolve(f.binding, { value: [{ evidence: [2] }] }, { ...f.audit, evidenceBank: [...f.audit.evidenceBank, tool.evidence_id] }), /只能选择本轮最终回复/);
 });
 
-test("model summaries cannot restate invocation counts or confuse message numbers with counts", () => {
+test("only field summaries prohibited from restating invocation counts are rejected", () => {
   const f = fixture("session_overview");
   for (const text of ["共32次工具调用。", "第147次shell调用被拒绝。", "调用了工具27次。"])
-    assert.throws(() => f.registry.resolve(f.binding, { value: ["用户问租金。", text] }, f.audit), /调用次数仅由程序/);
+    assert.throws(() => f.registry.resolve(f.binding, { value: ["用户问租金。", text] }, f.audit), /调用次数由程序/);
   assert.doesNotThrow(() => f.registry.resolve(f.binding, { value: ["用户问每年一次的租金调增。", "脚本失败，未交付工作簿。"] }, f.audit));
   assert.doesNotThrow(() => f.registry.resolve(f.binding, { value: ["用户问AIP与同业。", "调用 finquery.py 一次性批量查询，取得数据。"] }, f.audit));
+  const errors = fixture("tool_errors");
+  assert.throws(() => errors.registry.resolve(errors.binding,
+    { value: [{ tool_error_content: "共2次调用 shell 报错。", evidence: [1] }] }, errors.audit), /调用次数由程序/);
+  const components = fixture("components", "python /work/render.py");
+  assert.doesNotThrow(() => components.registry.resolve(components.binding, { value: [{ components_kind: "script", components_name: "/work/render.py",
+    components_content: "为生成预览，连续调用两次 render.py；第二次成功。", actor_indices: [1], evidence: [1] }] }, components.audit));
 });
 
 test("component extraction requires the exact actual script name in selected source", () => {
@@ -96,13 +102,15 @@ test("component repair enumerates all duplicate rows and source unions in one fe
     if (!(error instanceof ValidationError)) return false;
     issues = error.issues!;
     assert.equal(issues[0]!.code, "component_duplicate");
-    assert.deepEqual(issues[0]!.expected, { merge_groups: [{ name: "/work/render.py", rows: [0, 1], actor_indices: [1], evidence: [1] }] });
+    assert.deepEqual(issues[0]!.expected, { merge_groups: [{ name: "/work/render.py", actor_indices: [1], evidence: [1],
+      rows: [{ row: 0, content: "为生成产物运行脚本，保存预览。" }, { row: 1, content: "为生成产物运行脚本，保存预览。" }] }] });
     return true;
   });
   const rendered = compactAgent.profiles.components!.renderPrompt({ turns: [] }, DEFAULT_POLICY, {
     draft, errors: issues, attemptId: "repair", contentSubmissions: 2, fileErrors: 0, repeatedErrors: 0, stopped: true,
   });
   assert(rendered.includes('"merge_groups"') && rendered.includes('"/work/render.py"'));
+  assert(rendered.includes('"content":"为生成产物运行脚本，保存预览。"'));
   assert.doesNotThrow(() => f.registry.resolve(f.binding, { value: [entry] }, f.audit));
 });
 

@@ -12,7 +12,13 @@ model_actions 是生成请求或代码的可见原文；callable_contracts 是�
 解析报错、临时文件缺失、被隐藏的 stderr 不能单独证明参数违规或具体内部原因，未知就说明未知。
 
 工具组同样记录过程问题，不因后来恢复或终稿正确而省略：
-1. tool_errors 是本组必须逐条处置的已确认执行异常。每条恰好一条 tool_error_reviews 并引用原始报错；判恢复还须选后续实际回执，计划或终稿自述不证明恢复。除 uncertain 外，每条处置都必须由一条问题的 tool_error_indices 关联：unresolved_impact/recovered_impact 按剩余交付影响定 P0–P3，recovered_no_impact/no_delivery_impact 记 P4。根因或影响不清楚记 uncertain，不关联问题。
+1. tool_errors 是本组必须逐条处置的已确认执行异常。每条恰好一条 tool_error_reviews 并引用原始报错，content 不超过600字。处置状态只有五种：
+   - unresolved_impact：未恢复，且已确认有剩余交付影响；关联问题按剩余影响定 P0–P3。
+   - recovered_impact：已恢复，但仍有已确认的交付影响；必须选择报错之后的实际工具回执，关联问题按剩余影响定 P0–P3。
+   - recovered_no_impact：已恢复且无交付影响；必须选择报错之后的实际工具回执证明恢复，记 P4。
+   - no_delivery_impact：未恢复，但交付不受影响（例如替代路径已完成）；说明交付为何未受影响，记 P4。
+   - uncertain：根因或影响不清楚，不关联问题。
+   除 uncertain 外，每条处置都必须由一条问题的 tool_error_indices 关联。每条 problem 都必须提交 tool_error_indices；没有关联异常时填空数组 []。计划或终稿自述不证明恢复。
 2. 没有报错但请求或回执偏离要求（主体、期间、字段、单位等）、后来才被修正的调用，同样记问题。
 3. 冗余调用记问题：已成功后原样重发同一请求；失败后不改参数盲目重试。
 4. 同一根因的多次失败合并为一条问题，关联其全部 tool_error，现象写明次数和结果，例如“连续3次字段名错误，第4次改用X才成功”。

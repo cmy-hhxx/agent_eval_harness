@@ -17,12 +17,12 @@ const anonymousRoles = ["规划", "推理", "答案合成"];
 const invocationCount = /第\s*[\d零一二两三四五六七八九十百]+\s*次(?!性)[^。；\n]{0,16}(?:调用|shell|finquery)|(?:共|合计|总计|累计)[^。；\n]{0,12}[\d零一二两三四五六七八九十百]+\s*次(?!性)[^。；\n]{0,12}(?:调用|工具)|(?:调用|工具)[^。；\n]{0,16}[\d零一二两三四五六七八九十百]+\s*次(?!性)/u;
 function componentMergeGroups(rows: JsonObject[]) {
   if (!Array.isArray(rows)) return [];
-  const groups = new Map<string, { name: unknown; rows: number[]; actor_indices: Set<number>; evidence: Set<number> }>();
+  const groups = new Map<string, { name: unknown; rows: { row: number; content?: string }[]; actor_indices: Set<number>; evidence: Set<number> }>();
   rows.forEach((row, index) => {
     if (!row || typeof row !== "object") return;
     const key = JSON.stringify([row.components_kind, row.components_name]);
     const group = groups.get(key) ?? { name: row.components_name, rows: [], actor_indices: new Set(), evidence: new Set() };
-    group.rows.push(index);
+    group.rows.push({ row: index, ...(typeof row.components_content === "string" ? { content: row.components_content } : {}) });
     for (const value of Array.isArray(row.actor_indices) ? row.actor_indices as number[] : []) group.actor_indices.add(value);
     for (const value of Array.isArray(row.evidence) ? row.evidence as number[] : []) group.evidence.add(value);
     groups.set(key, group);
@@ -95,10 +95,10 @@ export const compactFieldProfiles: Record<string, AgentProfile> = Object.fromEnt
         submission_example: example, ...(repair ? { field_repair: repair } : {}) }, policy, repair ? undefined : recovery);
     },
     resolve(request, draft, audit) {
-      const countPhrase = field !== "key_data" && JSON.stringify((draft as JsonObject).value).match(invocationCount);
+      const countPhrase = ["session_overview", "tool_errors"].includes(field) && JSON.stringify((draft as JsonObject).value).match(invocationCount);
       if (countPhrase)
         throw new ValidationError([{ category: "structure", code: "compact_call_count", path: "/value", actual: countPhrase[0],
-          message: "调用次数仅由程序统计和组装，摘要不写共N次或第N次调用；用简要动作、结果及 evidence 导航，不把消息序号当调用次数。" }]);
+          message: "session_overview 与 tool_errors 的调用次数由程序统计和组装，不写共N次或第N次调用；其他字段按原文动作概括，不把消息序号当调用次数。" }]);
       if (field === "session_overview") return draft;
       const recorded = request.input.recorded_components as JsonObject[] ?? [], selected = new Set<number>();
       const value: JsonObject[] = ((draft as JsonObject).value as JsonObject[]).map((entry, index) => {

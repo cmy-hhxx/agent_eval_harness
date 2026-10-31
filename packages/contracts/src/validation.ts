@@ -85,13 +85,19 @@ export function schemaIssues(
             : undefined,
         value,
       );
+    const limit = (error.params as { limit?: unknown }).limit;
+    const measured = error.keyword === "maxLength" && typeof limit === "number" && typeof actual === "string"
+      ? [...actual].length : undefined;
     return {
       category: "structure",
       code: "schema_" + error.keyword,
       path: location || "/",
       expected: error.params,
       actual: actual ?? null,
-      message: "输出结构无效：" + (error.message || error.keyword),
+      ...(measured !== undefined ? { actualLength: measured, excess: measured - (limit as number) } : {}),
+      message: measured !== undefined
+        ? `输出结构无效：长度上限 ${limit} 字，实际 ${measured} 字，超出 ${measured - (limit as number)} 字。`
+        : "输出结构无效：" + (error.message || error.keyword),
     };
   });
 }

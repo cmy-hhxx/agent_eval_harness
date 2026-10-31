@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { AgentRegistry } from "@eval/host";
 import { attributionAgent, type SessionProblem } from "@eval/agents/attribution";
 import { cite, evidenceSources, parseEvidenceCoordinates } from "@eval/tools";
-import { ValidationError, type JsonObject } from "@eval/contracts";
+import { ValidationError, type JsonObject, type ValidationIssue } from "@eval/contracts";
 import { adapt, type RawInput } from "@eval/workflows/inputs";
 import { sourceCompactReceipt, componentDraft, componentTask, memberIndex } from "../../../../tests/fixtures/compact.js";
 import { emptyAudit } from "../../../../tests/fixtures/comparison.js";
@@ -85,7 +85,16 @@ test("recovery needs a later tool receipt, not only the original failure or fina
   for (const evidence of [[f.draft.tool_error_reviews[0]!.evidence[0]!],
     [f.draft.tool_error_reviews[0]!.evidence[0]!, f.finalIndex]]) {
     const unsupported = structuredClone(f.draft); unsupported.tool_error_reviews[0]!.evidence = evidence;
-    assert.throws(() => f.registry.resolve(f.binding, unsupported, f.audit), /之后的实际工具回执/);
+    let issue: ValidationIssue | undefined;
+    assert.throws(() => f.registry.resolve(f.binding, unsupported, f.audit), error => {
+      if (error instanceof ValidationError) issue = error.issues!.find(item => item.code === "tool_error_recovery");
+      return issue !== undefined;
+    });
+    const expected = issue!.expected as { recovery_receipt_after_message_index: number; append_evidence_ids: string[];
+      suggested_evidence: { evidence_index: number; message_index: number; quote: string }[] };
+    assert.equal(expected.recovery_receipt_after_message_index, 3);
+    assert(expected.suggested_evidence.some(item => item.message_index === 5 && item.quote.includes("delivered workbook.xlsx")));
+    assert.equal(expected.append_evidence_ids.length, expected.suggested_evidence.length);
   }
   const unknown = structuredClone(f.draft), error = unknown.tool_error_reviews[0]!;
   error.status = "uncertain"; error.content = "仅确认发生过异常，后续恢复和剩余影响未取得决定性证据。";

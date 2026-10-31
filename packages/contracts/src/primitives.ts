@@ -62,6 +62,9 @@ export interface ValidationIssue {
   candidate?: string;
   expected?: unknown;
   actual?: unknown;
+  /** Present for schema_maxLength so a rejected submission can see how far it overran. */
+  actualLength?: number;
+  excess?: number;
   message: string;
   category: FailureCategory;
 }

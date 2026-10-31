@@ -1,6 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { Ajv2020 } from "ajv/dist/2020.js";
+import { schemaIssues } from "@eval/contracts";
 import { componentAttributionProfile, traceAttributionProfile, sessionAttributionProfile } from "./session-profiles.js";
 
 test("component submissions select one offered actor and require severity and evidence", () => {
@@ -18,6 +19,16 @@ test("component submissions select one offered actor and require severity and ev
   assert(!validate(draft({ ...problem, actor_index: 0 })));
   assert(!validate(draft({ ...problem, component: "答案合成" })));
   assert(validate({ content: "未发现有证据支持的偏差。", evidence: [], tool_error_reviews: [], problems: [] }));
+});
+
+test("maxLength rejection reports the actual length and excess", () => {
+  const validate = new Ajv2020({ allErrors: true, strict: false }).compile(componentAttributionProfile.submissionSchema);
+  const draft = { content: "字".repeat(601), evidence: [], tool_error_reviews: [], problems: [] };
+  assert(!validate(draft));
+  const issue = schemaIssues(validate.errors, draft).find(item => item.code === "schema_maxLength")!;
+  assert.equal(issue.actualLength, 601);
+  assert.equal(issue.excess, 1);
+  assert.match(issue.message, /长度上限 600 字，实际 601 字，超出 1 字/);
 });
 
 test("trace cannot replace merged problems; session accepts cross-turn review", () => {
