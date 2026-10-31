@@ -123,17 +123,6 @@ export async function planAttribution(config: AttributionConfig) {
     session_tasks: catalog.length, issues: indexed.issues } };
 }
 const sourceCache = new WeakMap<object, Map<string, ReturnType<typeof attributionSessionSource> & { session: RawInput; compactMaterial?: JsonObject; traceMaterial?: Map<number, AgentBinding> }>>();
-/** Adapter A keeps the final answer as a plain assistant message; mark it so P4 evidence can name the delivery. */
-function markFinalAnswers(raw: RawInput, session: RawInput, candidate: Candidate) {
-  let offset = 0;
-  for (const [traceIndex, turn] of (session.turns ?? [{ messages: session.messages }]).entries()) {
-    const selected = candidate.turns?.find(item => item.trace_index === traceIndex);
-    const final = selected ? selected.final_index : candidate.final_index;
-    if (final !== null && Number.isSafeInteger(final) && raw.messages[offset + final])
-      raw.messages[offset + final] = { ...raw.messages[offset + final], type: "final_answer" };
-    offset += turn.messages.length;
-  }
-}
 function sourceFor(inputs: Record<string, unknown>, candidate: Candidate) {
   // The input reader owns window eviction and revision checks. Cache by its immutable
   // record object, so preparing fields neither reparses a session nor retains the whole run.
@@ -142,9 +131,8 @@ function sourceFor(inputs: Record<string, unknown>, candidate: Candidate) {
   if (!window) sourceCache.set(value, window = new Map());
   let source = window.get(candidate.input_id);
   if (!source) {
-    const session = normalizeInput(value), projection = attributionSessionSource(session);
-    markFinalAnswers(projection.raw, session, candidate);
-    source = { ...projection, session };
+    const session = normalizeInput(value);
+    source = { ...attributionSessionSource(session), session };
     window.set(candidate.input_id, source);
   }
   return source;
@@ -316,7 +304,8 @@ export function bindAttribution(task: PlannedTask, inputs: Record<string, unknow
     const reference = options.reference === undefined ? candidate.reference : options.reference;
     const modelInput = { ...material.modelInput, ...(reference !== null ? { ground_truth: { available: true, value: reference } } : {}) };
     return { agent: "attribution", profile: "component", request: { sources: { answer: { id: candidate.input_id, value: raw } },
-      input: { components: group.members, tool_errors: material.errors, source_positions: positions, trace_index: traceIndex } }, modelInput,
+      input: { components: group.members, tool_errors: material.errors, source_positions: positions, trace_index: traceIndex,
+        final_message_indices: finalIndex < 0 ? [] : [finalIndex] } }, modelInput,
       projectModelInput(input, bank) {
         const { ground_truth, tool_errors, upstream_error_context, final_claims, ...material } = input;
         return { ...projectEvidenceReferences(material, bank, 400),
@@ -345,8 +334,10 @@ export function bindAttribution(task: PlannedTask, inputs: Record<string, unknow
   if (traceList.length === 1) return { agent: "attribution", profile: "assembly", request: { sources: { answer: { id: candidate.input_id, value: raw } }, input: { session_meta: sessionMeta, turns: reviewedTurns } }, modelInput: {},
     computedResult: { session_meta: sessionMeta, turns: reviewedTurns, session_summary: reviewedTurns[0]!.summary, session_problem: [] } };
   const components = processComponents(raw, original, candidate.input_id, positions, compact.turns.flatMap(turn => turn.components as JsonObject[]));
+  const finalMessageIndices: number[] = [];
   const qa = traceList.map((trace, trace_index) => {
     const finalIndex = positions.findIndex(point => point.trace_index === trace_index && point.message_index === (trace.final_index ?? candidate.final_index));
+    if (finalIndex >= 0) finalMessageIndices.push(finalIndex);
     const questionIndex = positions.findIndex((point, index) => point.trace_index === trace_index && index < finalIndex &&
       (raw.messages[index]?.role === "user" || raw.messages[index]?.type === "user_question"));
     const question = questionIndex < 0 ? [] : compactFinalMaterial(questionIndex, raw, candidate.input_id, 1600, true).final_evidence;
@@ -358,7 +349,8 @@ export function bindAttribution(task: PlannedTask, inputs: Record<string, unknow
     problems: turn.problem.map(({ component, label, problem_phenomena, reason }) => ({ component, label, problem_phenomena, reason })) })), qa,
     actor_catalog: components.map(actor => ({ actor_index: actor.component_index, name: actor.name, kind: actor.kind })) };
   return { agent: "attribution", profile: "session", request: { sources: { answer: { id: candidate.input_id, value: raw } }, input: {
-    session_meta: sessionMeta, qa, source_positions: positions, turns: reviewedTurns, components } }, modelInput,
+    session_meta: sessionMeta, qa, source_positions: positions, turns: reviewedTurns, components,
+    final_message_indices: finalMessageIndices } }, modelInput,
     projectModelInput: (input, bank) => ({ ...projectEvidenceReferences({ ...input, qa: undefined }, bank, 400),
       qa: (input.qa as JsonObject[]).map(({ key_data, ...qa }) => ({ ...projectEvidenceReferences(qa, bank, 400), key_data: projectCompactEvidence(key_data, bank) })) }),
     presentedReads: [...presentedMaterialReads({ component_scene: modelInput }, "answer", candidate.input_id), ...compactPresentedReads(modelInput, "answer", candidate.input_id)] };

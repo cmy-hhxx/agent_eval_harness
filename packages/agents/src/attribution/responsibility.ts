@@ -66,7 +66,8 @@ const deliveryImpact = new Set(["unresolved_impact", "recovered_impact"]);
 
 /** P4 is a proven process defect, not a bucket for uncertain impact and not a success marker. */
 export function validateP4Problem(problem: SubmittedProblem, evidenceMessages: number[],
-  context: { messages: Record<string, unknown>[]; errorMessages: Set<number>; componentRole: ComponentRole }, path: string) {
+  context: { messages: Record<string, unknown>[]; errorMessages: Set<number>; finalMessages: ReadonlySet<number>; componentRole: ComponentRole },
+  path: string) {
   if (problem.severity !== "P4") return;
   if (context.componentRole === "delivery")
     throw new ValidationError([{ category: "decision", code: "final_process_severity", path: `${path}/severity`,
@@ -74,7 +75,7 @@ export function validateP4Problem(problem: SubmittedProblem, evidenceMessages: n
   const provesDelivery = evidenceMessages.some(index => {
     if (context.errorMessages.has(index)) return false;
     const message = context.messages[index];
-    return message?.role === "tool" || ["tool_result", "function_call_output", "final_answer"].includes(String(message?.type));
+    return context.finalMessages.has(index) || message?.role === "tool" || ["tool_result", "function_call_output"].includes(String(message?.type));
   });
   if (!provesDelivery)
     throw new ValidationError([{ category: "evidence", code: "p4_delivery_proof", path: `${path}/evidence`,

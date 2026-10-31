@@ -140,9 +140,10 @@ function resolveProblems(request: AgentRequest, problems: SubmittedProblem[], au
       const point = parseEvidenceCoordinates(String(item.evidence_id));
       return point ? [point.message_index] : [];
     }))]));
+  const finalMessages = new Set(((request.input.final_message_indices as number[] | undefined) ?? []));
   result.forEach((problem, index) => {
     const submitted = problems[index]!;
-    validateP4Problem(submitted, resolvedMessages[index]!, { messages: raw.messages,
+    validateP4Problem(submitted, resolvedMessages[index]!, { messages: raw.messages, finalMessages,
       errorMessages: new Set(submitted.tool_error_indices.flatMap(id => [...errorMessages.get(id) ?? []])),
       componentRole: problem.component_role }, `${field}/${index + offset}`);
   });

@@ -12,7 +12,7 @@
     "content": {
       "type": "string",
       "minLength": 1,
-      "maxLength": 700
+      "maxLength": 1200
     },
     "evidence": {
       "type": "array",
@@ -51,7 +51,7 @@
           "content": {
             "type": "string",
             "minLength": 1,
-            "maxLength": 700
+            "maxLength": 1200
           },
           "evidence": {
             "type": "array",

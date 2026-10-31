@@ -29,6 +29,9 @@ function fixture(secondAnswer = "仍然保持10%仓位。") {
 
 test("session receives ordered trace findings and original QA without unrelated tool noise", () => {
   const f = fixture(), binding = f.bind(), prepared = f.registry.prepare(binding);
+  assert.deepEqual(binding.request.input.final_message_indices, [2, 5]);
+  assert.deepEqual((binding.request.sources.answer.value as { messages: { type?: string }[] }).messages.map(message => message.type),
+    [undefined, undefined, undefined, undefined, undefined, undefined]);
   const qa = binding.modelInput!.qa as { question: { quote: string }[] }[];
   assert.equal(qa[0]!.question.map(item => item.quote).join("\n"), "我的仓位是10%。\n请保持这一前提。");
   assert(prepared.prompt.includes("仓位评语")); assert(!prepared.prompt.includes("TOOL_NOT_FOR_SESSION"));
@@ -79,7 +82,8 @@ for (const [shape, content, path, quote] of [
   const receipt = sourceCompactReceipt(candidate, normalizeInput(raw));
   const inputs = { [candidate.input_id]: raw }, binding = bindAttribution(componentTask(candidate, receipt, inputs, "答案合成·取值"), inputs, { compact: receipt });
   const registry = new AgentRegistry([attributionAgent]), prepared = registry.prepare(binding);
-  assert.equal(((binding.request.sources.answer.value as { messages: Record<string, unknown>[] }).messages[1]!).type, "final_answer");
+  assert.deepEqual(binding.request.input.final_message_indices, [1]);
+  assert.equal(((binding.request.sources.answer.value as { messages: Record<string, unknown>[] }).messages[1]!).type, undefined);
   assert.deepEqual(raw, original);
   const index = prepared.evidenceBank.findIndex(id => { const point = parseEvidenceCoordinates(id);
     return point?.kind === "text" && point.message_index === 0 && point.path === path; }) + 1;

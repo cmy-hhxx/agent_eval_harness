@@ -85,9 +85,10 @@ test("component family normalization and session-catalog roles always return a c
     { component_family: "finquery", component_role: "planning" });
 });
 
-test("P4 needs a delivery or alternative receipt, not an error-only or assistant-only record", () => {
-  const messages = [{ type: "final_answer" }, { type: "tool_result" }, { type: "tool_call" }, { role: "assistant" }];
-  const context = { messages, errorMessages: new Set<number>(), componentRole: "planning" as const };
+test("P4 needs a known final message or tool receipt, not an error-only or planning record", () => {
+  const messages = [{ role: "assistant", type: "message" }, { type: "tool_result" }, { type: "tool_call" },
+    { role: "assistant", type: "message" }];
+  const context = { messages, errorMessages: new Set<number>(), finalMessages: new Set([0]), componentRole: "planning" as const };
   assert.doesNotThrow(() => validateP4Problem(problem([], "P4"), [0], context, "/problems/0"));
   assert.doesNotThrow(() => validateP4Problem(problem([], "P4"), [1], context, "/problems/0"));
   assert.throws(() => validateP4Problem(problem([], "P4"), [2], context, "/problems/0"), /交付未受影响/);

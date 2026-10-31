@@ -73,7 +73,7 @@ test("P4 process defects stay in formal attribution but never decide a compariso
   value.turns[0]!.problem.push({ ...structuredClone(value.turns[0]!.problem[0]!), label: "首次取数报错", severity: "P4",
     severity_reason: "重试后取得正确数据，无交付影响。" });
   assert(new Ajv2020({ strict: false }).compile(sessionAttributionResultSchema)(value), "P4 is a formal severity");
-  assert.deepEqual(sessionProblems(value).map(problem => problem.severity), ["P1", "P4"], "reports keep P4 alongside delivery findings");
+  assert.deepEqual(sessionProblems(value).map(problem => problem.severity), ["P0", "P4"], "reports keep P4 alongside delivery findings");
   assert.deepEqual(comparisonAttribution(value).Problem.map(problem => problem.problem_path), ["/turns/0/problem/0"]);
 });
 

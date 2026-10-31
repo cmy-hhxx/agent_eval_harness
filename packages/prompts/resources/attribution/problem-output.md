@@ -12,6 +12,6 @@
   - P1：重要内容错误或缺失，需要实质修改才能使用。
   - P2：局部错误，修正后不改变主要结论。
   - P3：已确认对用户交付有轻微影响的表达或展示偏差。
-  - P4：过程缺陷，已证实最终交付未受影响，例如终稿未采用该结果、已用替代来源完成、或错误已修正且无残余影响。tool_error 的 recovered_no_impact/no_delivery_impact 与其他 planning、request_generation、script 过程缺陷都可记 P4，但必须用 final_answer、tool_result、function_call_output 或 role=tool 的实际回执证明；只引用报错回执、请求本身或普通 assistant 规划/工具调用消息不够。
+  - P4：过程缺陷，已证实最终交付未受影响，例如终稿未采用该结果、已用替代来源完成、或错误已修正且无残余影响。tool_error 的 recovered_no_impact/no_delivery_impact 与其他 planning、request_generation、script 过程缺陷都可记 P4，但必须用程序给出的终稿消息、tool_result、function_call_output 或 role=tool 的实际回执证明；只引用报错回执、请求本身或普通 assistant 规划/工具调用消息不够。
 - P4 判断的是最终交付是否受影响，不是每个枝节事实是否都已核实：终稿未采用、已替代或已修正后，某个次要细节未核实、未确认或只能说“可能”仍可记 P4；只有最终交付影响本身未确认、未核实或可能时才不报 P4，不能把 P4 当未确认兜底。P4 不代表 session 成功，同一 session 可以同时有 P4 和 P0–P3；P4 只保留在报告中，不参与 Comparison 判胜或聚类身份。
 - severity_reason 用一句话说明具体影响及其为何属于该等级，不重复问题描述。结合已提供的最终回答判断；已补救的问题按残余影响分级，P4 写明终稿未采用、已用替代来源或已修正，并说明为什么没有剩余交付影响。最终交付影响未确认时须如实说明，不能把局部异常写成整份回答失败，也不能把未查证写成已补救。

@@ -9,6 +9,7 @@ import type { Candidate, RawInput } from "../inputs/types.js";
 import type { TaskData } from "../comparison/types.js";
 import { AgentRegistry } from "@eval/host";
 import { attributionAgent } from "@eval/agents/attribution";
+import { attributionSessionSource } from "./public-trace.js";
 
 const id = "11111111-1111-4111-8111-111111111111", reference = { evidence_id: evidenceId(id, 0, "text", "/content", 0, 3) };
 test("presented ranges use actual preview length and exclude raw business fields", () => {
@@ -80,6 +81,15 @@ test("attribution navigation keeps semantic evidence and avoids repeating full f
   assert.deepEqual(view.turns[0].execution_chain, before.turns[0]!.execution_chain);
   assert.deepEqual(compactPresentedReads(view, "answer", id).map(read => read.message_index), [0, 0]);
   assert.deepEqual(value, before);
+});
+
+test("compact /type evidence verifies against an unmodified answer projection", () => {
+  const source: RawInput = { messages: [{ role: "assistant", type: "message", content: "最终回答。" }] };
+  const raw = attributionSessionSource(source).raw;
+  const proof = { evidence_id: evidenceId(id, 0, "text", "/type", 0, 7), quote: "message" };
+  const compact = { turns: [{ turn_idx: 0, execution_chain: [{ step_idx: 1, content: "执行摘要。", evidence: [proof] }] }] };
+  assert.deepEqual(verifiedCompact(compact, raw, source, id), compact);
+  assert.equal(raw.messages[0]!.type, "message");
 });
 
 test("repeated compact references resolve each original once and reject every altered quote", () => {
