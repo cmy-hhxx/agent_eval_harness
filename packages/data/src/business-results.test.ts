@@ -65,6 +65,66 @@ test("a journaled result whose row write was interrupted is rebuilt before the n
   assert(provenance.some(entry => entry.id === "next" && entry.published));
 });
 
+test("a publication batch appends every accepted row and replaces a verdict in place", async t => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "business-batch-"));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const record = (id: string, acceptedAt: number, submission = id): Omit<BusinessResult, "line" | "published"> => ({
+    id, date: "2026-10-26", file: "aime_fast/aime_fast_attribution-2026-10-26.jsonl", stage: "attribution-session", scope: {},
+    answers: [{ id: `answer-${id}`, batch: "2026-10-26", caseId: "case", model: "aime_fast", session: "session",
+      traces: ["trace"], source: "/source/input.jsonl", line: 1 }],
+    acceptedAt, evaluatorVersion: "r513", judge: "judge", submissionId: submission, complete: true,
+    origin: { run: path.join(root, `run-${submission}`), taskId: id, reference: { id, file: "attribution.jsonl", line: 1 } },
+  });
+  const file = path.join(root, "aime_fast/aime_fast_attribution-2026-10-26.jsonl");
+  const rows = async () => { const result = []; for await (const row of readJsonl(file)) result.push(row); return result; };
+  for (const id of ["a", "b", "b2", "c", "d"]) await writeJsonl(path.join(root, `run-${id}`, "results", "attribution.jsonl"),
+    [{ session_summary: id.toUpperCase() }]);
+  const publish = createBusinessPublisher(root);
+  await publish.many([
+    { record: record("a", 1), row: { session_summary: "A" } },
+    { record: record("b", 1), row: { session_summary: "B" } },
+    { record: record("c", 1), row: { session_summary: "C" } },
+  ]);
+  assert.deepEqual(await rows(), [{ session_summary: "A" }, { session_summary: "B" }, { session_summary: "C" }]);
+  await publish.many([
+    { record: record("b", 2, "b2"), row: { session_summary: "B2" } },
+    { record: record("d", 2), row: { session_summary: "D" } },
+  ]);
+  assert.deepEqual(await rows(), [{ session_summary: "A" }, { session_summary: "B2" }, { session_summary: "C" }, { session_summary: "D" }]);
+  const provenance = new Map((await readBusinessResults(root)).map(entry => [entry.id, entry]));
+  assert.deepEqual([...provenance.values()].filter(entry => entry.published).map(entry => [entry.id, entry.line]).sort(),
+    [["a", 1], ["b", 2], ["c", 3], ["d", 4]]);
+});
+
+test("a publication batch rebuilds a journaled row the delivery file never received", async t => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "business-batch-recovery-"));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const record = (id: string, acceptedAt: number): Omit<BusinessResult, "line" | "published"> => ({
+    id, date: "2026-10-26", file: "aime_fast/aime_fast_attribution-2026-10-26.jsonl", stage: "attribution-session", scope: {},
+    answers: [{ id: `answer-${id}`, batch: "2026-10-26", caseId: "case", model: "aime_fast", session: "session",
+      traces: ["trace"], source: "/source/input.jsonl", line: 1 }],
+    acceptedAt, evaluatorVersion: "r513", judge: "judge", submissionId: id, complete: true,
+    origin: { run: path.join(root, `run-${id}`), taskId: id, reference: { id, file: "attribution.jsonl", line: 1 } },
+  });
+  const file = path.join(root, "aime_fast/aime_fast_attribution-2026-10-26.jsonl");
+  const journal = path.join(root, ".delivery/provenance/2026-10-26.jsonl");
+  for (const id of ["a", "b", "c"]) await writeJsonl(path.join(root, `run-${id}`, "results", "attribution.jsonl"),
+    [{ session_summary: id.toUpperCase() }]);
+  const publish = createBusinessPublisher(root);
+  await publish.many([{ record: record("a", 1), row: { session_summary: "A" } }]);
+  await publish(record("b", 2), { session_summary: "B" });
+  // Crash between journaling the second result and appending its delivery row.
+  const saved = []; for await (const entry of readJsonl(journal)) saved.push(entry);
+  await writeJsonl(journal, saved.filter(entry => !((entry as { id: string; published: boolean }).id === "b" &&
+    (entry as { published: boolean }).published)));
+  await writeJsonl(file, [{ session_summary: "A" }]);
+  await publish.many([{ record: record("c", 3), row: { session_summary: "C" } }]);
+  const rows = []; for await (const row of readJsonl(file)) rows.push(row);
+  assert.deepEqual(rows, [{ session_summary: "A" }, { session_summary: "B" }, { session_summary: "C" }]);
+  const published = (await readBusinessResults(root)).filter(entry => entry.published).map(entry => entry.id).sort();
+  assert.deepEqual(published, ["a", "b", "c"]);
+});
+
 test("concurrent publishers on one root queue and release after a failed publication", async t => {
   const root = await mkdtemp(path.join(os.tmpdir(), "business-queue-"));
   t.after(() => rm(root, { recursive: true, force: true }));

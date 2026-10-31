@@ -3,7 +3,7 @@ import { isDeepStrictEqual } from "node:util";
 import { canonical, errorText, type JsonObject, type PlannedTask, type RunRepository, type RunState, type SubmissionReceipt } from "@eval/contracts";
 import { businessDate, businessRunDirectories, claimBusinessPartitions, createBusinessPublisher, fileSourceReader,
   formalAttributionFiles, formalResultLine, organizedResultLines, readBusinessResults, readJsonl,
-  sourcePredatesAcceptance, type BusinessResult } from "@eval/data";
+  sourcePredatesAcceptance, type BusinessPublication, type BusinessResult } from "@eval/data";
 import { answerBusinessKey, businessAnswer, businessCandidates, businessDestination, businessResultKey,
   businessScope, completeBusinessResult, sameBusinessMaterial } from "./business-results.js";
 import { loadRunInputs } from "../inputs/load.js";
@@ -342,7 +342,7 @@ export function businessResultRepository(repository: RunRepository, adapters: {
     createResultWriter(run, inputs) {
       const write = repository.createResultWriter(run, inputs), seen = new Map<string, JsonObject>();
       let publisher: ReturnType<typeof createBusinessPublisher> | undefined;
-      let delivered: Set<string> | undefined;
+      let delivered: Set<string> | undefined, planned: Map<string, PlannedTask> | undefined;
       return async state => {
         await write(state);
         const config = state.manifest.config as EvaluationConfig;
@@ -353,14 +353,23 @@ export function businessResultRepository(repository: RunRepository, adapters: {
         // unseen or newer verdicts need the serialized delivery lock.
         delivered ??= new Set((await readBusinessResults(config.output.path))
           .filter(record => record.published).map(record => record.submissionId));
-        for (const task of state.manifest.tasks) {
-          const receipt = state.receipts[task.id], row = receipt?.exported?.row;
-          if (!row || seen.get(task.id) === row || task.stage === "rewrite") continue;
+        // Accepted receipts are far fewer than planned tasks; rescanning a six-figure
+        // manifest on every flush would starve dispatch on the largest runs.
+        if (!planned || planned.size !== state.manifest.tasks.length)
+          planned = new Map(state.manifest.tasks.map(task => [task.id, task]));
+        const entries: BusinessPublication[] = [], accepted: [string, JsonObject][] = [];
+        for (const [taskId, receipt] of Object.entries(state.receipts)) {
+          const row = receipt.exported?.row, task = planned.get(taskId);
+          if (!row || !task || seen.get(task.id) === row || task.stage === "rewrite") continue;
           if (delivered.has(receipt.submissionId)) { seen.set(task.id, row); continue; }
           const record = await describe(run, state, task);
-          if (record) await publisher(record, row, seen.has(task.id));
-          seen.set(task.id, row);
+          if (record) {
+            entries.push({ record, row, refresh: seen.has(task.id) });
+            accepted.push([task.id, row]);
+          } else seen.set(task.id, row);
         }
+        await publisher.many(entries);
+        for (const [id, row] of accepted) seen.set(id, row);
       };
     },
   };

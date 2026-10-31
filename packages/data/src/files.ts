@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
-import { createReadStream } from "node:fs";
-import { chmod, link, lstat, mkdir, open, readFile, readdir, rename, rm, stat, writeFile } from "node:fs/promises";
+import { createReadStream, fsync } from "node:fs";
+import { chmod, link, lstat, mkdir, open, readFile, readdir, rename, rm, stat, writeFile, type FileHandle } from "node:fs/promises";
 import { Readable } from "node:stream";
 import { pipeline } from "node:stream/promises";
 import { createGunzip, createGzip } from "node:zlib";
@@ -19,6 +19,11 @@ export const localFiles = {
   mkdir,
   remove: rm,
 };
+
+/** FileHandle.sync() blocks the event loop; the threadpool keeps the Host responsive during publication. */
+function syncFile(handle: FileHandle): Promise<void> {
+  return new Promise((resolve, reject) => fsync(handle.fd, error => error ? reject(error) : resolve()));
+}
 
 export function exists(file: string): Promise<boolean> {
   return stat(file).then(
@@ -61,14 +66,14 @@ export async function atomicWrite(
     try {
       if (typeof value === "string" || value instanceof Uint8Array) await handle.writeFile(value);
       else for await (const chunk of value) await handle.writeFile(chunk);
-      await handle.sync();
+      await syncFile(handle);
     } finally {
       await handle.close();
     }
     await rename(temp, file);
     const directory = await open(path.dirname(file), "r");
     try {
-      await directory.sync();
+      await syncFile(directory);
     } finally {
       await directory.close();
     }
@@ -150,12 +155,12 @@ export async function appendJsonl(file: string, rows: Iterable<unknown>): Promis
   const handle = await open(file, "a");
   try {
     for (const row of rows) await handle.writeFile((JSON.stringify(row) ?? "null") + "\n");
-    await handle.sync();
+    await syncFile(handle);
   } finally {
     await handle.close();
   }
   const directory = await open(path.dirname(file), "r");
-  try { await directory.sync(); } finally { await directory.close(); }
+  try { await syncFile(directory); } finally { await directory.close(); }
 }
 
 export async function* readJsonlText(file: string, keepFinalLine = false): AsyncGenerator<string> {

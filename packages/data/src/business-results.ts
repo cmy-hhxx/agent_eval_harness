@@ -200,10 +200,18 @@ async function queuePublication(root: string): Promise<() => void> {
   };
 }
 
+export interface BusinessPublication {
+  record: Omit<BusinessResult, "line" | "published">;
+  row: JsonObject;
+  refresh?: boolean;
+  existingLine?: number;
+}
+type FileView = { revision: string; bytes: number; spans: Map<number, { offset: number; bytes: number }> };
+
 /** The public view is recoverable from immutable formal rows and its provenance journal. */
 export function createBusinessPublisher(root: string) {
   const cache = new Map<string, { revision: string; records: BusinessResult[] }>();
-  const views = new Map<string, { revision: string; bytes: number; spans: Map<number, { offset: number; bytes: number }> }>();
+  const views = new Map<string, FileView>();
   const view = async (file: string) => {
     if (!await exists(file)) return undefined;
     const revision = await fileSourceReader.revision(file), previous = views.get(file);
@@ -214,80 +222,110 @@ export function createBusinessPublisher(root: string) {
     if (bytes && fileSourceReader.record(file, bytes - 1, 1, revision) !== "\n") throw new Error("交付文件存在未完成尾行");
     const current = { revision, bytes, spans }; views.set(file, current); return current;
   };
-  return async (record: Omit<BusinessResult, "line" | "published">, row: JsonObject, refresh = false, existingLine?: number) => {
-    const release = await queuePublication(root);
-    let unlock: (() => Promise<void>) | undefined;
-    try {
-      unlock = await waitForRunLock(path.join(root, ".delivery", "publication"), AbortSignal.timeout(10_000));
-      const journal = path.join(root, ".delivery", "provenance", record.date + ".jsonl");
-      const revision = async () => stat(journal).then(info => [info.ino, info.size, info.mtimeMs].join(":"), error => {
-        if (error.code !== "ENOENT") throw error;
-        return "missing";
-      });
-      let saved = cache.get(record.date);
-      if (!saved || saved.revision !== await revision()) {
-        const records: BusinessResult[] = [];
-        if (await exists(journal)) for await (const value of readJsonl(journal)) { validate(value as BusinessResult); records.push(value as BusinessResult); }
-        saved = { revision: await revision(), records };
-        cache.set(record.date, saved);
-      }
-      const latest = new Map<string, BusinessResult>();
-      for (const item of saved.records) {
-        const previous = latest.get(item.id);
-        if (!previous || item.complete && !previous.complete || item.complete === previous.complete && item.acceptedAt >= previous.acceptedAt)
-          latest.set(item.id, item);
-      }
+  /**
+   * One delivery date is decided in memory and materialized with one journal append,
+   * one append per delivery file, then one published-flag append. The delivery mount
+   * charges a full fsync per append, so batching the accepted results of one write is
+   * what keeps publication from serializing the whole host behind the lock.
+   */
+  async function publishDate(entries: readonly BusinessPublication[]) {
+    const date = entries[0].record.date;
+    const journal = path.join(root, ".delivery", "provenance", date + ".jsonl");
+    const revision = async () => stat(journal).then(info => [info.ino, info.size, info.mtimeMs].join(":"), error => {
+      if (error.code !== "ENOENT") throw error;
+      return "missing";
+    });
+    let saved = cache.get(date);
+    if (!saved || saved.revision !== await revision()) {
+      const records: BusinessResult[] = [];
+      if (await exists(journal)) for await (const value of readJsonl(journal)) { validate(value as BusinessResult); records.push(value as BusinessResult); }
+      saved = { revision: await revision(), records };
+      cache.set(date, saved);
+    }
+    const latest = new Map<string, BusinessResult>();
+    for (const item of saved.records) {
+      const previous = latest.get(item.id);
+      if (!previous || item.complete && !previous.complete || item.complete === previous.complete && item.acceptedAt >= previous.acceptedAt)
+        latest.set(item.id, item);
+    }
+    // Snapshot the indexed lines before this batch claims any new ones.
+    const indexed = new Map<string, BusinessResult[]>();
+    for (const item of latest.values()) {
+      const list = indexed.get(item.file) ?? [];
+      list.push(item); indexed.set(item.file, list);
+    }
+    interface FileState { relative: string; current: FileView | undefined; lines: number; fresh: number;
+      rewrite?: Map<number, JsonObject>; appends: { line: number; row: JsonObject }[]; claimed: Set<number> }
+    const files = new Map<string, FileState>(), pending: BusinessResult[] = [], released: BusinessResult[] = [];
+    for (const entry of entries) {
+      const { record, row } = entry;
       const previous = latest.get(record.id);
-      if (previous?.complete && !record.complete) return;
-      if (previous && previous.complete === record.complete && previous.acceptedAt > record.acceptedAt) return;
+      if (previous?.complete && !record.complete) continue;
+      if (previous && previous.complete === record.complete && previous.acceptedAt > record.acceptedAt) continue;
       const sameOrigin = previous && canonical(previous.origin) === canonical(record.origin);
-      if (sameOrigin && previous.published && !refresh && await exists(destination(root, previous))) return;
-      if (previous?.submissionId === record.submissionId && previous.published && !refresh &&
+      if (sameOrigin && previous.published && !entry.refresh && await exists(destination(root, previous))) continue;
+      if (previous?.submissionId === record.submissionId && previous.published && !entry.refresh &&
         await exists(path.join(previous.origin.run, "results", previous.origin.reference.file!)) &&
-        await exists(destination(root, previous))) return;
-      const file = destination(root, record);
-      let current = await view(file);
-      if (current) {
+        await exists(destination(root, previous))) continue;
+      const file = destination(root, record), items = indexed.get(record.file) ?? [];
+      let state = files.get(file);
+      if (!state) {
+        const current = await view(file);
+        const lastLine = items.reduce((last, item) => Math.max(last, item.line), 0);
+        state = { relative: record.file, current, lines: current?.spans.size ?? lastLine, fresh: 0, appends: [], claimed: new Set() };
+        files.set(file, state);
+      }
+      const current = state.current;
+      if (items.length && current && items.some(item => item.line > current.spans.size)) {
         // A crash between journaling a result and appending its row leaves a journaled
         // tail the file never received. Rebuild that tail from the immutable formal rows
         // before the next result claims the next line.
-        const journaled = [...latest.values()].filter(item => item.file === record.file);
-        const missing = journaled.filter(item => item.line > current!.spans.size).sort((a, b) => a.line - b.line);
-        if (missing.length) {
-          const lines = new Set(journaled.map(item => item.line));
-          if (missing.some(item => item.published) || lines.size !== journaled.length || lines.size !== Math.max(...lines))
-            throw new Error("交付结果索引缺行，不能补造或删除未索引结果");
-          await appendJsonl(file, await Promise.all(missing.map(readBusinessResultRow)));
-          const published = missing.map(item => ({ ...item, published: true }));
-          await appendJsonl(journal, published);
-          saved.records.push(...published);
-          saved.revision = await revision();
-          current = (await view(file))!;
-        }
+        const missing = items.filter(item => item.line > current.spans.size);
+        const lines = new Set(items.map(item => item.line));
+        if (missing.some(item => item.published) || lines.size !== items.length || lines.size !== Math.max(...lines))
+          throw new Error("交付结果索引缺行，不能补造或删除未索引结果");
+        state.lines = Math.max(state.lines, ...lines);
+        state.rewrite ??= new Map();
       }
+      if (!current) state.rewrite ??= new Map();
       let adopted = false;
-      if (!previous && current && existingLine !== undefined) {
-        const span = current.spans.get(existingLine);
+      if (!previous && current && entry.existingLine !== undefined) {
+        const span = current.spans.get(entry.existingLine);
         if (!span || canonical(JSON.parse(fileSourceReader.record(file, span.offset, span.bytes, current.revision))) !== canonical(row))
           throw new Error("整理清单目标行与原正式结果不一致");
-        if ([...latest.values()].some(item => item.file === record.file && item.line === existingLine && item.id !== record.id))
+        if (items.some(item => item.line === entry.existingLine && item.id !== record.id) || state.claimed.has(entry.existingLine))
           throw new Error("整理清单目标行已归属其他业务回答");
         adopted = true;
       }
-      if (!previous && current && !adopted && [...latest.values()].filter(item => item.file === record.file).length !== current.spans.size)
+      if (!previous && current && !adopted && items.length + state.fresh !== state.lines)
         throw new Error("已有交付文件缺少可核实的整理映射，暂不追加或覆盖");
-      const lastLine = [...latest.values()].filter(item => item.file === record.file).reduce((last, item) => Math.max(last, item.line), 0);
-      const line = previous?.line ?? (adopted ? existingLine! : 1 + (current?.spans.size ?? lastLine));
+      const line = previous?.line ?? (adopted ? entry.existingLine! : 1 + state.lines);
       const next = { ...record, line, published: false };
       validate(next);
       if (previous && previous.file !== next.file) throw new Error("同一结果身份对应不同交付文件");
       if (previous && previous.acceptedAt === next.acceptedAt && !sameOrigin && previous.submissionId !== next.submissionId)
         throw new Error("同一回答的正式结果接受时间相同，无法选定最新判词");
-      // Read the immutable source on repair, never fabricate a successful empty result.
-      const repair = async () => {
-        const selected = new Map([...latest.values()].filter(item => item.file === next.file).map(item => [item.line, item]));
-        selected.set(next.line, next);
-        const spans = new Map<number, { offset: number; bytes: number }>();
+      // Journal first: a crash before publishing is repaired from the original accepted row.
+      if (!sameOrigin || canonical(previous) !== canonical(next)) pending.push(next);
+      state.claimed.add(line);
+      if (!adopted) {
+        if (!previous) state.fresh++;
+        if (!state.current || previous || state.rewrite) (state.rewrite ??= new Map()).set(line, row);
+        else state.appends.push({ line, row });
+        state.lines = Math.max(state.lines, line);
+      }
+      const published = { ...next, published: true };
+      released.push(published);
+      latest.set(record.id, published);
+    }
+    if (pending.length) { await appendJsonl(journal, pending); saved.records.push(...pending); }
+    const marks: BusinessResult[] = [];
+    for (const [file, state] of files) {
+      if (state.rewrite) {
+        // Rebuild the file from the immutable rows: replacements, a journaled tail the
+        // file never received, and rows still carrying their unpublished index entry.
+        const items = new Map([...latest.values()].filter(item => item.file === state.relative).map(item => [item.line, item]));
+        const overrides = state.rewrite, spans = new Map<number, { offset: number; bytes: number }>();
         let bytes = 0;
         async function* chunks() {
           let index = 0;
@@ -295,44 +333,60 @@ export function createBusinessPublisher(root: string) {
             const buffer = Buffer.from(text + "\n");
             spans.set(index, { offset: bytes, bytes: buffer.length - 1 }); bytes += buffer.length; return buffer;
           };
-          if (current) for await (const text of readJsonlText(file)) {
+          if (state.current) for await (const text of readJsonlText(file)) {
             index++;
-            const item = selected.get(index);
-            yield chunk(item === next ? JSON.stringify(row) : item && !item.published
+            const override = overrides.get(index), item = items.get(index);
+            yield chunk(override ? JSON.stringify(override) : item && !item.published
               ? JSON.stringify(await readBusinessResultRow(item)) : text);
           }
-          const end = [...selected.keys()].reduce((last, value) => Math.max(last, value), index);
+          const end = [...items.keys(), ...overrides.keys()].reduce((last, value) => Math.max(last, value), index);
           while (index < end) {
-            const item = selected.get(++index);
-            if (!item) throw new Error("交付结果索引缺行，不能补造或删除未索引结果");
-            yield chunk(JSON.stringify(item === next ? row : await readBusinessResultRow(item)));
+            const override = overrides.get(++index), item = items.get(index);
+            if (!override && !item) throw new Error("交付结果索引缺行，不能补造或删除未索引结果");
+            yield chunk(JSON.stringify(override ?? await readBusinessResultRow(item!)));
           }
         }
         await atomicWrite(file, chunks());
         views.set(file, { revision: await fileSourceReader.revision(file), bytes, spans });
-      };
-      // Journal first: a crash before publishing is repaired from the original accepted row.
-      if (!sameOrigin || canonical(previous) !== canonical(next)) {
-        await appendJsonl(journal, [next]);
-        saved.records.push(next);
-        saved.revision = await revision();
+        for (const item of latest.values())
+          if (item.file === state.relative && !item.published) marks.push({ ...item, published: true });
+      } else if (state.appends.length) {
+        const count = state.current?.spans.size ?? 0;
+        for (const [index, item] of state.appends.entries())
+          if (item.line !== count + index + 1) throw new Error("交付结果追加行号不连续");
+        await appendJsonl(file, state.appends.map(item => item.row));
+        if (state.current) {
+          for (const { line, row } of state.appends) {
+            state.current.spans.set(line, { offset: state.current.bytes, bytes: Buffer.byteLength(JSON.stringify(row)) });
+            state.current.bytes += Buffer.byteLength(JSON.stringify(row)) + 1;
+          }
+          state.current.revision = await fileSourceReader.revision(file);
+        }
       }
-      if (adopted) { /* The organized immutable row is already in place. */ }
-      else if (!current || previous) await repair();
-      else {
-        const count = current.spans.size;
-        if (line !== count + 1) throw new Error("交付结果追加行号不连续");
-        await appendJsonl(file, [row]);
-        current.spans.set(line, { offset: current.bytes, bytes: Buffer.byteLength(JSON.stringify(row)) });
-        current.bytes += Buffer.byteLength(JSON.stringify(row)) + 1;
-        current.revision = await fileSourceReader.revision(file);
+    }
+    if (released.length || marks.length) {
+      await appendJsonl(journal, [...released, ...marks]);
+      saved.records.push(...released, ...marks);
+    }
+    saved.revision = await revision();
+  }
+  const many = async (entries: readonly BusinessPublication[]) => {
+    if (!entries.length) return;
+    const release = await queuePublication(root);
+    let unlock: (() => Promise<void>) | undefined;
+    try {
+      unlock = await waitForRunLock(path.join(root, ".delivery", "publication"), AbortSignal.timeout(10_000));
+      const byDate = new Map<string, BusinessPublication[]>();
+      for (const entry of entries) {
+        const list = byDate.get(entry.record.date) ?? [];
+        list.push(entry); byDate.set(entry.record.date, list);
       }
-      const published = { ...next, published: true };
-      await appendJsonl(journal, [published]);
-      saved.records.push(published);
-      saved.revision = await revision();
+      for (const list of byDate.values()) await publishDate(list);
     } finally {
       try { await unlock?.(); } finally { release(); }
     }
   };
+  const publish = (record: Omit<BusinessResult, "line" | "published">, row: JsonObject, refresh = false, existingLine?: number) =>
+    many([{ record, row, refresh, existingLine }]);
+  return Object.assign(publish, { many });
 }
