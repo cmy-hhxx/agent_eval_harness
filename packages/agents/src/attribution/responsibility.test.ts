@@ -1,7 +1,8 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { ValidationError, type JsonObject } from "@eval/contracts";
-import { attributionComponentLabel, validateComponentReview, type ComponentReview, type SubmittedProblem } from "./responsibility.js";
+import { attributionComponentLabel, componentFamilyRole, normalizeComponentFamily,
+  validateComponentReview, type ComponentReview, type SubmittedProblem } from "./responsibility.js";
 
 const members: JsonObject[] = [
   { component_index: 1, kind: "script", name: "make.py" },
@@ -66,4 +67,20 @@ test("errors with residual delivery impact require a P0–P3 problem", () => {
 test("problems without tool errors keep any severity except P4 on the final answer", () => {
   assert.doesNotThrow(() => validateComponentReview(members, review([], [problem([], "P4", 2), problem([], "P1", 3)]), []));
   assert.throws(() => validateComponentReview(members, review([], [problem([], "P4", 3)]), []), /终稿问题都影响交付/);
+});
+
+test("component family normalization and session-catalog roles always return a concrete fallback", () => {
+  assert.equal(normalizeComponentFamily(undefined), "other");
+  assert.equal(normalizeComponentFamily("/opt/skills/finquery.py"), "finquery");
+  assert.equal(normalizeComponentFamily("scripts/finquery.sh"), "finquery");
+  assert.equal(normalizeComponentFamily("scripts/finquery.js"), "finquery");
+  assert.deepEqual(componentFamilyRole({ kind: "model", name: "答案合成" }), { component_family: "answer_synthesis", component_role: "delivery" });
+  assert.deepEqual(componentFamilyRole({ kind: "model", name: "planner-finquery" }), { component_family: "model", component_role: "planning" });
+  assert.deepEqual(componentFamilyRole({ kind: "script", name: "/opt/finquery.py" }), { component_family: "finquery", component_role: "script" });
+  assert.deepEqual(componentFamilyRole({ kind: "tool", name: "web_fetch" }), { component_family: "web_fetch", component_role: "tool" });
+  assert.deepEqual(componentFamilyRole({ kind: "mystery" }), { component_family: "other", component_role: "tool" });
+  assert.deepEqual(componentFamilyRole({ kind: "script" }), { component_family: "other", component_role: "script" });
+  assert.deepEqual(componentFamilyRole({ kind: "model" }), { component_family: "model", component_role: "planning" });
+  assert.deepEqual(componentFamilyRole({ kind: "model", name: "planner-finquery", component_family: "finquery", component_role: "planning" }),
+    { component_family: "finquery", component_role: "planning" });
 });

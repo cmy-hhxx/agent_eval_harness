@@ -5,6 +5,8 @@
   "additionalProperties": false,
   "required": [
     "component",
+    "component_family",
+    "component_role",
     "label",
     "definition",
     "problem_phenomena",
@@ -18,6 +20,15 @@
       "type": "string",
       "minLength": 1,
       "description": "程序复制责任组件名称：Compact components_name，或程序为匿名模型按工具命名的「<工具> 请求生成」；跨轮问题从 Compact 联合目录选择。"
+    },
+    "component_family": {
+      "type": "string",
+      "minLength": 1,
+      "description": "程序派生的组件族：按调用链目标归一化脚本或工具名，例如 finquery、web_fetch、web_search、shell、model、answer_synthesis、other；不改变原始 component 名称。"
+    },
+    "component_role": {
+      "enum": ["planning", "request_generation", "skill", "script", "tool", "delivery"],
+      "description": "程序派生的组件角色：规划、请求生成、skill、脚本、工具或最终交付。"
     },
     "label": { "type": "string", "minLength": 1, "description": "可复用的短问题名称。" },
     "definition": { "type": "string", "minLength": 1, "description": "可复用的问题定义，写清同类偏差及适用条件。" },

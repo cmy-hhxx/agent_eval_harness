@@ -49,6 +49,8 @@ test("cross-turn findings require original evidence from both turns and retain n
   const audit = { ...emptyAudit(), evidenceBank: prepared.evidenceBank };
   const result = f.registry.resolve(binding, draft, audit) as SessionAttributionResult; f.registry.validate(binding, result, audit);
   assert.equal(result.session_problem[0]!.component, actor.name);
+  assert.equal(result.session_problem[0]!.component_family, "answer_synthesis");
+  assert.equal(result.session_problem[0]!.component_role, "delivery");
   assert.deepEqual(result.session_problem[0]!.evidence.map(item => item.quote), ["按10%仓位分析。", "你的仓位是70%。"]);
   assert(result.session_problem[0]!.evidence[1]!.position.startsWith("trace_index 1 / message_index 2 /"));
   for (const index of [0, -1, 1.5, 999]) {

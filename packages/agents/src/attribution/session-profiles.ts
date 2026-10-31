@@ -10,7 +10,7 @@ import componentSubmissionSchema from "../../../../schemas/attribution/component
 import componentResultSchema from "../../../../schemas/attribution/component-result.schema.json" with { type: "json" };
 import sessionResultSchema from "../../../../schemas/attribution/session-result.schema.json" with { type: "json" };
 import { resolveAttributionEvidence } from "./source-evidence.js";
-import { attributionComponentLabel, validateComponentReview, type ComponentReview, type SubmittedProblem } from "./responsibility.js";
+import { attributionComponentIdentity, validateComponentReview, type ComponentReview, type SubmittedProblem } from "./responsibility.js";
 import type { SessionAttributionResult, SessionProblem, TraceAttributionResult } from "./types.js";
 
 const tools = ["read_trace", "search_trace", "view_image", "calculate", "execute_code", "read_artifact"];
@@ -101,9 +101,9 @@ function resolveProblems(request: AgentRequest, problems: SubmittedProblem[], au
   const raw = request.sources.answer.value as { messages: Record<string, unknown>[] };
   const issues: ValidationIssue[] = [];
   const result = problems.map((problem, index) => {
-    const component = attributionComponentLabel(problem.actor_index, request.input.components as JsonObject[], `${field}/${index + offset}/actor_index`);
+    const identity = attributionComponentIdentity(problem.actor_index, request.input.components as JsonObject[], `${field}/${index + offset}/actor_index`);
     const { tool_error_indices: _errorIndices, actor_index: _actor, ...description } = problem;
-    return { ...description, component,
+    return { ...description, component: identity.name, component_family: identity.component_family, component_role: identity.component_role,
       evidence: problem.evidence.flatMap((selection, evidenceIndex) => {
         try {
           const path = `${field}/${index + offset}/evidence/${evidenceIndex}`;
@@ -121,7 +121,7 @@ function resolveProblems(request: AgentRequest, problems: SubmittedProblem[], au
           if (!point || !position) throw new ValidationError([{ category: "evidence", code: "evidence_position_invalid", path,
             message: "证据必须能定位到本次收到的原始消息。" }]);
           return [{ position: attributionEvidencePosition(position.trace_index, position.message_index, evidence.evidence_id),
-            component: evidenceComponent(raw.messages[evidence.message_index] ?? {}, point.kind === "image" ? "image" : point.path, component),
+            component: evidenceComponent(raw.messages[evidence.message_index] ?? {}, point.kind === "image" ? "image" : point.path, identity.name),
             quote: evidence.quote, reason: selection.reason }];
         } catch (error) {
           if (!(error instanceof ValidationError)) throw error;

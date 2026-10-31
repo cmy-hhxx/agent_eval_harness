@@ -1,9 +1,12 @@
 import type { ResolvedEvidence, JsonObject } from '@eval/contracts';
 export type { TaskAnalysis, TaskCriterion } from '@eval/contracts';
 export interface Evidence extends ResolvedEvidence { source?: string; source_input_id?: string }
+export type ComponentRole = "planning" | "request_generation" | "skill" | "script" | "tool" | "delivery";
 /** Final session-level problem. Trace and session problems share this exact shape. */
 export interface SessionProblem {
   component: string;
+  component_family: string;
+  component_role: ComponentRole;
   label: string;
   definition: string;
   problem_phenomena: string;

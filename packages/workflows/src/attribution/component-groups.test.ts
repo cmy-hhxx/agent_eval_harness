@@ -7,7 +7,8 @@ import { bindAttribution } from "./index.js";
 import { finalCapabilities } from "./component-groups.js";
 import { componentTask, sourceCompactReceipt } from "../../../../tests/fixtures/compact.js";
 
-type Member = { name: string; role: string; message_indices: number[]; contains_final_generation?: boolean };
+type Member = { name: string; role: string; component_family?: string; component_role?: string;
+  message_indices: number[]; contains_final_generation?: boolean };
 function groups(raw: RawInput, names: string[], errors: (candidate: ReturnType<typeof adapt>) => JsonObject[] = () => []) {
   const candidate = adapt(raw, { id: "answer", name: "Answer", adapter: "b", sources: [] }, "fixture", 1), inputs = { [candidate.input_id]: raw };
   const compact = sourceCompactReceipt(candidate, raw);
@@ -37,6 +38,7 @@ test("an anonymous main loop is linked by its generated arguments and named per 
   assert.deepEqual((chain!.input.invocations as { request_components: string[] }[]).map(link => link.request_components), [["finquery 请求生成"], ["finquery 请求生成"]]);
   assert.deepEqual(delivery!.raw.map(member => [member.name, member.role, member.contains_final_generation === true]),
     [["规划", "delivery", false], ...finalCapabilities.map(([name]) => [name, "delivery", true])], "plan-level review and the final answer form the delivery group");
+  assert(delivery!.raw.every(member => member.component_family === "answer_synthesis" && member.component_role === "delivery"));
   assert.equal((delivery!.input.invocations as unknown[]).length, 2, "delivery checks the final answer against every invocation");
 });
 
@@ -62,4 +64,50 @@ test("a skill owns scripts under its directory, a planner answers for every tool
   assert.deepEqual(delivery!.members, finalCapabilities.map(([name]) => [name, "delivery"]));
   assert.deepEqual(search!.errors.map(error => error.tool_error_idx), [1]);
   for (const other of [skill, data, delivery]) assert.deepEqual(other!.errors, [], "delivery and unrelated chains never dispose another chain's error");
+  const dataFields = new Map(data!.raw.map(member => [member.name, [member.component_family, member.component_role]]));
+  assert.deepEqual(dataFields.get("finquery"), ["finquery", "tool"]);
+  assert.deepEqual(dataFields.get("planner-search"), ["finquery", "planning"]);
+  const searchFields = new Map(search!.raw.map(member => [member.name, [member.component_family, member.component_role]]));
+  assert.deepEqual(searchFields.get("web_search"), ["web_search", "tool"]);
+  assert.deepEqual(searchFields.get("planner-search"), ["web_search", "planning"]);
+});
+
+test("an expert finquery chain groups skill, planner, scripts and tool by the first invocation target", () => {
+  const raw: RawInput = { batch_id: "batch", case_id: "expert-finquery", messages: [
+    { type: "user_question", content: "查询A公司2025年营收并交付。" },
+    { type: "llm_turn", name: "planner-finquery", parent_span: "p1", output: "运行 finquery.py 查询营收。" },
+    call("s1", "shell", { command: "python /opt/skills/aime-finquery/finquery.py --query A" }, "p1"), result("s1", "shell", { exit_code: 0, stdout: "A公司2025年营收100亿元。" }),
+    call("s2", "shell", { command: "python scripts/finquery.py --query A" }), result("s2", "shell", { exit_code: 0, stdout: "A公司2025年营收100亿元。" }),
+    call("v", "view_skill", { name: "aime-finquery" }), result("v", "view_skill", { content: '<skill_content name="aime-finquery">查询公司财务。</skill_content>' }),
+    { type: "llm_turn", name: "答案合成", output: "A公司2025年营收100亿元。" }, { type: "final_answer", content: "A公司2025年营收100亿元。" },
+  ] };
+  const [chain] = groups(raw, ["shell"]), fields = new Map(chain!.raw.map(member => [member.name, [member.component_family, member.component_role]]));
+  assert.deepEqual(fields.get("aime-finquery"), ["finquery", "skill"]);
+  assert.deepEqual(fields.get("finquery.py 请求生成"), ["finquery", "request_generation"]);
+  assert.deepEqual(fields.get("planner-finquery"), ["finquery", "planning"]);
+  assert.deepEqual(fields.get("/opt/skills/aime-finquery/finquery.py"), ["finquery", "script"]);
+  assert.deepEqual(fields.get("scripts/finquery.py"), ["finquery", "script"]);
+  assert.deepEqual(fields.get("shell"), ["shell", "tool"]);
+});
+
+test("an unrecognized shell chain stays in the shell family instead of guessing finquery", () => {
+  const raw: RawInput = { batch_id: "batch", case_id: "shell-only", messages: [
+    { type: "user_question", content: "检查 finquery 是否可用。" },
+    call("s", "shell", { command: "finquery --help" }), result("s", "shell", { exit_code: 0, stdout: "usage" }),
+    { type: "final_answer", content: "已检查。" },
+  ] };
+  const [chain] = groups(raw, ["shell"]), fields = new Map(chain!.raw.map(member => [member.name, [member.component_family, member.component_role]]));
+  assert.deepEqual(fields.get("shell"), ["shell", "tool"]);
+  assert.deepEqual(fields.get("shell 请求生成"), ["shell", "request_generation"]);
+});
+
+test("a direct web_fetch chain separates the tool from its program-named request generation", () => {
+  const raw: RawInput = { batch_id: "batch", case_id: "web-fetch", messages: [
+    { type: "user_question", content: "读取公告。" },
+    call("w", "web_fetch", { url: "https://example.com/notice" }), result("w", "web_fetch", { content: "公告内容。" }),
+    { type: "final_answer", content: "公告已读取。" },
+  ] };
+  const [chain] = groups(raw, ["web_fetch"]), fields = new Map(chain!.raw.map(member => [member.name, [member.component_family, member.component_role]]));
+  assert.deepEqual(fields.get("web_fetch"), ["web_fetch", "tool"]);
+  assert.deepEqual(fields.get("web_fetch 请求生成"), ["web_fetch", "request_generation"]);
 });

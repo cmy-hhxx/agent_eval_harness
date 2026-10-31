@@ -67,7 +67,7 @@ flowchart TD
 
 组件材料按实际调用配对：`invocations` 为每次请求保留原始参数/代码、对应回执、请求生成者和执行组件，并按原始顺序提供修复链；不再用最后两次调用代表全部执行。逐次核对主体、期间、单位、字段和计算，不能用调用成功或终稿采用证明业务正确。`context_invocations` 配对提供必要替代路径及终稿引用的来源，`user_requirements` 保留当前及前序原始用户约束。实际加载的 skill 正文保留原文和补读入口，`callable_contracts` 提供相关模型调用中的真实工具契约；系统和 developer 私密规范继续隔离。去掉消息封装的角色、调用ID、重复输入位置和重复JSON父对象；表格JSON按完整原始行或属性保留，不重写或换算。每次调用单独分配原文预算，长代码、修复和数据可沿 `read_requests` 补读；未见或未核实的实现须说明不确定，不能判正常。
 
-组件只提交 content、evidence、tool_error_reviews、problems，程序绑定名称；content 与每条 tool_error_reviews.content 不超过600字。每条分派到该组件的异常须恰好处置一次：unresolved_impact 表示未恢复且有剩余交付影响，recovered_impact 表示已恢复但仍有交付影响，两者关联本组件问题并按剩余影响定 P0–P3；recovered_no_impact 表示已恢复且无交付影响，必须选择报错后的实际工具回执；no_delivery_impact 表示未恢复但交付不受影响；后两者记 P4 过程缺陷；uncertain 表示根因或影响不清，不关联问题。除 uncertain 外，每条处置都由一条问题的 tool_error_indices 关联，每条问题都必须提交该键，无关联异常时为空数组。计划或终稿自述不能证明恢复；恢复反馈会列出报错后的候选工具回执供补选。核查与异常关联保留在内部收据，不新增正式字段；失败组件未完成的异常处置保留为覆盖缺口，不冒充已经检查。
+组件只提交 content、evidence、tool_error_reviews、problems，程序绑定名称；content 与每条 tool_error_reviews.content 不超过600字。每条分派到该组件的异常须恰好处置一次：unresolved_impact 表示未恢复且有剩余交付影响，recovered_impact 表示已恢复但仍有交付影响，两者关联本组件问题并按剩余影响定 P0–P3；recovered_no_impact 表示已恢复且无交付影响，必须选择报错后的实际工具回执；no_delivery_impact 表示未恢复但交付不受影响；后两者记 P4 过程缺陷；uncertain 表示根因或影响不清，不关联问题。除 uncertain 外，每条处置都由一条问题的 tool_error_indices 关联，每条问题都必须提交该键，无关联异常时为空数组。计划或终稿自述不能证明恢复；恢复反馈会列出报错后的候选工具回执供补选。核查与异常关联保留在内部收据；正式问题新增的 `component_family`/`component_role` 由程序派生，不经模型提交。失败组件未完成的异常处置保留为覆盖缺口，不冒充已经检查。
 
 异常清单不是问题白名单。exit_code=0 或文件保存成功仍须核对实际内容、公式、单位和验收结果；脚本产生空表或错误公式应定位具体脚本，不伪造执行异常。最终答复只记录自己新增的误读、计算、结论或表达偏差。上游失败、终稿如实披露时，不能改称“交付缺失”并清空异常关联来转移责任。所有组件都须证明剩余交付影响；已被替代路径消除的检索偏差、无关回执或早期错误仅作内部记录，不能猜测额度浪费并报 P3。允许重复计责，未知因果不编造，不按比例分配组件。
 
@@ -101,6 +101,8 @@ Compact 接受后立即写 `results/compact.jsonl`，Session 接受后立即写 
 ```json
 {
   "component": "finquery 取数服务",
+  "component_family": "finquery",
+  "component_role": "tool",
   "label": "零行结果未识别",
   "definition": "应返回数据的查询返回零行，后续仍据此形成事实结论。",
   "problem_phenomena": "第一问把零行取数结果当成有数据支持。",
@@ -120,6 +122,8 @@ Compact 接受后立即写 `results/compact.jsonl`，Session 接受后立即写 
   ]
 }
 ```
+
+`component_family` 与 `component_role` 由程序派生，模型不提交、不改写。轮级问题取所选出错成员：调查组 family 由该组第一条调用链的 `invocationTarget` 归一化，脚本或工具名取 basename 并去掉 `.py/.sh/.js/.mjs/.ts` 扩展名；规划、请求生成、skill 和交付成员继承组 family，script/tool 使用自身名称归一化；组内 `program_request_generation` 成员角色为 `request_generation`，其他请求生成者为 `planning`；交付组 family 固定 `answer_synthesis`，成员角色为 `delivery`。会话级问题从 `processComponents` 联合目录派生：答案合成（匿名模型且名称为「答案合成」，或带 `contains_final_generation`）为 `answer_synthesis/delivery`；script/tool/skill 使用自身归一化名称和 kind；其他 model 为 `model/planning`。无链接、未知 kind 或名称缺失时分别回退 `other` 和 `tool`（model 回退 `model/planning`），不抛错。原始 `component` 名称保持不变。
 
 `quote` 上限为400字；工具和错误反馈只提供不超过400字的可提交片段。引文必须是精确连续原文，不能拼接或由程序截断。`position` 保留原始轮次、轮内消息和字段路径，末尾附 ` / evidence_id <完整坐标>`，外部字段结构不变；后续阶段直接解析该 ID，不生成临时替代来源。`evidence.component` 明确区分 `reasoning:`、`tool_call:`、`model:`（模型调用的可见输出）、`answer:` 等证据位置及具体组件。`calculations` 只保留文字点评，不再嵌套操作数和复算元数据。
 

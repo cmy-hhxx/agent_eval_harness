@@ -9,7 +9,8 @@ const result: SessionAttributionResult = {
   session_meta: { session_id: "session-1" },
   turns: [
     { meta: { trace_id: "t1" }, summary: "第一轮错误。", is_correct: 0, correct_reason: "与标准不符。",
-      problem: [{ component: "finquery 取数服务", label: "零行", definition: "查询应返回数据但为空。",
+      problem: [{ component: "finquery 取数服务", component_family: "finquery", component_role: "tool",
+        label: "零行", definition: "查询应返回数据但为空。",
         problem_phenomena: "第一问把零行当成有数据。", reason: "工具实际返回零行。",
         severity: "P1", severity_reason: "重要结论缺少数据支持，需要重新取数核对。",
         evidence: [{ position: "message 2 / output/0/text", component: "tool_call: finquery 取数服务",

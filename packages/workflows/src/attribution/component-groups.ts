@@ -1,5 +1,6 @@
 import { evidenceOrigin, type JsonObject } from "@eval/contracts";
 import { parseEvidenceCoordinates } from "@eval/tools";
+import { normalizeComponentFamily, type ComponentRole } from "@eval/agents/attribution";
 import type { RawInput } from "../inputs/types.js";
 
 export type MemberRole = "request_generation" | "tool" | "script" | "skill" | "delivery";
@@ -7,6 +8,7 @@ export interface InvestigationGroup {
   /** Stable within a turn: "delivery", or kind:name of the group's first catalog member. */
   key: string;
   delivery: boolean;
+  component_family: string;
   members: JsonObject[];
   /** Tool groups review their own invocations; delivery receives every invocation as checkable source. */
   links: JsonObject[];
@@ -21,6 +23,33 @@ export function invocationTarget(raw: RawInput, members: JsonObject[], requestIn
   return script ? String(script.name).split("/").at(-1)! : String(raw.messages[requestIndex]?.name);
 }
 const escape = (text: string) => text.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&");
+
+/** The group family follows its first link's actual executor; a missing link never invents a tool name. */
+function groupComponentFamily(raw: RawInput, group: InvestigationGroup): string {
+  if (group.delivery) return "answer_synthesis";
+  const request = Number(group.links[0]?.request_message_index);
+  if (!Number.isSafeInteger(request) || !raw.messages[request]) return "other";
+  try { return normalizeComponentFamily(invocationTarget(raw, group.members, request)); }
+  catch { return "other"; }
+}
+
+function memberComponentRole(member: JsonObject): ComponentRole {
+  const role = member.role, kind = member.kind;
+  if (role === "request_generation")
+    return member.identity_basis === "program_request_generation" ? "request_generation" : "planning";
+  if (role === "skill" || role === "script" || role === "tool" || role === "delivery") return role;
+  if (kind === "skill" || kind === "script" || kind === "tool") return kind;
+  return "tool";
+}
+
+function withComponentIdentity(raw: RawInput, group: InvestigationGroup): InvestigationGroup {
+  const groupFamily = groupComponentFamily(raw, group);
+  return { ...group, component_family: groupFamily, members: group.members.map(member => {
+    const component_role = memberComponentRole(member);
+    const ownsTarget = component_role === "script" || component_role === "tool";
+    return { ...member, component_family: ownsTarget ? normalizeComponentFamily(member.name) : groupFamily, component_role };
+  }) };
+}
 
 /**
  * Components sharing an invocation chain are investigated together, so request generation,
@@ -54,7 +83,7 @@ export function investigationGroups(raw: RawInput, actors: JsonObject[], links: 
   executors.forEach((actor, index) => sets.set(root(index), [...sets.get(root(index)) ?? [], actor]));
   const groups: InvestigationGroup[] = [...sets.values()].map(members => {
     const covered = new Set(members.flatMap(actor => actor.message_indices as number[]));
-    return { key: `${members[0]!.kind}:${members[0]!.name}`, delivery: false,
+    return { key: `${members[0]!.kind}:${members[0]!.name}`, delivery: false, component_family: "other",
       members: members.map(actor => ({ ...actor, role: actor.kind as MemberRole })),
       links: links.filter(link => covered.has(Number(link.request_message_index)) ||
         (link.return_message_indices as number[]).some(index => covered.has(index))), errors: [] };
@@ -108,7 +137,8 @@ export function investigationGroups(raw: RawInput, actors: JsonObject[], links: 
   const members = delivery.flatMap(actor => !(named ? actor === named : finalOwner(actor)) ? [{ ...actor, role: "delivery" as MemberRole }]
     : finalCapabilities.map(([name, scope]) => ({ ...actor, component_index: ++next, name, components_content: scope,
       identity_basis: "program_final_capability", role: "delivery" as MemberRole, contains_final_generation: true })));
-  return [...groups, ...delivery.length ? [{ key: "delivery", delivery: true, links, errors: [], members }] : []];
+  return [...groups, ...delivery.length ? [{ key: "delivery", delivery: true, component_family: "answer_synthesis", links, errors: [], members }] : []]
+    .map(group => withComponentIdentity(raw, group));
 }
 
 /** Capabilities of the final generation call, ordered by the earliest deviation they can explain. */

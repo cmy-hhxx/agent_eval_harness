@@ -4,7 +4,7 @@ import { componentAttributionProfile, sessionAssemblyProfile, sessionAttribution
 export { attributionNormDirectory, type AttributionNorm } from "./norm-directory.js";
 export * from "./types.js";
 export { sessionProblems, sessionProblemEntries, evidenceMessageIndex, sessionCorrectness } from "./session.js";
-export { attributionComponentLabel } from "./responsibility.js";
+export { attributionComponentLabel, normalizeComponentFamily } from "./responsibility.js";
 export { componentAttributionProfile, sessionAssemblyProfile, sessionAttributionProfile, sessionAttributionResultSchema, traceAttributionProfile } from "./session-profiles.js";
 export const attributionAgent: AgentDefinition = {
   id: "attribution",

@@ -23,7 +23,7 @@
 - `submission.schema.json`：模型提交。Profile 可据可信请求收窄可选编号、槽位与数量。
 - `result.schema.json`：程序绑定身份、展开证据并接受后的结果。
 - `workflow/export.schema.json`：含稳定模型身份、源归因及派生判决的正式对比行，仅接受 `decided`。
-- `attribution/problem.schema.json`：trace 与 session 共用的扁平 Problem，证据包含 position/component/quote/reason，计算只保留文字点评。
+- `attribution/problem.schema.json`：trace 与 session 共用的扁平 Problem；component 保留真实名称，component_family/component_role 由程序按调用链与角色派生，证据包含 position/component/quote/reason，计算只保留文字点评。
 - `attribution/session-result.schema.json`：独立 Attribution workflow 的正式行；一行一个 session，包含 session_meta、turns、session_summary、session_problem。
 - `workflow/clustering-tree.schema.json`：独立聚类完成后的树节点 JSONL；包含模型、功能责任、问题方向和细类，保留待观察问题及全部冻结回答的来源引用。
 - `workflow/rewritten.schema.json`：Workflow 导出的改写文案；Agent 原始结果不包含该字段，存储与来源关联见[改写契约](../docs/contract.md#改写)。

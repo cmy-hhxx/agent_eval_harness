@@ -181,7 +181,8 @@ test("Criteria and Comparison bind original multi-turn messages and accepted att
     const description = problem(1);
     const result: SessionAttributionResult = { session_meta: {}, session_summary: "脚本调用失败。", session_problem: [],
       turns: [0, 1].map(turn => ({ meta: {}, summary: "已检查。", is_correct: null, correct_reason: "无标准。", problem: turn ? [{
-        ...description, component: "planner-finquery", evidence: [{ position: attributionEvidencePosition(1, 3, evidence.evidence_id),
+        ...description, component: "planner-finquery", component_family: "finquery", component_role: "planning" as const,
+        evidence: [{ position: attributionEvidencePosition(1, 3, evidence.evidence_id),
           component: "tool_call: shell", quote: evidence.quote, reason: "原始返回。" }],
       }] : [] })) };
     return [label, { ...compactReceipt(2), taskId: task.dependencies[label]!, evaluation: result }];
