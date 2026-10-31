@@ -22,10 +22,26 @@ export interface AttributionTaskData {
   stage: AttributionStage; candidate: Candidate; traceIndex?: number; traceCount?: number;
   compactField?: string; compactTaskId?: string; componentGroup?: string;
 }
+/** Previous attribution tasks grouped by candidate and attribution identity. */
+export type AttributionTaskIndex = ReadonlyMap<string, readonly PlannedTask[]>;
+const attributionTaskKey = (inputId: string, identity?: string) => canonical([inputId, identity ?? null]);
+/** Resume planning must not rescan every planned task for every candidate. */
+export function indexAttributionTasks(tasks: readonly PlannedTask[]): AttributionTaskIndex {
+  const index = new Map<string, PlannedTask[]>();
+  for (const task of tasks) {
+    if (!task.stage.startsWith("attribution-")) continue;
+    const data = task.data as AttributionTaskData & { attributionIdentity?: string };
+    const key = attributionTaskKey(data.candidate.input_id, data.attributionIdentity);
+    const group = index.get(key);
+    if (group) group.push(task);
+    else index.set(key, [task]);
+  }
+  return index;
+}
 export interface AttributionUnitOptions {
   data?: Record<string, unknown>;
   dependencies?: Record<string, string>;
-  previousTasks?: readonly PlannedTask[];
+  previousTasks?: AttributionTaskIndex;
   acceptedTaskIds?: ReadonlySet<string>;
   identity?: string;
 }
@@ -39,9 +55,7 @@ function turns(candidate: Candidate) {
 
 /** One live Compact stage, component investigations, trace summaries, then session review. */
 export function planAttributionUnit(candidate: Candidate, options: AttributionUnitOptions = {}) {
-  const previous = (options.previousTasks ?? []).filter(task => task.stage.startsWith("attribution-") &&
-    (task.data as AttributionTaskData).candidate.input_id === candidate.input_id &&
-    (task.data as Record<string, unknown>).attributionIdentity === options.identity);
+  const previous = options.previousTasks?.get(attributionTaskKey(candidate.input_id, options.identity)) ?? [];
   const id = (stage: AttributionStage, traceIndex?: number) => previous.find(task => task.stage === stage &&
     (task.data as AttributionTaskData).traceIndex === traceIndex)?.id ?? randomUUID();
   const traceList = turns(candidate), upstream = options.dependencies ?? {};
@@ -399,7 +413,9 @@ export const attributionWorkflow: WorkflowDefinition = {
     const records = new Map<string, Candidate>();
     const inputs = await loadRunInputs(manifest, undefined, undefined, records, normalizeInput);
     const catalog = (manifest.inputCatalog as Candidate[]).map(candidate => ({ ...records.get(candidate.input_id)!, input_id: candidate.input_id }));
-    const tasks = catalog.flatMap(candidate => planAttributionUnit(candidate, { previousTasks: manifest.tasks, acceptedTaskIds: new Set(Object.keys(state.receipts)) }).tasks);
+    const previous = indexAttributionTasks(manifest.tasks);
+    const acceptedTaskIds = new Set(Object.keys(state.receipts));
+    const tasks = catalog.flatMap(candidate => planAttributionUnit(candidate, { previousTasks: previous, acceptedTaskIds }).tasks);
     manifest.tasks = tasks; manifest.inputCatalog = catalog;
     return { tasks, inputs, catalog, summary: manifest.preflight };
   },

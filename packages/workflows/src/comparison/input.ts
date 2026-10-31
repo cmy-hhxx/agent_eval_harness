@@ -11,7 +11,7 @@ import { attributionRewritePlaceholder } from "./attribution-rewrite-planning.js
 import { predictionKey, predictionMaterial, readPredictionAnswers } from "./prediction.js";
 import type { BatchPreflight, EvalConfig, TaskData } from "./types.js";
 import type { Candidate } from "../inputs/types.js";
-import { planAttributionUnit, type AttributionTaskData } from "@eval/workflows/attribution";
+import { indexAttributionTasks, planAttributionUnit, type AttributionTaskData } from "@eval/workflows/attribution";
 
 const normalize = (text: string) => text.replace(/\s+/gu, "");
 const LABELS = "ABCDEFGHIJKLMNOPQRSTUVWXYZ".split("");
@@ -116,6 +116,7 @@ export async function buildPlan(
         canonical([identity.batch_id, identity.case_id, [first, second].sort()])));
     }));
   const oldTasks = new Map(previous?.tasks.map((task) => [taskKey(task), task]));
+  const previousAttribution = indexAttributionTasks(previous?.tasks ?? []);
   const collected = await collectInputs(config, previous && { inputs: previous.inputs,
     catalog: previous.catalog as Candidate[] | undefined ?? previous.tasks.flatMap(task => Object.values((task.data as TaskData).candidates)) }, {
     materializeInputs: options.materializeInputs,
@@ -329,7 +330,7 @@ export async function buildPlan(
                 !isDeepStrictEqual(oldCheck.reviewQuestions, data.reviewQuestions) ||
                 oldCheck.candidates.A.input_id !== record.input_id),
           );
-        const unit = planAttributionUnit(record, { data: { ...data } as Record<string, unknown>, dependencies: { criteria: criteria.id }, previousTasks: previous?.tasks, acceptedTaskIds: accepted,
+        const unit = planAttributionUnit(record, { data: { ...data } as Record<string, unknown>, dependencies: { criteria: criteria.id }, previousTasks: previousAttribution, acceptedTaskIds: accepted,
           identity: criteria.id });
         stats.attribution_tasks++;
         checks.set(checkKey, unit); attributionTasks.push(...unit.tasks);
@@ -400,7 +401,7 @@ export async function buildPlan(
     const key = canonical([record.batch_id, record.case_id, "attribution", [record.version], criteriaScope]);
     const unit = planAttributionUnit(record, { data: { stage: "attribution-compact", candidates: { A: record }, standalone: true, reference: record.reference,
       criteriaScope, initialContextChars: config.execution.initialContextChars,
-      standardAnswerReview: config.standardAnswerReview === true }, dependencies: { criteria: criteria.id }, previousTasks: previous?.tasks, acceptedTaskIds: accepted,
+      standardAnswerReview: config.standardAnswerReview === true }, dependencies: { criteria: criteria.id }, previousTasks: previousAttribution, acceptedTaskIds: accepted,
       identity: criteria.id });
     checks.set(key, unit); attributionTasks.push(...unit.tasks);
     batchStats(record.batch_id).attribution_tasks++;
