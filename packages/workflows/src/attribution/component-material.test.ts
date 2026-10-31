@@ -14,15 +14,15 @@ test("honest final disclosure receives the upstream successful-but-empty script 
     { type: "final_answer", content: "工作簿月度区块仍为空，未能交付。" },
   ] };
   const candidate = adapt(raw, { id: "answer", name: "Answer", adapter: "b", sources: [] }, "fixture", 1);
-  const compact = sourceCompactReceipt(candidate, raw), task = componentTask(candidate, compact, "最终答复生成");
-  const binding = bindAttribution(task, { [candidate.input_id]: raw }, { compact });
+  const inputs = { [candidate.input_id]: raw }, compact = sourceCompactReceipt(candidate, raw), task = componentTask(candidate, compact, inputs, "最终答复生成");
+  const binding = bindAttribution(task, inputs, { compact });
   const prepared = new AgentRegistry([attributionAgent]).prepare(binding);
   assert(prepared.prompt.includes("monthly_rows=0"), "the final review must see the actual upstream business failure even with exit 0 and no tool_errors");
   assert(prepared.prompt.includes("python make.py"), "the receipt must retain its real invocation");
   assert.equal((binding.modelInput!.tool_errors as unknown[]).length, 0);
 });
 
-test("a last planning call is not mistaken for the final generator when generation was not captured", () => {
+test("a planner without recorded requests joins delivery but is not mistaken for the final generator", () => {
   const raw = { batch_id: "batch", case_id: "missing-generation", messages: [
     { type: "user_question", content: "生成工作簿。" },
     { type: "llm_turn", name: "planner-excel", output: "运行 make.py。" },
@@ -31,14 +31,18 @@ test("a last planning call is not mistaken for the final generator when generati
     { type: "final_answer", content: "月度表为空，未交付。" },
   ] };
   const candidate = adapt(raw, { id: "answer", name: "Answer", adapter: "b", sources: [] }, "fixture", 1);
-  const compact = sourceCompactReceipt(candidate, raw);
-  const planner = componentTask(candidate, compact, "planner-excel");
-  const binding = bindAttribution(planner, { [candidate.input_id]: raw }, { compact });
-  assert.equal((binding.modelInput!.current_component as { contains_final_generation: boolean }).contains_final_generation, false);
-  assert(componentTask(candidate, compact, "最终答复生成"));
+  const inputs = { [candidate.input_id]: raw }, compact = sourceCompactReceipt(candidate, raw);
+  const delivery = bindAttribution(componentTask(candidate, compact, inputs, "planner-excel"), inputs, { compact }).modelInput!;
+  const members = delivery.investigated_components as { name: string; role: string; contains_final_generation?: boolean }[];
+  assert.equal(delivery.investigation_scope, "delivery");
+  assert.deepEqual(members.map(member => [member.name, member.contains_final_generation === true]), [["planner-excel", false], ["最终答复生成", true]]);
+  const chain = bindAttribution(componentTask(candidate, compact, inputs, "make.py"), inputs, { compact }).modelInput!;
+  assert.deepEqual((chain.investigated_components as { name: string; role: string }[]).map(member => [member.name, member.role]),
+    [["shell", "tool"], ["make.py", "script"], ["shell 请求生成", "request_generation"]], "an unlinked request is still a named per-tool responsibility");
+  assert.deepEqual((chain.invocations as { request_components: string[] }[])[0]!.request_components, ["shell 请求生成"]);
 });
 
-test("an empty planner sees the real alternative retrieval before deciding residual delivery impact", () => {
+test("an empty planner is reviewed with the real alternative retrieval before deciding residual delivery impact", () => {
   const raw = { batch_id: "batch", case_id: "alternative", messages: [
     { type: "user_question", content: "查询今日金价。" },
     { type: "llm_turn", name: "planner-finquery", output: "[]" },
@@ -48,11 +52,15 @@ test("an empty planner sees the real alternative retrieval before deciding resid
     { type: "final_answer", content: "今日金价100元/克，依据交易所报价。" },
   ] };
   const candidate = adapt(raw, { id: "answer", name: "Answer", adapter: "b", sources: [] }, "fixture", 1);
-  const compact = sourceCompactReceipt(candidate, raw), task = componentTask(candidate, compact, "planner-finquery");
-  const binding = bindAttribution(task, { [candidate.input_id]: raw }, { compact });
-  const context = binding.modelInput!.context_invocations as { return_evidence: { message_index: number; quote: string }[]; executed_components: string[] }[];
-  assert(context.some(item => item.return_evidence.some(proof => proof.message_index === 4 && proof.quote.includes("交易所报价"))));
-  assert(context.some(link => link.executed_components.includes("web_search")));
+  const inputs = { [candidate.input_id]: raw }, compact = sourceCompactReceipt(candidate, raw), task = componentTask(candidate, compact, inputs, "planner-finquery");
+  const binding = bindAttribution(task, inputs, { compact });
+  assert.equal(binding.modelInput!.investigation_scope, "delivery");
+  const sources = binding.modelInput!.invocations as { return_evidence: { message_index: number; quote: string }[]; executed_components: string[]; request_components: string[] }[];
+  assert(sources.some(item => item.return_evidence.some(proof => proof.message_index === 4 && proof.quote.includes("交易所报价"))));
+  assert(sources.some(link => link.executed_components.includes("web_search") && link.request_components.includes("planner-search")));
+  const search = bindAttribution(componentTask(candidate, compact, inputs, "web_search"), inputs, { compact }).modelInput!;
+  assert.deepEqual((search.investigated_components as { name: string; role: string }[]).map(member => [member.name, member.role]),
+    [["web_search", "tool"], ["planner-search", "request_generation"]]);
 });
 
 test("component investigation keeps loaded skill contracts, prior user constraints and actual tool arguments without envelope noise", () => {
@@ -70,8 +78,9 @@ test("component investigation keeps loaded skill contracts, prior user constrain
     { type: "final_answer", content: "股票A，2026Q1营收10亿美元，股价49美元。" },
   ] };
   const candidate = adapt(raw, { id: "answer", name: "Answer", adapter: "b", sources: [] }, "fixture", 1);
-  const compact = sourceCompactReceipt(candidate, raw), task = componentTask(candidate, compact, "planner-finquery");
-  const binding = bindAttribution(task, { [candidate.input_id]: raw }, { compact });
+  const inputs = { [candidate.input_id]: raw }, compact = sourceCompactReceipt(candidate, raw), task = componentTask(candidate, compact, inputs, "planner-finquery");
+  const binding = bindAttribution(task, inputs, { compact });
+  assert.deepEqual((binding.modelInput!.investigated_components as { name: string }[]).map(member => member.name), ["finquery", "planner-finquery"]);
   const text = new AgentRegistry([attributionAgent]).prepare(binding).prompt;
   assert(text.includes("季度营收必须使用指定报告期"), "the actual skill body must be inspectable, not an omitted marker");
   assert(text.includes("按指定股票及报告期查询财务字段"), "the request generator needs its actual callable contract");
@@ -92,8 +101,8 @@ test("each earlier request stays paired with its own receipt instead of only sho
     { type: "final_answer", content: "OCGN TTM revenue about $1.5M。" },
   ] };
   const candidate = adapt(raw, { id: "answer", name: "Answer", adapter: "b", sources: [] }, "fixture", 1);
-  const compact = sourceCompactReceipt(candidate, raw), task = componentTask(candidate, compact, "finquery");
-  const binding = bindAttribution(task, { [candidate.input_id]: raw }, { compact });
+  const inputs = { [candidate.input_id]: raw }, compact = sourceCompactReceipt(candidate, raw), task = componentTask(candidate, compact, inputs, "finquery");
+  const binding = bindAttribution(task, inputs, { compact });
   const invocations = binding.modelInput!.invocations as { request_message_index: number; return_message_indices: number[]; request_evidence: { quote: string }[]; return_evidence: { quote: string }[] }[];
   assert.equal(invocations.length, 4);
   assert.equal(invocations[0]!.request_message_index, 1);

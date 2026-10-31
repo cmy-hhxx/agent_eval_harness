@@ -299,7 +299,7 @@ async function harness(
       compact = plan.tasks.find((item) => item.id === task.dependencies.compact);
     const candidate = compact && (compact.data as AttributionTaskData).candidate;
     const compactResult = candidate && { ...sourceCompactReceipt(candidate, normalizeInput(plan.inputs[candidate.input_id])), taskId: compact!.id };
-    if (candidate && compactResult) { const component = componentTask(candidate, compactResult, "最终答复生成"); task = { ...component, dependencies: task.dependencies, data: { ...task.data as object, ...component.data as object } }; }
+    if (candidate && compactResult) { const component = componentTask(candidate, compactResult, plan.inputs, "最终答复生成"); task = { ...component, dependencies: task.dependencies, data: { ...task.data as object, ...component.data as object } }; }
     const criteriaReceipt: SubmissionReceipt | undefined = criteria && {
       taskId: criteria.id, attemptId: "criteria", submissionId: "criteria", status: "succeeded",
       acceptedAt: 1, evaluatorVersion: "fixture", judge: "fixture", evaluation: criteriaResult(), audit: emptyAudit(), usage: emptyUsage(),

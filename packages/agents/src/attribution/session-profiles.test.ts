@@ -3,19 +3,19 @@ import assert from "node:assert/strict";
 import { Ajv2020 } from "ajv/dist/2020.js";
 import { componentAttributionProfile, traceAttributionProfile, sessionAttributionProfile } from "./session-profiles.js";
 
-test("component submissions require severity and evidence, with no owner selection", () => {
+test("component submissions select one offered actor and require severity and evidence", () => {
   const validate = new Ajv2020({ allErrors: true, strict: false }).compile(componentAttributionProfile.submissionSchema);
-  const problem = { tool_error_indices: [], label: "年份错配", definition: "使用其他年份的数据。",
+  const problem = { actor_index: 1, tool_error_indices: [], label: "年份错配", definition: "使用其他年份的数据。",
     problem_phenomena: "2024年营收使用2023年的100亿元。", reason: "来源标注2023年。",
     severity: "P1", severity_reason: "关键数据期间错误。", evidence: [{ index: 1, reason: "原始来源年份。" }] };
   const draft = (item: object) => ({ content: "正常来源被误读年份。", evidence: [1], tool_error_reviews: [], problems: [item] });
-  for (const severity of ["P0", "P1", "P2", "P3"]) assert(validate(draft({ ...problem, severity })), JSON.stringify(validate.errors));
-  for (const severity of ["P4", "p1", 1, null]) assert(!validate(draft({ ...problem, severity })));
+  for (const severity of ["P0", "P1", "P2", "P3", "P4"]) assert(validate(draft({ ...problem, severity })), JSON.stringify(validate.errors));
+  for (const severity of ["P5", "p1", 1, null]) assert(!validate(draft({ ...problem, severity })));
   for (const severity_reason of ["", null, 1]) assert(!validate(draft({ ...problem, severity_reason })));
-  for (const field of ["severity", "severity_reason", "evidence"]) {
+  for (const field of ["actor_index", "severity", "severity_reason", "evidence"]) {
     const incomplete = { ...problem } as Record<string, unknown>; delete incomplete[field]; assert(!validate(draft(incomplete)));
   }
-  assert(!validate(draft({ ...problem, actor_index: 1 })));
+  assert(!validate(draft({ ...problem, actor_index: 0 })));
   assert(!validate(draft({ ...problem, component: "最终答复生成" })));
   assert(validate({ content: "未发现有证据支持的偏差。", evidence: [], tool_error_reviews: [], problems: [] }));
 });

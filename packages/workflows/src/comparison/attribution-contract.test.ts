@@ -68,6 +68,14 @@ test("comparison projection maps canonical session problems without private resp
   assert.deepEqual(comparisonAttribution(value), projection, "severity annotations do not change comparison material");
 });
 
+test("P4 process defects stay in formal attribution but never decide a comparison", () => {
+  const { value } = fixture();
+  value.turns[0]!.problem.push({ ...structuredClone(value.turns[0]!.problem[0]!), label: "首次取数报错", severity: "P4",
+    severity_reason: "重试后取得正确数据，无交付影响。" });
+  assert(new Ajv2020({ strict: false }).compile(sessionAttributionResultSchema)(value), "P4 is a formal severity");
+  assert.deepEqual(comparisonAttribution(value).Problem.map(problem => problem.problem_path), ["/turns/0/problem/0"]);
+});
+
 test("clustering consumes canonical problem label, definition and phenomenon", () => {
   const { value } = fixture(), problem = sessionProblemEntries(value)[0]!;
   const rows = groupObservations([{ input_id: String(value.session_meta.input_id), case_id: "q1", source: { file: "source", line: 1 },

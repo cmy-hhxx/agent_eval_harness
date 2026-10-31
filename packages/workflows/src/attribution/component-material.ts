@@ -1,6 +1,7 @@
 import { cite, displayEvidence, evidenceSources, images, normativeSources, parseEvidenceCoordinates } from "@eval/tools";
-import { evidenceOrigin, type JsonObject } from "@eval/contracts";
+import type { JsonObject } from "@eval/contracts";
 import type { RawInput } from "../inputs/types.js";
+import type { InvestigationGroup } from "./component-groups.js";
 import { compactFinalMaterial, compactProcessExcerpts, compactTextRanges } from "./compact-material.js";
 
 function citationExcerpts(raw: RawInput, original: RawInput, inputId: string, inventory: JsonObject) {
@@ -22,29 +23,18 @@ function citationExcerpts(raw: RawInput, original: RawInput, inputId: string, in
     }) })) };
 }
 
-/** The component directory supplies identity; invocation edges supply context, never presumed blame. */
+/** The group supplies identities and its own paired invocations; context never presumes blame. */
 export function componentMaterial(raw: RawInput, original: RawInput, inputId: string,
   positions: { trace_index: number; message_index: number }[], traceIndex: number, finalIndex: number,
-  actor: JsonObject, turn: JsonObject, facts: JsonObject, finalSources?: JsonObject, components: JsonObject[] = []) {
-  const roots = new Set(actor.message_indices as number[]), allLinks = facts.execution_links as JsonObject[];
-  const consumers = (link: JsonObject) => [...new Set((link.model_inputs as JsonObject[]).flatMap(input => [Number(input.message_index),
-    ...(input.additional_input_locations as JsonObject[] ?? []).map(location => Number(location.message_index))]))];
-  const links = allLinks.filter(link => roots.has(Number(link.request_message_index)) ||
-    (link.return_message_indices as number[]).some(index => roots.has(index)) || roots.has(Number(link.invoking_model_message_index)) ||
-    consumers(link).some(index => roots.has(index)));
+  group: InvestigationGroup, turn: JsonObject, facts: JsonObject, finalSources?: JsonObject, components: JsonObject[] = []) {
+  const roots = new Set(group.members.flatMap(member => member.message_indices as number[])), allLinks = facts.execution_links as JsonObject[];
+  const links = group.links;
   const related = new Set([...roots, ...links.flatMap(link => [Number(link.request_message_index), ...link.return_message_indices as number[]])]);
   const errors = turn.tool_errors as JsonObject[];
-  const ownErrors = finalSources || actor.name === "最终答复生成" ? [] : errors.filter(error => (error.evidence as JsonObject[]).some(proof => {
-    const point = parseEvidenceCoordinates(String(proof.evidence_id))!;
-    if (related.has(point.message_index)) return true;
-    const message = raw.messages[point.message_index]!;
-    const observed = point.kind === "image" ? {} : evidenceOrigin(message, point.path);
-    return actor.kind === "tool" && (message.type === "tool_result" && message.name === actor.name ||
-      observed.enclosing_role === "tool" && observed.enclosing_name === actor.name);
-  }));
+  const ownErrors = group.errors;
   const excerpts = (indices: ReadonlySet<number>, budget: number) => compactProcessExcerpts("component_investigation", raw, original,
     inputId, positions, traceIndex, finalIndex, budget, indices).map(({ origin: _origin, total_chars: _size, ...proof }) => proof);
-  const final = compactFinalMaterial(finalIndex, raw, inputId, finalSources || actor.name === "最终答复生成" ? 8000 : 2400);
+  const final = compactFinalMaterial(finalIndex, raw, inputId, group.delivery ? 8000 : 2400);
   let questionBudget = 6400;
   const seenQuestions = new Set<string>();
   const questionSources = raw.messages.flatMap((message, index) => index < finalIndex && (message.role === "user" || message.type === "user_question")
@@ -84,11 +74,20 @@ export function componentMaterial(raw: RawInput, original: RawInput, inputId: st
       ((["tool_call", "function_call"].includes(String(message.type)) ? ["input", "arguments", "parameters"] : ["output", "content", "result"])
         .find(key => Object.hasOwn(message, key)) ?? ""), offset: 0, max_chars: 16000 };
   };
+  // Inside a tool group the request side is the member that answers for it, including program-named generation.
+  const requesters = (link: JsonObject) => {
+    if (group.delivery) return namesAt(Number(link.invoking_model_message_index), "model");
+    const generators = group.members.filter(member => member.role === "request_generation");
+    const named = generators.filter(member => member.identity_basis !== "program_request_generation" &&
+      (member.message_indices as number[]).includes(Number(link.invoking_model_message_index)));
+    return named.length ? named.map(member => member.name)
+      : generators.filter(member => member.name === `${raw.messages[Number(link.request_message_index)]?.name} 请求生成`).map(member => member.name);
+  };
   const paired = (selected: JsonObject[], budget: number) => selected.map(link => {
     const request = Number(link.request_message_index), returns = link.return_message_indices as number[];
     const share = Math.min(9000, Math.max(1200, Math.floor(budget / Math.max(1, selected.length))));
     return { request_message_index: request, return_message_indices: returns,
-      request_components: namesAt(Number(link.invoking_model_message_index), "model"), executed_components: namesAt(request),
+      request_components: requesters(link), executed_components: namesAt(request),
       request_evidence: excerpts(new Set([request]), Math.floor(share / 3)),
       return_evidence: excerpts(new Set(returns), Math.floor(share * 2 / 3)),
       read_requests: [request, ...returns].map(navigation),
@@ -127,13 +126,16 @@ export function componentMaterial(raw: RawInput, original: RawInput, inputId: st
       return [{ name, evidence, read_request: { candidate: "answer", message_index, path, offset: 0, max_chars: 16000 } }];
     });
   });
-  const { source_evidence, name, kind, components_content } = actor;
   return { errors: ownErrors, modelInput: {
-    current_component: { name, kind, contains_final_generation: !!finalSources, content: components_content, source_evidence },
+    investigation_scope: group.delivery ? "delivery" : "tool_chain",
+    investigated_components: group.members.map(member => ({ actor_index: member.component_index, name: member.name, kind: member.kind, role: member.role,
+      ...(member.contains_final_generation ? { contains_final_generation: true } : {}),
+      ...(member.components_content ? { content: member.components_content } : {}),
+      source_evidence: (member.source_evidence as JsonObject[] ?? []).slice(0, 3) })),
     user_requirements: question, invocations: paired(links, 20000), context_invocations: paired(contextLinks, 6000),
     model_actions: excerpts(modelIndices, 3000), callable_contracts: contracts,
     loaded_skills: skills.map(component => ({ name: component.name, message_indices: component.message_indices })),
-    skill_evidence: excerpts(skillIndices, actor.kind === "skill" ? 6400 : 3200),
+    skill_evidence: excerpts(skillIndices, group.members.some(member => member.kind === "skill") ? 6400 : 3200),
     tool_errors: ownErrors, upstream_error_context: errors.filter(error => !ownErrors.includes(error)),
     final_answer: final.final_evidence, final_partial: final.final_context.partial,
     final_answer_read_request: { candidate: "answer", message_index: finalIndex, path: "/content", offset: 0, max_chars: 16000 },

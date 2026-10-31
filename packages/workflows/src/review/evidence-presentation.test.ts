@@ -179,7 +179,10 @@ test("component input retains original coordinates without transferring a global
   for (const value of [binding.request.input, binding.modelInput!])
     for (const key of ["business_chains", "execution_nodes", "transitions", "boundaries", "execution_graph"])
       assert(!Object.hasOwn(value as object, key), key);
-  assert((binding.modelInput!.source_directory as unknown[]).length < 5);
+  const own = new Set((binding.request.input.components as { message_indices: number[] }[]).flatMap(member => member.message_indices));
+  const directory = (binding.modelInput!.source_directory as { message_index: number }[]).map(entry => entry.message_index);
+  assert.equal(new Set(directory).size, directory.length);
+  assert(directory.every(index => own.has(index)), "the directory lists only the delivery members' own coordinates");
   const prepared = new AgentRegistry([attributionAgent]).prepare(binding);
   assert(prepared.evaluation.toolNames.includes("read_trace"));
   assert(!prepared.evaluation.toolNames.includes("read_responsibility_chain"));

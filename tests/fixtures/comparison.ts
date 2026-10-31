@@ -167,10 +167,10 @@ export function taskResult(spec: Pick<AttemptSpec, "evaluation" | "prompt" | "in
     return { value: spec.evaluation.profile === "session_overview" ? ["用户提出问题。", "模型已回复。"] : [] };
   }
   if (spec.evaluation.id === "attribution" && "problems" in properties) {
-    const material = parsedMaterial(spec, revealed) as { current_component: { contains_final_generation: boolean }; final_answer: { reference: { evidence_index: number } }[] };
-    const turn = attributionResult(false).turns[0]!;
-    return { content: "核对当前组件的实际动作与交付，仅最终生成存在受控算术偏差。", evidence: [], tool_error_reviews: [],
-      problems: !material.current_component.contains_final_generation ? [] : turn.problem.map(problem => ({
+    const material = parsedMaterial(spec, revealed) as { investigated_components: { actor_index: number; contains_final_generation?: boolean }[]; final_answer: { reference: { evidence_index: number } }[] };
+    const turn = attributionResult(false).turns[0]!, final = material.investigated_components.find(member => member.contains_final_generation);
+    return { content: "核对本组的实际调用与交付，仅最终生成存在受控算术偏差。", evidence: [], tool_error_reviews: [],
+      problems: !final ? [] : turn.problem.map(problem => ({ actor_index: final.actor_index,
         label: problem.label, definition: problem.definition, problem_phenomena: problem.problem_phenomena, reason: problem.reason,
         severity: problem.severity, severity_reason: problem.severity_reason, tool_error_indices: [],
         evidence: [{ index: material.final_answer[0]!.reference.evidence_index, reason: "原始最终回答。" }],

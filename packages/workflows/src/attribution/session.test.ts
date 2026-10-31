@@ -1,4 +1,4 @@
-import { bindAttributionFixture as bindAttribution, componentTask, componentDraft, sourceCompactReceipt } from "../../../../tests/fixtures/compact.js";
+import { bindAttributionFixture as bindAttribution, componentTask, componentDraft, memberIndex, sourceCompactReceipt } from "../../../../tests/fixtures/compact.js";
 import test from "node:test";
 import assert from "node:assert/strict";
 import { evidenceId, ValidationError, type JsonObject } from "@eval/contracts";
@@ -75,14 +75,14 @@ for (const [shape, content, path, quote] of [
   const raw = { batch_id: "batch", case_id: "form", messages: [{ role: "user", content }, { role: "assistant", content: "按这两项条件检查。" }] }, original = structuredClone(raw);
   const candidate = adapt(raw, { id: "answer", name: "Answer", adapter: "a", sources: [] }, "fixture", 1);
   const receipt = sourceCompactReceipt(candidate, normalizeInput(raw));
-  const binding = bindAttribution(componentTask(candidate, receipt, "最终答复生成"), { [candidate.input_id]: raw }, { compact: receipt });
+  const inputs = { [candidate.input_id]: raw }, binding = bindAttribution(componentTask(candidate, receipt, inputs, "最终答复生成"), inputs, { compact: receipt });
   const registry = new AgentRegistry([attributionAgent]), prepared = registry.prepare(binding);
   assert.deepEqual(raw, original);
   const index = prepared.evidenceBank.findIndex(id => { const point = parseEvidenceCoordinates(id);
     return point?.kind === "text" && point.message_index === 0 && point.path === path; }) + 1;
   assert(index > 0);
   const draft = componentDraft([{ label: "条件遗漏", definition: "遗漏已确认条件。", problem_phenomena: "忽略选择条件。", reason: "用户已选择。",
-    severity: "P2", severity_reason: "需要补充检查。", evidence: [{ index, reason: "原始选择。" }] }]);
+    severity: "P2", severity_reason: "需要补充检查。", evidence: [{ index, reason: "原始选择。" }] }], memberIndex(binding.request.input.components as JsonObject[], "最终答复生成"));
   const audit = { ...emptyAudit(), evidenceBank: prepared.evidenceBank };
   const result = registry.resolve(binding, draft, audit) as { problem: { evidence: { quote: string; position: string }[] }[] };
   registry.validate(binding, result, audit); assert.equal(result.problem[0]!.evidence[0]!.quote, quote);

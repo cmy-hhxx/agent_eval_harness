@@ -19,7 +19,8 @@ function sessionAttribution(result: SessionAttributionResult): ComparisonAttribu
     is_correct: consistent === null ? null : consistent === 1,
     correct_reason: result.turns.map(turn => turn.correct_reason).filter(Boolean).join("\n") || null,
     summary: result.session_summary,
-    Problem: sessionProblemEntries(result).map(sessionFinding) };
+    // P4 process defects left no delivery impact, so they never decide a comparison.
+    Problem: sessionProblemEntries(result).filter(problem => problem.severity !== "P4").map(sessionFinding) };
 }
 
 export function comparisonAttribution(result: SessionAttributionResult): ComparisonAttribution {

@@ -454,7 +454,7 @@ test("same run ID preserves accepted work when the model, budget and evaluator c
     const after = await readRunState(run);
     assert.equal(after.manifest.evaluatorVersion, "fixture-2");
     const originalShape = (task: typeof plan.tasks[number]) => task.stage === "attribution-trace" ? { ...task,
-      dependencies: Object.fromEntries(Object.entries(task.dependencies).filter(([label]) => !label.startsWith("component:"))), settledDependencies: [] } : task;
+      dependencies: Object.fromEntries(Object.entries(task.dependencies).filter(([label]) => !label.startsWith("group:"))), settledDependencies: [] } : task;
     assert.deepEqual(after.manifest.tasks.filter(task => before.manifest.tasks.some(original => original.id === task.id)).map(originalShape),
       before.manifest.tasks.map(originalShape), "resume preserves task identities and blind assignments while Compact can add component dependencies");
     for (const task of after.manifest.tasks) {

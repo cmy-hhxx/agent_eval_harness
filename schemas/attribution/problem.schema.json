@@ -17,13 +17,13 @@
     "component": {
       "type": "string",
       "minLength": 1,
-      "description": "程序原样复制当前任务绑定的 Compact components_name；跨轮问题从同一目录选择。"
+      "description": "程序复制责任组件名称：Compact components_name，或程序为匿名模型按工具命名的「<工具> 请求生成」；跨轮问题从 Compact 联合目录选择。"
     },
     "label": { "type": "string", "minLength": 1, "description": "可复用的短问题名称。" },
     "definition": { "type": "string", "minLength": 1, "description": "可复用的问题定义，写清同类偏差及适用条件。" },
     "problem_phenomena": { "type": "string", "minLength": 1, "description": "可独立读懂的个案说明：具体对象、应有情况与实际表现的偏差。" },
     "reason": { "type": "string", "minLength": 1, "description": "认定该偏差的依据，以及证据能确认的原因。" },
-    "severity": { "enum": ["P0", "P1", "P2", "P3"], "description": "本次问题对最终交付的影响等级，P0 最严重。" },
+    "severity": { "enum": ["P0", "P1", "P2", "P3", "P4"], "description": "P0–P3 为对最终交付的影响等级，P0 最严重；P4 为已恢复或不影响交付的过程缺陷。" },
     "severity_reason": { "type": "string", "minLength": 1, "description": "具体影响及其为何属于该等级；只写证据支持的影响。" },
     "evidence": {
       "type": "array",

@@ -4,12 +4,12 @@ import { AgentRegistry } from "@eval/host";
 import { attributionAgent } from "@eval/agents/attribution";
 import { compactAgent } from "@eval/agents/compact";
 import { cite, evidenceSources, parseEvidenceCoordinates } from "@eval/tools";
-import { ValidationError } from "@eval/contracts";
+import { ValidationError, type JsonObject } from "@eval/contracts";
 import { adapt } from "../inputs/records.js";
 import { processMaterial } from "../review/process-material.js";
 import { attributionTrace } from "../review/public-trace.js";
 import { bindAttribution, planAttributionUnit, attributionWorkflow } from "./index.js";
-import { compactReceipt, sourceCompactReceipt, componentDraft, componentTask } from "../../../../tests/fixtures/compact.js";
+import { compactReceipt, sourceCompactReceipt, componentDraft, componentTask, memberIndex } from "../../../../tests/fixtures/compact.js";
 import { emptyAudit } from "../../../../tests/fixtures/comparison.js";
 
 function fixture() {
@@ -27,9 +27,10 @@ function fixture() {
     return sourceCompactReceipt(candidate, raw);
   } };
 }
-test("anonymous planning receives related tool receipts and binds its responsibility without a selector", () => {
-  const f = fixture(), task = componentTask(f.candidate, f.compact, "规划");
+test("anonymous request generation is a program-named per-tool actor paired with its own receipts", () => {
+  const f = fixture(), task = componentTask(f.candidate, f.compact, f.inputs, "new-data-tool 请求生成");
   const binding = bindAttribution(task, f.inputs, { compact: f.compact }), prepared = f.registry.prepare(binding);
+  const actor = memberIndex(binding.request.input.components as JsonObject[], "new-data-tool 请求生成")!;
   assert(!prepared.prompt.includes("PRIVATE_SYSTEM_SENTINEL"));
   assert(prepared.prompt.includes("new-data-tool"));
   assert(!prepared.prompt.includes("session_overview"));
@@ -38,17 +39,18 @@ test("anonymous planning receives related tool receipts and binds its responsibi
     problem_phenomena: "用户问本期，实际查上期。", reason: "参数来自可见规划。", severity: "P1", severity_reason: "关键数据期间错误。",
     evidence: [{ index, reason: "规划明确查询上期。" }] };
   const audit = { ...emptyAudit(), evidenceBank: prepared.evidenceBank };
-  const draft = componentDraft([problem]);
+  const draft = componentDraft([problem], actor);
   const result = f.registry.resolve(binding, draft, audit) as { problem?: { component: string }[]; turns?: { problem: { component: string }[] }[] };
   f.registry.validate(binding, result, audit);
-  assert.equal((result.problem ?? result.turns![0]!.problem)[0]!.component, "规划");
+  assert.equal((result.problem ?? result.turns![0]!.problem)[0]!.component, "new-data-tool 请求生成");
   assert(!("actor_index" in (result.problem ?? result.turns![0]!.problem)[0]!));
   assert(!("component_reviews" in result), "component checks are transient submission data");
-  assert.throws(() => f.registry.resolve(binding, { ...draft, problems: [{ ...problem, tool_error_indices: [], component: "llm-call-7" }] }, audit), ValidationError);
+  const delivery = memberIndex(bindAttribution(componentTask(f.candidate, f.compact, f.inputs, "规划"), f.inputs, { compact: f.compact }).request.input.components as JsonObject[], "规划")!;
+  assert.throws(() => f.registry.resolve(binding, componentDraft([problem], delivery), audit), ValidationError, "an actor outside this group cannot be selected");
   assert.throws(() => f.registry.resolve(binding, { ...draft, problems: [{ ...problem, tool_error_indices: [], evidence: [{ index: 999, reason: "不存在。" }] }] }, audit), ValidationError);
 });
 test("privacy projection placeholders cannot become original execution failure evidence", () => {
-  const f = fixture(), task = componentTask(f.candidate, f.compact, "规划");
+  const f = fixture(), task = componentTask(f.candidate, f.compact, f.inputs, "规划");
   const binding = bindAttribution(task, f.inputs, { compact: f.compact });
   const publicRaw = binding.request.sources.answer.value as typeof f.raw;
   const source = evidenceSources(publicRaw.messages[1]).find(source => source.path === "/system_prompt")!;
@@ -64,7 +66,7 @@ test("privacy projection placeholders cannot become original execution failure e
 for (const length of [650, 1000]) test(`a ${length}-character quote offers valid short selections before result-schema validation`, () => {
   const f = fixture();
   f.raw.messages[3]!.output = "连续原文。".repeat(length).slice(0, length);
-  const task = componentTask(f.candidate, f.compact, "规划"), binding = bindAttribution(task, f.inputs, { compact: f.compact });
+  const task = componentTask(f.candidate, f.compact, f.inputs, "规划"), binding = bindAttribution(task, f.inputs, { compact: f.compact });
   const prepared = f.registry.prepare(binding), source = evidenceSources((binding.request.sources.answer.value as typeof f.raw).messages[3])
     .find(item => item.kind === "text" && item.path === "/output")!;
   const bank = [...prepared.evidenceBank, cite(f.candidate.input_id, 3, source, 0, length).evidence_id];

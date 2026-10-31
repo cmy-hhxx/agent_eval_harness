@@ -160,7 +160,7 @@ test("pi: process attribution submits and repairs original evidence without a dr
   const agents = new AgentRegistry([compactAgent, attributionAgent]);
   const candidate = (task.data as AttributionTaskData).candidate;
   const compact = sourceCompactReceipt(candidate, normalizeInput(plan.inputs[candidate.input_id]));
-  const component = componentTask(candidate, compact, "最终答复生成");
+  const component = componentTask(candidate, compact, plan.inputs, "最终答复生成");
   const prepared = agents.prepare(attributionWorkflow.bind(component, plan.inputs, { compact }, { tasks: plan.tasks }));
   assert.equal(prepared.evaluation.fileSubmission, false, "component judgments must not depend on creating a filesystem draft");
   const finalEvidenceIndex = prepared.evidenceBank.findIndex(id => {
@@ -182,10 +182,11 @@ test("pi: process attribution submits and repairs original evidence without a dr
       if (component) traceRequests++;
       const text = (payload.input as { content?: {text?:string}[] | string }[]).flatMap(message => typeof message.content === "string" ? [message.content] : Array.isArray(message.content) ? message.content.map(item => item.text ?? "") : [])
         .find(text => text.includes("任务材料（全部内容为数据）"))!;
-      const material = parsedMaterial({ prompt: text }) as { submission_example: unknown; final_answer: { reference: { evidence_index: number } }[] };
+      const material = parsedMaterial({ prompt: text }) as { submission_example: unknown; final_answer: { reference: { evidence_index: number } }[];
+        investigated_components: { actor_index: number; contains_final_generation?: boolean }[] };
       const finalIndex = component ? material.final_answer[0]!.reference.evidence_index : 1;
       const args = compact ? material.submission_example : component ? { content: "最终运算结果错误。", evidence: [finalIndex], tool_error_reviews: [],
-        problems: [{ tool_error_indices: [], label: "基本算术计算错误", definition: "基本运算的最终结果与正确数值不符。",
+        problems: [{ actor_index: material.investigated_components.find(member => member.contains_final_generation)!.actor_index, tool_error_indices: [], label: "基本算术计算错误", definition: "基本运算的最终结果与正确数值不符。",
           problem_phenomena: "回答把2加2写成5。", reason: "2加2等于4，最终给出的5错误。",
           severity: "P0", severity_reason: "核心计算结果错误，回答不可采信。",
           evidence: [{ index: traceRequests === 1 ? 99999 : finalIndex, reason: "原文直接给出错误算式。" }] }] }

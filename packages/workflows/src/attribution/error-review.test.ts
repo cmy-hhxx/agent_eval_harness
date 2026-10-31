@@ -5,7 +5,7 @@ import { attributionAgent, type SessionProblem } from "@eval/agents/attribution"
 import { cite, evidenceSources, parseEvidenceCoordinates } from "@eval/tools";
 import { ValidationError, type JsonObject } from "@eval/contracts";
 import { adapt, type RawInput } from "@eval/workflows/inputs";
-import { sourceCompactReceipt, componentDraft, componentTask } from "../../../../tests/fixtures/compact.js";
+import { sourceCompactReceipt, componentDraft, componentTask, memberIndex } from "../../../../tests/fixtures/compact.js";
 import { emptyAudit } from "../../../../tests/fixtures/comparison.js";
 import { bindAttribution, attributionWorkflow } from "./index.js";
 
@@ -31,7 +31,7 @@ function fixture(mode: "unresolved" | "recovered" | "misread" | "business") {
     const { evidence_id, quote } = cite(candidate.input_id, 3, source, 0, source.text.length);
     compact.turns[0]!.tool_errors = [{ tool_error_idx: 1, tool_error_content: "make.py 未定义变量，构建报错。", evidence: [{ evidence_id, quote }] }];
   }
-  const task = componentTask(candidate, receipt, mode === "misread" ? "最终答复生成" : "make.py"), inputs = { [candidate.input_id]: raw };
+  const actor = mode === "misread" ? "最终答复生成" : "make.py", inputs = { [candidate.input_id]: raw }, task = componentTask(candidate, receipt, inputs, actor);
   const binding = bindAttribution(task, inputs, { compact: receipt }), registry = new AgentRegistry([attributionAgent]), prepared = registry.prepare(binding);
   const index = (message: number, path: string) => prepared.evidenceBank.findIndex(id => {
     const point = parseEvidenceCoordinates(id);
@@ -40,25 +40,29 @@ function fixture(mode: "unresolved" | "recovered" | "misread" | "business") {
   const original = index(3, mode === "misread" || mode === "business" ? "/output/stdout" : "/output/stderr");
   assert(original > 0);
   const finalIndex = index(raw.messages.length - 1, "/content"); assert(finalIndex > 0);
-  const problem = { label: mode === "misread" ? "合计误读" : "工作簿未交付", definition: "实际结果与交付要求不一致。",
+  const problem = mode === "recovered" ? { label: "首次构建报错", definition: "脚本引用未定义变量导致首次构建失败。",
+    problem_phenomena: "首次运行 make.py 报 NameError，修复后重建通过。", reason: "make.py 引用未定义的 MON_HDR，第二次运行已修正。",
+    severity: "P4", severity_reason: "修复后重建通过并交付，无剩余交付影响。",
+    evidence: [{ index: original, reason: "首次构建报错。" }, { index: index(5, "/output/stdout"), reason: "修正后重建回执。" }] }
+    : { label: mode === "misread" ? "合计误读" : "工作簿未交付", definition: "实际结果与交付要求不一致。",
     problem_phenomena: final, reason: mode === "business" ? "构建完成却生成0行，未达到120行要求。" : mode === "misread" ? "正确的100被终稿误写为200。" : "make.py 未定义变量导致构建失败，未修复。",
     severity: "P1", severity_reason: "核心结果不可用。", evidence: [{ index: original, reason: "实际执行回执。" }, { index: finalIndex, reason: "最终交付。" }] };
-  const draft = componentDraft(mode === "recovered" ? [] : [problem]);
+  const draft = componentDraft([problem], memberIndex(binding.request.input.components as JsonObject[], actor));
   if (mode === "unresolved" || mode === "recovered") draft.tool_error_reviews.push({ tool_error_idx: 1,
     status: mode === "recovered" ? "recovered_no_impact" : "unresolved_impact",
     content: mode === "recovered" ? "修复后验收通过并交付，无剩余影响。" : "变量未定义且未恢复，阻断交付。",
     evidence: mode === "recovered" ? [original, index(5, "/output/stdout"), finalIndex] : [original, finalIndex],
   });
-  if (mode === "unresolved") draft.problems[0]!.tool_error_indices = [1];
+  if (mode === "unresolved" || mode === "recovered") draft.problems[0]!.tool_error_indices = [1];
   const audit = { ...emptyAudit(), evidenceBank: prepared.evidenceBank };
   return { registry, binding, draft, audit, task, receipt, inputs, finalIndex };
 }
 
-for (const mode of ["unresolved", "recovered", "misread", "business"] as const) test(`component review closes original error evidence: ${mode}`, () => {
+for (const mode of ["unresolved", "recovered", "misread", "business"] as const) test(`group review closes original error evidence and keeps recovered errors as P4: ${mode}`, () => {
   const f = fixture(mode), result = f.registry.resolve(f.binding, f.draft, f.audit) as { problem: SessionProblem[] };
   f.registry.validate(f.binding, result, f.audit);
   attributionWorkflow.advance!(f.task, { ...f.receipt, evaluation: result, submitted: f.draft, audit: f.audit }, {} as never, f.inputs);
-  assert.deepEqual(result.problem.map(problem => problem.component), mode === "unresolved" || mode === "business" ? ["make.py"] : mode === "recovered" ? [] : ["最终答复生成"]);
+  assert.deepEqual(result.problem.map(problem => [problem.component, problem.severity]), mode === "misread" ? [["最终答复生成", "P1"]] : [["make.py", mode === "recovered" ? "P4" : "P1"]]);
   assert(!JSON.stringify(result.problem).includes("tool_error_reviews"));
   assert(!JSON.stringify(result.problem).includes("tool_error_indices"));
 });
@@ -70,7 +74,7 @@ test("error disposition cannot skip original exception, disappear, or move to fi
   const unrelated = structuredClone(f.draft);
   (unrelated.tool_error_reviews[0] as { evidence: number[] }).evidence = [f.finalIndex];
   assert.throws(() => f.registry.resolve(f.binding, unrelated, f.audit), /原始报错消息/);
-  const finalTask = componentTask((f.task.data as { candidate: Parameters<typeof componentTask>[0] }).candidate, f.receipt, "最终答复生成");
+  const finalTask = componentTask((f.task.data as { candidate: Parameters<typeof componentTask>[0] }).candidate, f.receipt, f.inputs, "最终答复生成");
   const finalBinding = bindAttribution(finalTask, f.inputs, { compact: f.receipt });
   assert.deepEqual(finalBinding.request.input.tool_errors, [], "execution errors are not transferred to final disclosure");
 
@@ -86,5 +90,7 @@ test("recovery needs a later tool receipt, not only the original failure or fina
   const unknown = structuredClone(f.draft), error = unknown.tool_error_reviews[0]!;
   error.status = "uncertain"; error.content = "仅确认发生过异常，后续恢复和剩余影响未取得决定性证据。";
   error.evidence = [error.evidence[0]!];
+  assert.throws(() => f.registry.resolve(f.binding, unknown, f.audit), /uncertain 不关联问题/);
+  unknown.problems = [];
   assert.doesNotThrow(() => f.registry.resolve(f.binding, unknown, f.audit));
 });

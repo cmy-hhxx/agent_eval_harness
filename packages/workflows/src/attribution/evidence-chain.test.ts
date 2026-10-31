@@ -14,7 +14,7 @@ import type { TaskData } from "../comparison/types.js";
 import type { RawInput } from "../inputs/types.js";
 import { comparisonAgent } from "@eval/agents/comparison";
 import { attributionEvidencePosition } from "@eval/contracts";
-import { compactReceipt, sourceCompactReceipt, componentTask, componentDraft } from "../../../../tests/fixtures/compact.js";
+import { compactReceipt, sourceCompactReceipt, componentTask, componentDraft, memberIndex } from "../../../../tests/fixtures/compact.js";
 import { verifiedCompact } from "../review/evidence-presentation.js";
 import { attributionSessionSource } from "../review/public-trace.js";
 import { bindAttribution, planAttributionUnit, attributionWorkflow } from "./index.js";
@@ -43,17 +43,18 @@ const problem = (index: number) => ({ label: "脚本路径错误", definition: "
 
 test("component findings merge in fixed directory order and survive trace/session summarization", () => {
   const f = fixture(), receipt = sourceCompactReceipt(f.candidate, f.session);
-  const task = componentTask(f.candidate, receipt, "planner-finquery", 1);
+  const task = componentTask(f.candidate, receipt, f.inputs, "planner-finquery", 1);
   const binding = bindAttribution(task, f.inputs, { compact: receipt }), prepared = f.registry.prepare(binding);
   const index = prepared.evidenceBank.findIndex(id => parseEvidenceCoordinates(id)?.message_index === 10) + 1;
   assert(index > 0);
-  const draft = componentDraft([problem(index)]), audit = { ...emptyAudit(), evidenceBank: prepared.evidenceBank };
+  const draft = componentDraft([problem(index)], memberIndex(binding.request.input.components as JsonObject[], "planner-finquery"));
+  const audit = { ...emptyAudit(), evidenceBank: prepared.evidenceBank };
   const component = f.registry.resolve(binding, draft, audit) as { problem: JsonObject[] };
   assert.equal(component.problem[0]!.component, "planner-finquery");
   attributionWorkflow.advance!(task, { ...receipt, evaluation: component, submitted: draft, audit }, {} as never, f.inputs);
   const traceTask = f.tasks.find(task => task.stage === "attribution-trace" && (task.data as JsonObject).traceIndex === 1)!;
   const trace = bindAttribution(traceTask, f.inputs, { compact: receipt,
-    [`component:${(task.data as JsonObject).componentIdx}`]: { ...receipt, evaluation: component } });
+    [`group:${(task.data as JsonObject).componentGroup}`]: { ...receipt, evaluation: component } });
   const reviewed = f.registry.resolve(trace, { summary: "规划请求偏差影响取数。" }, emptyAudit()) as TraceAttributionResult;
   assert.deepEqual(reviewed.problem, component.problem);
   assert(reviewed.summary.startsWith("评测覆盖不完整"));
@@ -74,11 +75,12 @@ test("Compact original spans flow through component investigation and code-merge
     { ...emptyAudit(), evidenceBank: prepared.evidenceBank }) as JsonObject;
   const receipt = sourceCompactReceipt(f.candidate, f.session);
   (receipt.evaluation as SessionCompact).turns[1]!.execution_chain = value.value;
-  const task = componentTask(f.candidate, receipt, "finquery.py", 1), binding = bindAttribution(task, f.inputs, { compact: receipt });
+  const task = componentTask(f.candidate, receipt, f.inputs, "finquery.py", 1), binding = bindAttribution(task, f.inputs, { compact: receipt });
   const investigation = f.registry.prepare(binding), index = investigation.evidenceBank.indexOf(id) + 1;
   assert(index > 0, "original spans are immediately selectable without citing Compact prose");
   validateEvidenceBankSources(investigation.evidenceBank, new Map([[f.candidate.input_id, source.original]]));
-  const audit = { ...emptyAudit(), evidenceBank: investigation.evidenceBank }, draft = componentDraft([problem(index)]);
+  const audit = { ...emptyAudit(), evidenceBank: investigation.evidenceBank };
+  const draft = componentDraft([problem(index)], memberIndex(binding.request.input.components as JsonObject[], "finquery.py"));
   const component = f.registry.resolve(binding, draft, audit) as { problem: { evidence: { position: string; quote: string }[] }[] };
   f.registry.validate(binding, component, audit);
   const proof = component.problem[0]!.evidence[0]!;
@@ -104,7 +106,7 @@ test("key_data copies final claims and reaches component review without reformat
   const receipt = sourceCompactReceipt(f.candidate, f.session);
   (receipt.evaluation as SessionCompact).turns[1]!.key_data = entries;
   // The original final output owns the claim; a planning call is not treated as its generator.
-  const component = componentTask(f.candidate, receipt, "最终答复生成", 1);
+  const component = componentTask(f.candidate, receipt, f.inputs, "最终答复生成", 1);
   const reviewed = f.registry.prepare(bindAttribution(component, f.inputs, { compact: receipt }));
   assert(ids.every(id => reviewed.evidenceBank.includes(id)));
   const forged = structuredClone(entries); (forged[0]!.evidence as JsonObject[])[0]!.quote = "摘要声称100。";

@@ -10,7 +10,7 @@ import { attributionWorkflow, attributionRepository, planAttribution } from "@ev
 import { fixtureConfig, fakeIdentity, fakeEvaluatorVersion, taskResult, draftFor, submitFor, parsedMaterial } from "../../fixtures/comparison.js";
 import { services } from "../../fixtures/services.js";
 
-for (const failure of ["component", "trace"] as const) test(`parallel components settle independently; ${failure} failure has the right boundary`, async t => {
+for (const failure of ["component", "trace"] as const) test(`parallel investigation groups settle independently; ${failure} failure has the right boundary`, async t => {
   const raw = { batch_id: "batch", case_id: "pipeline", messages: [
     { type: "user_question", content: "生成工作簿。" },
     { type: "llm_turn", name: "planner-excel", output: "运行脚本。" },
@@ -34,7 +34,8 @@ for (const failure of ["component", "trace"] as const) test(`parallel components
         peak = Math.max(peak, ++active); if (active === 2) release();
         await overlap;
         try {
-          if (failure === "component" && (parsedMaterial(options.spec) as { current_component: { name: string } }).current_component.name === "make.py") throw new Error("component investigation unavailable");
+          const members = (parsedMaterial(options.spec) as { investigated_components: { name: string }[] }).investigated_components;
+          if (failure === "component" && members.some(member => member.name === "make.py")) throw new Error("component investigation unavailable");
           assert.notEqual((await submitFor(options, draftFor(options.spec, taskResult(options.spec)))).isError, true);
         } finally { active--; }
       } else {
@@ -51,7 +52,7 @@ for (const failure of ["component", "trace"] as const) test(`parallel components
     failureGuard: { enabled: false, windowSize: 50, threshold: 5 }, workerUrls: workers.map(worker => worker.url), signal: AbortSignal.timeout(20000) });
   const state = await attributionRepository.readRun(path.join(config.output.path, runId));
   const components = state.manifest.tasks.filter(task => task.stage === "attribution-component");
-  assert.equal(components.length, 4); assert.equal(peak, 2, "independent component tasks overlap within shared capacity");
+  assert.equal(components.length, 2, "the shell chain and the delivery are one task each"); assert.equal(peak, 2, "independent group tasks overlap within shared capacity");
   const trace = state.manifest.tasks.find(task => task.stage === "attribution-trace")!, session = state.manifest.tasks.find(task => task.stage === "attribution-session")!;
   assert.equal(calls.filter(profile => profile === "trace").length, 1);
   assert(!calls.includes("assembly"), "single-turn session assembly uses no model");

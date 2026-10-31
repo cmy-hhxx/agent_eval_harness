@@ -4,7 +4,7 @@ import { componentAttributionProfile } from "@eval/agents/attribution";
 import { planAttributionUnit } from "../attribution/index.js";
 import { adapt } from "../inputs/records.js";
 
-test("planning has no fabricated owner and attribution binds fixed Compact component slots", () => {
+test("planning has no fabricated owner and group problems select one program-offered actor", () => {
   const raw = { batch_id: "batch", case_id: "identity", messages: [
     { type: "user_question", content: "分析黄金。" }, { type: "llm_turn", name: "llm-call-7", output: "制定计划。" },
     { type: "final_answer", content: "黄金分析。" }] };
@@ -14,7 +14,7 @@ test("planning has no fabricated owner and attribution binds fixed Compact compo
   assert.deepEqual(tasks.filter(task => task.stage !== "attribution-compact-field").map(task => task.stage), ["attribution-compact", "attribution-trace", "attribution-session"]);
   assert(tasks.every(task => !("component" in (task.data as object))));
   const schema = componentAttributionProfile.submissionSchema as any;
-  assert(!schema.properties.problems.items.required.includes("actor_index"));
+  assert(schema.properties.problems.items.required.includes("actor_index"));
   assert(!Object.hasOwn(schema.properties.problems.items.properties, "component"));
   assert(schema.required.includes("problems"));
 });

@@ -71,12 +71,13 @@ function quoteRepair(request: AgentRequest, audit: ToolAudit, evidence: { eviden
     start, Math.min(point.end, start + limit)).evidence_id) };
 }
 
-function resolveProblems(request: AgentRequest, actor: JsonObject, problems: SubmittedProblem[], audit: ToolAudit, field: string, offset = 0): SessionProblem[] {
+/** Each problem names one actor offered by this request; the program copies its catalog name. */
+function resolveProblems(request: AgentRequest, problems: SubmittedProblem[], audit: ToolAudit, field: string, offset = 0): SessionProblem[] {
   const raw = request.sources.answer.value as { messages: Record<string, unknown>[] };
   const issues: ValidationIssue[] = [];
   const result = problems.map((problem, index) => {
-    const component = attributionComponentLabel(Number(actor.component_index), request.input.components as JsonObject[]);
-    const { tool_error_indices: _errorIndices, ...description } = problem;
+    const component = attributionComponentLabel(problem.actor_index, request.input.components as JsonObject[], `${field}/${index + offset}/actor_index`);
+    const { tool_error_indices: _errorIndices, actor_index: _actor, ...description } = problem;
     return { ...description, component,
       evidence: problem.evidence.flatMap((selection, evidenceIndex) => {
         try {
@@ -95,7 +96,7 @@ function resolveProblems(request: AgentRequest, actor: JsonObject, problems: Sub
           if (!point || !position) throw new ValidationError([{ category: "evidence", code: "evidence_position_invalid", path,
             message: "证据必须能定位到本次收到的原始消息。" }]);
           return [{ position: attributionEvidencePosition(position.trace_index, position.message_index, evidence.evidence_id),
-            component: evidenceComponent(raw.messages[evidence.message_index] ?? {}, point.kind === "image" ? "image" : point.path, String(actor.name)),
+            component: evidenceComponent(raw.messages[evidence.message_index] ?? {}, point.kind === "image" ? "image" : point.path, component),
             quote: evidence.quote, reason: selection.reason }];
         } catch (error) {
           if (!(error instanceof ValidationError)) throw error;
@@ -110,11 +111,11 @@ function resolveProblems(request: AgentRequest, actor: JsonObject, problems: Sub
 
 function traceToolErrors(request: AgentRequest): JsonObject[] { return request.input.tool_errors as JsonObject[]; }
 
-/** Each task has one program-bound owner; the model cannot select or rename responsibility. */
+/** Each task offers one program-formed group; the model selects members but never forms or renames them. */
 function resolveComponentReview(request: AgentRequest, review: ComponentReview, audit: ToolAudit): SessionProblem[] {
   const components = request.input.components as JsonObject[], errors = traceToolErrors(request);
   const raw = request.sources.answer.value as { messages: Record<string, unknown>[] };
-  validateComponentReview(components[0]!, review, errors);
+  validateComponentReview(components, review, errors);
   const read = (selection: number, path: string) => resolveAttributionEvidence(request,
     resolveEvidenceSelection(audit.evidenceBank ?? [], { evidence_index: selection }, path), audit, path);
   review.evidence.forEach((selection, j) => read(selection, `/evidence/${j}`));
@@ -135,14 +136,14 @@ function resolveComponentReview(request: AgentRequest, review: ComponentReview, 
         message: "已恢复的结论必须引用该次报错之后的实际工具回执，证明重试、修复或替代路径恢复；仅失败回执、计划或终稿自述不证明恢复。补选后续原文回执，无法确认则记 uncertain。" }]);
     }
   }
-  return resolveProblems(request, components[0]!, review.problems, audit, "/problems");
+  return resolveProblems(request, review.problems, audit, "/problems");
 }
 
 
 const componentResult = structuredClone(componentResultSchema) as any;
 componentResult.properties.problem.items = bareProblem;
 
-/** A component task receives exactly one code-bound owner; normal components return no problems. */
+/** A group task investigates one program-formed invocation chain or the delivery; normal groups return no problems. */
 export const componentAttributionProfile: AgentProfile = {
   id: "component", requestSchema: { type: "object", required: ["components", "tool_errors", "source_positions", "trace_index"] },
   submissionSchema: componentSubmissionSchema, resultSchema: componentResult, evidenceSelections: true, maxEvidenceQuoteChars: 400,
@@ -150,7 +151,7 @@ export const componentAttributionProfile: AgentProfile = {
   resolve(request, draft, audit) {
     const value = draft as ComponentReview;
     const problems = resolveComponentReview(request, value, audit);
-    return { component: String((request.input.components as JsonObject[])[0]!.name), content: value.content,
+    return { components: (request.input.components as JsonObject[]).map(component => String(component.name)), content: value.content,
       evidence: value.evidence, tool_error_reviews: value.tool_error_reviews, problem: problems };
   },
 };
@@ -181,13 +182,9 @@ export const sessionAttributionProfile: AgentProfile = {
   submissionSchema: sessionSubmission, resultSchema: sessionAttributionResultSchema,
   evidenceSelections: true, maxEvidenceQuoteChars: 400, ...sessionPrompt, toolNames: tools, maxToolCalls: 2,
   resolve(request, draft, audit) {
-    const value = draft as { session_summary: string; session_problem: (Omit<SubmittedProblem, "tool_error_indices"> & { actor_index: number })[] };
+    const value = draft as { session_summary: string; session_problem: Omit<SubmittedProblem, "tool_error_indices">[] };
     const problems = value.session_problem.flatMap((problem, index) => {
-      const actor = (request.input.components as JsonObject[]).find(actor => actor.component_index === problem.actor_index);
-      if (!actor) throw new ValidationError([{ category: "structure", code: "component_identity", path: `/session_problem/${index}/actor_index`,
-        message: "跨轮问题只能选择 Compact 联合目录的已有组件编号，程序透传名称。" }]);
-      const { actor_index: _index, ...description } = problem;
-      const resolved = resolveProblems(request, actor, [{ ...description, tool_error_indices: [] }], audit, "/session_problem", index);
+      const resolved = resolveProblems(request, [{ ...problem, tool_error_indices: [] }], audit, "/session_problem", index);
       const positions = request.input.source_positions as { trace_index: number }[];
       const traces = new Set(problem.evidence.map(item => {
         const point = parseEvidenceCoordinates(audit.evidenceBank![item.index - 1]!);

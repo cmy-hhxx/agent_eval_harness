@@ -57,6 +57,7 @@ const fastFiles = [
   "dist/packages/workflows/src/comparison/attribution-contract.test.js",
   "dist/packages/workflows/src/attribution/workflow.test.js",
   "dist/packages/workflows/src/attribution/atomic.test.js",
+  "dist/packages/workflows/src/attribution/component-groups.test.js",
   "dist/packages/workflows/src/attribution/session.test.js",
   "dist/packages/workflows/src/inputs/normalize.test.js",
   "dist/packages/workflows/src/comparison/instruction-review.test.js",

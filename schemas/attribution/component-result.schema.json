@@ -3,21 +3,26 @@
   "type": "object",
   "additionalProperties": false,
   "required": [
-    "component",
+    "components",
     "content",
     "evidence",
     "tool_error_reviews",
     "problem"
   ],
   "properties": {
-    "component": {
-      "type": "string",
-      "minLength": 1
+    "components": {
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": {
+        "type": "string",
+        "minLength": 1
+      }
     },
     "content": {
       "type": "string",
       "minLength": 1,
-      "maxLength": 400
+      "maxLength": 600
     },
     "evidence": {
       "type": "array",

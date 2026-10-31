@@ -37,24 +37,28 @@ export function sourceCompactReceipt(candidate: Candidate, session: RawInput): S
   }
   return receipt;
 }
-export function componentDraft<P>(problems: P[] = []) {
-  return { content: "已核对该组件的动作、原始回执及交付影响。", evidence: [] as number[],
+export function componentDraft<P>(problems: P[] = [], actor_index = 1) {
+  return { content: "已核对该组的调用、原始回执及交付影响。", evidence: [] as number[],
     tool_error_reviews: [] as { tool_error_idx: number; status: string; content: string; evidence: number[] }[],
-    problems: problems.map(problem => ({ ...problem, tool_error_indices: [] as number[] })) };
+    problems: problems.map(problem => ({ actor_index, ...problem, tool_error_indices: [] as number[] })) };
 }
-export function componentTask(candidate: Candidate, receipt: SubmissionReceipt, name: string, traceIndex = 0): PlannedTask {
+/** The investigation group task whose program-formed members include the named component. */
+export function componentTask(candidate: Candidate, receipt: SubmissionReceipt, inputs: Record<string, unknown>, name: string, traceIndex = 0): PlannedTask {
   const plan = planAttributionUnit(candidate), compact = plan.tasks.find(task => task.stage === "attribution-compact")!;
-  const followups = attributionWorkflow.advance!(compact, receipt, { manifest: { tasks: plan.tasks }, receipts: {} } as never, {})!;
-  const index = ((receipt.evaluation as { turns: { components: JsonObject[] }[] }).turns[traceIndex]!.components)
-    .find(component => component.components_name === name)?.components_idx;
+  // Probe on a cloned record: material caches are keyed by the record and must not see dependency-free bindings.
+  const probe = { [candidate.input_id]: structuredClone(inputs[candidate.input_id]) };
+  const followups = attributionWorkflow.advance!(compact, receipt, { manifest: { tasks: plan.tasks }, receipts: {} } as never, probe)!;
   const task = followups.tasks.find(task => (task.data as AttributionTaskData).traceIndex === traceIndex &&
-    (task.data as AttributionTaskData).componentIdx === index);
+    memberIndex(bindAttribution(task, probe, { compact: receipt }).request.input.components as JsonObject[], name) !== undefined);
   if (!task) throw new Error(`Missing fixture component: ${name}`);
   return task;
 }
+export function memberIndex(members: JsonObject[], name: string): number | undefined {
+  return members.find(member => member.name === name)?.component_index as number | undefined;
+}
 export function bindComponentFixture(candidate: Candidate, raw: RawInput, dependencies: Record<string, SubmissionReceipt> = {}) {
-  const compact = sourceCompactReceipt(candidate, normalizeInput(raw));
-  return bindAttribution(componentTask(candidate, compact, "最终答复生成"), { [candidate.input_id]: raw }, { compact, ...dependencies });
+  const compact = sourceCompactReceipt(candidate, normalizeInput(raw)), inputs = { [candidate.input_id]: raw };
+  return bindAttribution(componentTask(candidate, compact, inputs, "最终答复生成"), inputs, { compact, ...dependencies });
 }
 export function bindAttributionFixture(task: PlannedTask, inputs: Record<string, unknown>, dependencies: Record<string, SubmissionReceipt | undefined> = {}, options = {}) {
   if (task.stage === "attribution-compact") {

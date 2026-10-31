@@ -12,7 +12,7 @@
     "content": {
       "type": "string",
       "minLength": 1,
-      "maxLength": 400
+      "maxLength": 600
     },
     "evidence": {
       "type": "array",
@@ -71,6 +71,7 @@
         "type": "object",
         "additionalProperties": false,
         "required": [
+          "actor_index",
           "label",
           "definition",
           "problem_phenomena",
@@ -81,6 +82,10 @@
           "tool_error_indices"
         ],
         "properties": {
+          "actor_index": {
+            "type": "integer",
+            "minimum": 1
+          },
           "label": {
             "type": "string",
             "minLength": 1
@@ -102,7 +107,8 @@
               "P0",
               "P1",
               "P2",
-              "P3"
+              "P3",
+              "P4"
             ]
           },
           "severity_reason": {

@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { Ajv2020 } from "ajv/dist/2020.js";
 import { canonical, difference, restore, projectEvidenceReferences, resolveEvidenceSelection, type AgentBinding, type JsonObject, type PlannedTask, type RunManifest, type RunState, type SubmissionReceipt, type TaskAnalysis, type WorkflowDefinition, type WorkflowScheduling } from "@eval/contracts";
-import { cite, displayEvidence, evidenceSources, parseEvidenceCoordinates, resolveEvidence } from "@eval/tools";
+import { cite, displayEvidence, evidenceSources, parseEvidenceCoordinates, resolveEvidence, traceCallOrigins } from "@eval/tools";
 import { createRunRepository, type RunCodec } from "@eval/data";
 import { compactFields, compactResultSchema, type SessionCompact } from "@eval/agents/compact";
 import type { TraceAttributionResult } from "@eval/agents/attribution";
@@ -11,6 +11,7 @@ import problemSchema from "../../../../schemas/attribution/problem.schema.json" 
 import traceResultSchema from "../../../../schemas/attribution/trace-result.schema.json" with { type: "json" };
 import sessionResultSchema from "../../../../schemas/attribution/session-result.schema.json" with { type: "json" };
 import { componentMaterial } from "./component-material.js";
+import { investigationGroups } from "./component-groups.js";
 import { compactFinalMaterial, compactProcessExcerpts, compactTextRanges } from "./compact-material.js";
 
 /** Trace tasks summarize accepted component investigations. */
@@ -19,7 +20,7 @@ export interface AttributionConfig extends EvaluationConfig { workflow: "attribu
 export type AttributionStage = "attribution-compact-field" | "attribution-compact" | "attribution-component" | "attribution-trace" | "attribution-session";
 export interface AttributionTaskData {
   stage: AttributionStage; candidate: Candidate; traceIndex?: number; traceCount?: number;
-  compactField?: string; compactTaskId?: string; componentIdx?: number;
+  compactField?: string; compactTaskId?: string; componentGroup?: string;
 }
 export interface AttributionUnitOptions {
   data?: Record<string, unknown>;
@@ -67,7 +68,7 @@ export function planAttributionUnit(candidate: Candidate, options: AttributionUn
     .map(task => ({ ...task, data: { ...task.data as object, candidate } }));
   const traceTasks: PlannedTask[] = traceList.map(trace => {
     const children = components.filter(task => (task.data as AttributionTaskData).traceIndex === trace.trace_index);
-    const labels = children.map(task => `component:${(task.data as AttributionTaskData).componentIdx}`);
+    const labels = children.map(task => `group:${(task.data as AttributionTaskData).componentGroup}`);
     return { id: id("attribution-trace", trace.trace_index), stage: "attribution-trace", inputIds: { answer: candidate.input_id },
       dependencies: { ...upstream, compact: compact.id, ...Object.fromEntries(children.map((task, index) => [labels[index]!, task.id])) },
       settledDependencies: labels,
@@ -80,25 +81,26 @@ export function planAttributionUnit(candidate: Candidate, options: AttributionUn
   return { tasks: [...preparation, ...components, ...traceTasks, session], session };
 }
 
-/** Components fan out only after the live Compact directory is accepted. */
-function componentFollowups(task: PlannedTask, compact: SessionCompact, state: RunState) {
+/** Investigation groups fan out only after the live Compact directory is accepted. */
+function componentFollowups(task: PlannedTask, compact: SessionCompact, state: RunState, inputs: Record<string, unknown>) {
   const data = task.data as AttributionTaskData, tasks: PlannedTask[] = [], replace: PlannedTask[] = [];
+  const source = sourceFor(inputs, data.candidate);
   for (const turn of compact.turns) {
     const trace = state.manifest.tasks.find(item => item.stage === "attribution-trace" &&
       (item.data as AttributionTaskData).candidate.input_id === data.candidate.input_id && (item.data as AttributionTaskData).traceIndex === turn.turn_idx &&
       item.dependencies.compact === task.id)!;
     if (!trace || state.receipts[trace.id]) continue;
-    const upstream = Object.fromEntries(Object.entries(trace.dependencies).filter(([label]) => !label.startsWith("component:")));
-    const children = (turn.components as JsonObject[]).map(component => {
+    const upstream = Object.fromEntries(Object.entries(trace.dependencies).filter(([label]) => !label.startsWith("group:")));
+    const children = turnInvestigation(source, data.candidate, turn.turn_idx, turn).groups.map(group => {
       const old = state.manifest.tasks.find(item => item.stage === "attribution-component" && (item.data as AttributionTaskData).compactTaskId === task.id &&
-        (item.data as AttributionTaskData).traceIndex === turn.turn_idx && (item.data as AttributionTaskData).componentIdx === component.components_idx);
+        (item.data as AttributionTaskData).traceIndex === turn.turn_idx && (item.data as AttributionTaskData).componentGroup === group.key);
       if (old) return old;
       const child: PlannedTask = { id: randomUUID(), stage: "attribution-component", inputIds: task.inputIds,
         dependencies: upstream, data: { ...trace.data as object, stage: "attribution-component", compactTaskId: task.id,
-          componentIdx: Number(component.components_idx) } };
+          componentGroup: group.key } };
       tasks.push(child); return child;
     });
-    const labels = children.map(child => `component:${(child.data as AttributionTaskData).componentIdx}`);
+    const labels = children.map(child => `group:${(child.data as AttributionTaskData).componentGroup}`);
     replace.push({ ...trace, dependencies: { ...upstream, ...Object.fromEntries(children.map((child, index) => [labels[index]!, child.id])) },
       settledDependencies: labels });
   }
@@ -134,6 +136,21 @@ function sourceFor(inputs: Record<string, unknown>, candidate: Candidate) {
     window.set(candidate.input_id, source);
   }
   return source;
+}
+/** Groups are recomputed from the accepted Compact directory and recorded invocations; the model never forms them. */
+function turnInvestigation(source: ReturnType<typeof sourceFor>, candidate: Candidate, traceIndex: number, turn: JsonObject) {
+  const { raw, original, positions } = source, trace = turns(candidate)[traceIndex]!;
+  const finalIndex = positions.findIndex(point => point.trace_index === traceIndex && point.message_index === (trace.final_index ?? candidate.final_index));
+  const actors = processComponents(raw, original, candidate.input_id, positions, turn.components as JsonObject[]);
+  const recorded = processExecutionFacts(raw, original, candidate.input_id, positions, traceIndex)[0]!;
+  const indices = positions.flatMap((point, index) => point.trace_index === traceIndex ? [index] : []);
+  // Span links miss a main loop that emits tool calls directly; its exact generated arguments still identify the generator.
+  const origins = new Map(traceCallOrigins(indices.map(index => raw.messages[index]!)).map(origin => [indices[origin.request_index]!, indices[origin.planner_index]!]));
+  const facts = { ...recorded, execution_links: (recorded.execution_links as JsonObject[]).map(link => link.invoking_model_message_index === null &&
+    origins.has(Number(link.request_message_index)) ? { ...link, invoking_model_message_index: origins.get(Number(link.request_message_index))! } : link) };
+  const modelIndices = indices.filter(index => raw.messages[index]?.type === "llm_turn");
+  return { finalIndex, actors, facts,
+    groups: investigationGroups(raw, actors, facts.execution_links, turn.tool_errors as JsonObject[], finalIndex, modelIndices) };
 }
 export function compactFieldResult(compact: JsonObject, field: string, traceIndex?: number): JsonObject {
   if (field === "session_overview") {
@@ -269,16 +286,11 @@ export function bindAttribution(task: PlannedTask, inputs: Record<string, unknow
   const compact = verifiedCompact(compactReceipt.evaluation as SessionCompact, raw, original, candidate.input_id);
   if (task.stage === "attribution-component") {
     const traceIndex = data.traceIndex!, trace = traceList[traceIndex]!, turn = compact.turns[traceIndex]!;
-    const finalIndex = positions.findIndex(point => point.trace_index === traceIndex && point.message_index === (trace.final_index ?? candidate.final_index));
-    const actors = processComponents(raw, original, candidate.input_id, positions, turn.components as JsonObject[]);
-    const actor = actors[data.componentIdx! - 1] as JsonObject | undefined;
-    if (!actor) throw new Error("组件任务缺少 Compact 目录项");
-    const modelIndices = positions.flatMap((point, index) => point.trace_index === traceIndex && raw.messages[index]?.type === "llm_turn" ? [index] : []);
-    const hasCapturedFinal = actors.some(item => item.kind === "model" && (item.message_indices as number[]).includes(finalIndex));
-    const finalOwner = actor.kind === "model" && (actor.name === "最终答复生成" || (actor.message_indices as number[]).includes(finalIndex) ||
-      !hasCapturedFinal && (actor.message_indices as number[]).includes(modelIndices.at(-1) ?? finalIndex));
+    const { finalIndex, actors, facts, groups } = turnInvestigation(source, candidate, traceIndex, turn);
+    const group = groups.find(group => group.key === data.componentGroup);
+    if (!group) throw new Error("组件任务缺少 Compact 调查分组：" + data.componentGroup);
     let finalSources: JsonObject | undefined;
-    if (finalOwner) {
+    if (group.delivery) {
       source.traceMaterial ??= new Map();
       let prepared = source.traceMaterial.get(traceIndex);
       if (!prepared) {
@@ -288,12 +300,11 @@ export function bindAttribution(task: PlannedTask, inputs: Record<string, unknow
       }
       finalSources = prepared.modelInput!.answer as JsonObject;
     }
-    const facts = processExecutionFacts(raw, original, candidate.input_id, positions, traceIndex)[0]!;
-    const material = componentMaterial(raw, original, candidate.input_id, positions, traceIndex, finalIndex, actor, turn, facts, finalSources, actors);
+    const material = componentMaterial(raw, original, candidate.input_id, positions, traceIndex, finalIndex, group, turn, facts, finalSources, actors);
     const reference = options.reference === undefined ? candidate.reference : options.reference;
     const modelInput = { ...material.modelInput, ...(reference !== null ? { ground_truth: { available: true, value: reference } } : {}) };
     return { agent: "attribution", profile: "component", request: { sources: { answer: { id: candidate.input_id, value: raw } },
-      input: { components: [actor], tool_errors: material.errors, source_positions: positions, trace_index: traceIndex } }, modelInput,
+      input: { components: group.members, tool_errors: material.errors, source_positions: positions, trace_index: traceIndex } }, modelInput,
       projectModelInput(input, bank) {
         const { ground_truth, tool_errors, upstream_error_context, final_claims, ...material } = input;
         return { ...projectEvidenceReferences(material, bank, 400),
@@ -304,16 +315,16 @@ export function bindAttribution(task: PlannedTask, inputs: Record<string, unknow
   }
   if (task.stage === "attribution-trace") {
     const traceIndex = data.traceIndex!, trace = traceList[traceIndex]!, turn = compact.turns[traceIndex]!;
-    const components = (turn.components as JsonObject[]).map(component => ({ component, receipt: dependencies[`component:${component.components_idx}`] }));
-    const accepted = components.filter(item => item.receipt?.status === "succeeded");
+    const results = turnInvestigation(source, candidate, traceIndex, turn).groups.map(group => ({ group, receipt: dependencies[`group:${group.key}`] }));
+    const accepted = results.filter(item => item.receipt?.status === "succeeded");
     const problems = accepted.flatMap(item => (item.receipt!.evaluation as { problem: JsonObject[] }).problem);
-    const failed = components.filter(item => !item.receipt).map(item => item.component.components_name);
+    const failed = [...new Set(results.filter(item => !item.receipt).flatMap(item => item.group.members.map(member => String(member.name))))];
     const reference = options.reference === undefined ? candidate.reference : options.reference;
     const ground_truth = { available: reference !== null, value: reference };
     return { agent: "attribution", profile: "trace", request: { sources: { answer: { id: candidate.input_id, value: raw } }, input: {
       trace_meta: session.turns?.[traceIndex]?.meta ?? normalizeTraceInput(session, traceIndex).meta ?? {}, ground_truth, problem: problems, failed_components: failed } },
       modelInput: { question: trace.question, ground_truth, final_answer: turn.final_answer,
-        component_results: accepted.map(item => ({ component: item.component.components_name, content: (item.receipt!.evaluation as JsonObject).content })),
+        component_results: accepted.map(item => ({ components: (item.receipt!.evaluation as JsonObject).components, content: (item.receipt!.evaluation as JsonObject).content })),
         failed_components: failed, merged_problems: problems.map(({ component, label, problem_phenomena, reason, severity }) => ({ component, label, problem_phenomena, reason, severity })) } };
   }
   if (task.stage !== "attribution-session") throw new Error("未知 Attribution 任务阶段：" + task.stage);
@@ -360,7 +371,7 @@ export const attributionWorkflow: WorkflowDefinition = {
       const data = task.data as AttributionTaskData, source = sourceFor(inputs, data.candidate);
       verifiedCompact((receipt.evaluation as JsonObject).value, source.raw, source.original, data.candidate.input_id);
     }
-    if (task.stage === "attribution-compact") return componentFollowups(task, receipt.evaluation as SessionCompact, _state);
+    if (task.stage === "attribution-compact") return componentFollowups(task, receipt.evaluation as SessionCompact, _state, inputs);
     if (task.stage === "attribution-component" || task.stage === "attribution-session" && (task.data as AttributionTaskData).traceCount! > 1) {
       const data = task.data as AttributionTaskData, source = sourceFor(inputs, data.candidate);
       const visit = (value: unknown, path = ""): unknown => {
