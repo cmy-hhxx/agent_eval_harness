@@ -21,14 +21,15 @@ test("component submissions select one offered actor and require severity and ev
   assert(validate({ content: "未发现有证据支持的偏差。", evidence: [], tool_error_reviews: [], problems: [] }));
 });
 
-test("maxLength rejection reports the actual length and excess", () => {
+test("content tolerance allows 700 characters and maxLength rejection reports the excess", () => {
   const validate = new Ajv2020({ allErrors: true, strict: false }).compile(componentAttributionProfile.submissionSchema);
-  const draft = { content: "字".repeat(601), evidence: [], tool_error_reviews: [], problems: [] };
+  assert(validate({ content: "字".repeat(700), evidence: [], tool_error_reviews: [], problems: [] }));
+  const draft = { content: "字".repeat(701), evidence: [], tool_error_reviews: [], problems: [] };
   assert(!validate(draft));
   const issue = schemaIssues(validate.errors, draft).find(item => item.code === "schema_maxLength")!;
-  assert.equal(issue.actualLength, 601);
+  assert.equal(issue.actualLength, 701);
   assert.equal(issue.excess, 1);
-  assert.match(issue.message, /长度上限 600 字，实际 601 字，超出 1 字/);
+  assert.match(issue.message, /长度上限 700 字，实际 701 字，超出 1 字/);
 });
 
 test("trace cannot replace merged problems; session accepts cross-turn review", () => {

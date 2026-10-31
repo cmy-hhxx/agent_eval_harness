@@ -85,14 +85,16 @@ test("component family normalization and session-catalog roles always return a c
     { component_family: "finquery", component_role: "planning" });
 });
 
-test("P4 needs confirmed no-impact and a delivery or alternative receipt", () => {
-  const messages = [{ type: "final_answer" }, { type: "tool_result" }, { type: "tool_call" }];
+test("P4 needs a delivery or alternative receipt, not an error-only or assistant-only record", () => {
+  const messages = [{ type: "final_answer" }, { type: "tool_result" }, { type: "tool_call" }, { role: "assistant" }];
   const context = { messages, errorMessages: new Set<number>(), componentRole: "planning" as const };
   assert.doesNotThrow(() => validateP4Problem(problem([], "P4"), [0], context, "/problems/0"));
   assert.doesNotThrow(() => validateP4Problem(problem([], "P4"), [1], context, "/problems/0"));
   assert.throws(() => validateP4Problem(problem([], "P4"), [2], context, "/problems/0"), /交付未受影响/);
+  assert.throws(() => validateP4Problem(problem([], "P4"), [3], context, "/problems/0"), /交付未受影响/);
   assert.throws(() => validateP4Problem(problem([], "P4"), [0], { ...context, errorMessages: new Set([0]) }, "/problems/0"), /交付未受影响/);
-  assert.throws(() => validateP4Problem({ ...problem([], "P4"), severity_reason: "修复后影响未确认。" }, [0], context, "/problems/0"), /未确认/);
+  assert.doesNotThrow(() => validateP4Problem({ ...problem([], "P4"), severity_reason: "终稿未采用该结果；某个次要细节未核实。" },
+    [0], context, "/problems/0"));
   assert.throws(() => validateP4Problem(problem([], "P4"), [0], { ...context, componentRole: "delivery" }, "/problems/0"), /终稿问题/);
   assert.doesNotThrow(() => validateP4Problem({ ...problem([], "P1"), severity_reason: "核心结果不可用。" }, [2], context, "/problems/0"));
 });

@@ -104,15 +104,15 @@ test("recovery needs a later tool receipt, not only the original failure or fina
   assert.doesNotThrow(() => f.registry.resolve(f.binding, unknown, f.audit));
 });
 
-test("P4 needs a proven delivery outcome, not an unconfirmed or error-only record", () => {
+test("P4 needs a delivery or alternative receipt, not an error-only record", () => {
   const f = fixture("recovered");
   const problem = (f.draft.problems as { evidence: { index: number; reason: string }[]; severity_reason: string }[])[0]!;
   const onlyError = structuredClone(f.draft);
   (onlyError.problems as typeof f.draft.problems)[0]!.evidence = [problem.evidence[0]!];
   assert.throws(() => f.registry.resolve(f.binding, onlyError, f.audit), /P4.*交付未受影响|交付未受影响.*P4/);
-  const unconfirmed = structuredClone(f.draft);
-  (unconfirmed.problems as typeof f.draft.problems)[0]!.severity_reason = "修复后重建通过，但交付影响未确认。";
-  assert.throws(() => f.registry.resolve(f.binding, unconfirmed, f.audit), /未确认.*P4|P4.*未确认/);
+  const minorUnverified = structuredClone(f.draft);
+  (minorUnverified.problems as typeof f.draft.problems)[0]!.severity_reason = "修复后重建通过并交付，终稿未采用首次报错结果；仅某项次要细节未核实。";
+  assert.doesNotThrow(() => f.registry.resolve(f.binding, minorUnverified, f.audit));
   const alternative = structuredClone(f.draft);
   (alternative.problems as typeof f.draft.problems)[0]!.evidence = [
     { index: problem.evidence[0]!.index, reason: "首次构建报错。" },

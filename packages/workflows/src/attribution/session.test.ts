@@ -79,6 +79,7 @@ for (const [shape, content, path, quote] of [
   const receipt = sourceCompactReceipt(candidate, normalizeInput(raw));
   const inputs = { [candidate.input_id]: raw }, binding = bindAttribution(componentTask(candidate, receipt, inputs, "答案合成·取值"), inputs, { compact: receipt });
   const registry = new AgentRegistry([attributionAgent]), prepared = registry.prepare(binding);
+  assert.equal(((binding.request.sources.answer.value as { messages: Record<string, unknown>[] }).messages[1]!).type, "final_answer");
   assert.deepEqual(raw, original);
   const index = prepared.evidenceBank.findIndex(id => { const point = parseEvidenceCoordinates(id);
     return point?.kind === "text" && point.message_index === 0 && point.path === path; }) + 1;

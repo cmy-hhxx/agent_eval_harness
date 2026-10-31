@@ -123,6 +123,17 @@ export async function planAttribution(config: AttributionConfig) {
     session_tasks: catalog.length, issues: indexed.issues } };
 }
 const sourceCache = new WeakMap<object, Map<string, ReturnType<typeof attributionSessionSource> & { session: RawInput; compactMaterial?: JsonObject; traceMaterial?: Map<number, AgentBinding> }>>();
+/** Adapter A keeps the final answer as a plain assistant message; mark it so P4 evidence can name the delivery. */
+function markFinalAnswers(raw: RawInput, session: RawInput, candidate: Candidate) {
+  let offset = 0;
+  for (const [traceIndex, turn] of (session.turns ?? [{ messages: session.messages }]).entries()) {
+    const selected = candidate.turns?.find(item => item.trace_index === traceIndex);
+    const final = selected ? selected.final_index : candidate.final_index;
+    if (final !== null && Number.isSafeInteger(final) && raw.messages[offset + final])
+      raw.messages[offset + final] = { ...raw.messages[offset + final], type: "final_answer" };
+    offset += turn.messages.length;
+  }
+}
 function sourceFor(inputs: Record<string, unknown>, candidate: Candidate) {
   // The input reader owns window eviction and revision checks. Cache by its immutable
   // record object, so preparing fields neither reparses a session nor retains the whole run.
@@ -131,8 +142,9 @@ function sourceFor(inputs: Record<string, unknown>, candidate: Candidate) {
   if (!window) sourceCache.set(value, window = new Map());
   let source = window.get(candidate.input_id);
   if (!source) {
-    const session = normalizeInput(value);
-    source = { ...attributionSessionSource(session), session };
+    const session = normalizeInput(value), projection = attributionSessionSource(session);
+    markFinalAnswers(projection.raw, session, candidate);
+    source = { ...projection, session };
     window.set(candidate.input_id, source);
   }
   return source;
