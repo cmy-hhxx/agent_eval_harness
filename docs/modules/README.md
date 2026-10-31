@@ -36,7 +36,7 @@
 
 Agent 之间不互相导入；Workflow 通过公开入口组合。Host 只接收定义，应用层注入具体 Agent、存储和 Runtime。依赖限制由[架构测试](../../tests/architecture/dependencies.test.ts)执行。
 
-Comparison 复用 Attribution 的 compact → trace → session 任务规划和材料绑定；共用输入与材料模块不导入具体 Workflow。跨包调用共用能力使用 `@eval/workflows/inputs`、`@eval/workflows/review`。
+Comparison 复用 Attribution 的 Compact → 组件并行调查 → Trace 摘要 → Session 任务规划和材料绑定；共用输入与材料模块不导入具体 Workflow。跨包调用共用能力使用 `@eval/workflows/inputs`、`@eval/workflows/review`。
 
 Comparison 的额外归因维度在 `attributionDimensions` 登记：名称、Agent、材料绑定与结果字段由维度定义拥有，任务生成、调度、输出与恢复使用共用逻辑。当前登记指令遵循归因；其任务只关联本回答的 session 来源，不依赖其他维度，也不接收既有归因判词。添加用户 KYC 等维度时实现相应材料绑定、Agent 与 Schema，再登记定义；不修改 Host 或过程归因，不复用指令规则冒充 KYC 规则。独立 Attribution workflow 执行 Compact、组件并行调查、Trace 摘要及 Session 汇总。
 

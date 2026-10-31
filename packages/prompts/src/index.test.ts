@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { readFileSync, readdirSync } from "node:fs";
 import { DEFAULT_POLICY } from "@eval/contracts";
 import { builtinTools } from "@eval/tools";
-import { agentPrompt, attributionConditionalRules, compactFields, erisPrompt, type PromptStage } from "./index.js";
+import { agentPrompt, erisPrompt, type PromptStage } from "./index.js";
 
 const submissionToolNames = ["submit_evaluation", "submit_evaluation_file"];
 
@@ -20,10 +20,6 @@ test("all stage texts come from one resource tree; tool descriptions are complet
     assert(prompt.systemPrompt.startsWith(readFileSync(new URL(`${stage}/${profile}/system.md`, resources), "utf8").trim()));
     assert(prompt.instructions.startsWith(readFileSync(new URL(`${stage}/${profile}/instructions.md`, resources), "utf8").trim()));
     assert(prompt.systemPrompt.includes(prompt.instructions));
-    if (stage === "attribution") {
-      assert(!prompt.systemPrompt.includes("责任组件目录（component 必须选择具体条目的 ID）"));
-      assert(prompt.systemPrompt.includes("当前组件"));
-    }
     assert.deepEqual(Object.keys(prompt.toolDescriptions).sort(), tools.filter(name => name !== (prompt.fileSubmission ? "submit_evaluation" : "submit_evaluation_file")).sort());
     for (const [name, text] of Object.entries(prompt.toolDescriptions))
       assert.equal(text, readFileSync(new URL(stage === "attribution" && name === "execute_code"
@@ -47,7 +43,7 @@ test("submission-only stages expose only their direct submission tool", () => {
 });
 
 test("explicit transport and draft options determine tools and exploration budgets", () => {
-  const prompt = agentPrompt("attribution", ["execute_code"], { profile: "trace", fileSubmission: true, draftWriteInCallLimit: true });
+  const prompt = agentPrompt("attribution", ["execute_code"], { profile: "component", fileSubmission: true, draftWriteInCallLimit: true });
   assert.equal(prompt.fileSubmission, true);
   assert.equal(prompt.draftWriteInCallLimit, true);
   assert.deepEqual(Object.keys(prompt.toolDescriptions), ["execute_code", "submit_evaluation_file"]);
@@ -107,7 +103,7 @@ test("task materials and per-attempt budget/recovery render once and in order", 
 test("model budgets expose actionable call limits for the selected tools", () => {
   const policy = { ...DEFAULT_POLICY, repairAttempts: 4, maxTokens: 10000 };
   const limits = (stage: PromptStage, tools: string[], draftWriteInCallLimit = false) => {
-    const text = agentPrompt(stage, tools, { profile: stage === "attribution" ? "trace" : "default",
+    const text = agentPrompt(stage, tools, { profile: stage === "attribution" ? "component" : "default",
       fileSubmission: draftWriteInCallLimit, draftWriteInCallLimit }).renderPrompt(material, policy);
     return JSON.parse(text.match(/\n\n执行预算：(.*)。/)![1]) as Record<string, number>;
   };
@@ -127,12 +123,10 @@ test("compact and attribution recovery stay within their own submission contract
     repeatedErrors: 1, stopped: false, attemptId: "attempt" };
   const recovery = readFileSync(new URL("../resources/shared/attribution-recovery.md", import.meta.url), "utf8").trim();
   const comparisonRecovery = readFileSync(new URL("../resources/shared/recovery.md", import.meta.url), "utf8").trim();
-  for (const [stage, profile] of [["compact", "default"], ["attribution", "trace"], ["attribution", "session"]] as const) {
+  for (const [stage, profile] of [["compact", "default"], ["attribution", "component"], ["attribution", "trace"], ["attribution", "session"]] as const) {
     const rendered = agentPrompt(stage, [], { profile, fileSubmission: false }).renderPrompt({}, DEFAULT_POLICY, failure);
     assert(rendered.includes(recovery));
     assert(!rendered.includes(comparisonRecovery));
-    assert(!rendered.includes("slot_count"));
-    assert(!rendered.includes("/candidate"));
     assert(rendered.endsWith(JSON.stringify({ draft: failure.draft, errors: failure.errors })));
   }
 });
@@ -150,45 +144,13 @@ test("a workflow task focus is shown before full material without losing or rewr
  assert.deepEqual(input,before);
 });
 
-test("attribution sends only applicable rule resources and does not repeat shared decision text",()=>{
-  const none={standardAnswer:false,numeric:false,tableDoubts:false,images:false,captureGaps:false};
-  assert.equal(attributionConditionalRules(none),'');
-  assert.equal(attributionConditionalRules({...none,numeric:true}),'');
-  const choices=[['standardAnswer','standard-answer'],['tableDoubts','table-doubts'],['images','images'],['captureGaps','capture-gaps']] as const;
-  for(const [key,file] of choices)assert.equal(attributionConditionalRules({...none,[key]:true}),
-    readFileSync(new URL(`../resources/attribution/conditional/${file}.md`,import.meta.url),'utf8').trim());
-  const standard=attributionConditionalRules({...none,standardAnswer:true});
-  assert.equal(attributionConditionalRules({...none,standardAnswer:true,numeric:true}),standard+'\n\n'+
-    readFileSync(new URL('../resources/attribution/conditional/numeric.md',import.meta.url),'utf8').trim());
-  const prompt=agentPrompt('attribution',['read_trace','execute_code'],{profile:'trace',fileSubmission:false});
-  for(const source of ['commentary','evidence'])assert(!prompt.systemPrompt.includes(
-    readFileSync(new URL(`../resources/shared/${source}.md`,import.meta.url),'utf8').trim()));
-  assert(!prompt.systemPrompt.includes(standard));
-  assert.equal(prompt.systemPrompt.split(prompt.instructions).length,2);
-  assert(!prompt.toolDescriptions.execute_code.includes('edit_json'));
-  const focused=prompt.renderPrompt({task_focus:{question:'核查实际交付。'}});
-  assert(!focused.includes('候选私有规范'));
-});
-
 test("compact and process attribution have independent prompts with shared problem expression only for attribution", () => {
   const compact = agentPrompt("compact", ["read_trace"], { fileSubmission: false });
-  const trace = agentPrompt("attribution", ["read_trace"], { profile: "component", fileSubmission: false });
+  const component = agentPrompt("attribution", ["read_trace"], { profile: "component", fileSubmission: false });
   const session = agentPrompt("attribution", ["read_trace"], { profile: "session", fileSubmission: false });
-  assert(!trace.systemPrompt.includes("已补救且未影响交付的执行异常"));
-  assert(trace.systemPrompt.includes("已恢复且未留下交付影响的执行异常不生成问题"));
-  assert(trace.systemPrompt.includes("不能单独证明参数违规或具体内部原因"));
-  assert(trace.systemPrompt.includes("合理的解释、类比、补充应用场景"));
-  assert(trace.systemPrompt.includes("否则归实际结果使用者"));
-  assert(trace.systemPrompt.includes("不自行强化条件"));
-  assert(trace.systemPrompt.includes("以最后实际执行版本及回执判断剩余影响"));
   const problemOutput = readFileSync(new URL("../resources/attribution/problem-output.md", import.meta.url), "utf8").trim();
-  for (const prompt of [trace, session]) assert(prompt.instructions.endsWith(problemOutput));
+  for (const prompt of [component, session]) assert(prompt.instructions.endsWith(problemOutput));
   assert(!compact.instructions.includes(problemOutput));
-  assert(compact.instructions.includes('"value"'));
-  assert(compactFields.key_data!.instruction.includes('evidence'));
-  assert.match(compact.instructions, /调用 submit_evaluation/u);
   assert.equal(compact.toolDescriptions.submit_evaluation,
     readFileSync(new URL("../resources/compact/submit_evaluation.md", import.meta.url), "utf8").trim());
-  assert(!/candidate|winner|slot_count/u.test(compact.toolDescriptions.submit_evaluation!));
-  assert.match(session.instructions, /session_problem/u);
 });

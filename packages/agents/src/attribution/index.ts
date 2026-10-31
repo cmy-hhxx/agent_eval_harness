@@ -2,7 +2,6 @@ export {checkAttributionLanguage,type AttributionLanguageField,type AttributionL
 import { type AgentDefinition } from "@eval/contracts";
 import { componentAttributionProfile, sessionAssemblyProfile, sessionAttributionProfile, traceAttributionProfile } from "./session-profiles.js";
 export { attributionNormDirectory, type AttributionNorm } from "./norm-directory.js";
-export { numericReferenceDirectory } from "./units.js";
 export * from "./types.js";
 export { sessionProblems, sessionProblemEntries, evidenceMessageIndex, sessionCorrectness } from "./session.js";
 export { attributionComponentLabel } from "./responsibility.js";

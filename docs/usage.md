@@ -389,7 +389,7 @@ npm run eval -- rewrite-comparisons --run /mnt/fin_bench/eval_data/0_wencai/3_ev
 | results/comparison-review.jsonl | 主线待核，不计对战结果 |
 | results/comparison-verification.jsonl | 可选独立核验 |
 | results/clustering.jsonl | 归类与来源引用 |
-| 源结果的 rewritten | 改写文案；独立聚类作业另用 results/rewrite.jsonl |
+| 源结果的 rewritten / results/rewrite.jsonl | 改写文案；归因与独立聚类作业使用独立 rewrite.jsonl，其他改写附在源结果中 |
 | report.md、task_summaries.md | 总览与逐题呈现，优先用已接受改写 |
 | stats.json | 数量、覆盖、冲突、版本、用量及产物清单 |
 | model-behavior.jsonl | 由当前有效归因派生的责任分类与 finding 来源，不提供底座排名 |

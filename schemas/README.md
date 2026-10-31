@@ -26,7 +26,7 @@
 - `attribution/problem.schema.json`：trace 与 session 共用的扁平 Problem，证据包含 position/component/quote/reason，计算只保留文字点评。
 - `attribution/session-result.schema.json`：独立 Attribution workflow 的正式行；一行一个 session，包含 session_meta、turns、session_summary、session_problem。
 - `workflow/clustering-tree.schema.json`：独立聚类完成后的树节点 JSONL；包含模型、功能责任、问题方向和细类，保留待观察问题及全部冻结回答的来源引用。
-- `workflow/rewritten.schema.json`：Workflow 导出的改写文案；Agent 原始结果不包含该字段，归因改写位于meta.rewritten，其他Workflow维持其当前位置。
+- `workflow/rewritten.schema.json`：Workflow 导出的改写文案；Agent 原始结果不包含该字段，存储与来源关联见[改写契约](../docs/contract.md#改写)。
 
 提交方式、各阶段选择规则及 Rewrite 的固定 `rewrites: [{id,text}]` 见[数据契约](../docs/contract.md#提交方式与反馈)，不在导航中另抄字段清单。
 

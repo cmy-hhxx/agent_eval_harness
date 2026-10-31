@@ -125,7 +125,7 @@ Compact 接受后立即写 `results/compact.jsonl`，Session 接受后立即写 
 
 正式 Problem 不含 problem_id 或替代 ID。内部定位使用原接受收据和原生 JSON 路径：逐轮为 `/turns/<轮次>/problem/<位置>`，跨轮为 `/session_problem/<位置>`；路径由数组位置生成，不写入 Problem 正文。Comparison、聚类、召回和复核使用 `problem_path` 并保留来源收据；同一收据跨 run 复用不新增问题身份。历史正式行保持原样，不生成编号、UUID、哈希或迁移副本。
 
-新生成的每条 Problem 必填 `severity`（P0/P1/P2/P3，P0 最严重）和 `severity_reason`，按本次对最终交付的已确认影响判定；已补救的问题按残余影响分级，无残余交付影响的执行异常不生成问题；不能仅凭解析报错推定请求不合规。同类问题在不同回答中可以有不同等级，不按等级拆类，也不改变 Comparison 的判胜规则。分级口径与点评表达统一维护在[问题表达规则](../packages/prompts/resources/attribution/problem-output.md)。Trace 与 Session 各自填写本阶段产生的问题，正式导出原样保留。跨版本复用的历史正式行不补造后来新增的字段。
+新生成的每条 Problem 必填 `severity`（P0/P1/P2/P3，P0 最严重）和 `severity_reason`，按本次对最终交付的已确认影响判定；已补救的问题按残余影响分级，无残余交付影响的执行异常不生成问题；不能仅凭解析报错推定请求不合规。同类问题在不同回答中可以有不同等级，不按等级拆类，也不改变 Comparison 的判胜规则。分级口径与点评表达统一维护在[问题表达规则](../packages/prompts/resources/attribution/problem-output.md)。组件调查与 Session 各自填写本阶段产生的问题，正式导出原样保留。跨版本复用的历史正式行不补造后来新增的字段。
 
 提交只校验 Schema、字段范围、证据身份、原文坐标及读取证明；不靠占位词黑名单、相似措辞或语义重复判断触发返工。来源预览的编号只对应已展示的连续原文，完整长段在展示时拆成不超过400字的独立片段，各自保留原始坐标。工具沿用相同限制；拒绝提交时一次反馈全部引用问题和可选短片段，要求替换对应 evidence.index，不逐条消耗修复次数。校验不会改写或截断所选 quote，不增加校验阶段或预算。
 

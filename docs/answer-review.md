@@ -1,10 +1,10 @@
 # 单样本归因与评分
 
-Attribution 使用独立 `workflow: attribution`，问财和 AIME 共用 compact → trace → session 三段逻辑。一个输入记录分别输出一行 `compact.jsonl` 和 `attribution.jsonl`。字段、运行与恢复契约见 [Session 归因](attribution.md) 和 [使用指南](usage.md)。
+Attribution 使用独立 `workflow: attribution`，问财和 AIME 共用 Compact → 组件并行调查 → Trace 摘要 → Session 流程。一个输入记录分别输出一行 `compact.jsonl` 和 `attribution.jsonl`。字段、运行与恢复契约见 [Session 归因](attribution.md) 和 [使用指南](usage.md)。
 
 ## 归因职责与材料
 
-Compact 字段任务提取原会话事实，Trace 审查每轮完整过程并输出总结、问题与标准答案一致性；Session 只新增跨轮问题和整体总结，逐轮结果由 Workflow 原样回填。单轮会话由 Trace 直接生成终态，不额外调用 Session 模型。材料与责任选择规则见[提示词与任务分工](attribution-prompt.md)。
+Compact 字段任务提取原会话事实，组件任务并行调查各自问题；程序合并问题，Trace 只输出摘要及标准答案一致性。Session 只新增跨轮问题和整体总结，逐轮结果由 Workflow 原样回填。单轮 Session 由程序组装，不额外调用模型。材料与责任选择规则见[提示词与任务分工](attribution-prompt.md)。
 
 外层原始 `meta` 直接传入 `session_meta`，trace 元数据直接传入对应 turn 的 `meta`。这些字段只供 Host 组装与落盘，不进入汇总模型的可见材料，也不由模型生成或改写。
 
@@ -14,7 +14,7 @@ Host 验证结构、身份、引用与原文坐标合法性，不做语义验收
 
 Comparison 的指令遵循归因是一项独立维度：依据明确规则、适用条件、实际行为和证据分析偏离原因，不读取主归因判词。它与其他维度不互相依赖，也不成为正式 Comparison 的依赖。
 
-维度通过 [统一定义](../packages/workflows/src/review/dimensions.ts) 登记 Agent、材料绑定和结果字段。调度、输出与恢复复用现有 Host/Workflow。KYC 等新维度需拥有明确的资料与归因规则，再接入该定义；当前没有内置 KYC 实现。独立 Attribution workflow 当前仅运行三段主归因，不隐式增加维度任务。
+维度通过 [统一定义](../packages/workflows/src/review/dimensions.ts) 登记 Agent、材料绑定和结果字段。调度、输出与恢复复用现有 Host/Workflow。KYC 等新维度需拥有明确的资料与归因规则，再接入该定义；当前没有内置 KYC 实现。独立 Attribution workflow 只运行上述主归因流程，不隐式增加维度任务。
 
 ## 评分与改写
 

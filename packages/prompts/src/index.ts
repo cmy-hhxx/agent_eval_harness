@@ -29,17 +29,6 @@ export function workflowText(name: "attribution-material" | "core-rewrite" | "cr
   return resource(`workflow/${name}.md`);
 }
 export const attributionNoStandardReason = resource("attribution/trace/no-standard-reason.md");
-const attributionRules = Object.fromEntries(["standard-answer", "numeric", "table-doubts", "images", "capture-gaps"]
-  .map(name => [name, resource(`attribution/conditional/${name}.md`)]));
-/** Only applicable procedural rules accompany this request; fixed decisions remain in the system prompt. */
-export function attributionConditionalRules(options: {
-  standardAnswer: boolean; numeric: boolean; tableDoubts: boolean; images: boolean; captureGaps: boolean;
-}): string {
-  return [options.standardAnswer && attributionRules["standard-answer"],
-    options.standardAnswer && options.numeric && attributionRules.numeric,
-    options.tableDoubts && attributionRules["table-doubts"], options.images && attributionRules.images,
-    options.captureGaps && attributionRules["capture-gaps"]].filter(Boolean).join("\n\n");
-}
 export const compactFields = JSON.parse(resource("compact/fields.json")) as Record<string, {
   scope: "session" | "turn"; instruction: string; submission_example?: JsonObject;
 }>;
