@@ -48,7 +48,7 @@ function evidenceComponent(message: Record<string, unknown>, path: string, fixed
   const source = message.model ?? message.name ?? fixedComponent;
   return kind === "tool_call" ? `tool_call: ${message.name ?? fixedComponent}`
     : kind === "reasoning" ? `reasoning: ${source}`
-      : kind === "answer" ? "answer: 最终答复生成"
+      : kind === "answer" ? "answer: 答案合成"
         : kind === "model" ? `model: ${source}`
           : kind === "question" ? "question: 用户输入" : `material: ${source}`;
 }

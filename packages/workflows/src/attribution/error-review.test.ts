@@ -31,7 +31,7 @@ function fixture(mode: "unresolved" | "recovered" | "misread" | "business") {
     const { evidence_id, quote } = cite(candidate.input_id, 3, source, 0, source.text.length);
     compact.turns[0]!.tool_errors = [{ tool_error_idx: 1, tool_error_content: "make.py 未定义变量，构建报错。", evidence: [{ evidence_id, quote }] }];
   }
-  const actor = mode === "misread" ? "最终答复生成" : "make.py", inputs = { [candidate.input_id]: raw }, task = componentTask(candidate, receipt, inputs, actor);
+  const actor = mode === "misread" ? "答案合成·取值" : "make.py", inputs = { [candidate.input_id]: raw }, task = componentTask(candidate, receipt, inputs, actor);
   const binding = bindAttribution(task, inputs, { compact: receipt }), registry = new AgentRegistry([attributionAgent]), prepared = registry.prepare(binding);
   const index = (message: number, path: string) => prepared.evidenceBank.findIndex(id => {
     const point = parseEvidenceCoordinates(id);
@@ -62,7 +62,7 @@ for (const mode of ["unresolved", "recovered", "misread", "business"] as const) 
   const f = fixture(mode), result = f.registry.resolve(f.binding, f.draft, f.audit) as { problem: SessionProblem[] };
   f.registry.validate(f.binding, result, f.audit);
   attributionWorkflow.advance!(f.task, { ...f.receipt, evaluation: result, submitted: f.draft, audit: f.audit }, {} as never, f.inputs);
-  assert.deepEqual(result.problem.map(problem => [problem.component, problem.severity]), mode === "misread" ? [["最终答复生成", "P1"]] : [["make.py", mode === "recovered" ? "P4" : "P1"]]);
+  assert.deepEqual(result.problem.map(problem => [problem.component, problem.severity]), mode === "misread" ? [["答案合成·取值", "P1"]] : [["make.py", mode === "recovered" ? "P4" : "P1"]]);
   assert(!JSON.stringify(result.problem).includes("tool_error_reviews"));
   assert(!JSON.stringify(result.problem).includes("tool_error_indices"));
 });
@@ -74,7 +74,7 @@ test("error disposition cannot skip original exception, disappear, or move to fi
   const unrelated = structuredClone(f.draft);
   (unrelated.tool_error_reviews[0] as { evidence: number[] }).evidence = [f.finalIndex];
   assert.throws(() => f.registry.resolve(f.binding, unrelated, f.audit), /原始报错消息/);
-  const finalTask = componentTask((f.task.data as { candidate: Parameters<typeof componentTask>[0] }).candidate, f.receipt, f.inputs, "最终答复生成");
+  const finalTask = componentTask((f.task.data as { candidate: Parameters<typeof componentTask>[0] }).candidate, f.receipt, f.inputs, "答案合成·取值");
   const finalBinding = bindAttribution(finalTask, f.inputs, { compact: f.receipt });
   assert.deepEqual(finalBinding.request.input.tool_errors, [], "execution errors are not transferred to final disclosure");
 

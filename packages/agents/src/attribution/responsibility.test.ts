@@ -6,7 +6,7 @@ import { attributionComponentLabel, validateComponentReview, type ComponentRevie
 const members: JsonObject[] = [
   { component_index: 1, kind: "script", name: "make.py" },
   { component_index: 2, kind: "model", name: "shell 请求生成" },
-  { component_index: 3, kind: "model", name: "最终答复生成", contains_final_generation: true },
+  { component_index: 3, kind: "model", name: "答案合成", contains_final_generation: true },
 ];
 const problem = (tool_error_indices: number[] = [], severity: SubmittedProblem["severity"] = "P1", actor_index = 1): SubmittedProblem => ({
   actor_index, label: "月度矩阵为空", definition: "脚本未生成要求的数据。", problem_phenomena: "核心工作簿未交付。",

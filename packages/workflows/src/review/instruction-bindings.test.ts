@@ -27,7 +27,7 @@ function shownNorms(binding: AgentBinding, raw: RawInput, inputId: string): Attr
 
 function bindFinal(task: PlannedTask, inputs: Record<string, unknown>, criteria: SubmissionReceipt) {
   const candidate = (task.data as TaskData).candidate!, compact = sourceCompactReceipt(candidate, normalizeInput(inputs[candidate.input_id]));
-  const component = componentTask(candidate, compact, inputs, "最终答复生成");
+  const component = componentTask(candidate, compact, inputs, "答案合成·取值");
   const target = { ...component, data: { ...task.data as object, ...component.data as object } };
   return bindTask(target, inputs, { compact, criteria }, { tasks: [target] });
 }

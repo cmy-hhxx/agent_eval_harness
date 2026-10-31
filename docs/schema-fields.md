@@ -58,4 +58,4 @@ session 与 trace 的 Problem 同形。`trace.meta` 与 `session_meta` 直接保
 
 归因探索与修复共用从开始即公开的既有总额度，提交不再解锁额外工具次数，不增加总预算或重试。进度 Token 仅累计已归档尝试，同时显示待归档次数和统计覆盖范围；零值不代表没有实际消耗。checkpoint.writeMs 是累计持久化墙钟时间，不是事件循环阻塞时间；snapshotMs 仅衡量快照构造，不涵盖全部持久化 CPU。
 
-组件统一来自真实消息身份；明确命名的 planner/tool 保留，`llm-call-*`/span/UUID 等匿名 locator 仅按可见职责合并为“规划 / 推理 / 最终答复生成”，不进入“其他工具”。正式结果不包含 `boundary:N`、`responsibility_chain` 或旧 `evidence_status`。
+组件统一来自真实消息身份；明确命名的 planner/tool 保留，`llm-call-*`/span/UUID 等匿名 locator 仅按可见职责合并为“规划 / 推理 / 答案合成”，不进入“其他工具”。正式结果不包含 `boundary:N`、`responsibility_chain` 或旧 `evidence_status`。

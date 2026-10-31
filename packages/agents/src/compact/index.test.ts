@@ -161,6 +161,6 @@ test("component examples use the actual source numbers and types, grouping model
   assert.deepEqual(example.map((entry: Record<string,unknown>) => [entry.components_kind, entry.actor_indices]),
     [["model", [1]], ["model", [5]], ["model", [3]], ["tool", [2]], ["script", [7]]]);
   assert.equal(example[0].components_name, "规划");
-  assert.equal(example[1].components_name, "最终答复生成");
+  assert.equal(example[1].components_name, "答案合成");
   assert(example.every((entry: {evidence:number[]}) => entry.evidence[0] === 4));
 });

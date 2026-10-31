@@ -1,3 +1,4 @@
+import { finalCapabilities } from "./component-groups.js";
 import test from "node:test";
 import assert from "node:assert/strict";
 import { AgentRegistry } from "@eval/host";
@@ -14,7 +15,7 @@ test("honest final disclosure receives the upstream successful-but-empty script 
     { type: "final_answer", content: "工作簿月度区块仍为空，未能交付。" },
   ] };
   const candidate = adapt(raw, { id: "answer", name: "Answer", adapter: "b", sources: [] }, "fixture", 1);
-  const inputs = { [candidate.input_id]: raw }, compact = sourceCompactReceipt(candidate, raw), task = componentTask(candidate, compact, inputs, "最终答复生成");
+  const inputs = { [candidate.input_id]: raw }, compact = sourceCompactReceipt(candidate, raw), task = componentTask(candidate, compact, inputs, "答案合成·取值");
   const binding = bindAttribution(task, inputs, { compact });
   const prepared = new AgentRegistry([attributionAgent]).prepare(binding);
   assert(prepared.prompt.includes("monthly_rows=0"), "the final review must see the actual upstream business failure even with exit 0 and no tool_errors");
@@ -35,7 +36,7 @@ test("a planner without recorded requests joins delivery but is not mistaken for
   const delivery = bindAttribution(componentTask(candidate, compact, inputs, "planner-excel"), inputs, { compact }).modelInput!;
   const members = delivery.investigated_components as { name: string; role: string; contains_final_generation?: boolean }[];
   assert.equal(delivery.investigation_scope, "delivery");
-  assert.deepEqual(members.map(member => [member.name, member.contains_final_generation === true]), [["planner-excel", false], ["最终答复生成", true]]);
+  assert.deepEqual(members.map(member => [member.name, member.contains_final_generation === true]), [["planner-excel", false], ...finalCapabilities.map(([name]) => [name, true])]);
   const chain = bindAttribution(componentTask(candidate, compact, inputs, "make.py"), inputs, { compact }).modelInput!;
   assert.deepEqual((chain.investigated_components as { name: string; role: string }[]).map(member => [member.name, member.role]),
     [["shell", "tool"], ["make.py", "script"], ["make.py 请求生成", "request_generation"]], "an unlinked request is named after the inner script it runs");

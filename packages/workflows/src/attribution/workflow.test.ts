@@ -216,7 +216,7 @@ test("compact is a mandatory dependency and produces its own recoverable formal 
     const prepared = registry.prepare(fieldBinding);
     assert.equal(prepared.maxToolCalls, 0);
     const input = field === "components" ? { value: (fieldBinding.request.input.recorded_components as JsonObject[]).map(actor => ({
-      components_kind: actor.kind, components_name: actor.anonymous === true ? "最终答复生成" : actor.name,
+      components_kind: actor.kind, components_name: actor.anonymous === true ? "答案合成" : actor.name,
       components_content: "为回答用户问题执行对应动作；实际输出见原文。", actor_indices: [actor.component_index],
       evidence: [prepared.evidenceBank.indexOf(((actor.source_evidence as JsonObject[])[0]!.reference as JsonObject).evidence_id as string) + 1],
     })) } : compactFieldResult(draft, field!, traceIndex);

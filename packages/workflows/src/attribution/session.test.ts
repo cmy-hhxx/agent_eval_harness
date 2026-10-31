@@ -41,7 +41,7 @@ test("cross-turn findings require original evidence from both turns and retain n
   const f = fixture("你的仓位是70%。"), binding = f.bind(), prepared = f.registry.prepare(binding);
   const indices = [2, 5].map(message => prepared.evidenceBank.findIndex(id => parseEvidenceCoordinates(id)?.message_index === message) + 1);
   assert(indices.every(index => index > 0));
-  const actor = (binding.request.input.components as JsonObject[]).find(actor => actor.name === "最终答复生成")!;
+  const actor = (binding.request.input.components as JsonObject[]).find(actor => actor.name === "答案合成")!;
   const draft = { session_summary: "同一仓位前后矛盾。", session_problem: [{ actor_index: actor.component_index,
     label: "仓位前后矛盾", definition: "无条件更新却改变仓位。", problem_phenomena: "先称10%，后称70%。",
     reason: "用户说明仓位未变。", severity: "P1", severity_reason: "需重新确认仓位后使用分析。",
@@ -75,14 +75,14 @@ for (const [shape, content, path, quote] of [
   const raw = { batch_id: "batch", case_id: "form", messages: [{ role: "user", content }, { role: "assistant", content: "按这两项条件检查。" }] }, original = structuredClone(raw);
   const candidate = adapt(raw, { id: "answer", name: "Answer", adapter: "a", sources: [] }, "fixture", 1);
   const receipt = sourceCompactReceipt(candidate, normalizeInput(raw));
-  const inputs = { [candidate.input_id]: raw }, binding = bindAttribution(componentTask(candidate, receipt, inputs, "最终答复生成"), inputs, { compact: receipt });
+  const inputs = { [candidate.input_id]: raw }, binding = bindAttribution(componentTask(candidate, receipt, inputs, "答案合成·取值"), inputs, { compact: receipt });
   const registry = new AgentRegistry([attributionAgent]), prepared = registry.prepare(binding);
   assert.deepEqual(raw, original);
   const index = prepared.evidenceBank.findIndex(id => { const point = parseEvidenceCoordinates(id);
     return point?.kind === "text" && point.message_index === 0 && point.path === path; }) + 1;
   assert(index > 0);
   const draft = componentDraft([{ label: "条件遗漏", definition: "遗漏已确认条件。", problem_phenomena: "忽略选择条件。", reason: "用户已选择。",
-    severity: "P2", severity_reason: "需要补充检查。", evidence: [{ index, reason: "原始选择。" }] }], memberIndex(binding.request.input.components as JsonObject[], "最终答复生成"));
+    severity: "P2", severity_reason: "需要补充检查。", evidence: [{ index, reason: "原始选择。" }] }], memberIndex(binding.request.input.components as JsonObject[], "答案合成·取值"));
   const audit = { ...emptyAudit(), evidenceBank: prepared.evidenceBank };
   const result = registry.resolve(binding, draft, audit) as { problem: { evidence: { quote: string; position: string }[] }[] };
   registry.validate(binding, result, audit); assert.equal(result.problem[0]!.evidence[0]!.quote, quote);

@@ -4,6 +4,7 @@ import type { JsonObject } from "@eval/contracts";
 import { cite, evidenceSources } from "@eval/tools";
 import { adapt, type RawInput } from "@eval/workflows/inputs";
 import { bindAttribution } from "./index.js";
+import { finalCapabilities } from "./component-groups.js";
 import { componentTask, sourceCompactReceipt } from "../../../../tests/fixtures/compact.js";
 
 type Member = { name: string; role: string; message_indices: number[]; contains_final_generation?: boolean };
@@ -29,13 +30,13 @@ test("an anonymous main loop is linked by its generated arguments and named per 
     generated("c2", "A 2025 营收"), call("c2", "finquery", { query: "A 2025 营收" }), result("c2", "finquery", "A公司2025年营收100亿元。"),
     { type: "llm_turn", output: "A公司2025年营收100亿元。" }, { type: "final_answer", content: "A公司2025年营收100亿元。" },
   ] };
-  const [chain, delivery] = groups(raw, ["finquery", "最终答复生成"]);
+  const [chain, delivery] = groups(raw, ["finquery", "答案合成·取值"]);
   assert.deepEqual(chain!.members, [["finquery", "tool"], ["finquery 请求生成", "request_generation"]]);
   assert.deepEqual(chain!.raw[1]!.message_indices, [1, 4], "every generating call answers for the program-named slot");
   assert.equal(chain!.input.investigation_scope, "tool_chain");
   assert.deepEqual((chain!.input.invocations as { request_components: string[] }[]).map(link => link.request_components), [["finquery 请求生成"], ["finquery 请求生成"]]);
   assert.deepEqual(delivery!.raw.map(member => [member.name, member.role, member.contains_final_generation === true]),
-    [["规划", "delivery", false], ["最终答复生成", "delivery", true]], "plan-level review and the final answer form the delivery group");
+    [["规划", "delivery", false], ...finalCapabilities.map(([name]) => [name, "delivery", true])], "plan-level review and the final answer form the delivery group");
   assert.equal((delivery!.input.invocations as unknown[]).length, 2, "delivery checks the final answer against every invocation");
 });
 
@@ -50,7 +51,7 @@ test("a skill owns scripts under its directory, a planner answers for every tool
     call("f", "finquery", { query: "A PE" }, "p2"), result("f", "finquery", "A PE=12"),
     { type: "final_answer", content: "A股PE 12，行业数据暂缺。" },
   ] };
-  const [skill, search, data, delivery] = groups(raw, ["valuation", "web_search", "finquery", "最终答复生成"], candidate => {
+  const [skill, search, data, delivery] = groups(raw, ["valuation", "web_search", "finquery", "答案合成·取值"], candidate => {
     const source = evidenceSources(raw.messages[8]).find(item => item.path === "/output/error")!;
     return [{ tool_error_idx: 1, tool_error_content: "web_search 超时。", evidence: [cite(candidate.input_id, 8, source, 0, source.text.length)] }];
   });
@@ -58,7 +59,7 @@ test("a skill owns scripts under its directory, a planner answers for every tool
     ["planner-shell", "request_generation"], ["view_skill 请求生成", "request_generation"]], "an unrecorded generator still gets a per-tool slot");
   assert.deepEqual(search!.members, [["web_search", "tool"], ["planner-search", "request_generation"]]);
   assert.deepEqual(data!.members, [["finquery", "tool"], ["planner-search", "request_generation"]]);
-  assert.deepEqual(delivery!.members, [["最终答复生成", "delivery"]]);
+  assert.deepEqual(delivery!.members, finalCapabilities.map(([name]) => [name, "delivery"]));
   assert.deepEqual(search!.errors.map(error => error.tool_error_idx), [1]);
   for (const other of [skill, data, delivery]) assert.deepEqual(other!.errors, [], "delivery and unrelated chains never dispose another chain's error");
 });

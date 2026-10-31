@@ -106,7 +106,7 @@ test("key_data copies final claims and reaches component review without reformat
   const receipt = sourceCompactReceipt(f.candidate, f.session);
   (receipt.evaluation as SessionCompact).turns[1]!.key_data = entries;
   // The original final output owns the claim; a planning call is not treated as its generator.
-  const component = componentTask(f.candidate, receipt, f.inputs, "最终答复生成", 1);
+  const component = componentTask(f.candidate, receipt, f.inputs, "答案合成·取值", 1);
   const reviewed = f.registry.prepare(bindAttribution(component, f.inputs, { compact: receipt }));
   assert(ids.every(id => reviewed.evidenceBank.includes(id)));
   const forged = structuredClone(entries); (forged[0]!.evidence as JsonObject[])[0]!.quote = "摘要声称100。";

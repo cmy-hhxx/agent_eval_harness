@@ -16,7 +16,7 @@ test("component submissions select one offered actor and require severity and ev
     const incomplete = { ...problem } as Record<string, unknown>; delete incomplete[field]; assert(!validate(draft(incomplete)));
   }
   assert(!validate(draft({ ...problem, actor_index: 0 })));
-  assert(!validate(draft({ ...problem, component: "最终答复生成" })));
+  assert(!validate(draft({ ...problem, component: "答案合成" })));
   assert(validate({ content: "未发现有证据支持的偏差。", evidence: [], tool_error_reviews: [], problems: [] }));
 });
 

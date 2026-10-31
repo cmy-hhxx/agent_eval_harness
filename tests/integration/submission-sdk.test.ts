@@ -160,7 +160,7 @@ test("pi: process attribution submits and repairs original evidence without a dr
   const agents = new AgentRegistry([compactAgent, attributionAgent]);
   const candidate = (task.data as AttributionTaskData).candidate;
   const compact = sourceCompactReceipt(candidate, normalizeInput(plan.inputs[candidate.input_id]));
-  const component = componentTask(candidate, compact, plan.inputs, "最终答复生成");
+  const component = componentTask(candidate, compact, plan.inputs, "答案合成·取值");
   const prepared = agents.prepare(attributionWorkflow.bind(component, plan.inputs, { compact }, { tasks: plan.tasks }));
   assert.equal(prepared.evaluation.fileSubmission, false, "component judgments must not depend on creating a filesystem draft");
   const finalEvidenceIndex = prepared.evidenceBank.findIndex(id => {

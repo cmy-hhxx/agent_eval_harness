@@ -13,7 +13,7 @@ export const compactResultSchema = schema;
 export { compactFields };
 const prompt = agentPrompt("compact", [], { fileSubmission: false });
 const anonymousActor = (actor: JsonObject) => actor.kind === "model" && (actor.anonymous === true || isComponentLocator(String(actor.name)));
-const anonymousRoles = ["规划", "推理", "最终答复生成"];
+const anonymousRoles = ["规划", "推理", "答案合成"];
 const invocationCount = /第\s*[\d零一二两三四五六七八九十百]+\s*次(?!性)[^。；\n]{0,16}(?:调用|shell|finquery)|(?:共|合计|总计|累计)[^。；\n]{0,12}[\d零一二两三四五六七八九十百]+\s*次(?!性)[^。；\n]{0,12}(?:调用|工具)|(?:调用|工具)[^。；\n]{0,16}[\d零一二两三四五六七八九十百]+\s*次(?!性)/u;
 function componentMergeGroups(rows: JsonObject[]) {
   if (!Array.isArray(rows)) return [];
@@ -81,7 +81,7 @@ export const compactFieldProfiles: Record<string, AgentProfile> = Object.fromEnt
         example.value = [...(models.length > 1 ? [{ components_kind: "model", components_name: "规划",
           components_content: "为推进本轮业务请求，合并可见的规划与调整；指导后续执行。",
           actor_indices: models.slice(0, -1).map(actor => actor.actor_index), evidence: index === undefined ? [] : [index] }] : []),
-          ...(models.length ? [{ components_kind: "model", components_name: "最终答复生成",
+          ...(models.length ? [{ components_kind: "model", components_name: "答案合成",
           components_content: "为完成本轮业务请求，分析已取得的材料；输出具体答复。",
           actor_indices: [models.at(-1)!.actor_index], evidence: index === undefined ? [] : [index] }] : []),
           ...actors.filter(actor => !anonymousActor(actor)).map(actor => ({ components_kind: actor.kind, components_name: actor.name,
@@ -114,7 +114,7 @@ export const compactFieldProfiles: Record<string, AgentProfile> = Object.fromEnt
         if (field === "components" && actors.some(anonymousActor) &&
             (!actors.every(anonymousActor) || !anonymousRoles.includes(String(entry.components_name))))
           throw new ValidationError([{ category: "structure", code: "component_anonymous_role", path: "/value/" + index + "/components_name",
-            message: "匿名模型调用只按可见职责归为规划、推理或最终答复生成；同类合并，不另起业务名，不与具名 Agent 合并。" }]);
+            message: "匿名模型调用只按可见职责归为规划、推理或答案合成；同类合并，不另起业务名，不与具名 Agent 合并。" }]);
         if (field === "components" && actors.some(actor => actor.kind === "model" && !anonymousActor(actor)) &&
             (actors.length !== 1 || actors[0]!.name !== entry.components_name))
           throw new ValidationError([{ category: "structure", code: "component_named_actor", path: "/value/" + index + "/components_name",
@@ -153,7 +153,7 @@ export const compactFieldProfiles: Record<string, AgentProfile> = Object.fromEnt
       if (field === "components" && new Set(value.map(entry => JSON.stringify([entry.components_kind, entry.components_name]))).size !== value.length)
         throw new ValidationError([{ category: "structure", code: "component_duplicate", path: "/value",
           expected: { merge_groups: componentMergeGroups((draft as JsonObject).value as JsonObject[]) },
-          message: "同一类型、同一名称的组件只保留一项并合并来源编号与证据；匿名规划、推理、最终答复生成各自按职责合并，不逐调用重复列出。" }]);
+          message: "同一类型、同一名称的组件只保留一项并合并来源编号与证据；匿名规划、推理、答案合成各自按职责合并，不逐调用重复列出。" }]);
       const missing = field === "components" ? recorded.filter(actor => !anonymousActor(actor) && !selected.has(Number(actor.component_index))) : [];
       const missingAnonymous = field === "components" && recorded.some(anonymousActor) && !recorded.some(actor => anonymousActor(actor) && selected.has(Number(actor.component_index)));
       if (missing.length || missingAnonymous) throw new ValidationError([{ category: "structure", code: "component_coverage", path: "/value",

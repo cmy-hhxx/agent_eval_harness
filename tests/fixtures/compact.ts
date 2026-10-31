@@ -22,7 +22,7 @@ export function sourceCompactReceipt(candidate: Candidate, session: RawInput): S
       components_idx: ordinal + 1, components_kind: actor.kind,
       components_name: actor.anonymous || isComponentLocator(actor.name)
         ? actor.positions.some(position => position.source_message_index === final || contentText(source.raw.messages[position.source_message_index]?.output) === contentText(source.raw.messages[final]?.content))
-          ? "最终答复生成" : "规划" : actor.name,
+          ? "答案合成" : "规划" : actor.name,
       components_content: "为完成本轮请求执行所记录的动作；实际输出保留在原文中。",
       evidence: actor.source_evidence.filter(proof => source.positions[proof.message_index as number]!.trace_index === index)
         .map(proof => ({ evidence_id: (proof.reference as { evidence_id: string }).evidence_id, quote: proof.quote })),
@@ -58,7 +58,7 @@ export function memberIndex(members: JsonObject[], name: string): number | undef
 }
 export function bindComponentFixture(candidate: Candidate, raw: RawInput, dependencies: Record<string, SubmissionReceipt> = {}) {
   const compact = sourceCompactReceipt(candidate, normalizeInput(raw)), inputs = { [candidate.input_id]: raw };
-  return bindAttribution(componentTask(candidate, compact, inputs, "最终答复生成"), inputs, { compact, ...dependencies });
+  return bindAttribution(componentTask(candidate, compact, inputs, "答案合成·取值"), inputs, { compact, ...dependencies });
 }
 export function bindAttributionFixture(task: PlannedTask, inputs: Record<string, unknown>, dependencies: Record<string, SubmissionReceipt | undefined> = {}, options = {}) {
   if (task.stage === "attribution-compact") {

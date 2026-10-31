@@ -60,7 +60,7 @@ export function investigationGroups(raw: RawInput, actors: JsonObject[], links: 
         (link.return_message_indices as number[]).some(index => covered.has(index))), errors: [] };
   });
   const hasCapturedFinal = actors.some(actor => actor.kind === "model" && (actor.message_indices as number[]).includes(finalIndex));
-  const finalOwner = (actor: JsonObject) => actor.kind === "model" && (actor.name === "最终答复生成" ||
+  const finalOwner = (actor: JsonObject) => actor.kind === "model" && (actor.name === "答案合成" ||
     (actor.message_indices as number[]).includes(finalIndex) || !hasCapturedFinal && (actor.message_indices as number[]).includes(modelIndices.at(-1) ?? finalIndex));
   const delivery: JsonObject[] = [];
   for (const actor of actors.filter(actor => actor.kind === "model")) {
@@ -102,8 +102,21 @@ export function investigationGroups(raw: RawInput, actors: JsonObject[], links: 
     });
     owner?.errors.push(error);
   }
-  const named = delivery.find(actor => actor.name === "最终答复生成");
-  return [...groups, ...delivery.length ? [{ key: "delivery", delivery: true, links, errors: [],
-    members: delivery.map(actor => ({ ...actor, role: "delivery" as MemberRole,
-      ...((named ? actor === named : finalOwner(actor)) ? { contains_final_generation: true } : {}) })) }] : []];
+  const named = delivery.find(actor => actor.name === "答案合成");
+  // One final generation call reads, computes, reasons, cites and writes; each failure has a different fix,
+  // so responsibility names the failed capability of that same call instead of one undivided stage.
+  const members = delivery.flatMap(actor => !(named ? actor === named : finalOwner(actor)) ? [{ ...actor, role: "delivery" as MemberRole }]
+    : finalCapabilities.map(([name, scope]) => ({ ...actor, component_index: ++next, name, components_content: scope,
+      identity_basis: "program_final_capability", role: "delivery" as MemberRole, contains_final_generation: true })));
+  return [...groups, ...delivery.length ? [{ key: "delivery", delivery: true, links, errors: [], members }] : []];
 }
+
+/** Capabilities of the final generation call, ordered by the earliest deviation they can explain. */
+export const finalCapabilities = [
+  ["答案合成·取值", "从来源取值时主体、期间、字段、单位或口径读错、张冠李戴。"],
+  ["答案合成·计算", "取值正确，但比例、增速、加总、换算等派生数值算错。"],
+  ["答案合成·推断", "数据与计算无误，但比较、趋势、因果或结论判断错误，或答复内前后矛盾。"],
+  ["答案合成·无据内容", "写出任何来源和用户输入中都不存在的事实、数值或解释。"],
+  ["答案合成·引用", "内容本身有来源，但引用标记指向不含该内容的来源或漏标真实来源。"],
+  ["答案合成·指令遵循", "遗漏或违背用户明确要求、格式或交付物，或措辞误导，且不属于以上类别。"],
+] as const;
