@@ -1,7 +1,7 @@
 import { cite, displayEvidence, evidenceSources, images, normativeSources, parseEvidenceCoordinates } from "@eval/tools";
 import type { JsonObject } from "@eval/contracts";
 import type { RawInput } from "../inputs/types.js";
-import type { InvestigationGroup } from "./component-groups.js";
+import { invocationTarget, type InvestigationGroup } from "./component-groups.js";
 import { compactFinalMaterial, compactProcessExcerpts, compactTextRanges } from "./compact-material.js";
 
 function citationExcerpts(raw: RawInput, original: RawInput, inputId: string, inventory: JsonObject) {
@@ -81,13 +81,19 @@ export function componentMaterial(raw: RawInput, original: RawInput, inputId: st
     const named = generators.filter(member => member.identity_basis !== "program_request_generation" &&
       (member.message_indices as number[]).includes(Number(link.invoking_model_message_index)));
     return named.length ? named.map(member => member.name)
-      : generators.filter(member => member.name === `${raw.messages[Number(link.request_message_index)]?.name} 请求生成`).map(member => member.name);
+      : generators.filter(member => member.name === `${invocationTarget(raw, group.members, Number(link.request_message_index))} 请求生成`).map(member => member.name);
+  };
+  // An entry tool (shell) running a recorded script only transports the call; the script executes it.
+  const executors = (request: number) => {
+    const names = namesAt(request), scripts = namesAt(request, "script");
+    return scripts.length ? { executed_components: scripts, entry_components: names.filter(name => !scripts.includes(name)) }
+      : { executed_components: names };
   };
   const paired = (selected: JsonObject[], budget: number) => selected.map(link => {
     const request = Number(link.request_message_index), returns = link.return_message_indices as number[];
     const share = Math.min(9000, Math.max(1200, Math.floor(budget / Math.max(1, selected.length))));
     return { request_message_index: request, return_message_indices: returns,
-      request_components: requesters(link), executed_components: namesAt(request),
+      request_components: requesters(link), ...executors(request),
       request_evidence: excerpts(new Set([request]), Math.floor(share / 3)),
       return_evidence: excerpts(new Set(returns), Math.floor(share * 2 / 3)),
       read_requests: [request, ...returns].map(navigation),
@@ -139,8 +145,9 @@ export function componentMaterial(raw: RawInput, original: RawInput, inputId: st
     tool_errors: ownErrors, upstream_error_context: errors.filter(error => !ownErrors.includes(error)),
     final_answer: final.final_evidence, final_partial: final.final_context.partial,
     final_answer_read_request: { candidate: "answer", message_index: finalIndex, path: "/content", offset: 0, max_chars: 16000 },
+    final_claims: turn.key_data,
     ...(finalSources ? { citation_sources: citationExcerpts(raw, original, inputId, finalSources.citation_inventory as JsonObject),
-      applicable_rules: finalSources.norm_directory, final_claims: turn.key_data } : {}),
+      applicable_rules: finalSources.norm_directory } : {}),
     source_directory: [...contextIndices].sort((a, b) => a - b).map(message_index => ({ message_index,
       type: raw.messages[message_index]?.type, name: raw.messages[message_index]?.name,
       ...(images(raw.messages[message_index]).length ? { image_count: images(raw.messages[message_index]).length,

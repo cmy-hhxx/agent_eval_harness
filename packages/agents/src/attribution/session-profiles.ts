@@ -32,10 +32,11 @@ delete sessionAttributionResultSchema.$id; delete sessionAttributionResultSchema
 sessionAttributionResultSchema.properties.turns.items = traceResult;
 sessionAttributionResultSchema.properties.session_problem.items = bareProblem;
 
-function evidenceKind(message: Record<string, unknown>, path: string): "reasoning" | "tool_call" | "answer" | "question" | "material" {
+function evidenceKind(message: Record<string, unknown>, path: string): "reasoning" | "tool_call" | "answer" | "question" | "model" | "material" {
   if (message.role === "tool" || ["tool_call", "tool_result", "function_call", "function_call_output"].includes(String(message.type))) return "tool_call";
   if (/tool_calls?|function_call|tool_result|function_call_output/iu.test(path)) return "tool_call";
   if (/reasoning|thinking|analysis|calculations?/iu.test(path)) return "reasoning";
+  if (message.type === "llm_turn") return "model";
   if (message.type === "final_answer" || message.role === "assistant") return "answer";
   if (message.type === "user_question" || message.role === "user") return "question";
   if (["tool_result", "function_call_output"].includes(String(message.type))) return "tool_call";
@@ -47,8 +48,9 @@ function evidenceComponent(message: Record<string, unknown>, path: string, fixed
   const source = message.model ?? message.name ?? fixedComponent;
   return kind === "tool_call" ? `tool_call: ${message.name ?? fixedComponent}`
     : kind === "reasoning" ? `reasoning: ${source}`
-      : kind === "answer" ? "answer: 终稿生成轮"
-        : kind === "question" ? "question: 用户输入" : `material: ${source}`;
+      : kind === "answer" ? "answer: 最终答复生成"
+        : kind === "model" ? `model: ${source}`
+          : kind === "question" ? "question: 用户输入" : `material: ${source}`;
 }
 
 /** Split one rejected long quote into real, independently selectable excerpts without changing source bytes. */

@@ -38,8 +38,11 @@ test("a planner without recorded requests joins delivery but is not mistaken for
   assert.deepEqual(members.map(member => [member.name, member.contains_final_generation === true]), [["planner-excel", false], ["最终答复生成", true]]);
   const chain = bindAttribution(componentTask(candidate, compact, inputs, "make.py"), inputs, { compact }).modelInput!;
   assert.deepEqual((chain.investigated_components as { name: string; role: string }[]).map(member => [member.name, member.role]),
-    [["shell", "tool"], ["make.py", "script"], ["shell 请求生成", "request_generation"]], "an unlinked request is still a named per-tool responsibility");
-  assert.deepEqual((chain.invocations as { request_components: string[] }[])[0]!.request_components, ["shell 请求生成"]);
+    [["shell", "tool"], ["make.py", "script"], ["make.py 请求生成", "request_generation"]], "an unlinked request is named after the inner script it runs");
+  const invocation = (chain.invocations as { request_components: string[]; executed_components: string[]; entry_components?: string[] }[])[0]!;
+  assert.deepEqual([invocation.request_components, invocation.executed_components, invocation.entry_components], [["make.py 请求生成"], ["make.py"], ["shell"]],
+    "shell only transports the call; the script answers for what it returns");
+  assert(Array.isArray(chain.final_claims), "tool groups check whether their faulty receipts reached the final claims");
 });
 
 test("an empty planner is reviewed with the real alternative retrieval before deciding residual delivery impact", () => {

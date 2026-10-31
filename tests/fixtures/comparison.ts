@@ -149,7 +149,7 @@ export function attributionResult(correct=true,answer='2+2=4',available=true,inp
     definition: '最终回答与给定加法结果不一致。', problem_phenomena: '2+2 应得 4，实际回答给出了不同结果。',
     reason: '最终回答中的计算结果错误。', severity: 'P0', severity_reason: '加法结果是本题的核心交付，数值错误使回答不可采信。',
     evidence: [{ position: 'trace_index 0 / message_index 1 / path /content',
-      component: 'answer: 终稿生成轮', quote: answer, reason: '证明最终回答给出的结果。' }] }];
+      component: 'answer: 最终答复生成', quote: answer, reason: '证明最终回答给出的结果。' }] }];
   const turn = { meta: { trace_id: `trace-${inputId}` }, summary: correct?'正确给出结果。':'加法结果错误。', problem,
     is_correct: available ? (correct ? 1 as const : 0 as const) : null,
     correct_reason: available?(correct?'回答结果4与给定标准4一致。':'回答结果与给定标准4不一致。'):null };

@@ -27,6 +27,20 @@ test("component directory preserves named models and actual tools across flatten
     assert.equal(parseEvidenceCoordinates(proof.reference.evidence_id)?.input_id, id);
 });
 
+test("a relative script run from its skill directory is the same component as its absolute path", () => {
+  const messages = [
+    { type: "tool_call", name: "shell", call_id: "a", input: { command: "cd /opt/skills/fin && python scripts/finquery.py \"Q1\"" } },
+    { type: "tool_result", name: "shell", call_id: "a", output: "rows" },
+    { type: "tool_call", name: "shell", call_id: "b", input: { command: "python /opt/skills/fin/scripts/finquery.py \"Q2\"" } },
+    { type: "tool_result", name: "shell", call_id: "b", output: "rows" },
+  ];
+  const source = attributionSessionSource({ messages, turns: [{ messages }] });
+  const scripts = processComponents(source.raw, source.original, "11111111-1111-4111-8111-111111111111", source.positions)
+    .filter(entry => entry.kind === "script");
+  assert.deepEqual(scripts.map(entry => entry.name), ["/opt/skills/fin/scripts/finquery.py"]);
+  assert.deepEqual(scripts[0]!.message_indices.filter(index => source.raw.messages[index]!.type === "tool_call").length, 2);
+});
+
 test("a source-identified inner service remains distinct from its shell transport", () => {
   const id = "11111111-1111-4111-8111-111111111111";
   const raw = { messages: [

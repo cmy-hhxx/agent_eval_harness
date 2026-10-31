@@ -41,6 +41,15 @@ export function processComponents(raw: RawInput, original: RawInput, inputId: st
   const entries: JsonObject[] = [];
   const pythonFiles: { trace: number; name: string; body: string; index: number; source: ReturnType<typeof evidenceSources>[number]; start: number; proof: JsonObject }[] = [];
   const add = (kind: string, name: string, message_indices: number[], source_evidence: JsonObject[], extra: JsonObject = {}) => {
+    if (kind === "script") {
+      // A relative path run from a skill directory and its absolute path name the same executed script.
+      const same = entries.filter(entry => entry.kind === "script" && entry.name !== name &&
+        (String(entry.name).endsWith("/" + name) || name.endsWith("/" + String(entry.name))));
+      if (same.length === 1) {
+        if (name.length > String(same[0]!.name).length) same[0]!.name = name;
+        name = String(same[0]!.name);
+      }
+    }
     const existing = entries.find(entry => entry.kind === kind && entry.name === name);
     if (existing) {
       existing.message_indices = [...new Set([...existing.message_indices as number[], ...message_indices])];

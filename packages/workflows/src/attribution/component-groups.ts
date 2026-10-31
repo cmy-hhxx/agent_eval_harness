@@ -14,6 +14,12 @@ export interface InvestigationGroup {
 }
 
 const requestTypes = new Set(["tool_call", "function_call"]);
+
+/** A call run through an entry tool such as shell answers for the inner script it executes. */
+export function invocationTarget(raw: RawInput, members: JsonObject[], requestIndex: number): string {
+  const script = members.find(member => member.kind === "script" && (member.message_indices as number[]).includes(requestIndex));
+  return script ? String(script.name).split("/").at(-1)! : String(raw.messages[requestIndex]?.name);
+}
 const escape = (text: string) => text.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&");
 
 /**
@@ -73,8 +79,9 @@ export function investigationGroups(raw: RawInput, actors: JsonObject[], links: 
     const generators = new Set(group.members.filter(member => member.role === "request_generation").flatMap(member => member.message_indices as number[]));
     const tools = new Map<string, number[]>();
     for (const link of group.links) {
-      const name = raw.messages[Number(link.request_message_index)]?.name;
-      if (typeof name !== "string" || !name.trim() || generators.has(Number(link.invoking_model_message_index))) continue;
+      if (typeof raw.messages[Number(link.request_message_index)]?.name !== "string") continue;
+      const name = invocationTarget(raw, group.members, Number(link.request_message_index));
+      if (!name.trim() || generators.has(Number(link.invoking_model_message_index))) continue;
       tools.set(name, [...tools.get(name) ?? [], ...link.invoking_model_message_index === null ? [] : [Number(link.invoking_model_message_index)]]);
     }
     for (const [tool, indices] of tools) group.members.push({ component_index: ++next, kind: "model", name: `${tool} 请求生成`, anonymous: true,
