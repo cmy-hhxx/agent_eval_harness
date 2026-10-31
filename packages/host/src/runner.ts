@@ -1130,7 +1130,11 @@ export async function runEvaluation(options: RunOptions): Promise<Record<string,
         // make progress before preparing the next task in a large cohort.
         await yieldToIO();
       }
-      if (blockedStates.size) await current.save(undefined, { manifest: true, stateIds: [...blockedStates] });
+      if (blockedStates.size) {
+        const ids = [...blockedStates];
+        await current.save(undefined, { manifest: false, stateIds: ids });
+        blockedStates.clear();
+      }
       if (reschedule) continue;
       const retryDeadlines = manifest.tasks.filter(task => !executionStopReason(manifest) && dispatchable(task) &&
         manifest.states[task.id].status === "pending" && (manifest.states[task.id].nextRetryAt ?? 0) > Date.now())

@@ -606,6 +606,7 @@ export class RunStore {
     const previousTasks = [...this.manifest.tasks];
     const previousScope = this.manifest.executionScope && [...this.manifest.executionScope];
     const addedIds: string[] = [], changedTasks: PlannedTask[] = [];
+    let scopeChanged = false;
     try {
       const advance = this.services.taskSource.advance?.(task, receipt, this.state, this.inputs);
       for (const replacement of advance?.replace ?? []) {
@@ -621,15 +622,20 @@ export class RunStore {
         changedTasks.push(next);
         addedIds.push(next.id);
         this.manifest.states[next.id] = { status: "pending", attempts: 0, revision: 1 };
-        if (this.manifest.executionScope?.includes(task.id)) this.manifest.executionScope.push(next.id);
+        if (this.manifest.executionScope?.includes(task.id)) {
+          this.manifest.executionScope.push(next.id);
+          scopeChanged = true;
+        }
       }
-      const { tasks: _tasks, states: _states, inputCatalog: _inputCatalog, ...manifest } = this.manifest;
       const states: Record<string, TaskState> = { [task.id]: structuredClone(state) };
       for (const id of addedIds) states[id] = structuredClone(this.manifest.states[id]);
       try {
+        // The manifest is already durable in the checkpoint; a receipt only owns
+        // the scope extension it made. Never copy immutable config or plan indexes
+        // into every acceptance.
         this.journal.append({
-          at: Date.now(), manifest,
-          ...(addedIds.length ? { taskOrder: this.manifest.tasks.map(item => item.id) } : {}),
+          at: Date.now(),
+          ...(scopeChanged ? { manifest: { executionScope: [...this.manifest.executionScope!] } } : {}),
           ...(changedTasks.length ? { tasks: changedTasks } : {}),
           states, receipts: { [task.id]: structuredClone(receipt) },
         });

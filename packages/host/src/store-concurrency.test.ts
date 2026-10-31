@@ -5,11 +5,13 @@ import os from "node:os";
 import path from "node:path";
 import {
   DEFAULT_POLICY, emptyUsage, type AgentBinding, type AgentProfile, type AttemptSpec,
-  type FailureContext, type RunRepository, type RunState, type Submission,
+  type FailureContext, type PlannedTask, type RunRepository, type RunState, type Submission,
 } from "@eval/contracts";
 import { AgentRegistry } from "./agents.js";
 import { RunStore } from "./store.js";
-import { appendProgressJournal, createRunRepository, readProgressJournal, runProgressFile, RunHotStore, runJournalIdentity } from "@eval/data";
+import {
+  applyRunJournalDelta, appendProgressJournal, createRunRepository, readProgressJournal, runProgressFile, RunHotStore, runJournalIdentity,
+} from "@eval/data";
 
 for (const debug of [false, true]) test(`two hundred independent activations and commits do not wait for diagnostics or checkpoint projection (debug: ${debug})`, async t => {
   const run = await mkdtemp(path.join(os.tmpdir(), "eval-activation-"));
@@ -65,12 +67,68 @@ for (const debug of [false, true]) test(`two hundred independent activations and
   assert.equal(checkpoints, 0, "acceptance never waits for or triggers full checkpoint projection");
   const receipts = journal.pending(1000).filter(row => row.event.receipts);
   assert.equal(receipts.length, 200);
-  assert.ok(receipts.every(row => row.event.manifest?.inputCatalog === undefined && row.event.taskOrder === undefined),
-    "ordinary commits retain the existing catalog and task order without copying them into every receipt event");
+  assert.ok(receipts.every(row => row.event.manifest === undefined && row.event.taskOrder === undefined),
+    "ordinary commits never repeat the manifest or the frozen task order");
   acceptanceLatencies.sort((a, b) => a - b);
   const p95 = acceptanceLatencies[Math.ceil(acceptanceLatencies.length * 0.95) - 1]!;
   t.diagnostic(`200 accepts: p50=${acceptanceLatencies[99]!.toFixed(1)}ms p95=${p95.toFixed(1)}ms max=${acceptanceLatencies.at(-1)!.toFixed(1)}ms`);
   assert(p95 < 1000, `acceptance p95 must stay below one second, received ${p95.toFixed(1)}ms`);
+});
+
+test("accept events persist only their execution-scope extension, never the repeated manifest or task order", async t => {
+  const run = await mkdtemp(path.join(os.tmpdir(), "eval-receipt-scope-"));
+  t.after(() => rm(run, { recursive: true, force: true }));
+  const sourceId = "22222222-2222-4222-8222-222222222222", input = { messages: [{ content: "source" }] };
+  const task: PlannedTask = { id: "task", stage: "attribution", inputIds: { answer: sourceId }, dependencies: {}, data: {} };
+  const next: PlannedTask = { id: "next", stage: "attribution", inputIds: { answer: sourceId }, dependencies: {}, data: {} };
+  const binding: AgentBinding = { agent: "fixture", profile: "default", request: {
+    input: {}, sources: { answer: { id: sourceId, value: input } },
+  } };
+  const profile: AgentProfile = {
+    id: "default", requestSchema: { type: "object" }, submissionSchema: { type: "object" },
+    systemPrompt: "Submit.", instructions: "Submit.", submissionNudge: "Submit.", fileSubmission: false,
+    toolNames: [], toolDescriptions: { submit_evaluation: "Submit." }, renderPrompt: () => "Submit.", validate() {},
+  };
+  const agents = new AgentRegistry([{ id: "fixture", profiles: { default: profile } }]);
+  const state: RunState = {
+    manifest: { format: "evaluation-run", debug: false, runId: "receipt-scope", status: "running",
+      engine: { engine: "pi", version: "test", commit: "test", buildId: "test" }, evaluatorVersion: "test",
+      config: { inputs: { records: ["immutable".repeat(20_000)] } }, tasks: [task],
+      inputs: { [sourceId]: { id: sourceId, name: "answer" } }, inputCatalog: [{ input_id: sourceId }],
+      states: { task: { status: "pending", attempts: 0, revision: 1 } }, executionScope: ["task"],
+      preflight: {}, startedAt: 1 },
+    receipts: {}, usage: emptyUsage(), recordedAttempts: 0,
+  };
+  const checkpoint = structuredClone(state);
+  const repository: RunRepository = {
+    async readRun() { return structuredClone(state); }, async readTasks() { return structuredClone(state); },
+    async writeRun() {}, createResultWriter() { return async () => {}; },
+  };
+  const journal = new RunHotStore(":memory:", runJournalIdentity(state));
+  const store = new RunStore(run, state, { [sourceId]: input }, {
+    agents, repository, taskSource: { id: "fixture", bind: () => binding, advance: () => ({ tasks: [next] }) },
+  }, undefined, journal);
+  t.after(() => store.close());
+  const prepared = agents.prepare(binding), engine = state.manifest.engine;
+  const spec: AttemptSpec = { runId: "receipt-scope", taskId: task.id, attemptId: "attempt",
+    inputRevision: 1, engine, evaluation: prepared.evaluation, policy: { ...DEFAULT_POLICY, maxToolCalls: 0 },
+    prompt: "Submit.", evidenceBank: [], inputs: [{ id: sourceId, name: "answer" }], hostUrl: "http://localhost",
+    deadline: Date.now() + 60_000, model: { provider: "fixture", baseUrl: "http://localhost", api: "openai-completions",
+      apiKeyEnv: "FIXTURE_KEY", model: "fixture", thinking: "off", contextWindow: 10000, maxOutputTokens: 1000 } };
+  await store.activate(spec);
+  const submission: Submission = { taskId: task.id, attemptId: spec.attemptId, submissionId: "submission",
+    evaluation: { index: 0 }, usage: emptyUsage(), audit: { calls: 0, requiredReadCalls: 0, traceReads: [],
+      viewedImages: [], calculations: [], artifacts: [], evidenceBank: [] } };
+  await store.accept(submission);
+  const events = journal.pending();
+  const accept = events.find(row => row.event.receipts)!;
+  assert.deepEqual(accept.event.manifest, { executionScope: ["task", "next"] },
+    "a receipt owns only the scope extension it made, not the immutable config or plan indexes");
+  assert.equal(accept.event.taskOrder, undefined, "appended tasks replay in their append order");
+  const replayed = structuredClone(checkpoint);
+  for (const row of events) applyRunJournalDelta(replayed, row.event);
+  assert.deepEqual(replayed.manifest.tasks.map(item => item.id), ["task", "next"]);
+  assert.deepEqual(replayed.manifest.executionScope, ["task", "next"]);
 });
 
 test("blocked scheduler subsets persist only the newly blocked states", async t => {
@@ -89,9 +147,10 @@ test("blocked scheduler subsets persist only the newly blocked states", async t 
   const store = new RunStore(run, state, {}, { agents: new AgentRegistry([]),
     taskSource: { id: "fixture", bind(): never { throw new Error("unused"); } }, repository }, undefined, hot);
   t.after(() => store.close());
-  await store.save(undefined, { manifest: true, stateIds: ["a", "c"] });
+  await store.save(undefined, { manifest: false, stateIds: ["a", "c"] });
   const pending = hot.pending();
   assert.equal(pending.length, 1);
+  assert.equal(pending[0]!.event.manifest, undefined);
   assert.deepEqual(Object.keys(pending[0]!.event.states!), ["a", "c"]);
 });
 
