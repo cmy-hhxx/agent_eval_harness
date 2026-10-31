@@ -1,4 +1,4 @@
-import { sessionProblems, type SessionAttributionResult } from "@eval/agents/attribution";
+import { sessionProblemEntries, type SessionAttributionResult } from "@eval/agents/attribution";
 import path from "node:path";
 import { isDeepStrictEqual } from "node:util";
 import { canonical, type PlannedTask, type ProblemObservationRef, type RunRepository, type RunState, type TaskPlan, type WorkflowDefinition } from "@eval/contracts";
@@ -74,18 +74,19 @@ export async function loadClusteringJobInputs(config: ClusteringJobConfig, readS
   const primary = new Set(config.clusteringJob.sources.map(source => source.input_id));
   const recalled = new Set((config.clusteringJob.recall ?? []).map(problemSampleKey));
   for (const ref of config.clusteringJob.recall ?? []) {
-    const finding = sessionProblems(states.get(ref.attribution.run)!.receipts[ref.attribution.task_id].evaluation as SessionAttributionResult)
-      .find(item => item.problem_id === ref.finding_id);
+    const finding = sessionProblemEntries(states.get(ref.attribution.run)!.receipts[ref.attribution.task_id].evaluation as SessionAttributionResult)
+      .find(item => item.problem_path === ref.problem_path);
     if (!finding || canonical([finding.component]) !== canonical(ref.components))
-      throw new Error("待观察引用的原发现已缺失或改变：" + ref.input_id + "/" + ref.finding_id);
+      throw new Error("待观察引用的原发现已缺失或改变：" + ref.input_id + "/" + ref.problem_path);
   }
   for (const model of [...new Set(config.clusteringJob.sources.map(source => source.model))].sort()) {
     const pending: ProblemObservationRef[] = [];
     const observations = groupObservations(sources.filter(source => source.model === model).map(source => {
-      const findings = sessionProblems(states.get(source.run)!.receipts[source.task_id].evaluation as SessionAttributionResult)
-        .filter(finding => primary.has(source.input_id) || recalled.has(problemSampleKey({ input_id: source.input_id, finding_id: finding.problem_id })));
+      const findings = sessionProblemEntries(states.get(source.run)!.receipts[source.task_id].evaluation as SessionAttributionResult)
+        .filter(finding => primary.has(source.input_id) || recalled.has(problemSampleKey({ input_id: source.input_id, problem_path: finding.problem_path,
+          attribution: { submission_id: source.submission_id } })));
       for (const finding of findings) pending.push({ version: model,
-        input_id: source.input_id, finding_id: finding.problem_id, batch_id: source.batch_id, case_id: source.case_id,
+        input_id: source.input_id, problem_path: finding.problem_path, batch_id: source.batch_id, case_id: source.case_id,
         source: source.source, attribution: { run: source.run, run_id: source.run_id, task_id: source.task_id,
           submission_id: source.submission_id, evaluator_version: source.evaluator_version },
         components: [finding.component], evidence_status: "已确认",
@@ -221,12 +222,12 @@ async function syncJobLibrary(run: string, state: RunState, inputs: Record<strin
           (task.data as ClusteringJobTask).model === model && (task.data as ClusteringJobTask).reclassify && state.receipts[task.id])) {
         const material = jobMaterial(inputs, model), processed = new Set(material.pending.map(problemSampleKey));
         const active = new Set(effectiveProblemOccurrences(library).map(item => canonical([
-          item.input_id, item.finding_id, library.classes[item.class_id].component_id])));
+          problemSampleKey(item), library.classes[item.class_id].component_id])));
         const pending = [...(library.pending_observations ?? []).filter(ref => !processed.has(problemSampleKey(ref))),
           ...material.pending.filter(ref => !ref.components.length || ref.components.some(label => {
             const component = Object.values(library.components).find(item => [item.label, ...item.aliases]
               .some(alias => normalizeLabel(alias) === normalizeLabel(label)));
-            return !component || !active.has(canonical([ref.input_id, ref.finding_id, component.id]));
+            return !component || !active.has(canonical([problemSampleKey(ref), component.id]));
           }))];
         if (canonical(pending) !== canonical(library.pending_observations ?? []))
           library = replacePendingObservations(library, pending, { at: new Date().toISOString(), run });

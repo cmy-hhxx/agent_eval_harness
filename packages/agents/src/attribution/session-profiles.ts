@@ -1,26 +1,25 @@
 import { Ajv2020 } from "ajv/dist/2020.js";
 import { ValidationError, attributionEvidencePosition, resolveEvidenceSelection, schemaIssues, selectEvidence, type AgentProfile, type AgentRequest, type JsonObject, type ToolAudit, type ValidationIssue } from "@eval/contracts";
-import { agentPrompt, attributionConditionalRules, attributionNoStandardReason, attributionTaxonomy } from "@eval/prompts";
+import { agentPrompt, attributionNoStandardReason } from "@eval/prompts";
 import { cite, evidenceSources, parseEvidenceCoordinates } from "@eval/tools";
 import problemSchema from "../../../../schemas/attribution/problem.schema.json" with { type: "json" };
 import traceSubmissionSchema from "../../../../schemas/attribution/trace-summary-submission.schema.json" with { type: "json" };
 import traceResultSchema from "../../../../schemas/attribution/trace-result.schema.json" with { type: "json" };
 import sessionSubmissionSchema from "../../../../schemas/attribution/session-summary-submission.schema.json" with { type: "json" };
+import componentSubmissionSchema from "../../../../schemas/attribution/component-submission.schema.json" with { type: "json" };
+import componentResultSchema from "../../../../schemas/attribution/component-result.schema.json" with { type: "json" };
 import sessionResultSchema from "../../../../schemas/attribution/session-result.schema.json" with { type: "json" };
 import { resolveAttributionEvidence } from "./source-evidence.js";
-import { attributionComponentLabel } from "./responsibility.js";
-import { investigationMaterial } from "./investigation-material.js";
-import { numericReferenceDirectory } from "./units.js";
+import { attributionComponentLabel, validateComponentReview, type ComponentReview, type SubmittedProblem } from "./responsibility.js";
 import type { SessionAttributionResult, SessionProblem, TraceAttributionResult } from "./types.js";
 
 const tools = ["read_trace", "search_trace", "view_image", "calculate", "execute_code", "read_artifact"];
-const tracePrompt = agentPrompt("attribution", tools, { profile: "trace", fileSubmission: false });
+const componentPrompt = agentPrompt("attribution", tools, { profile: "component", fileSubmission: false });
+const tracePrompt = agentPrompt("attribution", [], { profile: "trace", fileSubmission: false });
 const sessionPrompt = agentPrompt("attribution", tools, { profile: "session", fileSubmission: false });
 const traceSubmission = structuredClone(traceSubmissionSchema);
 const sessionSubmission = structuredClone(sessionSubmissionSchema);
-for (const problem of [traceSubmission.properties.problems.items, sessionSubmission.properties.session_problem.items])
-  Object.assign(problem.properties.component, { enum: Object.keys(attributionTaxonomy.components) });
-const traceWithStandardSchema = { ...traceSubmission, required: ["summary", "problems", "is_correct", "correct_reason"] };
+const traceWithStandardSchema = { ...traceSubmission, required: [...traceSubmission.required, "is_correct", "correct_reason"] };
 const validateTraceWithStandard = new Ajv2020({ allErrors: true, strict: false }).compile(traceWithStandardSchema);
 const traceHasStandard = (request: AgentRequest) => (request.input.ground_truth as { available: boolean }).available;
 const bareProblem = structuredClone(problemSchema) as Record<string, unknown>;
@@ -72,18 +71,16 @@ function quoteRepair(request: AgentRequest, audit: ToolAudit, evidence: { eviden
     start, Math.min(point.end, start + limit)).evidence_id) };
 }
 
-type SubmittedProblem = Omit<SessionProblem, "problem_id" | "evidence"> & { actor_index: number; evidence: { index: number; reason: string }[] };
-function resolveProblems(request: AgentRequest, problems: SubmittedProblem[], audit: ToolAudit, field: string, session = false): SessionProblem[] {
+function resolveProblems(request: AgentRequest, actor: JsonObject, problems: SubmittedProblem[], audit: ToolAudit, field: string, offset = 0): SessionProblem[] {
   const raw = request.sources.answer.value as { messages: Record<string, unknown>[] };
   const issues: ValidationIssue[] = [];
   const result = problems.map((problem, index) => {
-    const component = attributionComponentLabel(problem.component, problem.actor_index, request.input.components as JsonObject[]);
-    const actor = (request.input.components as JsonObject[]).find(entry => entry.component_index === problem.actor_index)!;
-    const { actor_index: _componentIndex, ...description } = problem;
-    return { ...description, component, problem_id: `${session ? "s-" : ""}p${index + 1}`,
+    const component = attributionComponentLabel(Number(actor.component_index), request.input.components as JsonObject[]);
+    const { tool_error_indices: _errorIndices, ...description } = problem;
+    return { ...description, component,
       evidence: problem.evidence.flatMap((selection, evidenceIndex) => {
         try {
-          const path = `/${field}/${index}/evidence/${evidenceIndex}`;
+          const path = `${field}/${index + offset}/evidence/${evidenceIndex}`;
           const reference = resolveEvidenceSelection(audit.evidenceBank ?? [], { evidence_index: selection.index }, path);
           const evidence = resolveAttributionEvidence(request, reference, audit, path);
           if (evidence.quote.length > 400) {
@@ -110,11 +107,58 @@ function resolveProblems(request: AgentRequest, problems: SubmittedProblem[], au
   if (issues.length) throw new ValidationError(issues);
   return result;
 }
+
+function traceToolErrors(request: AgentRequest): JsonObject[] { return request.input.tool_errors as JsonObject[]; }
+
+/** Each task has one program-bound owner; the model cannot select or rename responsibility. */
+function resolveComponentReview(request: AgentRequest, review: ComponentReview, audit: ToolAudit): SessionProblem[] {
+  const components = request.input.components as JsonObject[], errors = traceToolErrors(request);
+  const raw = request.sources.answer.value as { messages: Record<string, unknown>[] };
+  validateComponentReview(components[0]!, review, errors);
+  const read = (selection: number, path: string) => resolveAttributionEvidence(request,
+    resolveEvidenceSelection(audit.evidenceBank ?? [], { evidence_index: selection }, path), audit, path);
+  review.evidence.forEach((selection, j) => read(selection, `/evidence/${j}`));
+  for (const [j, error] of review.tool_error_reviews.entries()) {
+    const path = `/tool_error_reviews/${j}/evidence`;
+    const origin = errors.find(item => item.tool_error_idx === error.tool_error_idx)!;
+    const messages = new Set((origin.evidence as { evidence_id: string }[]).map(item => parseEvidenceCoordinates(item.evidence_id)!.message_index));
+    const proofs = error.evidence.map((selection, k) => read(selection, `${path}/${k}`));
+    if (!proofs.some(proof => messages.has(proof.message_index)))
+      throw new ValidationError([{ category: "evidence", code: "tool_error_origin", path,
+        message: "处置必须回指该条 tool_error 的原始报错消息，并结合实际请求、参数/代码、回执和后续结果核对原因及剩余影响。" }]);
+    if (error.status === "recovered_impact" || error.status === "recovered_no_impact") {
+      const lastError = Math.max(...messages);
+      if (!proofs.some(proof => {
+        const message = raw.messages[proof.message_index];
+        return proof.message_index > lastError && (message?.role === "tool" || ["tool_result", "function_call_output"].includes(String(message?.type)));
+      })) throw new ValidationError([{ category: "evidence", code: "tool_error_recovery", path,
+        message: "已恢复的结论必须引用该次报错之后的实际工具回执，证明重试、修复或替代路径恢复；仅失败回执、计划或终稿自述不证明恢复。补选后续原文回执，无法确认则记 uncertain。" }]);
+    }
+  }
+  return resolveProblems(request, components[0]!, review.problems, audit, "/problems");
+}
+
+
+const componentResult = structuredClone(componentResultSchema) as any;
+componentResult.properties.problem.items = bareProblem;
+
+/** A component task receives exactly one code-bound owner; normal components return no problems. */
+export const componentAttributionProfile: AgentProfile = {
+  id: "component", requestSchema: { type: "object", required: ["components", "tool_errors", "source_positions", "trace_index"] },
+  submissionSchema: componentSubmissionSchema, resultSchema: componentResult, evidenceSelections: true, maxEvidenceQuoteChars: 400,
+  ...componentPrompt, toolNames: tools, maxToolCalls: 4,
+  resolve(request, draft, audit) {
+    const value = draft as ComponentReview;
+    const problems = resolveComponentReview(request, value, audit);
+    return { component: String((request.input.components as JsonObject[])[0]!.name), content: value.content,
+      evidence: value.evidence, tool_error_reviews: value.tool_error_reviews, problem: problems };
+  },
+};
+
+/** This call only summarizes code-merged component results; it cannot change the problems. */
 export const traceAttributionProfile: AgentProfile = {
-  id: "trace", requestSchema: { type: "object", required: ["trace_meta", "question", "answer", "compact", "ground_truth", "source_positions"],
-    properties: { ground_truth: { type: "object", required: ["available", "value"],
-      properties: { available: { type: "boolean" }, value: {} }, additionalProperties: false } }, additionalProperties: true },
-  submissionSchema: traceSubmission,
+  id: "trace", requestSchema: { type: "object", required: ["trace_meta", "ground_truth", "problem", "failed_components"] },
+  submissionSchema: traceSubmission, resultSchema: traceResult, ...tracePrompt, toolNames: [], maxToolCalls: 0,
   modelSubmissionSchema(request) {
     if (traceHasStandard(request)) return traceWithStandardSchema;
     const { is_correct: _correct, correct_reason: _reason, ...properties } = traceSubmission.properties;
@@ -123,45 +167,48 @@ export const traceAttributionProfile: AgentProfile = {
   validateSubmission(request, draft) {
     return traceHasStandard(request) && !validateTraceWithStandard(draft) ? schemaIssues(validateTraceWithStandard.errors, draft) : [];
   },
-  resultSchema: traceResult, evidenceSelections: true, maxEvidenceQuoteChars: 400,
-  ...tracePrompt, toolNames: tools,
-  renderPrompt(input, policy, failure) {
-    const truth = input.ground_truth as { available: boolean; value: unknown };
-    const numeric = truth.available ? numericReferenceDirectory(truth.value) : [];
-    const rules = attributionConditionalRules({ standardAnswer: truth.available, numeric: numeric.length > 0,
-      tableDoubts: false, images: false, captureGaps: false });
-    const repair = failure?.draft !== undefined && failure.errors.length && failure.errors.every(error =>
-      error.code === "quote_too_long" || error.code === "schema_maxLength" && error.path.endsWith("/quote"))
-      ? { previous_submission: failure.draft, errors: failure.errors } : undefined;
-    return (rules ? rules + "\n\n" : "") + tracePrompt.renderPrompt(investigationMaterial({ ...input,
-      numeric_references: numeric.map(item => ({ ...item, reference_index: item.reference_index + 1 })),
-      ...(repair ? { evidence_repair: repair } : {}) }), policy, repair ? undefined : failure);
-  },
-  resolve(request, draft, audit) {
-    const value = draft as { summary: string; problems: SubmittedProblem[]; is_correct: 1 | 0 | null; correct_reason: string };
-    return { meta: request.input.trace_meta as JsonObject, summary: value.summary,
-      problem: resolveProblems(request, value.problems, audit, "problems"),
+  resolve(request, draft) {
+    const value = draft as { summary: string; is_correct: 1 | 0 | null; correct_reason: string };
+    const partial = (request.input.failed_components as string[]).length > 0;
+    return { meta: request.input.trace_meta as JsonObject, summary: (partial ? "评测覆盖不完整：部分组件调查未完成；" : "") + value.summary, problem: request.input.problem as SessionProblem[],
       is_correct: traceHasStandard(request) ? value.is_correct : null,
       correct_reason: traceHasStandard(request) ? value.correct_reason : attributionNoStandardReason } satisfies TraceAttributionResult;
   },
 };
+
 export const sessionAttributionProfile: AgentProfile = {
-  id: "session", requestSchema: { type: "object", required: ["session_meta", "qa", "source_positions", "turns", "compact"], additionalProperties: true },
+  id: "session", requestSchema: { type: "object", required: ["session_meta", "qa", "source_positions", "turns", "components"] },
   submissionSchema: sessionSubmission, resultSchema: sessionAttributionResultSchema,
-  evidenceSelections: true, maxEvidenceQuoteChars: 400, ...sessionPrompt, toolNames: tools,
+  evidenceSelections: true, maxEvidenceQuoteChars: 400, ...sessionPrompt, toolNames: tools, maxToolCalls: 2,
   resolve(request, draft, audit) {
-    const value = draft as { session_summary: string; session_problem: SubmittedProblem[] };
+    const value = draft as { session_summary: string; session_problem: (Omit<SubmittedProblem, "tool_error_indices"> & { actor_index: number })[] };
+    const problems = value.session_problem.flatMap((problem, index) => {
+      const actor = (request.input.components as JsonObject[]).find(actor => actor.component_index === problem.actor_index);
+      if (!actor) throw new ValidationError([{ category: "structure", code: "component_identity", path: `/session_problem/${index}/actor_index`,
+        message: "跨轮问题只能选择 Compact 联合目录的已有组件编号，程序透传名称。" }]);
+      const { actor_index: _index, ...description } = problem;
+      const resolved = resolveProblems(request, actor, [{ ...description, tool_error_indices: [] }], audit, "/session_problem", index);
+      const positions = request.input.source_positions as { trace_index: number }[];
+      const traces = new Set(problem.evidence.map(item => {
+        const point = parseEvidenceCoordinates(audit.evidenceBank![item.index - 1]!);
+        return point && positions[point.message_index]!.trace_index;
+      }));
+      if (traces.size < 2) throw new ValidationError([{ category: "evidence", code: "cross_turn_evidence", path: `/session_problem/${index}/evidence`,
+        message: "跨轮问题必须引用至少两个 trace 的原始问答或执行证据；单轮问题保留在对应 turn。" }]);
+      return resolved;
+    });
     return { session_meta: request.input.session_meta as JsonObject, turns: request.input.turns as TraceAttributionResult[],
-      session_summary: value.session_summary, session_problem: resolveProblems(request, value.session_problem, audit, "session_problem", true) } satisfies SessionAttributionResult;
+      session_summary: value.session_summary, session_problem: problems } satisfies SessionAttributionResult;
   },
 };
 
-/** Single-turn session: the process judgment is final; session assembly needs no second model call. */
-export const singleSessionAttributionProfile: AgentProfile = {
-  ...traceAttributionProfile, id: "single", resultSchema: sessionAttributionResultSchema,
-  resolve(request, draft, audit) {
-    const turn = traceAttributionProfile.resolve!(request, draft, audit) as TraceAttributionResult;
-    return { session_meta: request.input.session_meta as JsonObject, turns: [turn],
-      session_summary: turn.summary, session_problem: [] } satisfies SessionAttributionResult;
+/** A single-turn session is a code-owned assembly, with no additional model request. */
+export const sessionAssemblyProfile: AgentProfile = {
+  id: "assembly", requestSchema: { type: "object", required: ["session_meta", "turns"] },
+  submissionSchema: sessionAttributionResultSchema, resultSchema: sessionAttributionResultSchema,
+  ...tracePrompt, toolNames: [], maxToolCalls: 0,
+  resolve(request) {
+    const turns = request.input.turns as TraceAttributionResult[];
+    return { session_meta: request.input.session_meta as JsonObject, turns, session_summary: turns[0]!.summary, session_problem: [] };
   },
 };

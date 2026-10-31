@@ -1,5 +1,5 @@
 import { canonical, type ProblemLibrary, type ProblemObservationRef } from "@eval/contracts";
-import { effectiveProblemOccurrences, normalizeLabel } from "@eval/agents/clustering";
+import { effectiveProblemOccurrences, normalizeLabel, problemSampleKey } from "@eval/agents/clustering";
 import { jobMaterial, type ClusteringJobConfig } from "./clustering-job-types.js";
 import { Ajv2020 } from "ajv/dist/2020.js";
 import treeSchema from "../../../../schemas/workflow/clustering-tree.schema.json" with { type: "json" };
@@ -23,7 +23,7 @@ export interface ClusteringTreeNode {
   class_code?: string;
   samples?: TreeSample[];
 }
-const findingKey = (ref: Pick<ProblemObservationRef, "input_id" | "finding_id">) => canonical([ref.input_id, ref.finding_id]);
+const findingKey = problemSampleKey;
 
 /** Export the frozen source cohort, including healthy answers and every unassigned responsibility. */
 export function projectClusteringTree(config: ClusteringJobConfig, inputs: Record<string, unknown>, libraries: ProblemLibrary[]): ClusteringTreeNode[] {
@@ -41,7 +41,7 @@ export function projectClusteringTree(config: ClusteringJobConfig, inputs: Recor
       const owner = desired.get(canonical([findingKey(occurrence), normalizeLabel(component.label)]));
       if (!owner || canonical(occurrence.attribution) !== canonical(owner.ref.attribution) ||
           occurrence.evidence_status !== owner.ref.evidence_status || canonical(occurrence.source) !== canonical(owner.ref.source))
-        throw new Error("聚类树样本与冻结归因不一致：" + occurrence.input_id + "/" + occurrence.finding_id);
+        throw new Error("聚类树样本与冻结归因不一致：" + occurrence.input_id + "/" + occurrence.problem_path);
       const coordinate = canonical([findingKey(occurrence), normalizeLabel(owner.component)]), previous = assigned.get(coordinate);
       if (previous && previous !== problem.id) throw new Error("聚类树同责任问题重复归类：" + coordinate);
       if (previous) continue;

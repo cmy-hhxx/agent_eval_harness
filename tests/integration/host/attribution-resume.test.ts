@@ -43,7 +43,7 @@ test("attribution CLI skip-failed clears the requested pause without retrying fa
   } catch (error) { code = (error as { code: unknown }).code; diagnostic = String((error as { stderr?: string }).stderr ?? error); }
   assert.equal(code, 2, "retained failed tasks produce a failure exit, without executing them: " + diagnostic);
   const restored = await attributionRepository.readRun(run);
-  assert.deepEqual(restored.manifest.pausedStages, []);
+  assert.deepEqual(restored.manifest.pausedStages, [], diagnostic);
   for (const task of plan.tasks) {
     assert.equal(restored.manifest.states[task.id]!.status, state.manifest.states[task.id]!.status);
     assert.equal(restored.manifest.states[task.id]!.attempts, state.manifest.states[task.id]!.attempts);

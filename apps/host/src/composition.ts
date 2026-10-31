@@ -4,7 +4,7 @@ import { attributionDimensions } from "@eval/workflows/review";
 import { configurationSecrets } from "./settings.js";
 import { AgentRegistry } from "@eval/host";
 import { comparisonAgent, comparisonProfile } from "@eval/agents/comparison";
-import { attributionAgent, singleSessionAttributionProfile, sessionAttributionProfile, traceAttributionProfile } from "@eval/agents/attribution";
+import { attributionAgent, sessionAssemblyProfile, componentAttributionProfile, sessionAttributionProfile, traceAttributionProfile } from "@eval/agents/attribution";
 import { rewriteAgent, rewriteProfile } from "@eval/agents/rewrite";
 import { clusteringAgent, clusteringProfile } from "@eval/agents/clustering";
 import { criteriaAgent, criteriaProfile } from "@eval/agents/criteria";
@@ -45,7 +45,8 @@ export const services = {
           ...Object.fromEntries(Object.entries(compactFieldProfiles).map(([field, profile]) => [`attribution-compact-${field}`, profile])),
           "attribution-trace": traceAttributionProfile,
           "attribution-session": sessionAttributionProfile,
-          "attribution-session-single": singleSessionAttributionProfile,
+          "attribution-session-assembly": sessionAssemblyProfile,
+          "attribution-component": componentAttributionProfile,
           comparison: comparisonProfile,
           rewrite: rewriteProfile,
           clustering: clusteringProfile,

@@ -64,7 +64,8 @@ export function businessDestination(task: PlannedTask, state: RunState, file: st
   for (const model of models) safeId(model);
   if (!models.length) throw new Error("正式结果缺少被评模型");
   if (models.length === 1) return { date, file: models[0] + "/" +
-    (file === "attribution.jsonl" ? "" : file.replace(/\.jsonl$/, "") + "/") + models[0] + "-" + date + ".jsonl" };
+    (file === "attribution.jsonl" ? "" : file.replace(/\.jsonl$/, "") + "/") + models[0] +
+    (["attribution.jsonl", "compact.jsonl"].includes(file) ? "_" + file.replace(/\.jsonl$/, "") : "") + "-" + date + ".jsonl" };
   if (models.some(model => model.includes("_vs_"))) throw new Error("业务交付模型 ID 不能包含 _vs_ 分隔符");
   const pair = models.join("_vs_");
   return { date, file: file.replace(/\.jsonl$/, "") + "/" + pair + "/" + pair + "-" + date + ".jsonl" };

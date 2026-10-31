@@ -159,7 +159,7 @@ export function modelMaterial(material: Record<string, unknown>, candidate: stri
 
 /** Source facts are shared by the input window; there is no per-task execution graph. */
 function prepareAttributionMaterial(candidate: Candidate, original: RawInput, analysis?: TaskAnalysis, publicRaw?: RawInput) {
-  const raw = publicRaw ?? attributionTrace(original, candidate.input_id, candidate.final_index);
+  const raw = publicRaw ?? attributionTrace(original);
   const task_analysis: TaskAnalysis = analysis ?? { task_type: "回答评审", goal: candidate.question,
     requirements: [{ id: "r1", text: candidate.question, acceptance_rule: candidate.question, applies_to: [] }], scoring_points: [], red_flags: [] };
   const sources = { answer: { id: candidate.input_id, value: raw } };
@@ -171,7 +171,7 @@ function prepareAttributionMaterial(candidate: Candidate, original: RawInput, an
   return { raw, sources, task_analysis, answer, norms, citations };
 }
 
-/** One trace review follows the complete process; responsibility is chosen by the model. */
+/** One trace review follows the complete process in program-bound Compact component slots. */
 export function bindAttributionMaterial(candidate: Candidate, original: RawInput, analysis: TaskAnalysis | undefined,
   options: { reference?: unknown; compact: JsonObject; source?: { raw: RawInput; positions: { trace_index: number; message_index: number }[]; traceIndex: number } }): AgentBinding {
   const started = performance.now();
@@ -191,17 +191,16 @@ export function bindAttributionMaterial(candidate: Candidate, original: RawInput
     }) })) };
   const delivery = initialAttributionMaterial(candidate.final_index, raw, candidate.input_id, 6400);
   const { execution_facts, ...process } = processMaterial(raw, original, candidate.input_id, "answer", 12000, options.source?.positions, options.source?.traceIndex);
-  const counted = (options.compact.turns as JsonObject[]).every(turn => turn.execution_facts !== undefined);
   const components = processComponents(raw, original, candidate.input_id, options.source?.positions ??
     raw.messages.map((_, message_index) => ({ trace_index: 0, message_index })),
     (options.compact.turns as JsonObject[]).flatMap(turn => turn.components as JsonObject[] ?? []));
   const catalog = actorCatalog(options.source ? components.filter(entry => entry.positions.some(position =>
     position.trace_index === options.source!.traceIndex)) : components);
-  const modelInput = { ground_truth, compact: compactNavigation(options.compact, !delivery.final_context.partial),
+  const modelInput = { ground_truth, compact: compactNavigation(options.compact),
     actor_catalog: catalog,
     task_analysis: taskAnalysisPresentation(task_analysis, { answer: candidate.input_id }, answer.criterion_instruction_sources),
     answer: { question: candidate.question, ...delivery,
-      ...process, ...(!counted ? { execution_facts } : {}),
+      ...process, execution_facts,
       citation_inventory,
       norm_directory: norms.map(norm => ({ ...norm, evidence: norm.evidence.map(displayEvidence) })) } };
   return { agent: "attribution", profile: "trace", request: { input: { trace_index: 0, ground_truth, compact: options.compact, trace_meta: original.meta ?? {},

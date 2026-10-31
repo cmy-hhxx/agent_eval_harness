@@ -1,7 +1,6 @@
 import { evidenceId, projectEvidenceReferences, type EvidenceBank, type JsonObject, type TraceRead } from "@eval/contracts";
 import { parseEvidenceCoordinates, resolveEvidence } from "@eval/tools";
 import { ValidationError } from "@eval/contracts";
-import { executionFactsView } from "./process-material.js";
 
 const object = (value: unknown): JsonObject | undefined => value && typeof value === "object" && !Array.isArray(value) ? value as JsonObject : undefined;
 
@@ -135,71 +134,51 @@ export function projectComparisonEvidence(input: JsonObject, bank: EvidenceBank,
   return result;
 }
 
-/** Only this reserved code-hydrated envelope is original evidence; the rest remains model summary/data. */
+/** Compact evidence has a fixed, flat shape. Source metadata is always opaque. */
 export function compactSourceEvidence(value: unknown): JsonObject[] {
   if (Array.isArray(value)) return value.flatMap(compactSourceEvidence);
   const node = object(value);
   if (!node) return [];
-  return Object.entries(node).flatMap(([key, child]) => compactMeta(node, key) ? [] : key === "source_evidence" && Array.isArray(child)
-    ? child as JsonObject[] : compactSourceEvidence(child));
+  return Object.entries(node).flatMap(([key, child]) => key === "session_meta" || key === "trace_meta" ? [] : key === "evidence" && Array.isArray(child)
+    ? child.map(entry => {
+      const point = parseEvidenceCoordinates(entry.evidence_id);
+      return { reference: { evidence_id: entry.evidence_id }, quote: entry.quote, message_index: point?.message_index };
+    }) : compactSourceEvidence(child));
 }
-const compactMeta = (node: JsonObject, key: string) => key === "meta" && Array.isArray(node.turns) && Object.hasOwn(node, "session_overview");
-/** Keep semantic evidence and input changes; stored compact retains code proofs and repeated source locations. */
-export function compactNavigation(value: JsonObject, completeFinal: boolean): JsonObject {
-  const { meta: _meta, components: _components, ...navigation } = value;
-  const { batch_id: _batch, case_id: _case, model: _model, source_input_id: _source,
-    summary_origin: _origin, trace_ids: _traces, ...facts } = object(value.meta) ?? {};
-  return { ...navigation, ...(Object.keys(facts).length ? { meta: facts } : {}), turns: (value.turns as JsonObject[]).map(turn => {
-    const { final_answer, execution_facts, components: _components, ...process } = turn;
-    const facts = object(execution_facts);
-    const view = { ...process, ...(facts ? { execution_facts: executionFactsView(facts) } : {}) };
-    return completeFinal ? view : { ...view, final_answer };
-  }) };
+
+/** Final answers are already shown as original excerpts, and actors have their own catalog. */
+export function compactNavigation(value: JsonObject): JsonObject {
+  const { session_meta: _session, trace_meta: _traces, ...navigation } = value;
+  return { ...navigation, turns: (value.turns as JsonObject[]).map(({ final_answer: _answer, components: _actors, ...turn }) => turn) };
 }
 export function projectCompactEvidence(value: unknown, bank: EvidenceBank, shown = new Set<string>()): unknown {
   if (Array.isArray(value)) return value.map(child => projectCompactEvidence(child, bank, shown));
   const node = object(value);
   if (!node) return value;
-  return Object.fromEntries(Object.entries(node).filter(([key]) => key !== "summary_origin").map(([key, child]) => [key,
-    compactMeta(node, key) ? child : key === "source_evidence" ? projectEvidenceReferences((evidenceOnce(child, shown) as JsonObject[]).map(entry => {
-      const { location: _location, message_index: _message, ...citation } = entry;
-      const point = parseEvidenceCoordinates((entry.reference as JsonObject).evidence_id as string);
-      return { ...citation, ...(entry.quote && point && point.kind !== "image" ? { read_request: { candidate: "answer",
-        message_index: point.message_index, path: point.path, offset: point.start, max_chars: 1600 } } : {}) };
-    }), bank, 400)
-      : key === "source_values" && Array.isArray(child) ? child.map(entry => {
-        const { location, ...fact } = entry as JsonObject, point = location as JsonObject;
-        return { ...projectCompactEvidence(fact, bank, shown) as JsonObject,
-          location: { path: point.path, field_path: point.field_path } };
-      })
+  return Object.fromEntries(Object.entries(node).map(([key, child]) => [key,
+    key === "session_meta" || key === "trace_meta" ? child : key === "evidence" && Array.isArray(child)
+      ? projectEvidenceReferences(evidenceOnce(compactSourceEvidence({ evidence: child }), shown), bank, 400)
       : projectCompactEvidence(child, bank, shown)]));
 }
 export function compactPresentedReads(value: unknown, candidate: string, inputId: string): TraceRead[] {
   return presentedMaterialReads({ process_evidence: compactSourceEvidence(value) }, candidate, inputId);
 }
 
-/** Summary prose never becomes a quote. Every reserved source envelope is resolved from source again. */
+/** Recheck every stored quote against both public and original source before attribution. */
 export function verifiedCompact<T>(value: T, raw: { messages: unknown[] }, original: { messages: unknown[] }, inputId: string): T {
   const audit = { traceReads: [], viewedImages: [] };
   const quotes = new Map<string, { publicQuote: string; originalQuote: string }>();
-  const visit = (value: unknown): unknown => {
-    if (Array.isArray(value)) return value.map(visit);
-    const node = object(value);
-    if (!node) return value;
-    return Object.fromEntries(Object.entries(node).map(([key, child]) => [key, compactMeta(node, key) ? child : key === "source_evidence" && Array.isArray(child)
-      ? child.map(value => {
-        const entry = object(value)!, reference = object(entry.reference) as { evidence_id: string };
-        let source = quotes.get(reference.evidence_id);
-        if (!source) {
-          source = { publicQuote: resolveEvidence(raw, reference, "answer", audit, "/compact/source_evidence", inputId).quote,
-            originalQuote: resolveEvidence(original, reference, "answer", audit, "/compact/source_evidence", inputId).quote };
-          quotes.set(reference.evidence_id, source);
-        }
-        if (source.publicQuote !== source.originalQuote || entry.quote !== source.originalQuote)
-          throw new ValidationError([{ category: "evidence", code: "compact_original_scope", path: "/compact/source_evidence",
-            message: "摘要引用必须与可见原始片段一致，摘要文本不能代替原文。" }]);
-        return { ...entry, quote: source.originalQuote };
-      }) : visit(child)]));
-  };
-  return visit(value) as T;
+  for (const entry of compactSourceEvidence(value)) {
+    const reference = entry.reference as { evidence_id: string };
+    let source = quotes.get(reference.evidence_id);
+    if (!source) {
+      source = { publicQuote: resolveEvidence(raw, reference, "answer", audit, "/compact/evidence", inputId).quote,
+        originalQuote: resolveEvidence(original, reference, "answer", audit, "/compact/evidence", inputId).quote };
+      quotes.set(reference.evidence_id, source);
+    }
+    if (source.publicQuote !== source.originalQuote || entry.quote !== source.originalQuote)
+      throw new ValidationError([{ category: "evidence", code: "compact_original_scope", path: "/compact/evidence",
+        message: "摘要引用必须与可见原始片段一致，摘要文本不能代替原文。" }]);
+  }
+  return value;
 }

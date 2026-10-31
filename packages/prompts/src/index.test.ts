@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { readFileSync, readdirSync } from "node:fs";
 import { DEFAULT_POLICY } from "@eval/contracts";
 import { builtinTools } from "@eval/tools";
-import { agentPrompt, attributionConditionalRules, attributionTaxonomy, compactFields, erisPrompt, type PromptStage } from "./index.js";
+import { agentPrompt, attributionConditionalRules, compactFields, erisPrompt, type PromptStage } from "./index.js";
 
 const submissionToolNames = ["submit_evaluation", "submit_evaluation_file"];
 
@@ -15,14 +15,14 @@ test("all stage texts come from one resource tree; tool descriptions are complet
   const tools = readdirSync(new URL("tools/", resources)).map((file) => file.replace(/\.md$/, ""));
   assert.deepEqual(tools.sort(), [...builtinTools.map((tool) => tool.name), ...submissionToolNames].sort());
   for (const stage of stages) {
-    const profile = stage === "attribution" ? "trace" : "default";
+    const profile = stage === "attribution" ? "component" : "default";
     const prompt = agentPrompt(stage, tools.filter((name) => !submissionToolNames.includes(name)), { profile, fileSubmission: false });
     assert(prompt.systemPrompt.startsWith(readFileSync(new URL(`${stage}/${profile}/system.md`, resources), "utf8").trim()));
     assert(prompt.instructions.startsWith(readFileSync(new URL(`${stage}/${profile}/instructions.md`, resources), "utf8").trim()));
     assert(prompt.systemPrompt.includes(prompt.instructions));
     if (stage === "attribution") {
-      assert(prompt.systemPrompt.includes(JSON.stringify(attributionTaxonomy.components)));
-      assert(!prompt.renderPrompt(material).includes(JSON.stringify(attributionTaxonomy.components)));
+      assert(!prompt.systemPrompt.includes("责任组件目录（component 必须选择具体条目的 ID）"));
+      assert(prompt.systemPrompt.includes("当前组件"));
     }
     assert.deepEqual(Object.keys(prompt.toolDescriptions).sort(), tools.filter(name => name !== (prompt.fileSubmission ? "submit_evaluation" : "submit_evaluation_file")).sort());
     for (const [name, text] of Object.entries(prompt.toolDescriptions))
@@ -170,33 +170,22 @@ test("attribution sends only applicable rule resources and does not repeat share
   assert(!focused.includes('候选私有规范'));
 });
 
-test("taxonomy components carry one group, stage and definition", () => {
-  const groups = attributionTaxonomy.groups;
-  const components = attributionTaxonomy.components;
-  const listed = Object.values(groups).flat();
-  assert.deepEqual([...new Set(listed)].sort(), Object.keys(components).sort());
-  for (const [code, component] of Object.entries(components)) {
-    assert.equal(groups[component.group]?.includes(code), true, code);
-    assert.equal(attributionTaxonomy.stages.includes(component.stage), true, code);
-    assert(component.definition.trim(), code);
-    assert(!/[与或/]/u.test(component.label), `${code} must identify one responsibility`);
-    assert(Array.isArray(component.exclusions), code);
-  }
-  for (const component of Object.values(components)) assert(["reasoning", "tool", "script", "skill"].includes(component.kind));
-  assert.equal(components["finquery-script"]?.label, "finquery.py 脚本（经 shell）");
-  assert.equal(components["data-visualizer"]?.label, "data-visualizer 图表渲染");
-});
-
 test("compact and process attribution have independent prompts with shared problem expression only for attribution", () => {
   const compact = agentPrompt("compact", ["read_trace"], { fileSubmission: false });
-  const trace = agentPrompt("attribution", ["read_trace"], { profile: "trace", fileSubmission: false });
+  const trace = agentPrompt("attribution", ["read_trace"], { profile: "component", fileSubmission: false });
   const session = agentPrompt("attribution", ["read_trace"], { profile: "session", fileSubmission: false });
+  assert(!trace.systemPrompt.includes("已补救且未影响交付的执行异常"));
+  assert(trace.systemPrompt.includes("已恢复且未留下交付影响的执行异常不生成问题"));
+  assert(trace.systemPrompt.includes("不能单独证明参数违规或具体内部原因"));
+  assert(trace.systemPrompt.includes("合理的解释、类比、补充应用场景"));
+  assert(trace.systemPrompt.includes("否则归实际结果使用者"));
+  assert(trace.systemPrompt.includes("不自行强化条件"));
+  assert(trace.systemPrompt.includes("以最后实际执行版本及回执判断剩余影响"));
   const problemOutput = readFileSync(new URL("../resources/attribution/problem-output.md", import.meta.url), "utf8").trim();
   for (const prompt of [trace, session]) assert(prompt.instructions.endsWith(problemOutput));
   assert(!compact.instructions.includes(problemOutput));
-  assert(compact.instructions.includes("field_value_type"));
   assert(compact.instructions.includes('"value"'));
-  assert(compactFields.key_data!.instruction.includes('$evidence'));
+  assert(compactFields.key_data!.instruction.includes('evidence'));
   assert.match(compact.instructions, /调用 submit_evaluation/u);
   assert.equal(compact.toolDescriptions.submit_evaluation,
     readFileSync(new URL("../resources/compact/submit_evaluation.md", import.meta.url), "utf8").trim());

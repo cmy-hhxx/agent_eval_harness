@@ -69,8 +69,8 @@ for (const growing of [false, true]) test(`healthy balanced channels execute dif
     for (const task of plan.tasks) {
       assert.equal(saved.manifest.states[task.id].status, "succeeded");
       assert.equal(saved.manifest.states[task.id].attempts, 1);
-      assert.equal(submissions.get(task.id), task.stage === "attribution-compact" ? undefined : 1);
-      assert.equal(saved.receipts[task.id].submissionStats?.contentSubmissions, task.stage === "attribution-compact" ? undefined : 1);
+      assert.equal(submissions.get(task.id), services.taskSource.isComputedTask?.(task) ? undefined : 1);
+      assert.equal(saved.receipts[task.id].submissionStats?.contentSubmissions, services.taskSource.isComputedTask?.(task) ? undefined : 1);
     }
   } finally {
     clearTimeout(timeout);

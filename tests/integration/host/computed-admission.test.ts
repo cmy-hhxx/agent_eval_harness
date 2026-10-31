@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import path from "node:path";
 import { rm } from "node:fs/promises";
-import type { AgentBackend, PlannedTask } from "@eval/contracts";
+import type { AgentBackend } from "@eval/contracts";
 import { runEvaluation } from "@eval/host";
 import { startWorker } from "@eval/runtime/worker";
 import { attributionRepository, attributionWorkflow, planAttribution } from "@eval/workflows/attribution";
@@ -36,7 +36,7 @@ test("computed aggregation proceeds while all worker slots finish accepted model
   const workers = await Promise.all([0, 1].map(index => startWorker(backend, path.join(f.directory, `worker-${index}`))));
   try {
     const taskSource = { ...attributionWorkflow,
-      isComputedTask: (task: PlannedTask) => task.stage === "attribution-compact",
+      isComputedTask: attributionWorkflow.isComputedTask,
       bind(...args: Parameters<typeof attributionWorkflow.bind>) {
         if (args[0].stage === "attribution-compact") {
           computedWhileBusy = heldStarted === 2 && !timedOut;
@@ -51,6 +51,6 @@ test("computed aggregation proceeds while all worker slots finish accepted model
       workerUrls: workers.map(worker => worker.url), report: async () => ({}) });
     assert.equal(result.execution_task_statuses.succeeded, plan.tasks.length);
     assert(computedWhileBusy, "code aggregation must not wait for occupied model worker slots");
-    assert.equal(modelCalls, fields.length + 1, "aggregation never creates a model session");
+    assert.equal(modelCalls, fields.length + 2, "aggregation never creates a model session");
   } finally { release(); await Promise.all(workers.map(worker => worker.close())); await rm(f.directory, { recursive: true, force: true }); }
 });

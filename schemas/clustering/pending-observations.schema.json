@@ -37,7 +37,7 @@
       "required": [
         "version",
         "input_id",
-        "finding_id",
+        "problem_path",
         "attribution",
         "source",
         "batch_id",
@@ -53,7 +53,7 @@
         "input_id": {
           "$ref": "#/$defs/text"
         },
-        "finding_id": {
+        "problem_path": {
           "$ref": "#/$defs/text"
         },
         "batch_id": {

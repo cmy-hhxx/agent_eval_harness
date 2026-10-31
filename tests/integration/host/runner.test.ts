@@ -108,7 +108,7 @@ test("two workers preserve same-run receipts and honor explicitly requested reev
     assert.equal(Object.keys(saved.receipts).length, saved.manifest.tasks.length);
     for (const task of saved.manifest.tasks) {
       assert.equal(saved.manifest.states[task.id].status, "succeeded", task.stage);
-      assert.equal(calls.get(task.id), task.stage === "attribution-compact" ? undefined : 1);
+      assert.equal(calls.get(task.id), services.taskSource.isComputedTask?.(task) ? undefined : 1);
     }
     for (const file of ["state.json", "overview.json", "stats.json", "report.md", "task_summaries.md"])
       assert.equal(await exists(path.join(run, file)), true, file);
@@ -133,7 +133,7 @@ test("two workers preserve same-run receipts and honor explicitly requested reev
       assert.equal(resumed.receipts[id].submissionId, receipt.submissionId);
     const independent = await runEvaluation({ ...options, runId: "second" });
     assert.equal(independent.completed_comparisons, summary.completed_comparisons);
-    assert.equal([...calls.values()].reduce((sum, count) => sum + count, 0), saved.manifest.tasks.filter(task => task.stage !== "attribution-compact").length * 2,
+    assert.equal([...calls.values()].reduce((sum, count) => sum + count, 0), saved.manifest.tasks.filter(task => !services.taskSource.isComputedTask?.(task)).length * 2,
       "another run independently executes the complete graph");
     assert.equal((await validateRun(path.join(config.output.path, "second"))).valid, true);
     for (const workdir of workerDirectories)
@@ -453,14 +453,16 @@ test("same run ID preserves accepted work when the model, budget and evaluator c
     assert.equal(complete.completed_comparisons, plan.tasks.filter(task => task.stage === "comparison").length);
     const after = await readRunState(run);
     assert.equal(after.manifest.evaluatorVersion, "fixture-2");
-    assert.deepEqual(after.manifest.tasks.filter(task => before.manifest.tasks.some(original => original.id === task.id)),
-      before.manifest.tasks, "resume preserves task identities and blind assignments");
+    const originalShape = (task: typeof plan.tasks[number]) => task.stage === "attribution-trace" ? { ...task,
+      dependencies: Object.fromEntries(Object.entries(task.dependencies).filter(([label]) => !label.startsWith("component:"))), settledDependencies: [] } : task;
+    assert.deepEqual(after.manifest.tasks.filter(task => before.manifest.tasks.some(original => original.id === task.id)).map(originalShape),
+      before.manifest.tasks.map(originalShape), "resume preserves task identities and blind assignments while Compact can add component dependencies");
     for (const task of after.manifest.tasks) {
       const receipt = after.receipts[task.id], previous = before.receipts[task.id];
       assert.equal(after.manifest.states[task.id].status, "succeeded", task.stage);
-      assert.equal(calls.get(task.id), task.stage === "attribution-compact" ? undefined : previous ? previousCalls.get(task.id) : (previousCalls.get(task.id) ?? 0) + 1);
+      assert.equal(calls.get(task.id), services.taskSource.isComputedTask?.(task) ? undefined : previous ? previousCalls.get(task.id) : (previousCalls.get(task.id) ?? 0) + 1);
       assert.equal(receipt.evaluatorVersion, previous ? previous.evaluatorVersion : "fixture-2");
-      assert.equal(receipt.judge, previous ? previous.judge : task.stage === "attribution-compact" ? "code" : "changed-model");
+      assert.equal(receipt.judge, previous ? previous.judge : services.taskSource.isComputedTask?.(task) ? "code" : "changed-model");
       if (previous) assert.equal(receipt.submissionId, previous.submissionId);
     }
     assert.deepEqual(complete.evaluator_versions, [fakeEvaluatorVersion, "fixture-2"].sort());
@@ -504,7 +506,7 @@ for (const reportedContent of [0, undefined]) test(`a worker's ${reportedContent
           "a confirmed inspection at count three leaves exactly one final submission within the cap of four");
       }
       const value = taskResult(options.spec);
-      if (options.spec.evaluation.id === "attribution" && ["trace", "single"].includes(options.spec.evaluation.profile))
+      if (options.spec.evaluation.id === "attribution" && options.spec.evaluation.profile === "component")
         (value as { problems: unknown[] }).problems = [];
       const result = await submitFor(options, draftFor(options.spec, value));
       assert.equal(result.isError, undefined, JSON.stringify(result));

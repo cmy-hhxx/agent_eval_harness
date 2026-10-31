@@ -9,7 +9,6 @@
 | 位置 | 内容 |
 |---|---|
 | `resources/score/skill/` | 原skill评分规则、分档、校准与固定目录 |
-| `resources/attribution/taxonomy.json` | 责任技术域、功能组件、出错环节与八步业务调查的唯一目录 |
 | `resources/attribution/problem-output.md` | Trace、Session 共用的问题表达、字段分工与严重程度口径 |
 | `resources/attribution/component-choice.md` | 具体动作定责、工具契约边界及相邻组件的选择规则 |
 | `resources/instruction-review/default/` | 后置独立内部指令核验 |
@@ -25,7 +24,7 @@
 | `resources/eris/` | Eris 系统、预测、核对及工具规则 |
 | [src/index.ts](src/index.ts) | 加载、渲染与公开入口 |
 
-固定规则在系统提示词中发送一次。Attribution 分别说明本轮审查与跨轮审查要读的材料、判断方法及输出；具体 taxonomy 组件目录在 Trace、Session 系统提示词中提供一次，由模型沿过程选择责任。Compact 只提取当前字段，明确 value 类型和提交示例，内部结构保持开放。任务消息只追加本次适用的条件规则、焦点、材料、预算和恢复信息。可信请求与模型展示投影分开，展示精简不改变业务校验或证据。装配与规则归属见[归因提示词](../../docs/attribution-prompt.md)。
+固定规则在系统提示词中发送一次。Attribution 分别说明本轮审查与跨轮审查要读的材料、判断方法及输出；Compact 是唯一组件目录；每个组件用独立任务检查自己的问题和相关 tool_errors，程序绑定名称；Trace 只总结合并结果，单轮 Session 由程序组装，多轮用一次轻量审查。部分组件失败不阻断 Trace，Trace 失败阻断 Session，短核查记录不进入正式输出。Compact 只提取当前字段，明确 value 类型和提交示例，仅允许固定浅层字段，所有 idx 由程序生成。任务消息只追加本次适用的条件规则、焦点、材料、预算和恢复信息。可信请求与模型展示投影分开，展示精简不改变业务校验或证据。装配与规则归属见[归因提示词](../../docs/attribution-prompt.md)。
 
 Agent Profile 向 `agentPrompt` 显式传入 `fileSubmission`、`draftWriteInCallLimit` 与可选 `profile`；本模块据此渲染工具和预算，不根据阶段名称决定运行策略。
 

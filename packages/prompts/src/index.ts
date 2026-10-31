@@ -40,27 +40,11 @@ export function attributionConditionalRules(options: {
     options.tableDoubts && attributionRules["table-doubts"], options.images && attributionRules.images,
     options.captureGaps && attributionRules["capture-gaps"]].filter(Boolean).join("\n\n");
 }
-export interface AttributionComponent {
-  label: string;
-  kind: "reasoning" | "tool" | "script" | "skill";
-  group: string;
-  stage: string;
-  definition: string;
-  optional?: "material_change" | "command_match" | "unlisted_tool";
-  exclusions: string[];
-}
-export const attributionTaxonomy = JSON.parse(resource("attribution/taxonomy.json")) as {
-  groups: Record<string, string[]>;
-  components: Record<string, AttributionComponent>;
-  domains: Record<string, string[]>;
-  stages: string[];
-  investigation_steps: string[];
-};
 export const compactFields = JSON.parse(resource("compact/fields.json")) as Record<string, {
   scope: "session" | "turn"; instruction: string; submission_example?: JsonObject;
 }>;
 export const compactOutputGuidance = JSON.parse(resource("compact/output-guidance.json")) as {
-  examples: Record<string, JsonObject>; repair_instruction: string; field_task: string;
+  repair_instruction: string; field_task: string;
 };
 const descriptions = new Map<string, string>(
   builtinToolNames.map((name) => [name, resource(`tools/${name}.md`)]),
@@ -85,13 +69,11 @@ export function agentPrompt(stage: PromptStage, toolNames: string[], options: Ag
   if (!/^[a-z][a-z0-9_-]*$/.test(profile)) throw new Error(`Invalid prompt profile: ${profile}`);
   const resourceProfile=profile;
   const instructions = resource(`${stage}/${resourceProfile}/instructions.md`) + (stage === "score" ? '\n\n'+scoreRules(profile) : "") +
-    (stage === "attribution" && ["trace", "session"].includes(profile)
-      ? (profile === "trace" ? "\n\n" + resource("attribution/component-choice.md") : "") + "\n\n" + resource("attribution/problem-output.md") : "");
+    (stage === "attribution" && ["component", "session"].includes(profile)
+      ? (profile === "component" ? "\n\n" + resource("attribution/component-choice.md") : "") + "\n\n" + resource("attribution/problem-output.md") : "");
   const evidenceGuide = !["attribution", "compact"].includes(stage) && toolNames.some(name => ["read_trace", "search_trace", "view_image", "check_table"].includes(name))
     ? `\n${evidence}\n` : "";
-  const taxonomy = stage === "attribution" && ["trace", "session"].includes(profile)
-    ? "\n\n责任组件目录（component 必须选择具体条目的 ID）：\n" + JSON.stringify(attributionTaxonomy.components) : "";
-  const systemPrompt = resource(`${stage}/${resourceProfile}/system.md`) + "\n\n" + (["score", "attribution", "compact"].includes(stage) ? "" : commentary + "\n\n") + instructions + taxonomy + evidenceGuide;
+  const systemPrompt = resource(`${stage}/${resourceProfile}/system.md`) + "\n\n" + (["score", "attribution", "compact"].includes(stage) ? "" : commentary + "\n\n") + instructions + evidenceGuide;
   const names = [...toolNames, ...submissionToolNames(fileSubmission)];
   if (new Set(names).size !== names.length) throw new Error(`Duplicate prompt tool in ${stage}`);
   const toolDescriptions = Object.fromEntries(names.map((name) => {

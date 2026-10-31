@@ -53,7 +53,7 @@ test("an independent dimension can fail while atomic attribution and comparisons
   const resumed = await readRunState(run);
   assert.equal(resumed.manifest.tasks.filter(task => task.stage === "instruction-review").length, 4);
   for (const task of state.manifest.tasks.filter(task => state.receipts[task.id]))
-    assert.equal(executions.get(task.id), task.stage === "attribution-compact" ? undefined : 1);
+    assert.equal(executions.get(task.id), services.taskSource.isComputedTask?.(task) ? undefined : 1);
   const after = await Promise.all(["attribution", "comparison"].map(name => readFile(path.join(run, "results", name + ".jsonl"), "utf8")));
   assert.deepEqual(after, before);
 });

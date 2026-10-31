@@ -1,10 +1,10 @@
-import { sessionProblems, type SessionAttributionResult, type SessionProblem } from "@eval/agents/attribution";
+import { sessionProblemEntries, type SessionAttributionResult, type SessionProblem } from "@eval/agents/attribution";
 import type { ComparisonAttribution } from "@eval/agents/comparison";
 import { attributionPositionReference, parseEvidenceCoordinates } from "@eval/contracts";
 
 /** Comparison receives accepted problem facts, never private responsibility judgments. */
-function sessionFinding(problem: SessionProblem) {
-  return { problem_id: problem.problem_id, text: problem.problem_phenomena, reason: problem.reason,
+function sessionFinding(problem: SessionProblem & { problem_path: string }) {
+  return { problem_path: problem.problem_path, text: problem.problem_phenomena, reason: problem.reason,
     evidence_status: "已确认" as const,
     evidence: problem.evidence.flatMap(item => {
       const reference = attributionPositionReference(item.position);
@@ -19,7 +19,7 @@ function sessionAttribution(result: SessionAttributionResult): ComparisonAttribu
     is_correct: consistent === null ? null : consistent === 1,
     correct_reason: result.turns.map(turn => turn.correct_reason).filter(Boolean).join("\n") || null,
     summary: result.session_summary,
-    Problem: sessionProblems(result).map(sessionFinding) };
+    Problem: sessionProblemEntries(result).map(sessionFinding) };
 }
 
 export function comparisonAttribution(result: SessionAttributionResult): ComparisonAttribution {

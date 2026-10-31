@@ -1,4 +1,4 @@
-import { sessionProblems, type SessionAttributionResult } from "@eval/agents/attribution";
+import { sessionProblemEntries, type SessionAttributionResult } from "@eval/agents/attribution";
 import { canonical, type PlannedTask, type SubmissionReceipt } from "@eval/contracts";
 import type { TaskData } from "./types.js";
 
@@ -8,7 +8,7 @@ export const responsibilityLabels: Record<ResponsibilityGroup, string> = {
 };
 interface SourceReference { task_id: string; submission_id: string; evaluator_version: string }
 export interface ModelBehaviorFinding {
-  finding_id: string;
+  problem_path: string;
   responsibility: ResponsibilityGroup;
   components: string[];
   text: string;
@@ -77,12 +77,13 @@ export function modelBehavior(tasks: readonly PlannedTask[], receipts: Readonly<
     if (!row) rows.set(candidate.input_id, row = { input_id: candidate.input_id, batch_id: candidate.batch_id,
       case_id: candidate.case_id, version: candidate.version, sources: [], findings: [] });
     row.sources.push(source);
-    for (const finding of sessionProblems(receipt.evaluation as SessionAttributionResult)) {
+    for (const finding of sessionProblemEntries(receipt.evaluation as SessionAttributionResult)) {
       const components = [finding.component].filter(Boolean).sort();
       const responsibility: ResponsibilityGroup = !components.length ? "unknown" : "known";
-      const observation = { finding_id: finding.problem_id, responsibility, components, text: finding.problem_phenomena,
+      const observation = { problem_path: finding.problem_path, responsibility, components, text: finding.problem_phenomena,
         impact: finding.reason, source_conflict: false };
-      const existing = row.findings.find(item => item.finding_id === finding.problem_id);
+      const existing = row.findings.find(item => item.problem_path === finding.problem_path &&
+        item.sources.some(previous => previous.submission_id === source.submission_id));
       if (!existing) row.findings.push({ ...observation, sources: [source] });
       else {
         const { sources: _sources, ...previous } = existing;
@@ -117,7 +118,7 @@ export function modelBehaviorDetails(rows: readonly ModelBehaviorRow[]): string[
   return ["# 模型行为归因结论", "", "以下说明本次任务中的已接受归因，不代表底座能力排名；未标注责任的优点不自动归功于模型。", "",
     ...rows.flatMap(row => [`## ${row.batch_id} / ${row.case_id} / ${row.version}`, "",
       ...(row.findings.length ? row.findings.map(finding => `- **${responsibilityLabels[finding.responsibility]}**：${finding.text}` +
-        (finding.impact ? ` ${finding.impact}` : "") + `（发现 ${finding.finding_id}；来源任务 ${finding.sources.map(source => source.task_id).join("、")}）`)
+        (finding.impact ? ` ${finding.impact}` : "") + `（发现 ${finding.problem_path}；来源任务 ${finding.sources.map(source => source.task_id).join("、")}）`)
         : ["未记录问题归因；这不证明没有错误或模型能力更强。"]), ""])];
 }
 

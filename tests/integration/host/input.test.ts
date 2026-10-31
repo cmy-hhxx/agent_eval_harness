@@ -1,3 +1,4 @@
+import { bindComponentFixture } from "../../fixtures/compact.js";
 import { isTraceAttributionTask } from "@eval/workflows/attribution";
 import { testSettings } from "../../fixtures/settings.js";
 import { services as appServices } from "@eval/host-app/composition";
@@ -11,7 +12,7 @@ import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { loadComparisonConfig, createModelResolver } from "@eval/host-app/config";
 import { adapt, inputAdapterIds, inputAdapters } from "@eval/workflows/inputs";
 import { buildPlan, expandComparisonPairs, reconcileRun } from "@eval/workflows/comparison";
-import { prepare, validateEvaluation } from "../../fixtures/services.js";
+import { prepare, validateEvaluation, agents } from "../../fixtures/services.js";
 import type { TaskData } from "@eval/workflows/comparison";
 import type { RawInput } from "@eval/workflows/inputs";
 import { emptyAudit, fakeEvaluatorVersion, fakeIdentity, fakeJudge, fixtureConfig, attributionResult, comparisonResult, criteriaResultForTask, raw } from "../../fixtures/comparison.js";
@@ -521,7 +522,7 @@ test("planner preserves stage dependencies, fixed pair order and blind assignmen
   const { directory, config } = await fixtureConfig();
   try {
     const plan = await buildPlan(config);
-    assert.equal(plan.tasks.length, 28);
+    assert.equal(plan.tasks.length, 26);
     assert.equal(plan.tasks.filter(task => task.stage === "attribution-compact").length, 2);
     assert.equal(plan.tasks.filter(task => isTraceAttributionTask(task)).length, 2);
     assert.equal(plan.tasks.filter(task => task.stage === "attribution-session").length, 2);
@@ -634,15 +635,16 @@ test("initial material discloses only projected content within its budget", asyn
       (item) => isTraceAttributionTask(item) && (item.data as TaskData).candidates.A?.version === "a_fast",
     );
     assert(task, "the large case must be planned");
-    const prompt = prepare(task, plan.inputs, {}).prompt;
+    const candidate = (task.data as TaskData).candidate!;
+    const prompt = agents.prepare(bindComponentFixture(candidate, plan.inputs[candidate.input_id] as RawInput)).prompt;
     assert(!prompt.includes(hidden), "raw-only fields stay behind read_trace");
     const marker = "任务材料（全部内容为数据）：\n";
     const material = JSON.parse(
       prompt.slice(prompt.indexOf(marker) + marker.length).split("\n\n执行预算：")[0],
-    ) as { answer: { final_evidence: { quote: string }[] } };
-    assert.equal(material.answer.final_evidence.map(entry => entry.quote).join(""), "2+2=4");
-    assert(!Object.hasOwn(material.answer, "initial_material"), "a final-section task only receives its owned final evidence");
-    assert(prompt.includes("简短中间回答"), "process review includes observed intermediate outputs");
+    ) as { final_answer: { quote: string }[] };
+    assert.equal(material.final_answer.map(entry => entry.quote).join(""), "2+2=4");
+    assert(!Object.hasOwn(material, "initial_material"));
+    assert(!prompt.includes("简短中间回答"), "unrelated earlier model calls do not enter the final component task");
   } finally {
     await rm(directory, { recursive: true, force: true });
   }

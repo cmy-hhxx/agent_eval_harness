@@ -152,7 +152,7 @@
                           "input_id",
                           "batch_id",
                           "case_id",
-                          "finding_id",
+                          "problem_path",
                           "evidence_status",
                           "run_id",
                           "task_id",
@@ -171,7 +171,7 @@
                             "type": "string",
                             "minLength": 1
                           },
-                          "finding_id": {
+                          "problem_path": {
                             "type": "string",
                             "minLength": 1
                           },

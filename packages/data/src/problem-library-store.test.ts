@@ -12,7 +12,7 @@ function library(): ProblemLibrary {
   return { model: "a_fast", updated_at: "2026-10-14T08:00:00Z", components: {}, classes: {}, events: [], occurrences: [{
     id: randomUUID(), class_id: randomUUID(), version: "a_fast", evaluator_version: "fixture", batch_id: "2026-10-14",
     case_id: "case", input_id: randomUUID(), run_id: "cluster", task_id: randomUUID(), submission_id: randomUUID(),
-    finding_id: "f1", evidence_status: "已确认", message_index: 3, source: { file: "/inputs/original.jsonl", line: 1 },
+    problem_path: "f1", evidence_status: "已确认", message_index: 3, source: { file: "/inputs/original.jsonl", line: 1 },
     classification: "assigned", previous_class_id: null, at: "2026-10-14T08:00:00Z",
   }] };
 }

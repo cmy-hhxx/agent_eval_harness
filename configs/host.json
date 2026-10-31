@@ -1,5 +1,5 @@
 {
-  "evaluatorVersion": "r486",
+  "evaluatorVersion": "r505",
   "inputs": {
     "timing_unit": "ms",
     "versions": [
@@ -98,6 +98,10 @@
       "thinking": "low"
     },
     "attribution-compact": {
+      "profile": "judge",
+      "thinking": "off"
+    },
+    "attribution-trace": {
       "profile": "judge",
       "thinking": "off"
     },

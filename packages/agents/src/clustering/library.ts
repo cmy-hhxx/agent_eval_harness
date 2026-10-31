@@ -19,10 +19,10 @@ export const normalizeLabel = (label: string): string =>
   label.trim().replace(/\s+/gu, " ").toLowerCase();
 
 /** One finding may have several responsible components or appear under several topics. */
-export const problemSampleKey = (sample: { input_id: string; finding_id: string }): string =>
-  `${sample.input_id}\u0000${sample.finding_id}`;
+export const problemSampleKey = (sample: { input_id: string; problem_path: string; attribution?: { submission_id: string } }): string =>
+  JSON.stringify([sample.attribution?.submission_id ?? null, sample.input_id, sample.problem_path]);
 
-export function countProblemSamples(samples: Iterable<{ input_id: string; finding_id: string }>): number {
+export function countProblemSamples(samples: Iterable<{ input_id: string; problem_path: string }>): number {
   return new Set(Array.from(samples, problemSampleKey)).size;
 }
 
@@ -64,9 +64,9 @@ export function projectLibrary(library: ProblemLibrary): ProblemProjection {
           occurrences: counts.get(problem.id)?.size ?? 0,
           examples: representativeSamples(occurrences.filter(item => item.class_id === problem.id), item => ({
             answer: item.input_id, date: item.batch_id, certainty: item.evidence_status, scene: item.case_id,
-            key: `${item.batch_id}\u0000${item.case_id}\u0000${item.finding_id}`,
-          })).map(({ input_id, batch_id, case_id, finding_id, evidence_status, run_id, task_id, submission_id, attribution }) => ({
-            input_id, batch_id, case_id, finding_id, evidence_status, run_id, task_id, submission_id,
+            key: `${item.batch_id}\u0000${item.case_id}\u0000${item.problem_path}`,
+          })).map(({ input_id, batch_id, case_id, problem_path, evidence_status, run_id, task_id, submission_id, attribution }) => ({
+            input_id, batch_id, case_id, problem_path, evidence_status, run_id, task_id, submission_id,
             ...(attribution ? { attribution: { ...attribution } } : {}),
           })),
         })),
@@ -94,7 +94,7 @@ export interface ClusteringObservationRef {
   input_id: string;
   case_id: string;
   source: { file: string; line: number };
-  finding_id: string;
+  problem_path: string;
   message_index: number;
   quote: string;
   evidence_status: "已确认" | "待核实";
@@ -288,7 +288,7 @@ export function applyClustering(library: ProblemLibrary, input: ApplyClusteringI
 
   const seen = new Set(
     next.occurrences.map(
-      (occurrence) => `${occurrence.class_id}\u0000${occurrence.input_id}\u0000${occurrence.finding_id}`,
+      (occurrence) => `${occurrence.class_id}\u0000${problemSampleKey(occurrence)}`,
     ),
   );
   for (const assignment of input.result.assignments) {
@@ -301,7 +301,7 @@ export function applyClustering(library: ProblemLibrary, input: ApplyClusteringI
     if (!problem) continue;
     const classification = entry?.created ? "created" : "assigned";
     for (const ref of observation.refs) {
-      const key = `${problem.id}\u0000${ref.input_id}\u0000${ref.finding_id}`;
+      const key = `${problem.id}\u0000${problemSampleKey(ref)}`;
       if (seen.has(key)) continue;
       seen.add(key);
       changed = true;
@@ -318,7 +318,7 @@ export function applyClustering(library: ProblemLibrary, input: ApplyClusteringI
         ...(ref.attribution ? { attribution: ref.attribution } : {}),
         task_id: input.task_id,
         submission_id: input.submission_id,
-        finding_id: ref.finding_id,
+        problem_path: ref.problem_path,
         evidence_status: ref.evidence_status,
         message_index: ref.message_index,
         source: ref.source,
@@ -340,9 +340,10 @@ export function applyClustering(library: ProblemLibrary, input: ApplyClusteringI
       if (!component) continue; // An unclassified component has no previous class to supersede.
       for (const ref of observation.refs) {
         const occurrence = problem && next.occurrences.find(item => item.class_id === problem.id &&
-          item.input_id === ref.input_id && item.finding_id === ref.finding_id);
+          problemSampleKey(item) === problemSampleKey(ref));
         if (problem && !occurrence) throw new Error("重新归类缺少已保存的样本关联");
-        targets.push({ input_id: ref.input_id, finding_id: ref.finding_id, component_id: component.id,
+        targets.push({ input_id: ref.input_id, problem_path: ref.problem_path, component_id: component.id,
+          ...(ref.attribution ? { attribution: { submission_id: ref.attribution.submission_id } } : {}),
           occurrence_id: occurrence ? occurrence.id : null });
       }
     }

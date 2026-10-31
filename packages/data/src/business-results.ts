@@ -161,8 +161,8 @@ export async function formalAttributionFiles(root: string, models: readonly stri
       const file = path.join(directory, entry.name);
       if (entry.isDirectory() && depth < 3) await visit(file, depth + 1);
       else if (entry.isFile() && (entry.name === "attribution.jsonl" && path.basename(directory) === "results" ||
-        models.some(model => path.basename(directory) === model && entry.name.startsWith(model + "-") &&
-          /^\d{4}-\d{2}-\d{2}\.jsonl$/.test(entry.name.slice(model.length + 1))))) files.push(file);
+        models.some(model => path.basename(directory) === model && entry.name.startsWith(model + "_attribution-") &&
+          /^\d{4}-\d{2}-\d{2}\.jsonl$/.test(entry.name.slice(model.length + "_attribution-".length))))) files.push(file);
     }
   };
   await visit(root, 0);

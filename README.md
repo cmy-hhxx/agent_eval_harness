@@ -2,7 +2,7 @@
 
 TypeScript Host 编排评测任务，Pi Worker 执行模型与工具调用。通过 CLI 显式选择输入、启动与续跑评测；Eris 提供已有结果的只读分析。
 
-评测能力包括 Criteria、Attribution、指令遵循归因、Score、Comparison、Clustering 和 Rewrite。Attribution 按 compact → trace → session 三段归因；Comparison 对整场 session 做两两比较。开发先读 [AGENTS.md](AGENTS.md)，当前行为以源码、配置和 Schema 为准。
+评测能力包括 Criteria、Attribution、指令遵循归因、Score、Comparison、Clustering 和 Rewrite。Attribution 按 compact → 组件并行调查 → trace 摘要 → session 归因流水线；Comparison 对整场 session 做两两比较。开发先读 [AGENTS.md](AGENTS.md)，当前行为以源码、配置和 Schema 为准。
 
 ## 运行边界
 

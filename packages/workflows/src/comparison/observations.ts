@@ -1,4 +1,4 @@
-import { evidenceMessageIndex, sessionProblems, type SessionAttributionResult, type SessionProblem } from "@eval/agents/attribution";
+import { evidenceMessageIndex, sessionProblemEntries, type SessionAttributionResult } from "@eval/agents/attribution";
 import { canonical } from "@eval/contracts";
 import type { PlannedTask, SubmissionReceipt } from "@eval/contracts";
 import {
@@ -17,7 +17,7 @@ export interface ProblemSource {
   input_id: string;
   case_id: string;
   source: { file: string; line: number };
-  problems: SessionProblem[];
+  problems: ReturnType<typeof sessionProblemEntries>;
   batch_id?: string;
   attribution?: ClusteringObservationRef["attribution"];
 }
@@ -49,7 +49,7 @@ export function groupObservations(sources: ProblemSource[]): ClusteringObservati
           entries: [],
         };
         const evidence = finding.evidence[0];
-        if (!evidence) throw new Error(`问题样本缺少本方证据：${source.input_id}/${finding.problem_id}`);
+        if (!evidence) throw new Error(`问题样本缺少本方证据：${source.input_id}/${finding.problem_path}`);
         group.entries.push({
           ref: {
             ...(source.batch_id ? { batch_id: source.batch_id } : {}),
@@ -57,7 +57,7 @@ export function groupObservations(sources: ProblemSource[]): ClusteringObservati
             input_id: source.input_id,
             case_id: source.case_id,
             source: source.source,
-            finding_id: finding.problem_id,
+            problem_path: finding.problem_path,
             evidence_status: "已确认",
             message_index: evidenceMessageIndex(evidence.position) ?? 0,
             quote: evidence.quote,
@@ -76,13 +76,13 @@ export function groupObservations(sources: ProblemSource[]): ClusteringObservati
     .sort((a, b) => (canonical([a.component, a.label, a.definition]) < canonical([b.component, b.label, b.definition]) ? -1 : 1))
     .map((group, index) => {
       const entries = group.entries.sort((a, b) =>
-        canonical([a.ref.case_id, a.ref.finding_id]) < canonical([b.ref.case_id, b.ref.finding_id]) ? -1 : 1,
+        canonical([a.ref.case_id, a.ref.problem_path]) < canonical([b.ref.case_id, b.ref.problem_path]) ? -1 : 1,
       );
       const examples = representativeSamples(entries, ({ ref, example }) => ({
         answer: ref.input_id, date: ref.batch_id ?? "", certainty: ref.evidence_status,
         scene: canonical(example.responsibilities?.map(cause=>cause.component)??[]),
         content: canonical(example),
-        key: canonical([ref.case_id, ref.finding_id]),
+        key: canonical([ref.case_id, ref.problem_path]),
       })).map(entry => entry.example);
       return {
         id: `o${index + 1}`,
@@ -117,7 +117,7 @@ function observationsFor(
         source: entry.source,
         ...(origin ? { attribution: { ...origin, task_id: accepted!.taskId!,
           submission_id: accepted!.submissionId!, evaluator_version: accepted!.evaluatorVersion! } } : {}),
-        problems: accepted?.evaluation ? sessionProblems(accepted.evaluation as SessionAttributionResult) : [],
+        problems: accepted?.evaluation ? sessionProblemEntries(accepted.evaluation as SessionAttributionResult) : [],
       };
     }),
   );

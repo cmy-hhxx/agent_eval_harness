@@ -4,6 +4,8 @@ import {
   applyClustering,
   emptyLibrary,
   projectLibrary,
+  problemSampleKey,
+  countProblemSamples,
   resolveActiveClass,
   type ApplyClusteringInput,
   type ClusteringObservation,
@@ -11,6 +13,17 @@ import {
 import { ValidationError } from "@eval/contracts";
 import type { ClusteringResult } from "./types.js";
 import { effectiveProblemOccurrences } from "./occurrence-review.js";
+
+test("problem identity uses the accepted receipt and native path across turns and reused task wrappers", () => {
+  const first = { input_id: "answer", problem_path: "/turns/0/problem/0", attribution: { submission_id: "accepted-1", task_id: "task-1" } };
+  const reused = { ...first, attribution: { ...first.attribution, task_id: "reused-task" } };
+  const otherTurn = { ...first, problem_path: "/turns/1/problem/0" };
+  const otherReceipt = { ...first, attribution: { ...first.attribution, submission_id: "accepted-2" } };
+  assert.equal(problemSampleKey(first), problemSampleKey(reused));
+  assert.notEqual(problemSampleKey(first), problemSampleKey(otherTurn));
+  assert.notEqual(problemSampleKey(first), problemSampleKey(otherReceipt));
+  assert.equal(countProblemSamples([first, reused, otherTurn, otherReceipt]), 3);
+});
 
 const observation = (id: string, component: string, label: string, inputId: string): ClusteringObservation => ({
   id,
@@ -33,7 +46,7 @@ const observation = (id: string, component: string, label: string, inputId: stri
       input_id: inputId,
       case_id: `case-${inputId}`,
       source: { file: "f.jsonl", line: 7 },
-      finding_id: `f-${id}`,
+      problem_path: `f-${id}`,
       evidence_status: "已确认",
       message_index: 3,
       quote: "q",
@@ -454,7 +467,7 @@ test("library recalls at most three independent effective answers with source id
   });
   observations[3]!.refs[0]!.evidence_status = "待核实";
   observations[3]!.established_answer_ids = [];
-  observations[0]!.refs.push({ ...observations[0]!.refs[0]!, finding_id: "same-answer-second-finding" });
+  observations[0]!.refs.push({ ...observations[0]!.refs[0]!, problem_path: "same-answer-second-finding" });
   const library = applyClustering(emptyLibrary("model"), receipt(observations, {
     assignments: observations.map(item => ({ item_id: item.id, new_class_key: "n1" })), merges: [],
     new_classes: [{ key: "n1", component: "模型自身推理", label: "计算错误", definition: "计算结果与数据不符。", closest_existing: null, novelty: "首例。", category: "数值可靠性" }],
@@ -465,7 +478,7 @@ test("library recalls at most three independent effective answers with source id
   assert.equal(problem!.examples[0]!.evidence_status, "已确认");
   assert(problem!.examples.some(item => item.evidence_status === "待核实"));
   assert.equal(new Set(problem!.examples.map(item => item.batch_id)).size, 2);
-  assert(problem!.examples.every(item => item.attribution?.run === "/runs/source" && item.finding_id));
+  assert(problem!.examples.every(item => item.attribution?.run === "/runs/source" && item.problem_path));
   assert.equal(problem!.occurrences, 5);
   assert(!("finding" in problem!.examples[0]!), "the persisted library never duplicates full accepted finding text");
   assert(!("quote" in problem!.examples[0]!), "a resumable directory projection retains source references without copying input text");

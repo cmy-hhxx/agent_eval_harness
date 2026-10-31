@@ -1,4 +1,4 @@
-import { sessionProblems, type SessionAttributionResult } from "@eval/agents/attribution";
+import { sessionProblemEntries, type SessionAttributionResult } from "@eval/agents/attribution";
 import path from "node:path";
 import { canonical, safeId, type ProblemLibrary, type RunState } from "@eval/contracts";
 import { fileSourceReader, problemLibraryFile, readProblemLibrary, withProblemLibraryLock, writeProblemLibrary } from "@eval/data";
@@ -165,7 +165,7 @@ export async function reviewProblemOccurrences(
       !scopeCase || scopeCase.case_id !== occurrence.case_id ||
       canonical(scopeCase.source) !== canonical(occurrence.source))
       fail("问题样本原 Attribution 来源或 owner 不一致：" + item.occurrence_id);
-    const finding = sessionProblems(attribution.evaluation as SessionAttributionResult).find(finding => finding.problem_id === occurrence.finding_id);
+    const finding = sessionProblemEntries(attribution.evaluation as SessionAttributionResult).find(finding => finding.problem_path === occurrence.problem_path);
     const association = problemAssociation(initial, occurrence);
     const component = initial.components[association.component_id]!;
     if (!finding ||
@@ -180,7 +180,7 @@ export async function reviewProblemOccurrences(
       !observations.some(observation =>
         [component.label, ...component.aliases].some(name => normalizeLabel(name) === normalizeLabel(observation.component)) &&
         observation.refs.some(({ quote: _quote, ...ref }) => canonical(ref) === canonical({
-          input_id: occurrence.input_id, finding_id: occurrence.finding_id, case_id: occurrence.case_id,
+          input_id: occurrence.input_id, problem_path: occurrence.problem_path, case_id: occurrence.case_id,
           source: occurrence.source, message_index: occurrence.message_index,
           evidence_status: occurrence.evidence_status,
           batch_id: occurrence.batch_id,

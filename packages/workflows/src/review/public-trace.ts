@@ -1,4 +1,4 @@
-import { evidenceSources, instructionSources, parseEvidenceCoordinates, resolveEvidence } from "@eval/tools";
+import { evidenceSources, parseEvidenceCoordinates, resolveEvidence } from "@eval/tools";
 import { ValidationError, type ToolAudit, type ValidationIssue } from "@eval/contracts";
 import type { RawInput } from "../inputs/types.js";
 import { workflowText } from "@eval/prompts";
@@ -7,13 +7,9 @@ import { sessionSource } from "../inputs/session.js";
 const omitted = workflowText("material-omitted");
 
 /** Task-local view: preserve message positions and factual leaf paths while excluding private instructions. */
-export function attributionTrace(raw: RawInput, inputId: string, finalIndex: number): RawInput {
-  const skills = instructionSources(raw, inputId, finalIndex).filter(source => source.role === "tool");
-  const hiddenSkills = new Set(skills.map(source => source.message_index));
-  const skillContents = new Set(skills.flatMap(source => typeof source.content === "string" ? [source.content] : []));
+export function attributionTrace(raw: RawInput): RawInput {
   const projected = new WeakMap<object, unknown>();
   const visit = (value: unknown): unknown => {
-    if (typeof value === "string" && skillContents.has(value)) return omitted;
     if (!value || typeof value !== "object") return value;
     if (projected.has(value)) return projected.get(value);
     if (Array.isArray(value)) {
@@ -39,17 +35,16 @@ export function attributionTrace(raw: RawInput, inputId: string, finalIndex: num
     projected.set(value, result);
     return result;
   };
-  return { messages: raw.messages.map((message, index) => hiddenSkills.has(index)
-    ? { ...Object.fromEntries(Object.entries(message).filter(([key]) =>
-      ["type", "role", "name", "call_id", "tool_call_id", "parent_span", "span_id", "status", "exit_code"].includes(key))), output: omitted }
-    : visit(message) as RawInput["messages"][number]) };
+  // Loaded skills are executed dependencies under review, not private model instructions.
+  return { messages: raw.messages.map(message => message.role === "tool" || ["tool_result", "function_call_output"].includes(String(message.type))
+    ? message : visit(message) as RawInput["messages"][number]) };
 }
 
 /** Project each received turn independently, then retain the shared original message coordinates. */
-export function attributionSessionSource(session: RawInput, inputId: string) {
+export function attributionSessionSource(session: RawInput) {
   const source = sessionSource(session);
   const turns = (session.turns ?? [{ messages: session.messages }]).map(turn =>
-    attributionTrace({ messages: turn.messages }, inputId, turn.messages.length - 1));
+    attributionTrace({ messages: turn.messages }));
   return { ...source, original: source.raw, raw: { messages: turns.flatMap(turn => turn.messages) } as RawInput };
 }
 
@@ -62,6 +57,8 @@ export function validateOriginalAttributionEvidence(value: unknown, originals: R
     return Object.entries(entry).flatMap(([key, child]) => {
       const location = `${path}/${key}`;
       if (key.endsWith("evidence_indices") && Array.isArray(child))
+        return child.flatMap((number, i) => number === index ? [`${location}/${i}`] : []);
+      if (key === "evidence" && Array.isArray(child) && child.every(Number.isSafeInteger))
         return child.flatMap((number, i) => number === index ? [`${location}/${i}`] : []);
       if (key === "evidence_index" && child === index) return [location];
       if (key === "index" && /\/evidence\/\d+$/u.test(path) && child === index) return [location];
@@ -82,7 +79,7 @@ export function validateOriginalAttributionEvidence(value: unknown, originals: R
       if (!matches) {
         const index = (audit.evidenceBank ?? []).indexOf(row.evidence_id) + 1;
         const paths = index ? addressed(submission, index) : [];
-        const view = original && attributionTrace(original, point.input_id, original.messages.length - 1);
+        const view = original && attributionTrace(original);
         const originalLeaves = original ? evidenceSources(original.messages[point.message_index]) : [];
         const safe = view ? evidenceSources(view.messages[point.message_index]).filter(source => source.kind === "text" &&
           source.text.length && originalLeaves.some(leaf => leaf.kind === "text" && leaf.path === source.path && leaf.text === source.text)) : [];

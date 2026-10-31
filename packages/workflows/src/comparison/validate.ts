@@ -144,7 +144,7 @@ export async function validateRun(
       try {
         const receipt = receipts.get(task.id)!;
         // Internal receipts are validated above; only session attribution is a formal row.
-        if (task.stage === "attribution-trace" || task.stage === "attribution-compact-field") continue;
+        if (["attribution-component", "attribution-trace", "attribution-compact-field"].includes(task.stage)) continue;
         const dimension = attributionDimension(task.stage);
         if (dimension) {
           const exported = encodeResult(task, state, inputs);

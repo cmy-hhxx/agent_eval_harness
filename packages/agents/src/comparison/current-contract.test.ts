@@ -15,7 +15,7 @@ function accept(request:AgentRequest,draft:ComparisonSubmission){const result=co
  comparisonProfile.validate!(request,result,audit);return result;}
 function rejected(fn:()=>unknown,code:string){assert.throws(fn,(error:unknown)=>error instanceof ValidationError&&!!error.issues?.some(item=>item.code===code));}
 function problem(input:ComparisonInput,candidate='A',status:'已确认'|'待核实'='已确认'){
- input.attributions[candidate].Problem=[{problem_id:'p1',text:'回答数值错误',reason:'原问题要求4，回答提供5。',evidence_status:status,
+ input.attributions[candidate].Problem=[{problem_path:'/turns/0/problem/0',text:'回答数值错误',reason:'原问题要求4，回答提供5。',evidence_status:status,
   evidence:[{evidence_id:`ev_${input.candidates[candidate].candidate_id}_1_text_0_5_/content`,message_index:1,quote:'2+2=5'}]}];
 }
 test('comparison accepts independent met judgments with evidence-backed no-problem attributions',()=>{

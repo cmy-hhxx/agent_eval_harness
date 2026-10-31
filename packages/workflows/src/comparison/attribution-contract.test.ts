@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { Ajv2020 } from "ajv/dist/2020.js";
 import type { PlannedTask, RunState, SubmissionReceipt } from "@eval/contracts";
 import { emptyUsage } from "@eval/contracts";
-import { sessionAttributionResultSchema, sessionProblems } from "@eval/agents/attribution";
+import { sessionAttributionResultSchema, sessionProblems, sessionProblemEntries } from "@eval/agents/attribution";
 import { attributionResult, emptyAudit, fakeEvaluatorVersion, fakeJudge } from "../../../../tests/fixtures/comparison.js";
 import { comparisonAttribution } from "./comparison-attribution.js";
 import { attributionRow, stageResult, encodeResult } from "./results.js";
@@ -35,7 +35,7 @@ test("canonical session attribution is the only exported attribution contract", 
 test("formal turn and session problems require severity without filling missing values", () => {
   const validate = new Ajv2020({ strict: false }).compile(sessionAttributionResultSchema);
   const { value } = fixture();
-  value.session_problem = [{ ...structuredClone(value.turns[0]!.problem[0]!), problem_id: "s-p1" }];
+  value.session_problem = [structuredClone(value.turns[0]!.problem[0]!)];
   assert(validate(value));
   for (const scope of ["turn", "session"]) for (const field of ["severity", "severity_reason"]) {
     const invalid = structuredClone(value), problem = scope === "turn" ? invalid.turns[0]!.problem[0]! : invalid.session_problem[0]!;
@@ -59,7 +59,7 @@ test("rewrite slots address canonical turn and session problems", () => {
 
 test("comparison projection maps canonical session problems without private responsibility fields", () => {
   const { value } = fixture(), projection = comparisonAttribution(value);
-  assert.equal(projection.Problem[0]!.problem_id, "p1");
+  assert.equal(projection.Problem[0]!.problem_path, "/turns/0/problem/0");
   assert.equal(projection.Problem[0]!.text, "2+2 应得 4，实际回答给出了不同结果。");
   assert.deepEqual(Object.keys(projection).sort(), ["Problem", "correct_reason", "has_standard_answer", "is_correct", "summary"]);
   assert(!Object.hasOwn(projection.Problem[0]!, "responsibility_boundary"));
@@ -69,13 +69,27 @@ test("comparison projection maps canonical session problems without private resp
 });
 
 test("clustering consumes canonical problem label, definition and phenomenon", () => {
-  const { value } = fixture(), problem = sessionProblems(value)[0]!;
+  const { value } = fixture(), problem = sessionProblemEntries(value)[0]!;
   const rows = groupObservations([{ input_id: String(value.session_meta.input_id), case_id: "q1", source: { file: "source", line: 1 },
     problems: [problem] }, { input_id: "second-input", case_id: "q2", source: { file: "source", line: 2 },
     problems: [{ ...problem, severity: "P3", severity_reason: "仅有轻微影响。" }] }]);
   assert.equal(rows.length, 1);
   assert.equal(rows[0]!.label, problem.label);
   assert.equal(rows[0]!.definition, problem.definition);
-  assert.equal(rows[0]!.refs[0]!.finding_id, "p1");
+  assert.equal(rows[0]!.refs[0]!.problem_path, "/turns/0/problem/0");
   assert.equal(rows[0]!.refs.length, 2, "different severity does not split the same problem class");
+});
+
+test("problem coordinates distinguish turns and session scope without modifying accepted problem bodies", () => {
+  const { value } = fixture();
+  value.turns.push(structuredClone(value.turns[0]!));
+  value.session_problem.push(structuredClone(value.turns[0]!.problem[0]!));
+  const before = structuredClone(value), entries = sessionProblemEntries(value);
+  assert.deepEqual(entries.map(entry => entry.problem_path), ["/turns/0/problem/0", "/turns/1/problem/0", "/session_problem/0"]);
+  assert.deepEqual(value, before);
+  const validate = new Ajv2020({ strict: false }).compile(sessionAttributionResultSchema);
+  assert(validate(value));
+  const invalid = structuredClone(value);
+  Object.assign(invalid.turns[0]!.problem[0]!, { problem_id: "p1" });
+  assert(!validate(invalid), "new formal rows cannot contain program-invented problem IDs");
 });

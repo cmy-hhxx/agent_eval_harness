@@ -72,9 +72,11 @@ test("new runs reuse the latest complete business answer across evaluator versio
     const resumed = await businessAttributionRepository.readRun(next.run);
     assert.equal(Object.keys(resumed.receipts).length, 4);
     for (const model of config.inputs.versions) {
-      const rows = []; for await (const row of readJsonl(path.join(config.output.path, model.id, model.id + "-2026-10-26.jsonl"))) rows.push(row);
+      const rows = []; for await (const row of readJsonl(path.join(config.output.path, model.id, model.id + "_attribution-2026-10-26.jsonl"))) rows.push(row);
       assert.equal(rows.length, 1);
       assert.equal((rows[0] as { session_summary: string }).session_summary, "最新判词");
+      const compacts = []; for await (const row of readJsonl(path.join(config.output.path, model.id, "compact", model.id + "_compact-2026-10-26.jsonl"))) compacts.push(row);
+      assert.equal(compacts.length, 1);
     }
   } finally { await close(); }
 });
@@ -90,7 +92,7 @@ test("organized historical verdicts retain missing newer fields and are reused f
   row.session_problem = [{ problem_id: "old-problem", component: "终稿生成轮", label: "旧问题", definition: "旧定义",
     problem_phenomena: "旧现象", reason: "旧依据", evidence: [] }];
   await writeJsonl(path.join(original.run, "results/attribution.jsonl"), [row]);
-  const model = config.inputs.versions[0].id, relative = model + "/" + model + "-2026-10-26.jsonl";
+  const model = config.inputs.versions[0].id, relative = model + "/" + model + "_attribution-2026-10-26.jsonl";
   const unrelated = { session_meta: { session_id: "unselected-original" }, turns: [], session_summary: "保留原结果", session_problem: [] };
   await writeJsonl(path.join(config.output.path, relative), [row, unrelated]);
   await writeJson(path.join(original.run, "organization.json"), { source_file: path.join(original.run, "results/attribution.jsonl"),
@@ -175,7 +177,7 @@ test("an accepted attribution without compact only schedules the missing summary
   const next = await prepare(config, "backfill-summary");
   const close = await businessAttributionRepository.prepareRun!(next.run, next.state, next.plan.inputs);
   try {
-    assert.equal(next.state.manifest.tasks.filter(task => task.stage === "attribution-compact-field").length, 11);
+    assert.equal(next.state.manifest.tasks.filter(task => task.stage === "attribution-compact-field").length, 9);
     assert.deepEqual(next.state.manifest.tasks.filter(task => task.stage !== "attribution-compact-field").map(task => task.stage).sort(), ["attribution-compact", "attribution-session"]);
     const compact = next.state.manifest.tasks.find(task => task.stage === "attribution-compact")!;
     const source = next.state.manifest.tasks.find(task => task.stage === "attribution-session")!;

@@ -11,6 +11,7 @@ export type SavedReceipt = Omit<SubmissionReceipt, "exported" | "evaluation" | "
   rewriteIds?: string[];
   exported?: DiskReference;
   compact?: ResultReference;
+  attribution?: ResultReference;
 };
 export type SavedTask = TaskState & {
   stage: Stage;

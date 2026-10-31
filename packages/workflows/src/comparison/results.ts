@@ -224,7 +224,7 @@ export function encodeResult(task: PlannedTask, state: RunState, inputs: Record<
     (task.stage !== "comparison" || data.verificationAudit !== true || !data.verificationOf?.taskId))
     throw new Error("可选核验必须同时声明核验标记与正式对比来源。");
   const receipt = state.receipts[task.id];
-  if (task.stage === "attribution-trace" || task.stage === "attribution-compact-field") return null;
+  if (["attribution-component", "attribution-trace", "attribution-compact-field"].includes(task.stage)) return null;
   if (attributionDimension(task.stage)) return receipt.exported ?? { id: task.id, file: resultFile(task.stage as Stage),
     row: dimensionAttributionRow(task, receipt, Object.values(data.candidates)[0]) };
   if (task.stage === "attribution-compact" && !validateCompact(receipt.evaluation))

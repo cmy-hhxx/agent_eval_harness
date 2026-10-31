@@ -1,20 +1,4 @@
 {
   "field_task": "当前任务：只提取 {field}；value 类型为 {type}。\n{instruction}",
-  "examples": {
-    "array": {
-      "value": [
-        {
-          "description": "当前字段的事实描述",
-          "$evidence": []
-        }
-      ]
-    },
-    "object": {
-      "value": {
-        "description": "当前字段的事实描述",
-        "$evidence": []
-      }
-    }
-  },
-  "repair_instruction": "仅修复反馈指出的封装、类型或引用位置，保留其他事实；字段内容直接放入 value，$evidence 使用当前材料的整数编号数组。"
+  "repair_instruction": "仅修复反馈指出的固定字段、类型或 evidence 选号，保留其他事实。只提交示例中的浅层字段，不生成 idx，不增加 JSON 层级。components 必须选择本轮目录编号，不用空 actor_indices 复述历史工具；merge_groups 中 rows 是0起算的待合并行，按提供的 actor_indices/evidence 并集只留一项，写一句整体摘要，不删除真实具名来源。"
 }

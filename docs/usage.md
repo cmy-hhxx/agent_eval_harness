@@ -110,8 +110,8 @@ Worker 启动和重建预算属于容量，耗尽后隔离容量而不把健康�
 | /mnt/fin_bench/eval_data/{source}/2_eval_input/ | 服务器评测输入，不复制到本地或每个 run |
 | /mnt/fin_bench/eval_data/4_user_kyc_data/{source}/ | 当前任务需要的用户 KYC 数据 |
 | data/input-catalog/ | 业务身份及字节位置索引，不存正文 |
-| {source}/3_eval_output/0_daily_eval/<模型>/<模型>-YYYY-MM-DD.jsonl | 日常单模型归因 |
-| {source}/3_eval_output/3_lost_user_eval/<模型>/<模型>-YYYY-MM-DD.jsonl | 流失样本归因 |
+| {source}/3_eval_output/0_daily_eval/<模型>/<模型>_attribution-YYYY-MM-DD.jsonl | 日常单模型归因 |
+| {source}/3_eval_output/3_lost_user_eval/<模型>/<模型>_attribution-YYYY-MM-DD.jsonl | 流失样本归因 |
 | <正式根>/criteria/criteria-YYYY-MM-DD.jsonl | 当天共享的共同标准 |
 | <正式根>/comparison/<模型A>_vs_<模型B>/<模型A>_vs_<模型B>-YYYY-MM-DD.jsonl | 当天对局；comparison-review、comparison-verification 等对应产物采用相同的模型对/日期命名 |
 | <正式根>/<模型>/<其他产物>/<模型>-YYYY-MM-DD.jsonl | 其他单模型正式产物 |

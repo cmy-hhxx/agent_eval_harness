@@ -231,7 +231,7 @@ test("a missing original finding or a forged clustering submission has no mainte
     const attrId = f.cluster.dependencies[f.library.occurrences[0]!.input_id]!;
     const saved = f.state.receipts[attrId]!.exported!;
     const row = structuredClone(saved.row);
-    sessionProblems(row as unknown as ReturnType<typeof attributionResult>)[0]!.problem_id = "different";
+    (row as unknown as ReturnType<typeof attributionResult>).turns[0]!.problem.splice(0, 1);
     const rows = Object.values(f.state.receipts).filter(receipt => receipt.exported?.file === "attribution.jsonl")
       .map(receipt => receipt.taskId === attrId ? row : receipt.exported!.row);
     await writeJsonl(path.join(f.run, "results", "attribution.jsonl"), rows);
@@ -269,13 +269,12 @@ test("review rejects a same-label finding that has no original accepted observat
     const row = structuredClone(original);
     const evaluation = row as unknown as ReturnType<typeof attributionResult>;
     const added = structuredClone(sessionProblems(evaluation)[0]!);
-    added.problem_id = "never-clustered";
     added.reason = "\uffffAnother independent problem definition absent from the original clustering request.";
     evaluation.turns[0]!.problem.push(added);
     await writeJsonl(path.join(f.run, "results", "attribution.jsonl"),
       Object.values(f.state.receipts).filter(receipt => receipt.exported?.file === "attribution.jsonl")
         .map(receipt => receipt.taskId === attrId ? row : receipt.exported!.row));
-    occurrence.finding_id = added.problem_id;
+    occurrence.problem_path = `/turns/0/problem/${evaluation.turns[0]!.problem.length - 1}`;
     await writeJson(f.file, f.library);
     const before = await readFile(f.file, "utf8");
     await assert.rejects(reviewProblemOccurrences(f.config, f.decision, { apply: true, evaluatorVersion: "review" }), /实际归类|原观察/);

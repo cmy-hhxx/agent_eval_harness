@@ -26,13 +26,13 @@ test("compact keeps its inexpensive exact binding while judgment stages inherit 
   try {
     models.bindings.attribution.thinking = "high";
     assert.equal(models.bindings["attribution-compact"].thinking, "off");
-    assert.equal(models.bindings["attribution-trace"], undefined);
+    assert.equal(models.bindings["attribution-trace"].thinking, "off");
     assert.equal(models.bindings["attribution-session"], undefined);
     const routing = createBalancedModels(models), base = routing.modelForStage("attribution");
-    for (const [index, stage] of ["attribution-compact", "attribution-trace", "attribution-session"].entries()) {
+    for (const [index, stage] of ["attribution-compact", "attribution-component", "attribution-trace", "attribution-session"].entries()) {
       const task = { id: `attribution-stage-${index}`, stage } as PlannedTask;
       assert.equal(routing.modelForTask(task).model, base.model);
-      const thinking = stage === "attribution-compact" ? "off" : base.thinking;
+      const thinking = ["attribution-compact", "attribution-trace"].includes(stage) ? "off" : base.thinking;
       assert.equal(routing.modelForTask(task).thinking, thinking);
       assert.equal(routing.modelForStage(stage).model, base.model);
       assert.equal(routing.modelForStage(stage).thinking, thinking);
@@ -78,7 +78,7 @@ test("balanced tasks keep their channel and stage parameters, and quota exhausti
     async run() {
       const spec = options.spec;
       seen.push({ task: spec.taskId, stage: spec.evaluation.id, channel: spec.model.provider });
-      if (spec.evaluation.id === "attribution") assert.equal(spec.model.thinking, "high");
+      if (spec.evaluation.id === "attribution") assert.equal(spec.model.thinking, spec.evaluation.profile === "trace" ? "off" : "high");
       if (spec.model.provider === "openai" && !failed.size) {
         failed.add(spec.taskId);
         options.onEvent({ type: "message_end", message: { role: "assistant", stopReason: "error",
@@ -106,7 +106,7 @@ test("balanced tasks keep their channel and stage parameters, and quota exhausti
     const saved = await readRunState(path.join(config.output.path, options.runId));
     for (const task of plan.tasks) {
       assert.equal(saved.manifest.states[task.id].status, "succeeded");
-      if (task.stage === "attribution-compact") {
+      if (services.taskSource.isComputedTask?.(task)) {
         assert.equal(saved.receipts[task.id].judge, "code");
         assert.equal(saved.receipts[task.id].usage.totalTokens, 0);
         continue;

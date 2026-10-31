@@ -1,4 +1,4 @@
-import { cite, displayEvidence, evidenceSources, selectEvidenceSource, images, overlapsImagePlaceholder, jsonRanges, traceCallOrigins, traceExchanges, traceExecutionLinks } from "@eval/tools";
+import { cite, displayEvidence, evidenceSources, selectEvidenceSource, images, overlapsImagePlaceholder, traceCallOrigins, traceExchanges, traceExecutionLinks } from "@eval/tools";
 import { canonical, evidenceOrigin, type JsonObject } from "@eval/contracts";
 import type { RawInput } from "../inputs/types.js";
 import { traceCatalog } from "./catalog.js";
@@ -206,73 +206,4 @@ export function processMaterial(raw: RawInput, original: RawInput, inputId: stri
       view_request: { candidate, message_index: row.message_index } } : {}),
     ...Object.fromEntries(["model", "agent_name", "node_name", "service_name", "tool_name", "skill_name", "script_path", "start_time", "end_time", "finish_reason", "stop_reason", "exit_code", "returncode", "success", "is_error", "usage"]
       .filter(key => Object.hasOwn(raw.messages[row.message_index], key)).map(key => [key, raw.messages[row.message_index]![key]])) })), process_evidence: [...priorityEvidence, ...process_evidence] };
-}
-
-/** Copy small structured source values once; semantic importance remains the compact model's choice. */
-export function structuredProcessFacts(raw: RawInput, maxChars = 14000, selected?: ReadonlySet<number>) {
-  const payloads = raw.messages.flatMap((message, message_index) =>
-    selected && !selected.has(message_index) ? [] : ["input", "arguments", "parameters", "output", "result", "content", "exit_code", "returncode", "success", "is_error"].flatMap(key => {
-      if (!Object.hasOwn(message, key)) return [];
-      let value = message[key];
-      if (typeof value === "string") {
-        try { value = JSON.parse(value); } catch { return []; }
-      }
-      return value !== undefined ? [{ message_index, path: `/${key}`, value }] : [];
-    }));
-  const allowance = Math.max(64, Math.floor(maxChars / Math.max(1, payloads.length)));
-  return payloads.map(({ message_index, path, value }) => {
-    const fields: Record<string, unknown> = {};
-    let chars = 2, partial = false;
-    const numeric = (node: unknown) => typeof node === "number" || typeof node === "string" && /^[-+]?(?:\d+\.?\d*|\.\d+)(?:e[-+]?\d+)?$/iu.test(node);
-    const visit = (node: unknown, location: string, numericPass: boolean) => {
-      if (node && typeof node === "object") {
-        const entries = Object.entries(node);
-        for (const [key, child] of Array.isArray(node) ? entries.slice(0, 5) : entries)
-          visit(child, `${location}/${key.replaceAll("~", "~0").replaceAll("/", "~1")}`, numericPass);
-        if (Array.isArray(node) && entries.length > 5) partial = true;
-      } else if (typeof node === "number" || typeof node === "boolean" || node === null || typeof node === "string" && node.length <= 160) {
-        if (numeric(node) !== numericPass || Object.hasOwn(fields, location)) return;
-        const size = JSON.stringify([location, node]).length;
-        if (chars + size <= allowance) { fields[location] = node; chars += size; }
-        else partial = true;
-      } else partial = true;
-    };
-    // Preserve the payload's own scalar context before spending the rest on nested series.
-    if (value && typeof value === "object" && !Array.isArray(value))
-      for (const [key, child] of Object.entries(value)) if (!child || typeof child !== "object")
-        visit(child, `/${key.replaceAll("~", "~0").replaceAll("/", "~1")}`, numeric(child));
-    // Large column descriptions must not exhaust the remaining budget before table values.
-    visit(value, "", true);
-    visit(value, "", false);
-    return { message_index, path, fields, partial,
-      read_request: { candidate: "answer", message_index, path, offset: 0, max_chars: 16000 } };
-  });
-}
-
-/** Resolve selected scalar facts to their exact source bytes, including JSON stored inside a string. */
-export function referencedProcessFacts(raw: RawInput, original: RawInput, inputId: string,
-  positions: { trace_index: number; message_index: number }[], scope?: number) {
-  const selected = scope === undefined ? undefined : new Set(positions.flatMap((point, index) => point.trace_index === scope ? [index] : []));
-  return structuredProcessFacts(raw, 14000, selected).flatMap(row => {
-    const message = raw.messages[row.message_index]!, originalMessage = original.messages[row.message_index]!;
-    const sources = evidenceSources(message), originals = evidenceSources(originalMessage);
-    const text = sources.find(source => source.kind === "text" && source.path === row.path);
-    const json = sources.find(source => source.kind === "json")!;
-    const source = text ?? json;
-    // Never issue coordinates in a rewritten JSON parent or a privacy placeholder.
-    if (source.quotable === false || !originals.some(item => item.kind === source.kind && item.path === source.path && item.text === source.text)) return [];
-    let ranges: ReturnType<typeof jsonRanges>;
-    try { ranges = jsonRanges(source.text); } catch { return []; }
-    return Object.entries(row.fields).flatMap(([field_path, value]) => {
-      const pointer = (text ? "" : row.path) + field_path;
-      const span = ranges.get(pointer);
-      if (!span || span.end - span.start > 400) return [];
-      if (!Object.is(JSON.parse(source.text.slice(span.valueStart, span.end)), value)) return [];
-      const evidence = displayEvidence(cite(inputId, row.message_index, source, span.start, span.end));
-      return [{ value, origin: evidenceOrigin(message, row.path + field_path),
-        location: { ...positions[row.message_index]!, source_message_index: row.message_index, path: row.path, field_path },
-        source_evidence: [{ ...evidence, location: { ...positions[row.message_index]!, source_message_index: row.message_index,
-          path: source.path, start: span.start, end: span.end } }] }];
-    });
-  });
 }

@@ -38,7 +38,7 @@ Agent 之间不互相导入；Workflow 通过公开入口组合。Host 只接收
 
 Comparison 复用 Attribution 的 compact → trace → session 任务规划和材料绑定；共用输入与材料模块不导入具体 Workflow。跨包调用共用能力使用 `@eval/workflows/inputs`、`@eval/workflows/review`。
 
-Comparison 的额外归因维度在 `attributionDimensions` 登记：名称、Agent、材料绑定与结果字段由维度定义拥有，任务生成、调度、输出与恢复使用共用逻辑。当前登记指令遵循归因；其任务只关联本回答的 session 来源，不依赖其他维度，也不接收既有归因判词。添加用户 KYC 等维度时实现相应材料绑定、Agent 与 Schema，再登记定义；不修改 Host 或过程归因，不复用指令规则冒充 KYC 规则。独立 Attribution workflow 当前仍只执行三段主归因。
+Comparison 的额外归因维度在 `attributionDimensions` 登记：名称、Agent、材料绑定与结果字段由维度定义拥有，任务生成、调度、输出与恢复使用共用逻辑。当前登记指令遵循归因；其任务只关联本回答的 session 来源，不依赖其他维度，也不接收既有归因判词。添加用户 KYC 等维度时实现相应材料绑定、Agent 与 Schema，再登记定义；不修改 Host 或过程归因，不复用指令规则冒充 KYC 规则。独立 Attribution workflow 执行 Compact、组件并行调查、Trace 摘要及 Session 汇总。
 
 Comparison 的归因输入由自身公开契约定义，Workflow 显式投影摘要、任务标准、判据、核心结论、正确性核查和 finding；保留证据坐标、数值与表格核查、标准答案冲突事实和原序号，隔离责任调查及内部 finding ID。表格来源复核在投影前从完整归因派生。`rewritten` 只属于 Workflow 导出与展示，不进入 Agent 原始结果。各 Agent Profile 声明提交方式和草稿预算，Prompts 只渲染传入选项。
 

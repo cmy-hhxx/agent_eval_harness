@@ -235,14 +235,14 @@
               "type": "object",
               "additionalProperties": false,
               "required": [
-                "problem_id",
+                "problem_path",
                 "text",
                 "reason",
                 "evidence_status",
                 "evidence"
               ],
               "properties": {
-                "problem_id": {
+                "problem_path": {
                   "type": "string",
                   "minLength": 1
                 },

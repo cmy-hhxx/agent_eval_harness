@@ -1,5 +1,6 @@
-import { isTraceAttributionTask } from "@eval/workflows/attribution";
-import { compactReceipt } from "../../../tests/fixtures/compact.js";
+import { type AttributionTaskData } from "@eval/workflows/attribution";
+import { normalizeInput } from "@eval/workflows/inputs";
+import { sourceCompactReceipt, componentTask } from "../../../tests/fixtures/compact.js";
 import { draftFor, submitFor } from "../../../tests/fixtures/comparison.js";
 import { waitForTestState } from "../../../tests/fixtures/wait.js";
 import test from "node:test";
@@ -61,8 +62,8 @@ interface WorkerHarnessOptions {
 
 const fileProfile: Partial<AgentProfile> = {
   fileSubmission: true, jsonStringSubmission:false, draftWriteInCallLimit:false,
-  toolDescriptions: agentPrompt("attribution", attributionAgent.profiles.trace!.toolNames,
-    { profile: "trace", fileSubmission: true }).toolDescriptions,
+  toolDescriptions: agentPrompt("attribution", attributionAgent.profiles.component!.toolNames,
+    { profile: "component", fileSubmission: true }).toolDescriptions,
 };
 
 for (const method of ["accept", "inspect"] as const)
@@ -292,9 +293,13 @@ async function harness(
       inputs: { "11111111-1111-4111-8111-111111111111": { messages: [{ content: material }, { content: "非必读正文" }] } },
       summary: {},
     };
-    const task = plan.tasks.find((item) => isTraceAttributionTask(item)) ?? plan.tasks[0],
+    let task = plan.tasks.find((item) => item.stage === "attribution-trace") ?? plan.tasks[0];
+    const
       criteria = plan.tasks.find((item) => item.id === task.dependencies.criteria),
       compact = plan.tasks.find((item) => item.id === task.dependencies.compact);
+    const candidate = compact && (compact.data as AttributionTaskData).candidate;
+    const compactResult = candidate && { ...sourceCompactReceipt(candidate, normalizeInput(plan.inputs[candidate.input_id])), taskId: compact!.id };
+    if (candidate && compactResult) { const component = componentTask(candidate, compactResult, "最终答复生成"); task = { ...component, dependencies: task.dependencies, data: { ...task.data as object, ...component.data as object } }; }
     const criteriaReceipt: SubmissionReceipt | undefined = criteria && {
       taskId: criteria.id, attemptId: "criteria", submissionId: "criteria", status: "succeeded",
       acceptedAt: 1, evaluatorVersion: "fixture", judge: "fixture", evaluation: criteriaResult(), audit: emptyAudit(), usage: emptyUsage(),
@@ -302,8 +307,7 @@ async function harness(
     const evaluationServices: EvaluationServices = material === undefined ? {
       ...services,
       ...(profile ? { agents: new AgentRegistry([{ ...attributionAgent, profiles: {
-        trace: { ...attributionAgent.profiles.trace!, ...(profile.fileSubmission ? {jsonStringSubmission:false}:{}), ...profile },
-        single: { ...attributionAgent.profiles.single!, ...(profile.fileSubmission ? {jsonStringSubmission:false}:{}), ...profile },
+        component: { ...attributionAgent.profiles.component!, ...(profile.fileSubmission ? {jsonStringSubmission:false}:{}), ...profile },
       } }]) } : {}),
     } : {
       repository: createRunRepository<RunState>({
@@ -343,12 +347,12 @@ async function harness(
     };
     const store = new RunStore(
       path.join(directory, "run"),
-      { manifest, receipts: { ...(criteria ? { [criteria.id]: criteriaReceipt! } : {}), ...(compact ? { [compact.id]: { ...compactReceipt(), taskId: compact.id } } : {}) }, usage: emptyUsage(), recordedAttempts: 0 },
+      { manifest, receipts: { ...(criteria ? { [criteria.id]: criteriaReceipt! } : {}), ...(compact ? { [compact.id]: compactResult! } : {}) }, usage: emptyUsage(), recordedAttempts: 0 },
       plan.inputs,
       evaluationServices,
     );
     const prepared = evaluationServices.agents.prepare(evaluationServices.taskSource.bind(task, plan.inputs,
-      { ...(criteria ? { criteria: criteriaReceipt! } : {}), ...(compact ? { compact: { ...compactReceipt(), taskId: compact.id } } : {}) }, { tasks: plan.tasks }));
+      { ...(criteria ? { criteria: criteriaReceipt! } : {}), ...(compact ? { compact: compactResult! } : {}) }, { tasks: plan.tasks }));
     let posts = 0, inspectionPosts = 0,
       lookups = 0;
     const host = await listen(async (req, res, url) => {

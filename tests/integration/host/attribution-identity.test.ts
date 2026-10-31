@@ -23,7 +23,7 @@ async function verifyIdentity(t: test.TestContext, sources: RawInput[][], distin
       await inspectFor(options);
       const result = taskResult(options.spec) as Record<string, unknown>;
       if (distinctSummaries && "session_summary" in result) result.session_summary = "独立来源归因：" + options.spec.taskId;
-      if (distinctSummaries && options.spec.evaluation.profile === "single") result.summary = "独立来源归因：" + options.spec.taskId;
+      if (distinctSummaries && options.spec.evaluation.profile === "trace") result.summary = "独立来源归因：" + options.spec.taskId;
       const submitted = await submitFor(options, draftFor(options.spec, result));
       assert.equal(submitted.isError, undefined, JSON.stringify(submitted));
     }, async abort() {}, async dispose() {} };
@@ -57,11 +57,11 @@ async function verifyIdentity(t: test.TestContext, sources: RawInput[][], distin
     assert.deepEqual(exported.row.session_meta, source.meta, "outer metadata is passed through without additions");
     assert.deepEqual((exported.row.turns as { meta: unknown }[]).map(turn => turn.meta),
       source.turns ? source.turns.map(turn => turn.meta) : [source.meta], "trace metadata is passed through without additions");
-    if (distinctSummaries) assert.equal(exported.row.session_summary, "独立来源归因：" + task.id);
+    if (distinctSummaries) assert.equal(exported.row.session_summary, "独立来源归因：" + (services.taskSource.isComputedTask?.(task) ? task.dependencies.trace0 : task.id));
     const selected = await comparisonRepository.readTasks(run, [task.id]);
     assert.deepEqual(selected.receipts[task.id], before.receipts[task.id]);
-    const archived = JSON.parse(await readFile(path.join(run, "_internal/tasks", task.id, "attempt-001/attempt.json"), "utf8"));
-    assert.equal(archived.spec.taskId, task.id, "the final Worker record still retains the complete debug attempt");
+    const archived = JSON.parse(await readFile(path.join(run, "_internal/tasks", services.taskSource.isComputedTask?.(task) ? task.dependencies.trace0! : task.id, "attempt-001/attempt.json"), "utf8"));
+    assert.equal(archived.spec.taskId, services.taskSource.isComputedTask?.(task) ? task.dependencies.trace0 : task.id, "the final Worker record still retains the complete debug attempt");
     assert.equal(archived.status.state, "succeeded");
   }
   assert.equal(identities.size, records.length);
@@ -77,7 +77,7 @@ async function verifyIdentity(t: test.TestContext, sources: RawInput[][], distin
       assert.equal(after.receipts[task.id].exported!.id, before.receipts[task.id].exported!.id);
       assert.equal(after.receipts[task.id].exported!.line, before.receipts[task.id].exported!.line);
       assert.deepEqual(after.receipts[task.id].evaluation, before.receipts[task.id].evaluation);
-      assert.equal(executions.get(task.id), 1);
+      assert.equal(executions.get(task.id), services.taskSource.isComputedTask?.(task) ? undefined : 1);
     }
     assert.deepEqual([...executions], executionCounts, "no stage is evaluated again on resume");
     const validation = await validateRun(run);

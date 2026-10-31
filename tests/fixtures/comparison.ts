@@ -145,7 +145,7 @@ export async function fixtureConfig(
 }
 
 export function attributionResult(correct=true,answer='2+2=4',available=true,inputId='7c4e3ba8-8f7c-46cc-b8fb-3016e10ea2dd'):SessionAttributionResult{
-  const problem: SessionProblem[] = correct ? [] : [{ problem_id: 'p1', component: '算术运算', label: '加法结果错误',
+  const problem: SessionProblem[] = correct ? [] : [{ component: '算术运算', label: '加法结果错误',
     definition: '最终回答与给定加法结果不一致。', problem_phenomena: '2+2 应得 4，实际回答给出了不同结果。',
     reason: '最终回答中的计算结果错误。', severity: 'P0', severity_reason: '加法结果是本题的核心交付，数值错误使回答不可采信。',
     evidence: [{ position: 'trace_index 0 / message_index 1 / path /content',
@@ -162,25 +162,25 @@ export function taskResult(spec: Pick<AttemptSpec, "evaluation" | "prompt" | "in
   const properties =
     (spec.evaluation.outputSchema as { properties?: Record<string, unknown> }).properties || {};
   if (spec.evaluation.id === "compact") {
-    const material = parsedMaterial(spec, revealed) as { turns: { turn_index: number }[] };
-    const field = spec.evaluation.profile;
-    if (field !== "default") return { value: ["reasoning_chain", "execution_chain", "reflections", "gaps", "artifacts", "components"].includes(field) ? []
-      : field === "key_data" ? { value: 4, unit: "元" } : { summary: "会话已完成。" } };
-    return { session_overview: { summary: "整理实际会话。" }, meta: {}, turns: material.turns.map(turn => ({
-      turn_index: turn.turn_index, key_data: { conclusion: "按原始证据核验。" } })) };
+    if (spec.evaluation.profile === "default") throw new Error("Compact assembly is computed, never sent to a model");
+    if (spec.evaluation.profile === "components") return structuredClone((parsedMaterial(spec, revealed) as { submission_example: unknown }).submission_example);
+    return { value: spec.evaluation.profile === "session_overview" ? ["用户提出问题。", "模型已回复。"] : [] };
+  }
+  if (spec.evaluation.id === "attribution" && "problems" in properties) {
+    const material = parsedMaterial(spec, revealed) as { current_component: { contains_final_generation: boolean }; final_answer: { reference: { evidence_index: number } }[] };
+    const turn = attributionResult(false).turns[0]!;
+    return { content: "核对当前组件的实际动作与交付，仅最终生成存在受控算术偏差。", evidence: [], tool_error_reviews: [],
+      problems: !material.current_component.contains_final_generation ? [] : turn.problem.map(problem => ({
+        label: problem.label, definition: problem.definition, problem_phenomena: problem.problem_phenomena, reason: problem.reason,
+        severity: problem.severity, severity_reason: problem.severity_reason, tool_error_indices: [],
+        evidence: [{ index: material.final_answer[0]!.reference.evidence_index, reason: "原始最终回答。" }],
+      })) };
   }
   if (spec.evaluation.id === "attribution" && "summary" in properties) {
-    const result = attributionResult(false), turn = result.turns[0]!;
-    return { summary: turn.summary, problems: turn.problem.map(problem => ({ component: "result-interpretation", actor_index: ((parsedMaterial(spec, revealed) as { actor_catalog: {kind:string;actor_index:number}[] }).actor_catalog.find(entry => entry.kind === "model")!.actor_index),
-      label: problem.label, definition: problem.definition, problem_phenomena: problem.problem_phenomena, reason: problem.reason,
-      severity: problem.severity, severity_reason: problem.severity_reason,
-      evidence: problem.evidence.map(() => ({ index: 1, reason: "原始证据。" })) })),
-      ...("is_correct" in properties ? { is_correct: turn.is_correct, correct_reason: turn.correct_reason } : {}) };
+    const turn = attributionResult(false).turns[0]!;
+    return { summary: turn.summary, ...("is_correct" in properties ? { is_correct: turn.is_correct, correct_reason: turn.correct_reason } : {}) };
   }
-  if ("session_summary" in properties) {
-    const result = attributionResult(false);
-    return { session_summary: result.session_summary, session_problem: [] };
-  }
+  if ("session_summary" in properties) return { session_summary: attributionResult(false).session_summary, session_problem: [] };
   if (spec.evaluation.id === "instruction-review") return {summary:"指令遵循归因独立完成。",checks:[]};
   if ("rewrites" in properties) {
     const request = parsedMaterial(spec, revealed) as { items: { id: string; text: string; preference?: string }[] };

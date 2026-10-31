@@ -4,7 +4,6 @@
   "type": "object",
   "additionalProperties": false,
   "required": [
-    "problem_id",
     "component",
     "label",
     "definition",
@@ -15,11 +14,10 @@
     "evidence"
   ],
   "properties": {
-    "problem_id": { "type": "string", "minLength": 1 },
     "component": {
       "type": "string",
       "minLength": 1,
-      "description": "程序按 taxonomy 和实际调用填写的具体组件，例如 finquery 取数服务。"
+      "description": "程序原样复制当前任务绑定的 Compact components_name；跨轮问题从同一目录选择。"
     },
     "label": { "type": "string", "minLength": 1, "description": "可复用的短问题名称。" },
     "definition": { "type": "string", "minLength": 1, "description": "可复用的问题定义，写清同类偏差及适用条件。" },

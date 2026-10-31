@@ -8,8 +8,8 @@
 |---|---|
 | [score/](score/) | 原skill单题0–10总分、12项0–4及24诊断输出 |
 | [criteria/](criteria/) | 共同验收基准 |
-| [compact/](compact/) | 会话过程摘要；外壳与类型固定、内部分区开放 |
-| [attribution/](attribution/) | 过程归因提交、具体 taxonomy 责任与 session 正式结果 |
+| [compact/](compact/) | 会话过程摘要；固定浅层字段、程序编号及可解析原文 |
+| [attribution/](attribution/) | 独立组件调查、Trace 摘要、跨轮审查与 Session 正式结果 |
 | [instruction-review/](instruction-review/) | 后置独立指令遵循归因、证据与核验账本 |
 | [comparison/](comparison/) | 普通对比、可选核验及首查检查点 |
 | [rewrite/](rewrite/) | 文本槽位改写 |

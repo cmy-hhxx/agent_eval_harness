@@ -1,78 +1,124 @@
 {
   "session_overview": {
     "scope": "session",
-    "instruction": "用一两句概括用户意图及主要结果，不列举全部指标或执行步骤。"
-  },
-  "plan": {
-    "scope": "turn",
-    "instruction": "记录原会话明确提出的目标拆解、计划、条件和依赖，保留执行前的计划身份；没有明确计划时返回空对象。"
-  },
-  "reasoning_chain": {
-    "scope": "turn",
-    "instruction": "压缩本轮可见的关键判断及其依据，写清谁作出判断、依据来自哪里、判断如何影响后续动作。模型的解释保持判断身份，不补写隐藏推理。"
-  },
-  "execution_chain": {
-    "scope": "turn",
-    "instruction": "沿原始记录压缩关键执行关系：谁做了什么动作、实际收到什么观察、随后出现什么结果或下一步动作。用原文关联动作和回执，保留影响结果的失败、恢复和状态变化；相邻发生不自动表示因果，不用终稿补全执行过程。"
-  },
-  "reflections": {
-    "scope": "turn",
-    "instruction": "记录原会话中有证据支持的纠错及策略变化，保留变化前后的动作、触发观察和实际后果；未出现则返回空数组。"
-  },
-  "gaps": {
-    "scope": "turn",
-    "instruction": "记录原会话中有原文支持、影响判断或执行的材料缺口及实际降级。区分明确缺失、未确认和当前摘录未展示，不把三者混为执行失败；无明确缺口时返回空数组。"
-  },
-  "stop_reason": {
-    "scope": "turn",
-    "instruction": "压缩最后的实际执行状态及原文明确的直接终止原因。没有执行回执支撑的原因保留为原模型自述，不推断其内部动机。"
-  },
-  "final_answer": {
-    "scope": "turn",
-    "instruction": "压缩原回答的主要结论、确定程度和限制，保持最终陈述身份；不把这些陈述当成执行记录或已核实事实。"
-  },
-  "key_data": {
-    "scope": "turn",
-    "instruction": "选择影响判断、执行分支或交付结果的关键量，按用途自由分组，不局限于终稿指标。只描述主体、用途及有证据支持的关系；数字、日期、单位、期间等原文事实用 $evidence 选择 facts 或原文，由代码保留，不另写自己的值、不重算。区分输入给定、工具返回、模型计算和最终陈述，不推测缺少的口径；无关键量时返回空对象。",
+    "instruction": "只返回两条简洁文字：第一条概括用户在实际收到的各轮提出的问题；第二条概括模型的最终回复及交付。工具次数、工具名称和报错次数由程序插入，不在这里重复。",
     "submission_example": {
-      "value": {
-        "关键指标": [
-          {
-            "用途": "说明该指标支撑的结论。",
-            "$evidence": [
-              1,
-              2
-            ]
-          }
-        ]
-      }
+      "value": [
+        "用户提出的问题。",
+        "模型回复及交付。"
+      ]
     }
   },
-  "artifacts": {
+  "plans": {
     "scope": "turn",
-    "instruction": "用文字记录有原始记录支持的交付资源、用途及交付状态，保留相关链接或附件依据。模型声称已生成不等于用户已收到或文件可用；没有可确认交付资源时返回空数组。",
+    "instruction": "只摘要模型原文明确提出的规划，每步一句 content。按目标分组，合并同一查询计划中的多个指标，不逐个照抄查询词；空数组只表示未提出计划，不单列一项。不要记录实际工具回执或终稿，没有明确规划返回空数组。",
     "submission_example": {
       "value": [
         {
-          "description": "交付资源描述"
+          "content": "当前字段的简要事实。",
+          "evidence": [
+            1
+          ]
         }
       ]
     }
   },
-  "cross_turn": {
-    "scope": "session",
-    "instruction": "压缩实际收到轮次之间的目标延续、条件更新、状态变化、纠错及依赖关系，关联相应轮次原文；不补写未收到的历史，不评判责任。"
-  },
-  "components": {
+  "reasoning_chain": {
     "scope": "turn",
-    "instruction": "补充本轮实际链路中未由 recorded_components 列出的组件，包括具体脚本、skill、脚本返回中明确出现的内层服务及委派模型。kind 为 model、tool、script 或 skill，name 使用原文中的实际名称、脚本路径或文件名；用 $evidence 关联含该名称且能说明实际调用的原文。可自由补充调用方、用途、执行结果，包含失败及恢复。同一组件只列一次，不重复程序已列的组件；不把举例文件、交付资源、查询标的或行为类别当组件。没有补充组件时返回空数组。",
+    "instruction": "只摘要材料中可见的推理文字：模型比较了什么、用什么依据作出什么判断。每步一句 content；结构化查询计划、空规划数组、用户问题、调用流水、成功状态和返回行数都不属于推理，不从这些现象推断模型为什么这么想；没有可见推理文字返回空数组。",
     "submission_example": {
       "value": [
         {
-          "kind": "script",
-          "name": "原文中的脚本路径",
-          "description": "该脚本在本轮的用途。",
-          "$evidence": [
+          "content": "当前字段的简要事实。",
+          "evidence": [
+            1
+          ]
+        }
+      ]
+    }
+  },
+  "execution_chain": {
+    "scope": "turn",
+    "instruction": "只摘要本轮实际工具调用，每步一句 content，写清具体工具或脚本、动作及关键回执。按目的合并连续重复查询或重试，不逐条抄查询词；规划 Agent 的计划、用户提问、模型生成终稿不属于工具调用，不列入此字段。无实际工具调用返回空数组。",
+    "submission_example": {
+      "value": [
+        {
+          "content": "当前字段的简要事实。",
+          "evidence": [
+            1
+          ]
+        }
+      ]
+    }
+  },
+  "reflections": {
+    "scope": "turn",
+    "instruction": "只记录模型原文明确承认错误、否定先前路径或主动纠正策略的文字，每项一句 reflection_content。原文必须明确说出了改正；单纯改了查询、空规划、工具报错或最后作答都不能倒推出反思，没有明确反思返回空数组。",
+    "submission_example": {
+      "value": [
+        {
+          "reflection_content": "当前字段的简要事实。",
+          "evidence": [
+            1
+          ]
+        }
+      ]
+    }
+  },
+  "tool_errors": {
+    "scope": "turn",
+    "instruction": "只记录工具明确返回的执行报错（异常、非零退出码、明确失败状态等），不把空数据、校验CHECK、未核验、业务计算错误或模型自述当作执行报错；恢复不抹去已发生的异常。每项 tool_error_content 简述真实工具或脚本与具体报错，evidence 选择完整可理解的回执，也可补充请求。不要写共N次或第N次调用，不把消息序号当次数；同一失败不重复列项，无报错返回空数组。",
+    "submission_example": {
+      "value": [
+        {
+          "tool_error_content": "当前字段的简要事实。",
+          "evidence": [
+            1
+          ]
+        }
+      ]
+    }
+  },
+  "components": {
+    "scope": "turn",
+    "instruction": "描述本轮实际组件链路。匿名 llm-call 或没有真实名称的模型调用，只按原文可见职责归为“规划”“推理”“最终答复生成”，同类合并；不要逐调用起业务名，不强制覆盖每个匿名调用，未见显式推理就不列“推理”。明确命名的 Agent、工具、脚本、skill 和内层服务必须保留真实名称并单列，不能并入匿名角色。actor_indices 只选择 recorded_components 已给出的来源编号，不另编编号；已有具名来源必须全部覆盖，匿名来源只选择能支持相应职责的记录，同一匿名记录有不同可见职责时可分别引用。程序已补入明确执行的脚本和实际读取的 skill，必须描述，不能因列了 shell 或模型就省略内层组件；核对实际调用与回执；所有组件都选择已有来源，不允许用空 actor_indices 临时起名。components_kind 只选 model/tool/script/skill。components_content 用一句简短中文写清“为完成什么目的，实际做了什么；结果是什么”，建议80字内；结果依据实际回执，无回执就说明未见结果，不声称已验证业务正确，不复述调用ID，不推测隐藏思考。evidence 选择本轮动作及结果原文，程序补入身份依据并生成idx。不要把数据、配置或交付文件当成执行组件，尤其 data.json、meta.json 不能列为脚本或工具；python -c、解释器和整条命令不另列为脚本。",
+    "submission_example": {
+      "value": [
+        {
+          "components_name": "原文中的脚本路径",
+          "components_kind": "script",
+          "components_content": "为取得本期营收，运行财务查询；返回100亿元。",
+          "actor_indices": [
+            1
+          ],
+          "evidence": [
+            1
+          ]
+        }
+      ]
+    }
+  },
+  "key_data": {
+    "scope": "turn",
+    "instruction": "只从本轮最终回复选取关键短句或表格行。value 每项只提交 evidence 编号，程序逐字复制所选原文到 key_data_content；保留主体、期间、数字、单位和限定词，不换算、不重算、不纠错、不补全。记录的是终稿声称的数据，真实性留给归因核查。不选择工具数据、数值菜单、交叉核验材料或普通流程概述；不要重复选号，无关键数据返回空数组。",
+    "submission_example": {
+      "value": [
+        {
+          "evidence": [
+            1
+          ]
+        }
+      ]
+    }
+  },
+  "artifacts": {
+    "scope": "turn",
+    "instruction": "每项 artifacts_content 用一句文字说明一个有原始记录支持的文件产物、名称或链接、内容及交付状态，evidence 指向生成或交付记录。同一文件只列一次，不列中间临时文件；声称生成不等于用户收到，没有可确认产物返回空数组。",
+    "submission_example": {
+      "value": [
+        {
+          "artifacts_content": "当前字段的简要事实。",
+          "evidence": [
             1
           ]
         }

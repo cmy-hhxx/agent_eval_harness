@@ -18,14 +18,29 @@ import { createRegistry, ToolRuntime } from "@eval/tools";
 test("shared slim snapshots stay shared after private instructions are projected out", () => {
   const snapshot = [{ role: "system", content: "PRIVATE_SYSTEM_SENTINEL" }, { role: "tool", content: "收入 42 亿元。" }];
   const raw = { messages: [0, 1].map(() => ({ type: "llm_turn", input_messages: snapshot, output: [] })) };
-  const view = attributionTrace(raw, randomUUID(), 1);
+  const view = attributionTrace(raw);
   assert.equal(view.messages[0].input_messages, view.messages[1].input_messages);
   assert(!JSON.stringify(view).includes("PRIVATE_SYSTEM_SENTINEL"));
   assert(JSON.stringify(view).includes("收入 42 亿元。"));
   assert.equal(raw.messages[0].input_messages[0].content, "PRIVATE_SYSTEM_SENTINEL");
 });
 
-test("main attribution excludes private rules from both prompt and readable sources while preserving factual coordinates", () => {
+test("service execution payloads retain exact JSON table coordinates even when they contain inner prompt records", () => {
+  const id = randomUUID(), raw = { messages: [
+    { type: "llm_turn", input_messages: [{ role: "system", content: "PRIVATE_AGENT_RULE" }], output: "查询财务。" },
+    { type: "tool_result", name: "finquery", output: { prompt: { messages: [{ role: "system", content: "SERVICE_SQL_CONTRACT" }] }, datas: [{ revenue: 1488000 }] } },
+  ] };
+  const view = attributionTrace(raw);
+  assert(!JSON.stringify(view).includes("PRIVATE_AGENT_RULE"));
+  assert.equal(view.messages[1], raw.messages[1], "an executed service receipt is factual data, not a governing model instruction");
+  const source = selectEvidenceSource(evidenceSources(view.messages[1]), "/output/datas")!;
+  assert.notEqual(source.source.quotable, false);
+  const proof = cite(id, 1, source.source, source.start, source.end);
+  assert(proof.quote.includes("1488000"));
+  validateOriginalAttributionEvidence(proof, { [id]: raw }, emptyAudit());
+});
+
+test("main attribution excludes private model rules but preserves loaded skills and factual coordinates", () => {
   const id = randomUUID(), question = "查询价格。", fact = "ETF价格为369美元。";
   const raw: RawInput = { messages: [
     { role: "system", content: "SYS_PRIVATE_SENTINEL" }, { role: "user", content: question },
@@ -40,11 +55,12 @@ test("main attribution excludes private rules from both prompt and readable sour
   const before = structuredClone(raw), binding = bindAttributionMaterial(candidate, raw, undefined, { compact: compactReceipt().evaluation as never });
   const modelText = JSON.stringify(binding.modelInput), requestText = JSON.stringify(binding.request);
   for (const text of [modelText, requestText])
-    for (const secret of ["SYS_PRIVATE_SENTINEL", "DEV_PRIVATE_SENTINEL", "SKILL_PRIVATE_SENTINEL"]) assert(!text.includes(secret));
+    for (const secret of ["SYS_PRIVATE_SENTINEL", "DEV_PRIVATE_SENTINEL"]) assert(!text.includes(secret));
   assert(requestText.includes(fact));
-  const view = attributionTrace(raw, id, 6);
+  assert(requestText.includes("SKILL_PRIVATE_SENTINEL"), "loaded skill bodies remain reviewable original tool receipts");
+  const view = attributionTrace(raw);
   assert(evidenceSources(view.messages[3]).filter(source => source.path === "/output" || source.kind === "json")
-    .every(source => source.quotable === false), "omitted content remains navigation, never original evidence");
+    .some(source => source.quotable !== false), "loaded skill content is original evidence");
   const leaf = evidenceSources(view.messages[5]).find(source => source.path === "/input_messages/1/content")!;
   const evidence = cite(id, 5, leaf, 0, leaf.text.length);
   assert.equal(resolveEvidence(raw, { evidence_id: evidence.evidence_id }, "answer", emptyAudit(), "/evidence", id).quote, fact);
@@ -72,10 +88,10 @@ test("main attribution excludes private rules from both prompt and readable sour
   assert(!Object.hasOwn(check.request.input, "attribution"));
   assert.deepEqual(raw, before);
   const serialized = { messages: [{ type: "llm_turn", input_messages: JSON.stringify(raw.messages[5].input_messages) }] };
-  assert(!JSON.stringify(attributionTrace(serialized, id, 0)).includes("DEV_PRIVATE_SENTINEL"));
+  assert(!JSON.stringify(attributionTrace(serialized)).includes("DEV_PRIVATE_SENTINEL"));
   const skillCopy = structuredClone(raw);
   skillCopy.messages[5].input_messages = JSON.stringify([{ role: "tool", content: raw.messages[3].output }]);
-  assert(!JSON.stringify(attributionTrace(skillCopy, id, 6)).includes("SKILL_PRIVATE_SENTINEL"));
+  assert(JSON.stringify(attributionTrace(skillCopy)).includes("SKILL_PRIVATE_SENTINEL"));
 });
 
 test("cache-cleaning failure: projected JSON is navigation and only original leaves enter the bank", async () => {
@@ -86,7 +102,7 @@ test("cache-cleaning failure: projected JSON is navigation and only original lea
     { role: "user", content: "怎么清理同花顺APP的缓存" },
     { role: "tool", content: "点首页左上角头像，右上角设置，找到清除缓存。" },
   ] }, output: [{ role: "assistant", content: "在设置中清除缓存。" }] }] };
-  const view = attributionTrace(raw, id, 0), workdir = await mkdtemp(path.join(os.tmpdir(), "projected-source-"));
+  const view = attributionTrace(raw), workdir = await mkdtemp(path.join(os.tmpdir(), "projected-source-"));
   try {
     const audit = { ...emptyAudit(), evidenceBank: [] as string[] };
     const ctx: ToolContext = { attemptId: "projection", workdir, inputs: new Map([["answer", view]]), inputIds: new Map([["answer", id]]),

@@ -65,12 +65,12 @@ function bindSourceTask(
     const blind = blindMaterials(data.candidates);
     const first = Object.values(data.candidates)[0]!;
     const sources = Object.fromEntries(Object.entries(task.inputIds).map(([label, id]) => [label, {
-      id, value: attributionSessionSource(inputs[id] as RawInput, id).raw, presentation: blind.presentation,
+      id, value: attributionSessionSource(inputs[id] as RawInput).raw, presentation: blind.presentation,
     }]));
     return { agent: "criteria", profile: "default", request: { sources, input: {
       question: first.question,
       candidates: Object.values(data.candidates).map((candidate) => {
-        const raw = attributionSessionSource(inputs[candidate.input_id] as RawInput, candidate.input_id).raw;
+        const raw = attributionSessionSource(inputs[candidate.input_id] as RawInput).raw;
         return {
           candidate_id: candidate.input_id,
           instructions: [],
@@ -170,7 +170,7 @@ function bindSourceTask(
   const reference = structuredClone(data.reference);
   const task_analysis = structuredClone(criteria.evaluation);
   const sourceContexts = Object.fromEntries(Object.entries(task.inputIds).map(([label, id]) =>
-    [label, attributionSessionSource(inputs[id] as RawInput, id)]));
+    [label, attributionSessionSource(inputs[id] as RawInput)]));
   const sources = Object.fromEntries(
     Object.entries(task.inputIds).map(([label, id]) => [label, {
       id,

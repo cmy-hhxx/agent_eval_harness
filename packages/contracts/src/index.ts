@@ -245,7 +245,7 @@ export interface ProblemOccurrence {
   attribution?: AttributionSource;
   task_id: string;
   submission_id: string;
-  finding_id: string;
+  problem_path: string;
   /** Certainty of this occurrence, not of its problem class. */
   evidence_status: "已确认" | "待核实";
   message_index: number;
@@ -265,7 +265,7 @@ export interface AttributionSource {
 export interface ProblemObservationRef {
   version: string;
   input_id: string;
-  finding_id: string;
+  problem_path: string;
   attribution: AttributionSource;
   source: { file: string; line: number };
   batch_id: string;
@@ -309,7 +309,7 @@ export interface ProblemProjection {
         input_id: string;
         batch_id: string;
         case_id: string;
-        finding_id: string;
+        problem_path: string;
         evidence_status: ProblemOccurrence["evidence_status"];
         /** A bounded preview; the source occurrence keeps the original quote. */
         quote?: string;

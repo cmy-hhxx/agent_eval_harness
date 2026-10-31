@@ -1,1 +1,1 @@
-调用本工具提交当前字段的完整结果，参数为 {"value":当前字段内容}。value 的类型以当前参数 Schema 为准，内部结构按字段任务组织。空对象或空数组也通过本工具提交；只发送普通文本或正文 JSON 不会完成任务。accepted=false 时仅按 errors 修复指出的类型、封装或引用路径，再提交完整结果。
+提交当前字段的 {"value":数组}。严格使用 submission_example 的固定字段；key_data 只选 evidence，由程序复制所选终稿；其他摘要写在 content 文字中，evidence 只填本次原文编号，不生成 idx 或嵌套结构。

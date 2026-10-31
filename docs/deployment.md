@@ -69,7 +69,7 @@ Eris 的 `collectionsFile` 指向独立 JSON 清单，格式见[清单示例](..
 | 状态与锁 | `runtime/state/` |
 | 日志 | `runtime/log/runtime.log`、`runtime/log/evaluation.log` |
 
-`source` 使用实际来源目录，例如 `0_wencai`、`1_aime`、`2_ifind`。配置、输入、账号和结果独立于 checkout。正式归因为 `<模型>/<模型>-YYYY-MM-DD.jsonl`；问财对局为 `comparison/<模型对>/<模型对>-YYYY-MM-DD.jsonl`。恢复账本与来源结果放在同一配置输出根下的 `.runs/<run ID>/`，不另存到 checkout 或 `runtime/data/runs`，也不作为默认交付入口。业务日期沿用输入完整的日期型 batch_id，不从运行或整理时间推导。
+`source` 使用实际来源目录，例如 `0_wencai`、`1_aime`、`2_ifind`。配置、输入、账号和结果独立于 checkout。正式归因为 `<模型>/<模型>_attribution-YYYY-MM-DD.jsonl`，摘要为 `<模型>/compact/<模型>_compact-YYYY-MM-DD.jsonl`；问财对局为 `comparison/<模型对>/<模型对>-YYYY-MM-DD.jsonl`。恢复账本与来源结果放在同一配置输出根下的 `.runs/<run ID>/`，不另存到 checkout 或 `runtime/data/runs`，也不作为默认交付入口。业务日期沿用输入完整的日期型 batch_id，不从运行或整理时间推导。
 
 所有分支、提交或专项用途的代码均部署在上述代码根目录的独立子目录，目录名由操作者按用途指定；`runtime/` 专用于持久配置、密钥、账号、聊天、状态和日志，不存放 checkout。停止使用 `user_workspace` 下的代码和运行目录，不保留指向旧位置的软链接。不同 checkout 共用外部配置时仍须遵守实例锁，更新代码不会自动启动评测或调度任务。
 

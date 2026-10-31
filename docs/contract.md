@@ -21,11 +21,11 @@
 
 业务链路目录遇到含图片的工具返回时，使用容器下原始文本叶子的坐标登记文本证据，保持原有摘录预算；图片展示占位符不能进入文本证据目录，也不能替代图片读取。
 
-Attribution 每条输入记录导出一行，包含 `session_meta`、`turns[]`、`session_summary`、`session_problem`；按 trace 抓取时允许多条记录共享会话身份，记录身份及去重规则见 [Session 归因](attribution.md)。每个 turn 使用 `meta/summary/problem/is_correct/correct_reason`，turn 与 session 的 Problem 同形：`problem_id/component/label/definition/problem_phenomena/reason/severity/severity_reason/evidence/calculations`。严重程度与理由均为必填，语义见[正式契约](attribution.md#正式契约)。`is_correct` 为 1、0 或 null；不再使用 `has_standard_answer`。`evidence.position` 同时包含原始 trace_index、轮内 message_index、path 和完整 evidence_id；`quote` 最多 400 字且必须精确连续。
+Attribution 每条输入记录导出一行，包含 `session_meta`、`turns[]`、`session_summary`、`session_problem`；按 trace 抓取时允许多条记录共享会话身份，记录身份及去重规则见 [Session 归因](attribution.md)。每个 turn 使用 `meta/summary/problem/is_correct/correct_reason`，turn 与 session 的 Problem 同形：`component/label/definition/problem_phenomena/reason/severity/severity_reason/evidence/calculations`。严重程度与理由均为必填，语义见[正式契约](attribution.md#正式契约)。`is_correct` 为 1、0 或 null；不再使用 `has_standard_answer`。`evidence.position` 同时包含原始 trace_index、轮内 message_index、path 和完整 evidence_id；`quote` 最多 400 字且必须精确连续。
 
 Compact、Trace、Session、Criteria、Comparison 共用原始来源 UUID 和顺序展平的消息空间；source_positions 只映射轮次和轮内位置，不重写原文。完整坐标继续使用现有 evidence_id，字段路径及半开 UTF-16 字符范围可直接解析。消息池先按源引用展开，再统一定位。复用完成结果时，只有原始输入和来源收据核实相同后，新任务才使用已持久化的来源 UUID；已接受任务及正式行不改写。
 
-Compact 内部保留开放 JSON；关键观察及数值统一使用 `$evidence` 整数数组选择本次 evidence.index，代码回填 source_evidence 原文和 source_values 精确原值，summary_origin 标识模型概述身份。每轮 execution_facts 的调用计数、返回形式及来源由代码记录。归因重用已呈现且核验的原文，仅对缺口定点读取。模型展示可省略重复坐标和摘要身份，正式结果仍保留完整溯源。隐私投影后的父对象不可冒充原文，安全事实叶子保留原坐标；不从省略标记推断执行失败。Comparison 直接解析 Attribution 的原始引用，不把拼接QA当成原始消息。
+Compact 使用固定浅层字段；模型用 evidence 整数数组选择原文，程序回填固定的 {evidence_id, quote}，所有 idx、meta 与完整最终回复均由程序填写。调用统计来自实际调用记录，归因按同一来源坐标复用原文并对缺口定点读取。Schema 拒绝任意字段和嵌套对象。隐私投影后的父对象不可冒充原文；Comparison 直接解析 Attribution 原始引用，不把拼接 QA 当原始消息。完整字段见 [Compact 契约](attribution.md#任务结构)。
 
 收据保存接受时的评测器标识和实际判官模型 `judge`；正式行存在 `evaluator_version` 时必须与收据一致。归因纯判词行的版本、模型和原始回答坐标通过正式溯源索引关联原收据，不伪造顶层字段。改写另存 `rewritten.evaluator_version`，统计汇总 `evaluator_versions` 与 `judge_models`。同 run 及跨 run 复用均可混合评测器版本：已接受判词保留原版本，未完成任务使用当前配置；完整成功与最新覆盖规则见[目录约定](usage.md#目录约定)。
 
@@ -97,7 +97,7 @@ Compact 内部保留开放 JSON；关键观察及数值统一使用 `$evidence` 
 
 Criteria 提交三组 `{source_indices,text}`：requirements、scoring_points、red_flags。程序生成 ID、来源交集作用域和含完整原文的 acceptance_rule。同一来源可支持多个独立检查项；三个数组中作用于全部候选的共同项去重后合计5–12项，私有项不计入共同数量，全部项最多24项。数量在提交解析及正式结果校验时检查，不自动填充。原问与质量来源须由共同 requirement 覆盖。SYS/DEV与已确认加载Skill不进入共同基准和主归因，统一由后置独立指令遵循归因处理。公开要求的数量、必交范围、可选性与例外按原文保留。标准答案不进入 Criteria 来源目录，完整保留给 Attribution 核对事实。
 
-Attribution 正式结果顶层为 `session_meta/turns/session_summary/session_problem`；过程摘要独立保留在 `compact.jsonl`，内部结构开放。逐轮问题与正确性见[正式契约](attribution.md#正式契约)。
+Attribution 正式结果顶层为 `session_meta/turns/session_summary/session_problem`；过程摘要独立保留在 `compact.jsonl`，使用固定浅层结构。逐轮问题与正确性见[正式契约](attribution.md#正式契约)。
 
 普通 Comparison 可用 `source_reviews` 提交决定性来源疑点，每项选择已有 `slot_index`、该槽 `reviewable_candidates` 中的 `candidate` 并说明 `reason`。程序绑定该候选原判据和 finding，保留 `needs_review`、空排名和空决定性引用，不改变归因。非空复核禁止同时提交正式或相对偏好；资源槽、不适用候选及重复选择均拒绝。双方门槛不一致继续用 `scope_conflicts`，同槽不重复提交两种复核。此入口约束已识别的语义风险，结构校验本身不保证模型能识别所有误读。
 
@@ -105,7 +105,7 @@ Attribution 正式结果顶层为 `session_meta/turns/session_summary/session_pr
 
 预测重评复用这套核对，正式 Comparison 增加成对出现的 `evaluation_purpose: "prediction"` 与 `prediction` 元数据，记录原任务、run、比较 ID、题目 ID、提问时刻和适用目标窗口。完整事后标答和来源保存在 `ground_truth`，只核验适用的明确预测结论，不以单次事件证明概率准确；多目标逐项说明，全部命中才判整体正确。判据仍来自原题，原回答和证据坐标不改写。
 
-归因先生成会话 compact，再对每个实际 trace 审查完整思考与执行过程。代码只整理调用事实、来源与有界材料，模型选择 taxonomy 中具体责任条目；重要观察与 key_data 进入归因，证据仍回到原文。详见[Session 归因](attribution.md)。
+归因先生成会话 compact，再按每轮组件目录创建并行调查任务，程序合并问题并调用一次 Trace 摘要，最后进行 Session 汇总。代码只整理调用事实、来源与有界材料，程序固定 Compact 组件审查顺序，模型逐组件返回问题或空数组，程序绑定名称并平铺；重要观察与 key_data 进入归因，证据仍回到原文。详见[Session 归因](attribution.md)。
 
 责任沿请求、工具返回、实际模型输入和最终交付定位。模型误用工具与工具自身错误分开；正确返回不证明模型实际收到。呈现、上下文或环境责任须有本方过程与交付证据。来源坐标合法只证明可定位，不证明责任或语义成立。
 
@@ -157,7 +157,7 @@ Comparison 字符串解析只允许确定性转义特定内部引号、移除完
 
 ### 模型行为归因摘要
 
-Workflow 从当前有效 Attribution 派生 `model-behavior.jsonl`，按 `input_id + finding_id` 去重，互斥计入模型独立责任、模型参与的混合责任、其他已知责任、未知责任或未确认问题。混合责任计一次，保留组件和原收据引用；明确复核链使用最新已接受来源，即使历史对局仍引用旧归因，旧问题也不再计入当前责任汇总；未完成复核不抹掉旧结论。无替代关系的冲突保留来源并降为未确认。
+Workflow 从当前有效 Attribution 派生 `model-behavior.jsonl`，按来源接受收据、`input_id + problem_path` 去重，互斥计入模型独立责任、模型参与的混合责任、其他已知责任、未知责任或未确认问题。混合责任计一次，保留组件和原收据引用；明确复核链使用最新已接受来源，即使历史对局仍引用旧归因，旧问题也不再计入当前责任汇总；未完成复核不抹掉旧结论。无替代关系的冲突保留来源并降为未确认。
 
 这是产品判决之外的责任说明，不把产品输赢折算成模型能力，不把没有已确认模型问题解释为模型更强，不把所有优点归功于模型。该辅助产物不修改正式导出或冻结统计契约。
 
@@ -186,7 +186,7 @@ Workflow 从当前有效 Attribution 派生 `model-behavior.jsonl`，按 `input_
 - 写库按模型加锁，重放幂等；合并保留原身份和事件，新归属替代同一 finding、组件的旧有效归属。
 - 类定义概括可观察错误与边界，不补做归因、不推断严重程度或胜负。修改类定义不会自动重分旧成员。
 
-未知责任不由聚类猜测；延期不是失败或已归类。统计按 `input_id + finding_id` 去重，多组件保留关联而不重复计缺陷。
+未知责任不由聚类猜测；延期不是失败或已归类。统计按来源接受收据、`input_id + problem_path` 去重，多组件保留关联而不重复计缺陷。
 
 显式[来源复核](usage.md#历史问题样本的来源复核)核对原归因和聚类来源，在锁内追加 occurrence_rejected 事件；只排除明确关联，保留原记录、其他组件及历史结果，不改冻结统计日志。实现见 [library.ts](../packages/agents/src/clustering/library.ts)、[problem-library-store.ts](../packages/data/src/problem-library-store.ts)。
 
@@ -248,7 +248,7 @@ Rewrite 只接收选定文本槽位，不接触原题、原始消息或证据。
 
 归因先验收 session 结构、组件证据和真实调用身份。compact 独立导出 `compact.jsonl`，trace 是内部任务；`attribution-session` 导出归因正式行。程序不证明摘要无漏项或机制解释无过度推断，真实样本抽审仍是质量验收依据。
 
-正式 Problem 不输出责任 boundary 或责任链。组件由模型依据思考链与执行链选择具体 taxonomy 责任条目和来源主体；模型错误使用 reasoning 条目名称，工具、脚本和 skill 故障回填具体名称；证据中的 `component` 明确写出 `reasoning:`、`tool_call:`、`answer:` 等位置和具体工具名。`position` 保留消息与字段坐标，正文说明具体动作和偏差。
+正式 Problem 不输出责任 boundary 或责任链。程序按 Compact 目录创建并行组件任务，每个任务返回自己的问题或空数组，程序原样复制该槽位的 components_name 并平铺，不接受问题再选主体，不输出第二套责任类别；证据中的 `component` 明确写出 `reasoning:`、`tool_call:`、`answer:` 等位置和具体工具名。`position` 保留消息与字段坐标，正文说明具体动作和偏差。
 
 归因探索与修复共用从开始即公开的既有总额度，提交不再解锁额外工具次数，不增加总预算或重试。进度 Token 仅累计已归档尝试，同时显示待归档次数和统计覆盖范围；零值不代表没有实际消耗。checkpoint.writeMs 是累计持久化墙钟时间，不是事件循环阻塞时间；snapshotMs 仅衡量快照构造，不涵盖全部持久化 CPU。
 
@@ -256,6 +256,6 @@ Rewrite 只接收选定文本槽位，不接触原题、原始消息或证据。
 
 Comparison 独立消费整场 session 的 Attribution 输出，按 QAQAQA 比较整体交付，不逐 trace 判胜，也不在 Attribution workflow 内创建 Comparison 任务。
 
-Attribution 内部提交的 `component` 为 taxonomy 责任条目 ID，`actor_index` 选择 actor_catalog 的来源主体。reasoning 条目对应 model 来源，正式 component 使用具体推理环节名称；其他条目对应实际 tool、script 或 skill，正式 component 使用具体组件名称。模型名称只保留来源身份，失败动作在问题描述中定位，内部编号不导出。Compact 的 `components` 为程序和模型共同整理的组件目录；脚本、skill 名称须在所选原文中逐字出现，其他内部描述保持开放。仅见于输入快照的工具回执保留其原始字段路径，不能把额度守卫解释成模型主动停止，也不增加实际调用计数。
+Attribution 按 Compact 目录投影 actor_catalog 的固定顺序逐组件审查，程序绑定实际主体；正式 component 统一填写真实 Agent、模型节点、工具、脚本或 skill 名称，失败环节写在问题描述中，内部编号不导出。Compact turns[].components 合并实际调用记录与有原文证明的补充组件，所有名称和证据经程序核对。仅见于输入快照的回执不增加实际调用计数。
 
-Compact 的 source_evidence.origin 复制原始 type/role/name/model、字段路径及嵌套发言身份，不把自述提升为执行事实。原始值与类型由 source_values 保留，关系表只保存来源位置。归因导航可以省去重复位置和代码证明；正式 compact 保持完整，已呈现证据记录仅包含模型实际看到的原文。
+Compact evidence 只保留可解析的 evidence_id 与原始短引文；发言身份、轮次、消息和字段范围由坐标回溯原始来源。归因展示省去重复终稿、组件目录和相同坐标的重复引文，已读记录只包含模型实际看到的原文，不把模型摘要当执行事实。

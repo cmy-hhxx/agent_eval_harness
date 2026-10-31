@@ -1,4 +1,4 @@
-import { sessionProblems } from "@eval/agents/attribution";
+import { sessionProblemEntries } from "@eval/agents/attribution";
 import path from "node:path";
 import { Script } from "node:vm";
 import { mkdir, readFile } from "node:fs/promises";
@@ -86,7 +86,7 @@ const rows = selected.map(({ entry, source }, index) => {
   return { id: `sample-${index + 1}`, inputId: source.input_id, taskId: source.task_id,
     date: source.batch_id, caseId: source.case_id, model: source.model, modelName: model.label,
     hasStandard: raw.turns.some(turn => turn.is_correct !== null), raw, taskSummary: titles.get(source.input_id),
-    problemSummaries: new Map(sessionProblems(raw).map(problem => [problem.problem_id, problem.label])),
+    problemSummaries: new Map(sessionProblemEntries(raw).map(problem => [problem.problem_path, problem.label])),
     attribution: { run: source.run, run_id: source.run_id, task_id: source.task_id, submission_id: source.submission_id, evaluator_version: source.evaluator_version },
     sourceRecord: { ...source.source }, deferred: [],
     source: { label: model.label + " JSONL", href: href(path.join(run, "models", model.id + ".jsonl")) },
@@ -112,12 +112,12 @@ for (const clusterRun of clusterRuns) {
       for (const ref of item.refs) {
         const row = selected.get(ref.attribution?.task_id);
         if (!row || row.inputId !== ref.input_id) continue;
-        const finding = sessionProblems(row.raw).find(item => item.problem_id === ref.finding_id);
+        const finding = sessionProblemEntries(row.raw).find(item => item.problem_path === ref.problem_path);
         if (ref.attribution.run !== row.attribution.run || ref.attribution.run_id !== row.attribution.run_id ||
           ref.attribution.submission_id !== row.attribution.submission_id || ref.attribution.evaluator_version !== row.attribution.evaluator_version ||
           !finding || !finding.component.split(" / ").includes(item.component))
-          throw new Error("聚类待观察引用与当前归因不一致：" + row.taskId + "/" + ref.finding_id);
-        if (assignment.deferred_reason) row.deferred.push({ findingId: ref.finding_id, component: item.component, reason: assignment.deferred_reason });
+          throw new Error("聚类待观察引用与当前归因不一致：" + row.taskId + "/" + ref.problem_path);
+        if (assignment.deferred_reason) row.deferred.push({ findingId: ref.problem_path, component: item.component, reason: assignment.deferred_reason });
       }
     }
   }

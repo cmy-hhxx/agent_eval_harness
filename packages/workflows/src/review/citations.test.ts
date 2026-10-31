@@ -1,16 +1,14 @@
-import { compactReceipt } from "../../../../tests/fixtures/compact.js";
+import { bindComponentFixture } from "../../../../tests/fixtures/compact.js";
 import test from "node:test";
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
-import { emptyUsage, type PlannedTask, type SubmissionReceipt } from "@eval/contracts";
+import { emptyUsage, type SubmissionReceipt } from "@eval/contracts";
 import { evidenceSources, resolveEvidence, selectEvidenceSource } from "@eval/tools";
 import { citationInventory, citationSourceParts } from "./citations.js";
 import { comparisonProfile } from "@eval/agents/comparison";
 import { Ajv2020 } from "ajv/dist/2020.js";
-import { bindTask } from "../comparison/binding.js";
 import { criteriaResult, emptyAudit } from "../../../../tests/fixtures/comparison.js";
 import type { Candidate, RawInput } from "../inputs/types.js";
-import type { TaskData } from "../comparison/types.js";
 
 const evidenceInputId = "7ebfa07b-55d4-4e19-80d0-545eb576289a";
 
@@ -159,23 +157,15 @@ test("deferred answer paragraphs retain context previews and candidate-specific 
     input_id: inputId, trace_id: null, source: "fixture", line: 1, question: "核对陈述", final_index: 2,
     reference: null, llm: null, answer_timing: { first_token_seconds: null, first_answer_seconds: null,
       finish_seconds: 1, source_unit: "s", source_values: {}, source_fields: {} } };
-  const criteriaTask: PlannedTask = { id: criteriaId, stage: "criteria", inputIds: { A: inputId }, dependencies: {},
-    data: { stage: "criteria", candidates: { A: candidate }, reference: null } satisfies TaskData };
   const receipt: SubmissionReceipt = { taskId: criteriaId, attemptId: randomUUID(), submissionId: randomUUID(), acceptedAt: 1,
     status: "succeeded", evaluatorVersion: "fixture", judge: "fixture", evaluation: criteriaResult(), audit: emptyAudit(), usage: emptyUsage() };
-  const task: PlannedTask = { id: randomUUID(), stage: "attribution-trace", inputIds: { answer: inputId }, dependencies: { compact: "compact", criteria: criteriaId },
-    data: { stage: "attribution-trace", candidate, candidates: { A: candidate }, reference: null } satisfies TaskData };
-  const binding = bindTask(task, { [inputId]: raw }, { compact: compactReceipt(), criteria: receipt }, { tasks: [criteriaTask, task] });
+  const binding = bindComponentFixture(candidate, raw, { criteria: receipt });
   const original = citationInventory(raw, inputId, 2).references[0];
-  const shown = binding.modelInput!.answer as { final_evidence: { quote: string }[];
-    final_context: { partial: boolean; continuations: { read_request: { candidate: string; offset: number; max_chars: number }; end_offset: number }[] } };
-  const deferred = shown.final_context.continuations[0];
-  const prefix = shown.final_evidence.map(entry => entry.quote).join("");
-  assert.equal(prefix, paragraph.slice(0, 6400));
-  assert.equal(deferred.read_request.candidate, "answer");
-  assert.equal(deferred.read_request.offset, prefix.length);
-  assert.equal(deferred.end_offset, paragraph.length);
-  assert(deferred.read_request.max_chars <= 16000);
+  const shown = binding.modelInput! as { final_answer: { quote: string }[]; final_partial: boolean; final_answer_read_request: { candidate: string; offset: number; max_chars: number } };
+  const prefix = shown.final_answer.map(entry => entry.quote).join("");
+  assert(paragraph.startsWith(prefix)); assert(prefix.length <= 8000); assert(shown.final_partial);
+  assert.equal(shown.final_answer_read_request.candidate, "answer");
+  assert(shown.final_answer_read_request.max_chars <= 16000);
   assert.equal(resolveEvidence(raw,original.occurrences[0].context,'answer',audit,'/evidence',inputId).quote,paragraph);
 
 });

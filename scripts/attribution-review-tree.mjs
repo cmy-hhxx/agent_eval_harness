@@ -1,4 +1,4 @@
-import { evidenceMessageIndex, sessionProblems } from "@eval/agents/attribution";
+import { evidenceMessageIndex, sessionProblemEntries } from "@eval/agents/attribution";
 import { effectiveProblemOccurrences, normalizeLabel, projectLibrary } from "@eval/agents/clustering";
 
 const modelOrder = ["a_fast", "a_expert", "b_fast", "b_expert"];
@@ -82,7 +82,7 @@ export function projectProblemLibraryTree(rows, libraries, classTexts, unfinishe
       if (!occurrence.attribution) throw new Error("问题库样本缺少正式归因来源：" + occurrence.id);
       const row = byTask.get(occurrence.attribution.task_id);
       if (!row) continue;
-      const finding = sessionProblems(row.raw).find(item => item.problem_id === occurrence.finding_id);
+      const finding = sessionProblemEntries(row.raw).find(item => item.problem_path === occurrence.problem_path);
       const component = (finding ? componentsOf(finding) : []).find(value => [target.component.label, ...target.component.aliases].some(label => normalizeLabel(label) === normalizeLabel(value)));
       if (library.model !== row.model || occurrence.version !== row.model || occurrence.input_id !== row.inputId ||
         occurrence.batch_id !== row.date || occurrence.case_id !== row.caseId || occurrence.attribution.run !== row.attribution.run ||
@@ -90,14 +90,14 @@ export function projectProblemLibraryTree(rows, libraries, classTexts, unfinishe
         occurrence.attribution.evaluator_version !== row.attribution.evaluator_version || occurrence.source.file !== row.sourceRecord.file ||
         occurrence.source.line !== row.sourceRecord.line || !finding || !component ||
         occurrence.evidence_status !== "已确认" || !finding.evidence.some(item => evidenceMessageIndex(item.position) === occurrence.message_index))
-        throw new Error("问题库引用与当前正式归因不一致：" + occurrence.attribution.task_id + "/" + occurrence.finding_id);
-      const coordinate = JSON.stringify([row.inputId, finding.problem_id, target.component.id]), previous = claimed.get(coordinate);
+        throw new Error("问题库引用与当前正式归因不一致：" + occurrence.attribution.task_id + "/" + occurrence.problem_path);
+      const coordinate = JSON.stringify([row.inputId, finding.problem_path, target.component.id]), previous = claimed.get(coordinate);
       if (previous && previous !== target.problem.id) throw new Error("同责任问题重复归类：" + coordinate);
       if (previous) continue;
       claimed.set(coordinate, target.problem.id);
-      row.classes.push({ findingId: finding.problem_id, component, id: target.problem.id });
+      row.classes.push({ findingId: finding.problem_path, component, id: target.problem.id });
       members.set(target.problem.id, [...members.get(target.problem.id) ?? [], {
-        taskId: row.taskId, findingId: finding.problem_id, components: [component], summary: row.problemSummaries.get(finding.problem_id),
+        taskId: row.taskId, findingId: finding.problem_path, components: [component], summary: row.problemSummaries.get(finding.problem_path),
       }]);
     }
     for (const [id, selected] of members) {
@@ -105,10 +105,10 @@ export function projectProblemLibraryTree(rows, libraries, classTexts, unfinishe
       nodes.push({ id, model: library.model, category: component.label, label: display.label, definition: display.definition, members: selected });
     }
   }
-  const pending = assigned.flatMap(row => sessionProblems(row.raw).flatMap(finding => {
-    const components = componentsOf(finding).filter(component => !row.classes.some(item => item.findingId === finding.problem_id && item.component === component));
-    return components.length || !componentsOf(finding).length ? [{ taskId: row.taskId, findingId: finding.problem_id,
-      components, summary: row.problemSummaries.get(finding.problem_id) }] : [];
+  const pending = assigned.flatMap(row => sessionProblemEntries(row.raw).flatMap(finding => {
+    const components = componentsOf(finding).filter(component => !row.classes.some(item => item.findingId === finding.problem_path && item.component === component));
+    return components.length || !componentsOf(finding).length ? [{ taskId: row.taskId, findingId: finding.problem_path,
+      components, summary: row.problemSummaries.get(finding.problem_path) }] : [];
   }));
   return projectAttributionTree(assigned, { nodes, pending, samples: assigned.map(row => ({ taskId: row.taskId, taskSummary: row.taskSummary })) }, unfinished);
 }
@@ -125,14 +125,14 @@ export function projectAttributionTree(rows, grouping, unfinished = []) {
     if (!row.inputId || byTask.has(row.taskId) || bySample.has(row.id) || inputIds.has(row.inputId))
       throw new Error(`归因审阅样本身份缺失或重复：${row.taskId}`);
     byTask.set(row.taskId, row); bySample.set(row.id, row); inputIds.add(row.inputId);
-    for (const finding of row.raw ? sessionProblems(row.raw) : []) {
-      const coordinate = key(row.taskId, finding.problem_id);
+    for (const finding of row.raw ? sessionProblemEntries(row.raw) : []) {
+      const coordinate = key(row.taskId, finding.problem_path);
       if (problems.has(coordinate)) throw new Error(`归因审阅问题坐标重复：${coordinate}`);
       const components = componentsOf(finding);
       const statusByComponent = new Map(components.map(component => [component,
-        (row.classes ?? []).some(item => item.findingId === finding.problem_id && item.component === component) ? "classified" :
+        (row.classes ?? []).some(item => item.findingId === finding.problem_path && item.component === component) ? "classified" :
           false ? "uncertain" :
-            (row.deferred ?? []).some(item => item.findingId === finding.problem_id && item.component === component) ? "deferred" : "unclassified"]));
+            (row.deferred ?? []).some(item => item.findingId === finding.problem_path && item.component === component) ? "deferred" : "unclassified"]));
       const statuses = components.length ? unique([...statusByComponent.values()]) : ["unlocated"];
       for (const status of statuses) totals[status]++;
       const libraryStatus = statuses.length === 1 ? statuses[0] : "mixed";
@@ -158,7 +158,7 @@ export function projectAttributionTree(rows, grouping, unfinished = []) {
     claimed.set(coordinate, seen);
     const statuses = components.length ? unique(components.map(component => statusByComponent.get(component))) : ["unlocated"];
     const libraryStatus = statuses.length === 1 ? statuses[0] : "mixed";
-    return { sampleId: row.id, findingId: finding.problem_id, summary: text(member.summary, "问题摘要"),
+    return { sampleId: row.id, findingId: finding.problem_path, summary: text(member.summary, "问题摘要"),
       components: [...components], evidenceStatus: "已确认",
       importance: null, libraryStatus, findingLibraryStatus };
   };

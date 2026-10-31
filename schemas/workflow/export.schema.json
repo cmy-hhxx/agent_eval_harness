@@ -296,11 +296,11 @@
               "evidence_status",
               "evidence",
               "attribution_reason",
-              "problem_id",
+              "problem_path",
               "component"
             ],
             "properties": {
-              "problem_id": {
+              "problem_path": {
                 "type": "string",
                 "minLength": 1
               },

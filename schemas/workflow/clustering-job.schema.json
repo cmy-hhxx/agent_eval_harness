@@ -103,7 +103,7 @@
                 "case_id",
                 "batch_id",
                 "source",
-                "finding_id",
+                "problem_path",
                 "message_index",
                 "quote",
                 "evidence_status",
@@ -140,7 +140,7 @@
                     }
                   }
                 },
-                "finding_id": {
+                "problem_path": {
                   "type": "string",
                   "minLength": 1
                 },

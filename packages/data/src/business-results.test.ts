@@ -18,7 +18,7 @@ test("business publication keeps the latest complete verdict and can repair a mi
   t.after(() => rm(root, { recursive: true, force: true }));
   const publish = createBusinessPublisher(root);
   const record = (run: string, acceptedAt: number, complete = true): Omit<BusinessResult, "line" | "published"> => ({
-    id: "same-answer", date: "2026-10-26", file: "aime_fast/aime_fast-2026-10-26.jsonl", stage: "attribution-session", scope: {},
+    id: "same-answer", date: "2026-10-26", file: "aime_fast/aime_fast_attribution-2026-10-26.jsonl", stage: "attribution-session", scope: {},
     answers: [{ id: "answer-uuid", batch: "2026-10-26", caseId: "case", model: "aime_fast", session: "session",
       traces: ["trace"], source: "/source/input.jsonl", line: 1 }], acceptedAt, evaluatorVersion: "old", judge: "judge", submissionId: run, complete,
     origin: { run: path.join(root, run), taskId: run, reference: { id: run, file: "attribution.jsonl", line: 1 } },
@@ -29,7 +29,7 @@ test("business publication keeps the latest complete verdict and can repair a mi
   await publish(record("old-run", 1), older);
   await publish(record("new-run", 2), newer);
   await publish(record("old-run", 3, false), older);
-  const file = path.join(root, "aime_fast/aime_fast-2026-10-26.jsonl");
+  const file = path.join(root, "aime_fast/aime_fast_attribution-2026-10-26.jsonl");
   const rows = async () => { const result = []; for await (const row of readJsonl(file)) result.push(row); return result; };
   assert.deepEqual(await rows(), [newer]);
   await rm(file);
@@ -44,13 +44,13 @@ test("business publication keeps the latest complete verdict and can repair a mi
 test("organized existing rows are indexed in place and unrelated unindexed rows survive replacement", async t => {
   const root = await mkdtemp(path.join(os.tmpdir(), "organized-results-"));
   t.after(() => rm(root, { recursive: true, force: true }));
-  const file = path.join(root, "aime_fast/aime_fast-2026-10-26.jsonl");
+  const file = path.join(root, "aime_fast/aime_fast_attribution-2026-10-26.jsonl");
   const original = { session_summary: "已有判词" }, unrelated = { session_summary: "尚未核实的另一条原结果" };
   await writeJsonl(file, [original, unrelated]);
   const run = path.join(root, "original-run");
   await writeJsonl(path.join(run, "results/attribution.jsonl"), [original]);
   const record: Omit<BusinessResult, "line" | "published"> = { id: "answer", date: "2026-10-26",
-    file: "aime_fast/aime_fast-2026-10-26.jsonl", stage: "attribution-session", scope: {}, answers: [],
+    file: "aime_fast/aime_fast_attribution-2026-10-26.jsonl", stage: "attribution-session", scope: {}, answers: [],
     acceptedAt: 1, evaluatorVersion: "old", judge: "judge", submissionId: "first", complete: true,
     origin: { run, taskId: "task", reference: { id: "task", file: "attribution.jsonl", line: 1 } } };
   const publish = createBusinessPublisher(root);

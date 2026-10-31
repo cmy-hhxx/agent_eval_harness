@@ -49,7 +49,8 @@ test("session and trace metadata pass through unchanged without entering model m
   const traceTask = plan.tasks.find(task => isTraceAttributionTask(task))!;
   const traceBinding = bindAttribution(traceTask, plan.inputs, {});
   assert(!Object.hasOwn(traceBinding.modelInput!, "trace_meta"));
-  const turn = registry.resolve(traceBinding, { summary: "该轮已完成。", problems: [] }, emptyAudit()) as { meta: unknown };
+  const prepared = registry.prepare(traceBinding), audit = { ...emptyAudit(), evidenceBank: prepared.evidenceBank };
+  const turn = registry.resolve(traceBinding, { summary: "该轮已完成。" }, audit) as { meta: unknown };
   assert.deepEqual(turn.meta, traceBinding.request.input.trace_meta);
   const sessionTask = plan.tasks.find(task => task.stage === "attribution-session")!;
   const sessionBinding = bindAttribution(sessionTask, plan.inputs, {
@@ -57,9 +58,32 @@ test("session and trace metadata pass through unchanged without entering model m
   });
   assert(!Object.hasOwn(sessionBinding.modelInput!, "session_meta"));
   assert(!Object.hasOwn(sessionBinding.modelInput!, "turns"));
-  const result = registry.resolve(sessionBinding, { session_summary: "整场已完成。", session_problem: [] }, emptyAudit()) as { session_meta: unknown; turns: { meta: unknown }[] };
+  const result = registry.resolve(sessionBinding, { session_summary: "整场已完成。", session_problem: [] }, { ...emptyAudit(), evidenceBank: registry.prepare(sessionBinding).evidenceBank }) as { session_meta: unknown; turns: { meta: unknown }[] };
   assert.deepEqual(result.session_meta, sessionBinding.request.input.session_meta);
   assert.deepEqual(result.turns.map(trace => trace.meta), [turn.meta, turn.meta]);
+});
+
+test("component material retains a script's later real execution and its receipt after an earlier help call", async t => {
+  const command = "cat > /work/calc1.py <<'PY'\n" + "# padding\n".repeat(500) + "PY\npython scripts/calc.py --code-file /work/calc1.py";
+  const input = { batch_id: "batch", case_id: "calculator", messages: [
+    { type: "user_question", content: "计算数据。" },
+    { type: "tool_call", name: "shell", call_id: "help", input: { command: "python scripts/calc.py --help" } },
+    { type: "tool_result", name: "shell", tool_call_id: "help", output: { stdout: "usage: calc.py" } },
+    { type: "tool_call", name: "shell", call_id: "run", input: { command } },
+    { type: "tool_result", name: "shell", tool_call_id: "run", output: { stdout: "Calculation completed; saved calculation.json" } },
+    { type: "final_answer", content: "计算完成。" },
+  ] };
+  const f = await fixtureConfig([[input], [], [], []]);
+  t.after(() => rm(f.directory, { recursive: true, force: true }));
+  f.config.inputs.versions[0]!.adapter = "b";
+  const plan = await planAttribution({ ...f.config, workflow: "attribution", inputs: { ...f.config.inputs, versions: f.config.inputs.versions.slice(0, 1) } } as AttributionConfig);
+  const task = plan.tasks.find(task => (task.data as AttributionTaskData).compactField === "components")!;
+  const binding = attributionWorkflow.bind(task, plan.inputs, {}, { tasks: plan.tasks });
+  const view = (binding.modelInput!.turns as JsonObject[])[0]!;
+  const excerpts = view.process_excerpts as JsonObject[];
+  assert(excerpts.some(entry => entry.message_index === 3 && String(entry.quote).includes("python scripts/calc.py --code-file /work/calc1.py")));
+  assert(excerpts.some(entry => entry.message_index === 4 && String(entry.quote).includes("Calculation completed; saved calculation.json")));
+  assert((view.execution_facts as JsonObject).execution_links);
 });
 
 test("same session different captured traces append unchanged and resume by trace identity", async t => {
@@ -177,26 +201,32 @@ test("compact is a mandatory dependency and produces its own recoverable formal 
     versions: f.config.inputs.versions.slice(0, 1) } } as AttributionConfig;
   const plan = await planAttribution(config), registry = new AgentRegistry([compactAgent, attributionAgent]);
   const fields = plan.tasks.filter(task => task.stage === "attribution-compact-field");
-  assert.equal(fields.length, 22);
+  assert.equal(fields.length, 17);
   assert(fields.every(task => Object.keys(task.dependencies).length === 0), "field sessions are independent");
   const compact = plan.tasks.find(task => task.stage === "attribution-compact")!, candidate = (compact.data as AttributionTaskData).candidate;
   for (const task of plan.tasks.filter(task => isTraceAttributionTask(task) || task.stage === "attribution-session")) assert.equal(task.dependencies.compact, compact.id);
   const traceTask = plan.tasks.find(task => isTraceAttributionTask(task))!;
   const binding = attributionWorkflow.bind(traceTask, plan.inputs, { compact: compactReceipt(2) }, { tasks: plan.tasks });
-  assert((binding.modelInput!.compact as { turns: unknown[] }).turns.length === 1);
+  assert(Array.isArray(binding.modelInput!.component_results));
   assert.throws(() => attributionWorkflow.bind(traceTask, plan.inputs, {}, { tasks: plan.tasks }), /必须先接受/);
-  const draft = { session_overview: { intent: "完成两轮问答。" }, meta: { environment: { available: true } },
-    cross_turn: {}, turns: [0, 1].map(turn_index => ({ turn_index, key_data: { custom: { amount: 100.25, period: "本期", unit: "亿元", source: [turn_index, 2] },
-      custom_section: { any: [true, "中文记录"] } } })) };
+  const draft = compactReceipt(2).evaluation as JsonObject;
   const dependencies = Object.fromEntries(fields.map(task => {
     const { compactField: field, traceIndex } = task.data as AttributionTaskData;
     const fieldBinding = attributionWorkflow.bind(task, plan.inputs, {}, { tasks: plan.tasks });
-    assert.equal(registry.prepare(fieldBinding).maxToolCalls, 0);
-    const evaluation = registry.resolve(fieldBinding, compactFieldResult(draft, field!, traceIndex), emptyAudit());
+    const prepared = registry.prepare(fieldBinding);
+    assert.equal(prepared.maxToolCalls, 0);
+    const input = field === "components" ? { value: (fieldBinding.request.input.recorded_components as JsonObject[]).map(actor => ({
+      components_kind: actor.kind, components_name: actor.anonymous === true ? "最终答复生成" : actor.name,
+      components_content: "为回答用户问题执行对应动作；实际输出见原文。", actor_indices: [actor.component_index],
+      evidence: [prepared.evidenceBank.indexOf(((actor.source_evidence as JsonObject[])[0]!.reference as JsonObject).evidence_id as string) + 1],
+    })) } : compactFieldResult(draft, field!, traceIndex);
+    const evaluation = registry.resolve(fieldBinding, input, { ...emptyAudit(), evidenceBank: prepared.evidenceBank });
     registry.validate(fieldBinding, evaluation, emptyAudit());
     return [traceIndex === undefined ? field! : `${traceIndex}:${field}`, { ...compactReceipt(2), taskId: task.id, evaluation }];
   }));
   const compactBinding = attributionWorkflow.bind(compact, plan.inputs, dependencies, { tasks: plan.tasks });
+  assert.equal((dependencies.session_overview!.evaluation as { value: unknown[] }).value.length, 2,
+    "inserting code-owned tool counts must not mutate the accepted overview field receipt");
   assert(compactBinding.computedResult, "assembly is performed by code");
   const evaluation = registry.resolve(compactBinding, compactBinding.computedResult, emptyAudit());
   registry.validate(compactBinding, evaluation, emptyAudit());
@@ -210,15 +240,17 @@ test("compact is a mandatory dependency and produces its own recoverable formal 
   const writer = attributionRepository.createResultWriter(run, plan.inputs); await writer(state); await writer(state);
   const text = await readFile(path.join(run, "results/compact.jsonl"), "utf8");
   assert.equal(text.trim().split("\n").length, 1);
-  const savedTurns = JSON.parse(text).turns;
-  assert.deepEqual(savedTurns.map(({ execution_facts: _facts, ...turn }: JsonObject) => turn), draft.turns);
-  assert(savedTurns.every((turn: JsonObject) => turn.execution_facts), "code-owned facts are part of the recoverable compact");
+  const saved = JSON.parse(text);
+  assert.deepEqual(Object.keys(saved), ["session_overview", "session_meta", "trace_meta", "turns"]);
+  assert(saved.turns.every((turn: JsonObject) => Array.isArray(turn.components) && typeof turn.final_answer === "string"));
+  assert(saved.session_overview[1].includes("实际调用工具"));
   await attributionRepository.writeRun(run, state);
   const checkpoint = await readFile(path.join(run, "state.json"), "utf8");
   assert(!checkpoint.includes("custom_section"), "compact body is referenced rather than copied into state");
   const resumed = await attributionRepository.readRun(run);
   assert.deepEqual(resumed.receipts[compact.id]!.evaluation, evaluation);
   for (const receipt of Object.values(dependencies)) assert.deepEqual(resumed.receipts[receipt.taskId]!.evaluation, receipt.evaluation);
-  assert.equal((resumed.receipts[compact.id]!.evaluation as { meta: { model: string } }).meta.model, candidate.version);
-  assert.throws(() => registry.resolve(compactBinding, { ...draft, turns: draft.turns.slice(0, 1) }, emptyAudit()));
+  assert.deepEqual((resumed.receipts[compact.id]!.evaluation as JsonObject).session_meta, saved.session_meta);
+  assert.equal((compact.data as AttributionTaskData).candidate.version, candidate.version);
+  assert.throws(() => registry.resolve(compactBinding, { ...draft, turns: (draft.turns as JsonObject[]).slice(0, 1) }, emptyAudit()));
 });

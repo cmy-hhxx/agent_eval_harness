@@ -12,7 +12,7 @@ function fixture() {
     evaluator_version: "fixture", input_id: inputId, model, batch_id: "day", case_id: "case", source: { file: "/source.jsonl", line: 1 } };
   const { run, run_id, task_id, submission_id, evaluator_version } = source;
   const components = ["planner-finquery / 工具请求参数 / 动作参数生成", "finquery / 原始返回及字段含义 / 实体映射"];
-  const ref: ProblemObservationRef = { version: model, input_id: inputId, finding_id: "f0", batch_id: "day", case_id: "case",
+  const ref: ProblemObservationRef = { version: model, input_id: inputId, problem_path: "f0", batch_id: "day", case_id: "case",
     source: source.source, attribution: { run, run_id, task_id, submission_id, evaluator_version },
     components, evidence_status: "已确认", summary: "返回不完整且结论缺少支持。" };
   const config = { clusteringJob: { sources: [source, { ...source, input_id: randomUUID(), task_id: randomUUID(),
@@ -26,7 +26,7 @@ function fixture() {
       aliases: [], status: "active", merged_into: null, first_seen: null, category: "可靠性" };
     library.occurrences.push({ id: randomUUID(), class_id: classId, version: model, evaluator_version: "fixture", batch_id: "day",
       case_id: "case", input_id: inputId, run_id: "cluster", task_id: randomUUID(), submission_id: randomUUID(),
-      attribution: ref.attribution, finding_id: ref.finding_id, evidence_status: ref.evidence_status, message_index: 1,
+      attribution: ref.attribution, problem_path: ref.problem_path, evidence_status: ref.evidence_status, message_index: 1,
       source: ref.source, classification: "created", previous_class_id: null, at: new Date(0).toISOString() });
   });
   return { config, inputs, library, ref };

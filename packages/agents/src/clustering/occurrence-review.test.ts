@@ -16,7 +16,7 @@ function fixture() {
     count: 1, established_count: 0, uncertain_count: 1, established_answer_ids: [],
     examples: [{ finding: "原主张", reason: "原理由", evidence_status: "待核实" as const }],
     refs: [{ input_id: inputId, case_id: "case", source: { file: "source.jsonl", line: 1 },
-      finding_id: "f0", message_index: 1, quote: "原回答", evidence_status: "待核实" as const }],
+      problem_path: "f0", message_index: 1, quote: "原回答", evidence_status: "待核实" as const }],
   }));
   const receipt = {
     run_id: "run", evaluator_version: "before", task_id: randomUUID(), submission_id: randomUUID(),

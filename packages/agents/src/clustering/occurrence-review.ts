@@ -12,8 +12,9 @@ export interface ProblemOccurrenceReviewDecision {
 }
 export interface ProblemAssociation {
   input_id: string;
-  finding_id: string;
+  problem_path: string;
   component_id: string;
+  attribution?: { submission_id: string };
 }
 export interface ProblemOccurrenceReviewTarget {
   occurrence_id: string;
@@ -30,13 +31,14 @@ export interface ProblemOccurrenceReviewDetail {
 const validator = new Ajv2020({ allErrors: true, strict: false }).compile(schema);
 function fail(message: string): never { throw new Error(message); }
 export const problemAssociationKey = (value: ProblemAssociation): string =>
-  canonical([value.input_id, value.finding_id, value.component_id]);
+  canonical([value.attribution?.submission_id ?? null, value.input_id, value.problem_path, value.component_id]);
 
 export function problemAssociation(library: ProblemLibrary, occurrence: ProblemOccurrence): ProblemAssociation {
   const problem = library.classes[occurrence.class_id];
   if (!problem || !library.components[problem.component_id])
     return fail("问题样本缺少真实问题类或责任组件：" + occurrence.id);
-  return { input_id: occurrence.input_id, finding_id: occurrence.finding_id, component_id: problem.component_id };
+  return { input_id: occurrence.input_id, problem_path: occurrence.problem_path, component_id: problem.component_id,
+    ...(occurrence.attribution ? { attribution: { submission_id: occurrence.attribution.submission_id } } : {}) };
 }
 
 /** Validate the current operator request before it selects any file or model. */
@@ -101,10 +103,11 @@ export function effectiveProblemOccurrences(library: ProblemLibrary): ProblemOcc
         fail("重新归类事件损坏：" + event.id);
       for (const target of targets) {
         if (!target || typeof target !== "object" || Array.isArray(target) ||
-          typeof target.input_id !== "string" || typeof target.finding_id !== "string" ||
+          typeof target.input_id !== "string" || typeof target.problem_path !== "string" ||
           typeof target.component_id !== "string" || !library.components[target.component_id] ||
           (target.occurrence_id !== null && typeof target.occurrence_id !== "string")) fail("重新归类目标损坏：" + event.id);
-        const association = { input_id: target.input_id, finding_id: target.finding_id, component_id: target.component_id };
+        const association = { input_id: target.input_id, problem_path: target.problem_path, component_id: target.component_id,
+          ...(target.attribution ? { attribution: target.attribution as {submission_id:string} } : {}) };
         const key = problemAssociationKey(association);
         if (target.occurrence_id !== null) {
           const occurrence = byId.get(target.occurrence_id);

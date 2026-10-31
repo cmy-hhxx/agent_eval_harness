@@ -3,7 +3,6 @@ export type { TaskAnalysis, TaskCriterion } from '@eval/contracts';
 export interface Evidence extends ResolvedEvidence { source?: string; source_input_id?: string }
 /** Final session-level problem. Trace and session problems share this exact shape. */
 export interface SessionProblem {
-  problem_id: string;
   component: string;
   label: string;
   definition: string;

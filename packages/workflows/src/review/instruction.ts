@@ -17,7 +17,7 @@ function processSections(message: RawInput["messages"][number], text: string, so
 }
 /** A new session gets rules and behavior, never the primary evaluator's findings or judgments. */
 export function bindInstructionReview(candidate: Candidate, raw: RawInput): AgentBinding {
-  const trace = attributionTrace(raw, candidate.input_id, candidate.final_index);
+  const trace = attributionTrace(raw);
   const final = trace.messages[candidate.final_index];
   const evidence: Record<string, string> = { Q: candidate.question,
     A: typeof final.content === "string" ? final.content : JSON.stringify(final.content ?? final, null, 2) };

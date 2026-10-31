@@ -4,6 +4,7 @@ import type { EvalConfig, TaskData } from "./types.js";
 import { reconcileRun } from "./run-data.js";
 import { bindTask } from "./binding.js";
 import { advanceReview } from "./review.js";
+import { attributionWorkflow } from "../attribution/index.js";
 import { attributionDimension } from "../review/dimensions.js";
 export { bindTask } from "./binding.js";
 
@@ -11,7 +12,7 @@ const isDeferred = (stage: string) => stage === "rewrite" || stage === "clusteri
 
 export const comparisonWorkflow: WorkflowDefinition = {
   id: "comparison",
-  isComputedTask: task => task.stage === "attribution-compact",
+  isComputedTask: task => attributionWorkflow.isComputedTask!(task),
   plan: (config, options) => buildPlan(config as EvalConfig, undefined, options as PlanOptions),
   reconcile: reconcileRun,
   bind: bindTask,

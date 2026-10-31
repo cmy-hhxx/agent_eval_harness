@@ -3,65 +3,164 @@ import assert from "node:assert/strict";
 import { DEFAULT_POLICY, ValidationError } from "@eval/contracts";
 import { AgentRegistry } from "@eval/host";
 import { compactAgent } from "./index.js";
-import { cite, displayEvidence, evidenceSources } from "@eval/tools";
+import { cite, evidenceSources } from "@eval/tools";
 import { emptyAudit } from "../../../../tests/fixtures/comparison.js";
 
-test("key_data keeps a flexible structure and code restores selected original facts exactly", () => {
-  const id = "11111111-1111-4111-8111-111111111111", raw = { messages: [{ output: "2.492108" }] };
-  const original = cite(id, 0, evidenceSources(raw.messages[0]).find(source => source.path === "/output")!, 0, 8);
-  const facts = [{ value: 2.492108, location: { trace_index: 1, message_index: 3, path: "/output", field_path: "/rows/0/weight" }, source_evidence: [displayEvidence(original)] }];
-  const binding = { agent: "compact", profile: "key_data", request: { sources: { answer: { id, value: raw } }, input: { facts, source_positions: [{ trace_index: 1, message_index: 3 }] } } };
-  const registry = new AgentRegistry([compactAgent]), draft = { value: { 自定义口径: [{ $evidence: [1], 用途: "结论依赖的持仓权重。" }] } };
-  const before = structuredClone(draft);
-  const audit = { ...emptyAudit(), evidenceBank: [original.evidence_id] };
-  const result = registry.resolve(binding, draft, audit);
-  registry.validate(binding, result, emptyAudit());
-  assert.deepEqual(result, { value: { 自定义口径: [{ source_values: facts, 用途: "结论依赖的持仓权重。", summary_origin: { agent: "compact", field: "key_data" } }] } });
+function fixture(profile: string, text = "2.492108") {
+  const id = "11111111-1111-4111-8111-111111111111", raw = { messages: [{ content: text, output: text }] };
+  const original = cite(id, 0, evidenceSources(raw.messages[0]).find(source => source.path === (profile === "key_data" ? "/content" : "/output"))!, 0, text.length);
+  return { registry: new AgentRegistry([compactAgent]), original,
+    binding: { agent: "compact", profile, request: { sources: { answer: { id, value: raw } },
+      input: { source_positions: [{ trace_index: 1, message_index: 3 }], trace_index: 1, final_message_index: 0,
+        recorded_components: profile === "components" ? [{ component_index: 1, kind: "script", name: "/work/render.py", source_evidence: [{ reference: { evidence_id: original.evidence_id }, quote: original.quote, message_index: 0 }] }] : [] } } },
+    audit: { ...emptyAudit(), evidenceBank: [original.evidence_id] } };
+}
+
+test("fixed flat key_data assigns indices and resolves original values without generated source nesting", () => {
+  const f = fixture("key_data"), draft = { value: [{ evidence: [1] }] };
+  const before = structuredClone(draft), result = f.registry.resolve(f.binding, draft, f.audit);
+  f.registry.validate(f.binding, result, f.audit);
+  assert.deepEqual(result, { value: [{ key_data_idx: 1, key_data_content: "2.492108",
+    evidence: [{ evidence_id: f.original.evidence_id, quote: "2.492108" }] }] });
   assert.deepEqual(draft, before);
-  assert.throws(() => registry.resolve(binding, { value: { wrong: { $evidence: [2] } } }, audit), ValidationError);
-  assert.throws(() => registry.resolve(binding, { value: { wrong: { $evidence: 1 } } }, audit), error =>
-    error instanceof ValidationError && error.issues?.[0]?.path === "/value/wrong/$evidence");
-  assert.throws(() => registry.resolve(binding, { value: { wrong: { evidence: [1] } } }, audit), error =>
-    error instanceof ValidationError && error.issues?.[0]?.path === "/value/wrong/evidence");
+  for (const value of [
+    { 任意分组: draft.value }, [{ ...draft.value[0], key_data_idx: 99 }],
+    [{ ...draft.value[0], key_data_content: { nested: "不允许" } }],
+    [{ ...draft.value[0], extra: {} }], [{ ...draft.value[0], evidence: [] }],
+    [{ ...draft.value[0], evidence: [2] }], [{ ...draft.value[0], evidence: [1, 1] }],
+  ]) assert.throws(() => f.registry.resolve(f.binding, { value }, f.audit), ValidationError);
+  assert.throws(() => f.registry.resolve({ ...f.binding, request: { ...f.binding.request,
+    input: { ...f.binding.request.input, trace_index: 0 } } }, draft, f.audit), ValidationError);
 });
 
-test("component extraction requires the actual script name in the selected original source", () => {
-  const id = "11111111-1111-4111-8111-111111111111", raw = { messages: [{ type: "tool_call", name: "shell", input: { command: "python /work/render.py" } }] };
-  const source = evidenceSources(raw.messages[0]).find(source => source.path === "/input/command")!;
-  const original = cite(id, 0, source, 0, source.text.length), registry = new AgentRegistry([compactAgent]);
-  const binding = { agent: "compact", profile: "components", request: { sources: { answer: { id, value: raw } },
-    input: { source_positions: [{ trace_index: 0, message_index: 0 }] } } };
-  const audit = { ...emptyAudit(), evidenceBank: [original.evidence_id] };
-  const draft = { value: [{ kind: "script", name: "/work/render.py", details: { purpose: "生成预览。" }, $evidence: [1] }] };
-  const result = registry.resolve(binding, draft, audit) as { value: Record<string, unknown>[] };
-  registry.validate(binding, result, audit);
-  assert.deepEqual(result.value[0]!.details, draft.value[0]!.details);
-  assert.throws(() => registry.resolve(binding, { value: [{ ...draft.value[0], name: "限制披露" }] }, audit), error =>
-    error instanceof ValidationError && error.issues?.[0]?.code === "component_source_name");
-  assert.throws(() => registry.resolve(binding, { value: [{ kind: "script", name: "/work/render.py" }] }, audit), ValidationError);
+test("key_data copies FDX final units and qualifiers without recomputing or correcting them", () => {
+  const claim = "FDX CY2027 consensus EPS is about $20.86; roughly 8.5x, not independently verified.";
+  const f = fixture("key_data", claim);
+  const result = f.registry.resolve(f.binding, { value: [{ evidence: [1] }] }, f.audit) as { value: { key_data_content: string }[] };
+  assert.equal(result.value[0]!.key_data_content, claim, "even an incorrect final multiple stays unchanged for attribution to check");
+  const raw = f.binding.request.sources.answer.value;
+  const tool = cite(f.binding.request.sources.answer.id, 0, evidenceSources(raw.messages[0]).find(source => source.path === "/output")!, 0, claim.length);
+  assert.throws(() => f.registry.resolve(f.binding, { value: [{ evidence: [2] }] }, { ...f.audit, evidenceBank: [...f.audit.evidenceBank, tool.evidence_id] }), /只能选择本轮最终回复/);
 });
 
-test("field prompts identify the field, value type, complete example and one targeted structural repair", () => {
+test("model summaries cannot restate invocation counts or confuse message numbers with counts", () => {
+  const f = fixture("session_overview");
+  for (const text of ["共32次工具调用。", "第147次shell调用被拒绝。", "调用了工具27次。"])
+    assert.throws(() => f.registry.resolve(f.binding, { value: ["用户问租金。", text] }, f.audit), /调用次数仅由程序/);
+  assert.doesNotThrow(() => f.registry.resolve(f.binding, { value: ["用户问每年一次的租金调增。", "脚本失败，未交付工作簿。"] }, f.audit));
+  assert.doesNotThrow(() => f.registry.resolve(f.binding, { value: ["用户问AIP与同业。", "调用 finquery.py 一次性批量查询，取得数据。"] }, f.audit));
+});
+
+test("component extraction requires the exact actual script name in selected source", () => {
+  const f = fixture("components", "python /work/render.py");
+  const draft = { value: [{ components_kind: "script", components_name: "/work/render.py", components_content: "生成预览。", actor_indices: [1], evidence: [1] }] };
+  const result = f.registry.resolve(f.binding, draft, f.audit);
+  f.registry.validate(f.binding, result, f.audit);
+  assert.throws(() => f.registry.resolve(f.binding, { value: [{ ...draft.value[0], components_name: "模型推理生成" }] }, f.audit), error =>
+    error instanceof ValidationError && error.issues?.some(issue => issue.code === "component_actor_name") === true);
+  assert.throws(() => f.registry.resolve(f.binding, { value: [{ ...draft.value[0], details: { purpose: "多余层" } }] }, f.audit), ValidationError);
+});
+
+test("field prompts contain a fixed example and permit one targeted structural repair", () => {
   const registry = new AgentRegistry([compactAgent]);
   const binding = { agent: "compact", profile: "artifacts", request: { sources: {}, input: {} }, projectModelInput: (input: Record<string, unknown>) => input };
   const prepared = registry.prepare(binding);
   assert(prepared.prompt.includes('"target_field":"artifacts"'));
   assert(prepared.prompt.includes('"field_value_type":"array"'));
-  assert(prepared.evaluation.systemPrompt.includes("只提取 artifacts"));
-  assert(prepared.prompt.includes('"submission_example":{"value":[{"description":"交付资源描述"}]}'));
-  const draft = { value: { artifacts: [{ description: "实际交付的文件。" }] } };
-  const prompt = prepared.renderAttempt({ ...DEFAULT_POLICY, repairAttempts: 0 }, {
+  const draft = { value: { artifacts: [{ artifacts_content: "文件。" }] } };
+  const repaired = prepared.renderAttempt({ ...DEFAULT_POLICY, repairAttempts: 0 }, {
     draft, errors: [{ category: "structure", code: "schema_type", path: "/value", message: "must be array" }],
     attemptId: "failed-artifacts", contentSubmissions: 1, fileErrors: 0, repeatedErrors: 0, stopped: true,
   });
-  assert(prompt.includes('"field_repair"'));
-  assert(prompt.includes(JSON.stringify(draft)));
-  assert(prompt.includes("仅修复反馈指出的封装"));
-  const value = { value: [{ any_shape: { count: 3 } }, "交付说明"] };
-  registry.validate(binding, registry.resolve(binding, value, emptyAudit()), emptyAudit());
-  const keyData = compactAgent.profiles.key_data!.renderPrompt({ facts: [{ value: 1234, reference: { evidence_index: 1 } }],
-    turns: [{ final_evidence: [{ quote: "结论使用股价100元。", reference: { evidence_index: 7 } }] }] });
-  assert.deepEqual(JSON.parse(keyData.slice(keyData.indexOf("\n") + 1)).submission_example,
-    { value: { 关键指标: [{ 用途: "说明该指标支撑的结论。", $evidence: [7] }] } });
-  assert(!keyData.includes('"field_instruction"'), "the field task belongs to the system instruction, outside original material");
+  assert(repaired.includes('"field_repair"')); assert(repaired.includes(JSON.stringify(draft)));
+  assert.throws(() => registry.resolve(binding, { value: [{ any_shape: { count: 3 } }] }, emptyAudit()), ValidationError);
+  const rendered = compactAgent.profiles.key_data!.renderPrompt({ turns: [{ final_evidence: [{ quote: "原文。", reference: { evidence_index: 7 } }] }] });
+  assert.deepEqual(JSON.parse(rendered.slice(rendered.indexOf("\n") + 1)).submission_example,
+    { value: [{ evidence: [7] }] });
+});
+
+
+test("historical tools cannot enter the current directory through empty source selections", () => {
+  const f = fixture("components", "历史上下文曾使用 web_search 与 finance skill。");
+  for (const kind of ["tool", "skill", "script"]) assert.throws(() => f.registry.resolve(f.binding, { value: [{
+    components_kind: kind, components_name: "web_search", components_content: "历史回执。", actor_indices: [], evidence: [1],
+  }] }, f.audit), ValidationError);
+});
+
+test("component repair enumerates all duplicate rows and source unions in one feedback", () => {
+  const f = fixture("components", "python /work/render.py");
+  const entry = { components_kind: "script", components_name: "/work/render.py", components_content: "为生成产物运行脚本，保存预览。", actor_indices: [1], evidence: [1] };
+  const draft = { value: [entry, { ...entry }] };
+  let issues: NonNullable<ValidationError["issues"]> = [];
+  assert.throws(() => f.registry.resolve(f.binding, draft, f.audit), error => {
+    if (!(error instanceof ValidationError)) return false;
+    issues = error.issues!;
+    assert.equal(issues[0]!.code, "component_duplicate");
+    assert.deepEqual(issues[0]!.expected, { merge_groups: [{ name: "/work/render.py", rows: [0, 1], actor_indices: [1], evidence: [1] }] });
+    return true;
+  });
+  const rendered = compactAgent.profiles.components!.renderPrompt({ turns: [] }, DEFAULT_POLICY, {
+    draft, errors: issues, attemptId: "repair", contentSubmissions: 2, fileErrors: 0, repeatedErrors: 0, stopped: true,
+  });
+  assert(rendered.includes('"merge_groups"') && rendered.includes('"/work/render.py"'));
+  assert.doesNotThrow(() => f.registry.resolve(f.binding, { value: [entry] }, f.audit));
+});
+
+test("reading a JSON data file does not make that file an executable script component", () => {
+  const f = fixture("components", "python -c \"import json; json.load(open('/tmp/data.json'))\"");
+  const draft = { value: [{ components_kind: "script", components_name: "data.json", components_content: "被读取的数据文件。", actor_indices: [1], evidence: [1] }] };
+  assert.throws(() => f.registry.resolve(f.binding, draft, f.audit), error => error instanceof ValidationError &&
+    error.issues?.some(issue => issue.code === "component_data_file") === true);
+});
+
+test("functional model names select actual source actors without leaking locators or losing coverage", () => {
+  const f = fixture("components", "为回答本期营收，已生成财务查询请求。"), raw = f.binding.request.sources.answer.value;
+  Object.assign(raw.messages[0]!, { type: "llm_turn", name: "llm-call-7" });
+  const source = evidenceSources(raw.messages[0]).find(source => source.path === "/name")!;
+  const identity = cite(f.binding.request.sources.answer.id, 0, source, 0, source.text.length);
+  (f.binding.request.input as Record<string, unknown>).recorded_components = [{ component_index: 1, kind: "model", name: "llm-call-7",
+    source_evidence: [{ reference: { evidence_id: identity.evidence_id }, quote: identity.quote, message_index: 0 }] }];
+  const entry = { components_kind: "model", components_name: "规划", components_content: "为回答本期营收，规划财务查询；已生成查询请求。",
+    actor_indices: [1], evidence: [1] };
+  const result = f.registry.resolve(f.binding, { value: [entry] }, f.audit) as { value: Record<string, unknown>[] };
+  f.registry.validate(f.binding, result, f.audit);
+  assert.equal(result.value[0]!.components_name, entry.components_name);
+  assert(!("actor_indices" in result.value[0]!));
+  assert.deepEqual(result.value[0]!.evidence, [{ evidence_id: f.original.evidence_id, quote: f.original.quote }, { evidence_id: identity.evidence_id, quote: identity.quote }]);
+  assert.throws(() => f.registry.resolve(f.binding, { value: [] }, f.audit), /可见职责分组/);
+  for (const actor_indices of [[2], [1, 1]]) assert.throws(() => f.registry.resolve(f.binding, { value: [{ ...entry, actor_indices }] }, f.audit), ValidationError);
+  assert.throws(() => f.registry.resolve(f.binding, { value: [{ ...entry, components_name: "llm-call-7" }] }, f.audit), ValidationError);
+  assert.throws(() => f.registry.resolve(f.binding, { value: [{ ...entry, components_name: "本期营收查询规划" }] }, f.audit), ValidationError);
+  assert.throws(() => f.registry.resolve(f.binding, { value: [entry, { ...entry, components_content: "重复列出同类调用。" }] }, f.audit), /同一类型、同一名称/);
+  ((f.binding.request.input as Record<string, unknown>).recorded_components as Record<string, unknown>[]).push({ component_index: 2, kind: "model", name: "llm-call-8", source_evidence: [] });
+  assert.doesNotThrow(() => f.registry.resolve(f.binding, { value: [entry] }, f.audit), "anonymous invocations may share one visible role group without individual enumeration");
+});
+
+test("a selected tool keeps its source name without making the model repeat identity evidence", () => {
+  const f = fixture("components", "已返回季度财报公告。"), raw = f.binding.request.sources.answer.value;
+  Object.assign(raw.messages[0]!, { type: "tool_result", name: "web_search" });
+  const source = evidenceSources(raw.messages[0]).find(source => source.path === "/name")!;
+  const identity = cite(f.binding.request.sources.answer.id, 0, source, 0, source.text.length);
+  (f.binding.request.input as Record<string, unknown>).recorded_components = [{ component_index: 3, kind: "tool", name: "web_search",
+    source_evidence: [{ reference: { evidence_id: identity.evidence_id }, quote: identity.quote, message_index: 0 }] }];
+  const entry = { components_kind: "tool", components_name: "web_search", components_content: "为核对季度财报检索公告；取得公告内容。",
+    actor_indices: [3], evidence: [1] };
+  const result = f.registry.resolve(f.binding, { value: [entry] }, f.audit) as {value:Record<string,unknown>[]};
+  f.registry.validate(f.binding, result, f.audit);
+  assert.deepEqual(result.value[0]!.evidence, [{ evidence_id: f.original.evidence_id, quote: f.original.quote }, { evidence_id: identity.evidence_id, quote: identity.quote }]);
+  assert.throws(() => f.registry.resolve(f.binding, { value: [{ ...entry, components_name: "shell" }] }, f.audit), ValidationError);
+});
+
+test("component examples use the actual source numbers and types, grouping model calls", () => {
+  const rendered = compactAgent.profiles.components!.renderPrompt({ recorded_components: [
+    { actor_index: 1, kind: "model", name: "llm-call-0" }, { actor_index: 3, kind: "model", name: "planner-finquery" },
+    { actor_index: 2, kind: "tool", name: "shell" },
+    { actor_index: 5, kind: "model", name: "llm-call-1" }, { actor_index: 7, kind: "script", name: "/work/render.py" },
+  ], turns: [{ process_excerpts: [{ quote: "原文。", reference: { evidence_index: 4 } }] }] });
+  const example = JSON.parse(rendered.slice(rendered.indexOf("\n") + 1)).submission_example.value;
+  assert.deepEqual(example.map((entry: Record<string,unknown>) => [entry.components_kind, entry.actor_indices]),
+    [["model", [1]], ["model", [5]], ["model", [3]], ["tool", [2]], ["script", [7]]]);
+  assert.equal(example[0].components_name, "规划");
+  assert.equal(example[1].components_name, "最终答复生成");
+  assert(example.every((entry: {evidence:number[]}) => entry.evidence[0] === 4));
 });

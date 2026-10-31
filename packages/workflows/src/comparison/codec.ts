@@ -35,6 +35,9 @@ function evaluationDifference(data: TaskData, row: JsonObject, evaluation: unkno
 }
 function encodeState(state: RunState): Checkpoint {
   const { tasks, states, inputs: _inputs, inputCatalog, ...metadata } = state.manifest;
+  const attributions = new Map(tasks.filter(task => task.stage === "attribution-session").map(task => [
+    canonical([(task.data as AttributionTaskData).candidate?.input_id, (task.data as JsonObject).attributionIdentity]), state.receipts[task.id]?.exported,
+  ]));
   const catalog = (inputCatalog as Candidate[]) || [
     ...new Map(
       tasks
@@ -71,10 +74,19 @@ function encodeState(state: RunState): Checkpoint {
       if (receipt) {
         const { exported, evaluation, submitted, ...rest } = receipt;
         const compactId = (task.data as AttributionTaskData).compactTaskId;
-        const compact = compactId && state.receipts[compactId]?.exported;
+        const compact = (task.data as AttributionTaskData).compactField && compactId && state.receipts[compactId]?.exported;
         if (compact) {
           value.receipt = { ...rest, compact: { id: compact.id, file: compact.file, line: compact.line },
+            evaluationPatch: difference(compactFieldResult(compact.row, (task.data as AttributionTaskData).compactField!, (task.data as AttributionTaskData).traceIndex), evaluation),
             ...(submitted !== undefined ? { submittedPatch: submissionDifference(evaluation, submitted) } : {}) };
+          return [task.id, value];
+        }
+        const parent = ["attribution-component", "attribution-trace"].includes(task.stage) && attributions.get(
+          canonical([(task.data as AttributionTaskData).candidate.input_id, (task.data as JsonObject).attributionIdentity]));
+        if (parent) {
+          const base = (parent.row as { turns: unknown[] }).turns[(task.data as AttributionTaskData).traceIndex!];
+          value.receipt = { ...rest, attribution: { id: parent.id, file: parent.file, line: parent.line },
+            evaluationPatch: difference(base, evaluation), ...(submitted !== undefined ? { submittedPatch: submissionDifference(evaluation, submitted) } : {}) };
           return [task.id, value];
         }
         const rewriteIds = task.stage === "rewrite"
@@ -244,12 +256,18 @@ function decodeState(
     state.manifest.states[task.id] = status;
     if (taskIds && !taskIds.has(task.id)) continue;
     if (!receipt) continue;
-    const { evaluationPatch, submittedPatch, rewriteIds, compact, ...value } = receipt;
+    const { evaluationPatch, submittedPatch, rewriteIds, compact, attribution, ...value } = receipt;
     if (compact) {
       const row = getRow(compact);
-      const info = task.data as AttributionTaskData, evaluation = compactFieldResult(row, info.compactField!, info.traceIndex);
+      const info = task.data as AttributionTaskData, evaluation = restore(compactFieldResult(row, info.compactField!, info.traceIndex), evaluationPatch ?? []);
       state.receipts[task.id] = { ...value, evaluation,
         ...(submittedPatch ? { submitted: restore(evaluation, submittedPatch) } : {}) } as SubmissionReceipt;
+      continue;
+    }
+    if (attribution) {
+      const base = (getRow(attribution) as { turns: unknown[] }).turns[(task.data as AttributionTaskData).traceIndex!];
+      const evaluation = restore(base, evaluationPatch ?? []);
+      state.receipts[task.id] = { ...value, evaluation, ...(submittedPatch ? { submitted: restore(evaluation, submittedPatch) } : {}) } as SubmissionReceipt;
       continue;
     }
     if (!receipt.exported) {
@@ -401,6 +419,7 @@ export const comparisonCodec: RunCodec<Checkpoint> = {
     return Object.entries(checkpoint.tasks).flatMap(([id, task]) => {
       if (taskIds && !taskIds.has(id)) return [];
       if (task.receipt?.compact) return [task.receipt.compact];
+      if (task.receipt?.attribution) return [task.receipt.attribution];
       const ref = task.receipt?.exported;
       return ref
         ? [

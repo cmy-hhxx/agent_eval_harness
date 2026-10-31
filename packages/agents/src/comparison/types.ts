@@ -9,7 +9,7 @@ export interface Evidence extends ResolvedEvidence {
   source_input_id?: string;
 }
 export interface Finding {
-  problem_id: string;
+  problem_path: string;
   text: string;
   reason: string;
   evidence_status: EvidenceStatus;

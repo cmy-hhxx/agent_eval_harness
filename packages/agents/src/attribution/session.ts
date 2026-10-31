@@ -6,6 +6,13 @@ export function sessionProblems(result: SessionAttributionResult): SessionProble
   return [...result.turns.flatMap(turn => turn.problem), ...result.session_problem];
 }
 
+/** A coordinate within one accepted receipt, never an ID stored in the formal problem. */
+export function sessionProblemEntries(result: SessionAttributionResult): (SessionProblem & { problem_path: string })[] {
+  return [...result.turns.flatMap((turn, turnIndex) => turn.problem.map((problem, index) => ({
+    ...problem, problem_path: `/turns/${turnIndex}/problem/${index}`,
+  }))), ...result.session_problem.map((problem, index) => ({ ...problem, problem_path: `/session_problem/${index}` }))];
+}
+
 export function evidenceMessageIndex(position: string): number | null {
   const reference = attributionPositionReference(position);
   if (reference) return parseEvidenceCoordinates(reference.evidence_id)!.message_index;

@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { structuredProcessFacts, referencedProcessFacts, processExecutionFacts, processMaterial } from "./process-material.js";
+import { processExecutionFacts, processMaterial } from "./process-material.js";
 import { attributionSessionSource } from "./public-trace.js";
 import { parseEvidenceCoordinates, resolveEvidence } from "@eval/tools";
 import { presentedMaterialReads, projectComparisonEvidence } from "./evidence-presentation.js";
@@ -49,42 +49,6 @@ test("repeated input locations stay global across turns and do not merge redacte
   assert(!JSON.stringify(facts).includes("PRIVATE_"));
 });
 
-test("numeric menus retain original payload context before large nested series", () => {
-  const raw = { messages: [{ type: "tool_result", output: {
-    rows: Array.from({ length: 100 }, (_, i) => ({ revenue: 27.3 + i, margin: 0.12, expense: 8.4 })),
-    entity: "ABC", unit: "USD millions", period: "FY 2026",
-  } }] };
-  const [facts] = structuredProcessFacts(raw, 180);
-  assert.equal(facts!.fields["/unit"], "USD millions");
-  assert.equal(facts!.fields["/period"], "FY 2026");
-  assert.equal(facts!.fields["/entity"], "ABC");
-  assert.equal(facts!.fields["/rows/0/revenue"], 27.3);
-  assert.equal(facts!.partial, true);
-});
-
-test("large column metadata cannot hide later numeric table values from compact", () => {
-  const result = {
-    columns: Array.from({ length: 20 }, (_, i) => ({ name: `metric-${i}`, definition: "column description ".repeat(6), unit: "元" })),
-    datas: [{ price: 230.46, growth: "33.7", period: "2026Q4" }],
-  };
-  for (const output of [result, JSON.stringify(result)]) {
-    const [facts] = structuredProcessFacts({ messages: [{ role: "tool", output }] }, 240);
-    assert.equal(facts!.fields["/datas/0/price"], 230.46);
-    assert.equal(facts!.fields["/datas/0/growth"], "33.7");
-    assert.equal(facts!.partial, true);
-    assert.equal(facts!.path, "/output");
-  }
-});
-
-test("key_data never copies image payloads as text and distinguishes empty JSON keys from a scalar root", () => {
-  const raw = { messages: [{ output: { "": 100, image: "data:image/png;base64,AA==", count: 2 } }, { output: "false" }] };
-  const facts = referencedProcessFacts(raw, raw, "11111111-1111-4111-8111-111111111111",
-    raw.messages.map((_, message_index) => ({ trace_index: 0, message_index })));
-  assert(!JSON.stringify(facts).includes("base64"));
-  assert(facts.some(fact => fact.location.field_path === "/" && fact.value === 100));
-  assert(facts.some(fact => fact.location.field_path === "" && fact.value === false));
-});
-
 test("snapshot-only tool returns retain original coordinates across privacy projection and turns", () => {
   const id = "11111111-1111-4111-8111-111111111111";
   const guard = "Tool execution is forbidden because the maximum tool-call iteration limit has been reached.";
@@ -96,7 +60,7 @@ test("snapshot-only tool returns retain original coordinates across privacy proj
       { role: "tool", name: "shell", tool_call_id: "done", content: "checked" }, returned] }, output: [] },
     { type: "llm_turn", input_messages: { messages: [returned] }, output: [] },
   ] };
-  const source = attributionSessionSource({ messages: [], turns: [turn, turn] }, id);
+  const source = attributionSessionSource({ messages: [], turns: [turn, turn] });
   const material = processMaterial(source.raw, source.original, id, "answer", 12000, source.positions);
   const proofs = material.process_evidence.filter(entry => entry.quote === guard);
   assert.equal(proofs.length, 2, "repeated snapshots are deduplicated within each turn, not across turns");

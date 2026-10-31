@@ -1,10 +1,9 @@
-import { compactReceipt } from "../../../../tests/fixtures/compact.js";
+import { compactReceipt, bindComponentFixture } from "../../../../tests/fixtures/compact.js";
 import test from "node:test";
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
 import { emptyUsage, type PlannedTask, type SubmissionReceipt, type TaskAnalysis } from "@eval/contracts";
 import { agentPrompt } from "@eval/prompts";
-import { traceAttributionProfile } from "@eval/agents/attribution";
 import { parseEvidenceCoordinates, resolveEvidence } from "@eval/tools";
 import { comparisonWorkflow } from "../comparison/workflow.js";
 import { taskAnalysisPresentation, taskFocus } from "./task-focus.js";
@@ -136,7 +135,8 @@ test("public judgment bindings keep global indices and separate blind originals 
       contextTasks.push(primaryTask);
     }
     const before = structuredClone({ task, inputs, dependencies });
-    const binding = comparisonWorkflow.bind(task, inputs, dependencies, { tasks: contextTasks });
+    const binding = mode === "attribution" ? bindComponentFixture(candidates.A!, inputs[candidates.A!.input_id]!, { criteria: criterionReceipt })
+      : comparisonWorkflow.bind(task, inputs, dependencies, { tasks: contextTasks });
     assert(!Object.hasOwn(binding.request.input, "task_focus"));
     if (mode !== "attribution") assert.deepEqual(binding.request.input.task_analysis, analysis);
     const shown = binding.modelInput!;
@@ -181,21 +181,24 @@ test("public judgment bindings keep global indices and separate blind originals 
       assert.deepEqual({ task, inputs, dependencies }, before);
       continue;
     }
+    if (mode === "attribution") {
+      assert.equal((shown.final_answer as { quote: string }[]).map(item => item.quote).join(""), "A 完整最终回答。");
+      assert((shown.user_requirements as { quote: string }[]).some(item => item.quote === candidates.A!.question));
+      assert(!Object.hasOwn(shown, "task_analysis")); assert(!Object.hasOwn(shown, "task_focus"));
+      assert.deepEqual({ task, inputs, dependencies }, before); continue;
+    }
     const focus = shown.task_focus as ReturnType<typeof taskFocus> | undefined;
     assert.deepEqual((shown.task_analysis as ReturnType<typeof taskAnalysisPresentation>).requirements.map(item => item.requirement_index), [0, 1, 2, 3]);
-    const answer = shown.answer as { question: string; final_evidence: { quote: string }[] } | undefined;
-    const finalAnswer = mode === "attribution" ? answer!.final_evidence.map(item => item.quote).join("")
-      : (shown.candidates as Record<string, { final_answer: string }>).A.final_answer;
-    const question = mode === "attribution" ? answer!.question : focus!.question;
+    const finalAnswer = (shown.candidates as Record<string, { final_answer: string }>).A.final_answer;
+    const question = focus!.question;
     assert.equal(finalAnswer, "A 完整最终回答。");
-    if (mode === "attribution") assert.deepEqual((shown.task_focus as { question: string }).question, question);
-    else {
+    {
       assert(!Object.hasOwn(focus!, "goal"));
       assert(!Object.hasOwn(focus!, "common_requirements"));
       assert(!JSON.stringify(focus).includes(analysis.requirements[1]!.text));
       assert.equal(focus!.answers.A!.question_timestamp, "2026-09-24T22:07:25.270Z");
     }
-    const profile = mode === "attribution" ? traceAttributionProfile : agentPrompt("comparison", [], { fileSubmission: false });
+    const profile = agentPrompt("comparison", [], { fileSubmission: false });
     const prompt = profile.renderPrompt(shown);
     assert(profile.systemPrompt.includes(profile.instructions), "fixed stage instructions belong to the system prompt");
     assert(prompt.indexOf(JSON.stringify(question)) >= 0);

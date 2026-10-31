@@ -318,7 +318,7 @@ export function businessResultRepository(repository: RunRepository, adapters: {
           const compactId = (task.data as Record<string, unknown>).compactTaskId;
           if (task.stage === "attribution-compact-field" && typeof compactId === "string" &&
             reused.has(replacements.get(compactId) ?? compactId)) removed.add(task.id);
-          if (task.stage === "attribution-trace" && reusedAttributions.some(source =>
+          if (["attribution-component", "attribution-trace"].includes(task.stage) && reusedAttributions.some(source =>
             businessCandidates(source, state)[0]?.input_id === businessCandidates(task, state)[0]?.input_id &&
             (source.data as Record<string, unknown>).attributionIdentity === data.attributionIdentity)) removed.add(task.id);
           if (task.stage === "rewrite" && data.rewriteOf && reused.has(data.rewriteOf.taskId)) removed.add(task.id);
