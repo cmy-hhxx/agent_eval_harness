@@ -99,13 +99,13 @@ Worker 启动期限保持 60 秒，由 Supervisor 异步、小批预热并统一
 
 先停止对应 Host 或 Eris 进程并等待保存完成，再在服务器对应 checkout（主线为 `/opt/eval_harness/main`）执行 `git pull --ff-only`。checkout 缺失或损坏时直接从 Git 重新克隆，不恢复共享盘旧副本。
 
-依赖安装只在下列情况执行 `npm run bootstrap`：首次部署或 checkout 缺少 `node_modules` / `.venv`；`package.json`、根 `package-lock.json` 或 `vendor/pi/package-lock.json` 变化；Node/npm/Python/uv 工具链版本变化；依赖目录损坏。普通代码更新不重新安装依赖，直接 `npm run build`；未改动 `vendor/pi` 时可执行 `npm run build:app` 跳过 Pi 重建。
+依赖安装只在下列情况执行 `npm run bootstrap`：首次部署或 checkout 缺少 `node_modules` / `.venv`；依赖声明、根 `package-lock.json` 或 `vendor/pi/package-lock.json` 变化；Node/npm/Python/uv 工具链版本变化；依赖目录损坏。普通代码更新不重新安装依赖，直接 `npm run build`；未改动 `vendor/pi` 时可执行 `npm run build:app` 跳过 Pi 重建。仅部署评测 Host/Worker 时使用 `npm run build:test` 编译后端、复制资源并打包运行时，不运行测试，也不构建 Eris 前端。
 
 `npm ci` 按锁文件删除并重建 `node_modules`，用于还原精确依赖或排查依赖损坏，不是每次部署步骤；`npm run build` 不安装依赖。是否需要安装只看锁文件和工具链是否变化，不看部署次数或时间间隔。依赖、vendor 或工具链有变化时重新执行 `npm run bootstrap`，随后 `npm run build`、`npm run doctor`。更新完成后手动启动所需入口。
 
 代码由服务器通过 Git 获取，凭据保存在 checkout 外，权限 `600`；密钥不进入 origin、命令参数或 Git。服务器配置继续保存在外部运行目录。
 
-手动更新主线时，从 `main/` checkout 显式使用外置凭据文件：
+主线 checkout 应在本地 Git 配置中指定已有外置凭据 helper，并对内网 Git 禁用环境 HTTP 代理；设置只影响这个 checkout，凭据文件保持 `600`，不把凭据放入远程 URL。未配置 helper 时，无交互的 `git pull` 会因无法获取用户名失败。配置后可直接执行 `git pull --ff-only`；临时指定同一配置的等价命令为：
 
 ```bash
 git -c credential.helper='store --file=/mnt/fin_bench/sync_datasets/code/1_eval_harnes/runtime/secrets/git-credentials' \
