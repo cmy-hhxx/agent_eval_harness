@@ -1,3 +1,4 @@
+import path from "node:path";
 import { type JsonObject } from "@eval/contracts";
 import { cite, displayEvidence, evidenceSources, messageContentSources, isComponentLocator, traceExchanges, traceCallOrigins } from "@eval/tools";
 import type { RawInput } from "../inputs/types.js";
@@ -28,6 +29,34 @@ function shellCommands(text: string): string {
   }).join("");
 }
 
+/**
+ * The working directory of each simple command. A skill script run as `cd <dir> && python scripts/x.py`
+ * executes the same file as its absolute path, so identity is decided after this resolution.
+ */
+function commandDirectories(command: string) {
+  const spans: { start: number; end: number; cwd?: string }[] = [];
+  let cwd: string | undefined, start = 0;
+  const push = (end: number) => {
+    const segment = command.slice(start, end).trim(), change = /^cd(?:\s+(.+))?$/u.exec(segment);
+    if (change) {
+      const target = change[1]?.replace(/^(["'])(.*)\1$/u, "$2");
+      cwd = !target || target === "-" ? undefined
+        : target.startsWith("/") ? path.posix.normalize(target)
+          : cwd ? path.posix.normalize(path.posix.join(cwd, target)) : undefined;
+    }
+    spans.push({ start, end, cwd });
+  };
+  // shellCommands masks separators inside quotes and heredocs, so every remaining one starts a command.
+  for (const match of command.matchAll(/&&|\|\||;|\n/gu)) { push(match.index!); start = match.index! + match[0].length; }
+  push(command.length);
+  return spans;
+}
+
+/** A script written or run relative to a resolved directory keeps its absolute identity across sessions. */
+function samePath(first: string, second: string) {
+  return first === second || first.endsWith("/" + second) || second.endsWith("/" + first);
+}
+
 /** Model navigation needs identities and proof, while code retains full positions and invocation bookkeeping. */
 export function actorCatalog(components: JsonObject[]) {
   return components.map(({ component_index, kind, name, anonymous, components_content, source_evidence, message_indices, invoked_by }) => ({ actor_index: component_index, kind, name,
@@ -43,8 +72,7 @@ export function processComponents(raw: RawInput, original: RawInput, inputId: st
   const add = (kind: string, name: string, message_indices: number[], source_evidence: JsonObject[], extra: JsonObject = {}) => {
     if (kind === "script") {
       // A relative path run from a skill directory and its absolute path name the same executed script.
-      const same = entries.filter(entry => entry.kind === "script" && entry.name !== name &&
-        (String(entry.name).endsWith("/" + name) || name.endsWith("/" + String(entry.name))));
+      const same = entries.filter(entry => entry.kind === "script" && entry.name !== name && samePath(String(entry.name), name));
       if (same.length === 1) {
         if (name.length > String(same[0]!.name).length) same[0]!.name = name;
         name = String(same[0]!.name);
@@ -106,19 +134,30 @@ export function processComponents(raw: RawInput, original: RawInput, inputId: st
       if (name === "view_skill" && /^\/(?:input|arguments|parameters)\/(?:name|skill|skill_name)$/u.test(item.path) && item.text.trim())
         add("skill", item.text, [index], [displayEvidence(cite(inputId, index, item, 0, item.text.length))], { identity_basis: "source_record" });
       if (!/^\/(?:input|arguments|parameters)\/(?:command|cmd)$/u.test(item.path)) continue;
-      const command = shellCommands(item.text);
+      const command = shellCommands(item.text), directories = commandDirectories(command);
       const trace = positions[index]!.trace_index;
+      const directory = (position: number) => {
+        let cwd: string | undefined;
+        for (const span of directories) { if (span.start > position) break; cwd = span.cwd; }
+        return cwd;
+      };
+      const scriptPath = (name: string, position: number) => {
+        if (name.startsWith("/")) return path.posix.normalize(name);
+        const cwd = directory(position);
+        return cwd ? path.posix.normalize(path.posix.join(cwd, name)) : name;
+      };
       for (const write of command.matchAll(/(?:^|&&|\|\||;|\n)\s*cat\s*(>>?)\s*["']?([^\s"'`<>()[\]{};$\\]+\.py)["']?\s*<<-?\s*(["']?)([A-Za-z_][\w-]*)\3/gu)) {
-        const name = write[2]!, start = item.text.indexOf("\n", write.index! + write[0].length) + 1;
+        const written = write[2]!, offset = write.index! + write[0].indexOf(written), name = scriptPath(written, offset);
+        const start = item.text.indexOf("\n", write.index! + write[0].length) + 1;
         const end = item.text.indexOf("\n" + write[4], start - 1);
         if (!start || end < start) continue;
-        const existing = pythonFiles.find(file => file.trace === trace && (file.name === name || file.name.endsWith("/" + name)));
-        const body = item.text.slice(start, end), offset = write.index! + write[0].indexOf(name);
+        const existing = pythonFiles.find(file => file.trace === trace && samePath(file.name, written));
+        const body = item.text.slice(start, end);
         if (write[1] === ">>" && existing) existing.body += "\n" + body;
         else {
           if (existing) pythonFiles.splice(pythonFiles.indexOf(existing), 1);
           pythonFiles.push({ trace, name: existing?.name ?? name, body, index, source: item, start,
-            proof: existing?.proof ?? displayEvidence(cite(inputId, index, item, offset, offset + name.length)) });
+            proof: existing?.proof ?? displayEvidence(cite(inputId, index, item, offset, offset + written.length)) });
         }
       }
       const imports = (body: string, executed: JsonObject, parent?: typeof pythonFiles[number], visited = new Set<string>()) => {
@@ -135,16 +174,16 @@ export function processComponents(raw: RawInput, original: RawInput, inputId: st
         }
       };
       for (const invocation of command.matchAll(/(?:^|&&|\|\||;|\n)\s*(?:python(?:\d+(?:\.\d+)?)?|node|bash|sh|tsx|ts-node)\s+(?!-(?:c|m)(?:\s|$))(?:-[\w-]+\s+)*["']?([^\s"'`<>()[\]{};$\\]+\.(?:py|sh|js|mjs|ts))(?=["'\s;&]|$)/gu)) {
-        const script = invocation[1]!, start = invocation.index! + invocation[0].lastIndexOf(script);
+        const script = invocation[1]!, start = invocation.index! + invocation[0].lastIndexOf(script), name = scriptPath(script, start);
         const executed = displayEvidence(cite(inputId, index, item, start, start + script.length));
-        const files = pythonFiles.filter(file => file.trace === trace && (file.name === script || file.name.endsWith("/" + script)));
-        add("script", script, [...files.map(file => file.index), index], [...files.map(file => file.proof), executed], { identity_basis: "source_record" });
+        const files = pythonFiles.filter(file => file.trace === trace && samePath(file.name, script));
+        add("script", name, [...files.map(file => file.index), index], [...files.map(file => file.proof), executed], { identity_basis: "source_record" });
         if (files.length === 1) imports(files[0]!.body, executed, files[0]);
         if (/(?:^|\/)calc\.py$/u.test(script)) {
           const offset = invocation.index! + invocation[0].length, newline = command.indexOf("\n", offset);
           for (const argument of command.slice(offset, newline < 0 ? undefined : newline).matchAll(/--code-file(?:=|\s+)["']?([^\s"'`<>()[\]{};$\\]+\.py)(?=["'\s;&|]|$)/gu)) {
             const file = argument[1]!, begin = offset + argument.index! + argument[0].lastIndexOf(file);
-            add("script", file, [index], [displayEvidence(cite(inputId, index, item, begin, begin + file.length))], { identity_basis: "source_record" });
+            add("script", scriptPath(file, begin), [index], [displayEvidence(cite(inputId, index, item, begin, begin + file.length))], { identity_basis: "source_record" });
           }
         }
       }

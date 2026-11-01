@@ -41,6 +41,28 @@ test("a relative script run from its skill directory is the same component as it
   assert.deepEqual(scripts[0]!.message_indices.filter(index => source.raw.messages[index]!.type === "tool_call").length, 2);
 });
 
+test("skill-relative and absolute invocations share one component identity across inputs", () => {
+  const ids = ["11111111-1111-4111-8111-111111111111", "22222222-2222-4222-8222-222222222222"];
+  const commands = [
+    'cd /opt/skills-aime/aime-finquery && python scripts/finquery.py "Q1"',
+    'python /opt/skills-aime/aime-finquery/scripts/finquery.py "Q2"',
+  ];
+  const scripts = commands.map((command, index) => {
+    const messages = [
+      { type: "tool_call", name: "shell", call_id: "run", input: { command } },
+      { type: "tool_result", name: "shell", call_id: "run", output: "rows" },
+    ];
+    const source = attributionSessionSource({ messages, turns: [{ messages }] });
+    return processComponents(source.raw, source.original, ids[index]!, source.positions).filter(entry => entry.kind === "script");
+  });
+  assert.equal(scripts[0]!.length, 1, "one input names exactly one script");
+  assert.equal(scripts[1]!.length, 1, "one input names exactly one script");
+  assert.equal(scripts[0]![0]!.name, "/opt/skills-aime/aime-finquery/scripts/finquery.py");
+  assert.equal(scripts[0]![0]!.name, scripts[1]![0]!.name, "the same executed file keeps one identity across sessions");
+  assert.deepEqual(scripts.map(found => found[0]!.source_evidence[0]!.quote),
+    ["scripts/finquery.py", "/opt/skills-aime/aime-finquery/scripts/finquery.py"], "evidence keeps the literal source text");
+});
+
 test("a source-identified inner service remains distinct from its shell transport", () => {
   const id = "11111111-1111-4111-8111-111111111111";
   const raw = { messages: [
@@ -108,11 +130,12 @@ test("actual script invocations and skill reads become source actors while inlin
   ] };
   const positions = raw.messages.map((_, message_index) => ({ trace_index: 0, message_index }));
   const directory = processComponents(raw, raw, id, positions);
-  assert.deepEqual(directory.filter(actor => actor.kind === "script").map(actor => actor.name), ["/work/render.py", "routes/chart/workflow.js", "scripts/calc.py", "/work/calc1.py"]);
+  assert.deepEqual(directory.filter(actor => actor.kind === "script").map(actor => [actor.name, actor.source_evidence[0]!.quote]), [
+    ["/work/render.py", "/work/render.py"], ["/work/routes/chart/workflow.js", "routes/chart/workflow.js"],
+    ["/work/scripts/calc.py", "scripts/calc.py"], ["/work/calc1.py", "/work/calc1.py"]]);
   assert.deepEqual(directory.filter(actor => actor.kind === "skill").map(actor => actor.name), ["routes/chart/ROUTE.md", "pdf"]);
   for (const script of directory.filter(actor => actor.kind === "script")) {
     assert.deepEqual(script.invoked_by, [1]);
-    assert.equal(script.source_evidence[0]!.quote, script.name);
     const point = parseEvidenceCoordinates((script.source_evidence[0]!.reference as {evidence_id:string}).evidence_id);
     assert(point && point.kind !== "image");
     assert.equal(point.path, "/input/command");
@@ -130,7 +153,7 @@ test("executed Python scripts include visible local imports, without listing mer
   const raw = { messages: commands.map(command => ({ type: "tool_call", name: "shell", input: { command } })) };
   const positions = raw.messages.map((_, message_index) => ({ trace_index: 0, message_index }));
   const scripts = processComponents(raw, raw, id, positions).filter(actor => actor.kind === "script");
-  assert.deepEqual(scripts.map(actor => actor.name), ["make.py", "/work/layout.py"]);
+  assert.deepEqual(scripts.map(actor => actor.name), ["/work/make.py", "/work/layout.py"]);
   assert(scripts[1]!.source_evidence.some(proof => proof.quote === "/work/layout.py"));
   assert(scripts[1]!.source_evidence.some(proof => proof.quote === "from layout import *"));
   assert(scripts[1]!.positions.some(point => point.source_message_index === 2));
