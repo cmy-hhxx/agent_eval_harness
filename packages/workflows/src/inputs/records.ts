@@ -238,7 +238,7 @@ interface ScannedInput {
 
 export async function* scanInputFile(source: string, version: VersionConfig, defaultBatch: string | undefined,
   revision: string): AsyncGenerator<ScannedInput | undefined> {
-  for await (const { line, index } of fileSourceReader.lines(source, revision)) {
+  for await (const { line, index, byteOffset, byteLength } of fileSourceReader.lines(source, revision)) {
     if (!line.trim()) { yield undefined; continue; }
     const entry: ScannedInput = { index, batchId: null, caseId: null };
     try {
@@ -246,7 +246,8 @@ export async function* scanInputFile(source: string, version: VersionConfig, def
       const batch = raw.batch_id || meta.batch_id || defaultBatch, id = raw.case_id || meta.case_id;
       entry.batchId = batch ? String(batch) : null;
       entry.caseId = id ? String(id) : null;
-      entry.record = adapt(raw, version, source, index, defaultBatch);
+      // Coordinates travel with the admitted record so execution never rescans the source.
+      entry.record = { ...adapt(raw, version, source, index, defaultBatch), byte_offset: byteOffset, byte_length: byteLength };
       entry.raw = normalizeInput(raw);
     } catch (error) { entry.error = error; }
     yield entry;

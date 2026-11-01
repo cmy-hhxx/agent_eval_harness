@@ -9,6 +9,24 @@ import { initializeServices } from "@eval/host-app/composition";
 import { preflightHost } from "../../../apps/host/src/preflight.js";
 import { ROOT } from "../../fixtures/services.js";
 
+test("an attribution run declares its business category and owns one partition directory", async t => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), "business-partition-"));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  const settings = parseSettings("[channel.evaluation-gateway]\nbase_url=http://127.0.0.1:1/v1\napi_key=\nmodel=fixture\nmodels=fixture\n");
+  const file = path.join(directory, "run.json");
+  const layered = async (output: unknown) => {
+    await writeFile(file, JSON.stringify({ workflow: "attribution", output }));
+    return [path.join(ROOT, "configs/host.json"), path.join(ROOT, "configs/attribution.json"), file];
+  };
+  const daily = { kind: "directory", layout: "business", path: path.join(directory, "0_daily_eval"), business: "daily" };
+  assert.equal((await loadConfig(await layered(daily), settings)).evaluation.output.business, "daily");
+  const { business: _business, ...undeclared } = daily;
+  await assert.rejects(loadConfig(await layered({ ...daily, business: "lost" }), settings),
+    /要求 output.path 以 3_lost_user_eval 结尾/);
+  const issues = await preflightHost(await loadConfig(await layered(undeclared), settings), "undeclared");
+  assert(issues.some(issue => issue.check === "output.business"), "the category is never inferred from the path");
+});
+
 test("INI log paths are applied before logger creation and startup reports all missing dependencies", async t => {
   const directory = await mkdtemp(path.join(os.tmpdir(), "startup-preflight-"));
   const names = ["EVAL_LOG_DIR", "EVAL_LOG_LOCK_DIR", "EVAL_HOT_STATE_ROOT", "EVAL_PYTHON", "EVAL_CHANNEL_KEY_evaluation_Hgateway"];

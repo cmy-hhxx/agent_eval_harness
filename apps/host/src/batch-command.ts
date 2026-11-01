@@ -57,10 +57,22 @@ export async function runBatchCommand(file: string, signal: AbortSignal) {
         console.log(JSON.stringify({ event, ...detail }));
         eventWrites.push(logger.event(event, { component: "batch", ...detail }));
       } });
+    const hosts = new Map<string, Awaited<ReturnType<typeof loadConfig>>>();
+    for (const entry of config.runs)
+      hosts.set(entry.runId, await loadConfig(entry.configs.map(source => path.resolve(directory, source)), settings));
+    // One run owns one business root; sharing it would mix daily and lost rows in the same delivery tree.
+    // Isolated run layouts keep their own directory under the shared path.
+    const roots = new Map<string, string>();
+    for (const [runId, host] of hosts) {
+      if (host.evaluation.output.layout !== "business") continue;
+      const target = path.resolve(host.evaluation.output.path), owner = roots.get(target);
+      if (owner) throw new Error("Runs " + owner + " and " + runId + " share output.path: " + target);
+      roots.set(target, runId);
+    }
     const jobs: BatchJob[] = [];
     for (const entry of config.runs) {
       jobs.push({ id: entry.runId, priority: entry.priority, run: async (control, taskLimit, cancelled) => {
-        const host = await loadConfig(entry.configs.map(source => path.resolve(directory, source)), settings);
+        const host = hosts.get(entry.runId)!;
         supervisor!.retryQuarantined();
         const issues = await preflightHost(host, entry.runId);
         if (issues.length) throw new Error("Run startup preflight failed: " + JSON.stringify(issues));
@@ -78,7 +90,8 @@ export async function runBatchCommand(file: string, signal: AbortSignal) {
         const routing = createBalancedModels(host.models, config.equivalentChannels);
         for (const stage of Object.keys(host.models.bindings)) routing.modelRoutesForTask({ stage });
         const plan = resuming ? { tasks: [], inputs: {}, summary: {} } : await workflow.plan(host.evaluation);
-        if (!resuming && !plan.tasks.length) throw new Error("No evaluable records; inspect input preflight");
+        // Sharded workflows plan their inputs one physical file at a time while the run proceeds.
+        if (!resuming && !plan.tasks.length && !plan.summary.sharded) throw new Error("No evaluable records; inspect input preflight");
         return runEvaluation({ ...services, ...routing, report: undefined, taskSource: workflow, repository,
           workerSupervisor: supervisor,
           runtime: { ...services.runtime, workerSlots: workers.slots },

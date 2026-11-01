@@ -32,6 +32,7 @@ import {
   type WorkerStatus,
   type FailureGuardPolicy,
   type StagePause,
+  type WorkflowShard,
 } from "@eval/contracts";
 import { HttpError, canonical, errorText, redact, safeId, validateEvidenceBank, validateEvidenceBankSources } from "@eval/contracts";
 import { body, json, listen, request } from "@eval/runtime/http";
@@ -223,6 +224,48 @@ export async function runEvaluation(options: RunOptions): Promise<Record<string,
     for (const stage of options.resumeStages ?? [])
       if (!manifest.pausedStages?.some((pause) => pause.stage === stage)) throw new Error("Stage is not paused: " + stage);
     manifest.pausedStages = (manifest.pausedStages ?? []).filter((pause) => !options.resumeStages?.includes(pause.stage));
+    // Physical input files stream in one at a time: each shard is planned, bound and
+    // dispatched while the next file is read, so no model task waits for the whole corpus.
+    const shardSource = options.taskSource.shards?.(options.config, saved);
+    const admissionWindow = options.taskSource.scheduling?.sessionAdmission;
+    const sessionWindow = !admissionWindow ? Infinity : typeof admissionWindow.window === "function"
+      ? admissionWindow.window(manifest) : admissionWindow.window;
+    let shardsDone = !shardSource, shardPulling = false;
+    const mergeShard = async (shard: WorkflowShard | undefined) => {
+      if (!shard) return false;
+      const catalog = (manifest.inputCatalog ??= []) as { input_id: string }[];
+      const known = new Set(catalog.map(candidate => candidate.input_id));
+      const added: { input_id: string }[] = [];
+      for (const candidate of shard.candidates as { input_id: string }[])
+        if (!known.has(candidate.input_id)) { catalog.push(candidate); added.push(candidate); }
+      for (const id of Object.keys(shard.inputs)) manifest.inputs[id] = { id, name: id };
+      Object.defineProperties(inputs, Object.getOwnPropertyDescriptors(shard.inputs));
+      // Formal-result reuse and partition admission run per file, before its tasks exist.
+      await options.repository.prepareShard?.(run, saved, inputs, shard.candidates, shard.tasks);
+      const ids = new Set(manifest.tasks.map(task => task.id));
+      for (const task of shard.tasks) {
+        if (ids.has(task.id)) continue;
+        manifest.tasks.push(task);
+        manifest.states[task.id] ??= { status: "pending", attempts: 0 };
+        ids.add(task.id);
+      }
+      if (shard.issues?.length) {
+        // The preparation owns this array; keep its reference alive across shards.
+        const issues = Array.isArray(manifest.preflight.issues) ? manifest.preflight.issues : (manifest.preflight.issues = []);
+        issues.push(...shard.issues);
+      }
+      options.onProgress?.(`shard_loaded ${shard.source} inputs=${added.length} tasks=${shard.tasks.length}`);
+      return true;
+    };
+    const pullShard = () => {
+      if (!shardSource || shardsDone || shardPulling) return;
+      shardPulling = true;
+      void shardSource.next()
+        .then(mergeShard)
+        .then(merged => { if (!merged) shardsDone = true; })
+        .catch(error => { fatalError ??= { error }; })
+        .finally(() => { shardPulling = false; wake(); });
+    };
     const guard = new FailureGuard(manifest.pausedStages, options.failureGuard);
     const includesTask = createScopeMembership(manifest);
     const inScope = (task: PlannedTask) => includesTask(task.id);
@@ -983,6 +1026,8 @@ export async function runEvaluation(options: RunOptions): Promise<Record<string,
         continue;
       }
       if (persistencePaused) { persistencePaused = false; options.onProgress?.("run_resumed persistence_recovered"); }
+      // Bound the bound-input window by the same session admission that bounds model work.
+      if (shardSource && !shardsDone && !shardPulling && Object.keys(inputs).length < sessionWindow) pullShard();
       // Rebuilding the schedule over a large plan is expensive. At capacity with no
       // completion since the last pass nothing can start; only quota growth reopens a
       // slot, and taskConcurrency() below still observes it.
@@ -1027,6 +1072,8 @@ export async function runEvaluation(options: RunOptions): Promise<Record<string,
         // Worker startup and preparation yield while dependencies finish. Refresh
         // the stage order before admitting more of the old upstream backlog.
         if (completions !== scheduledAtCompletion) { reschedule = true; break; }
+        // A finished input can be released while this snapshot is being scheduled.
+        if (!manifest.states[task.id]) continue;
         if (!dispatchable(task)) continue;
         if (manifest.states[task.id].status !== "pending" || running.has(task.id) ||
             (manifest.states[task.id].nextRetryAt ?? 0) > Date.now()) continue;
@@ -1164,7 +1211,13 @@ export async function runEvaluation(options: RunOptions): Promise<Record<string,
         await new Promise((resolve) => setTimeout(resolve, 1000));
       }
       else if (!scheduled) {
-        if (manifest.tasks.some(task => inScope(task) && manifest.states[task.id].status === "pending" && !resourceAvailable(task)))
+        // An empty queue between shards is expected: keep reading instead of stopping.
+        if (shardSource && !shardsDone) {
+          if (!shardPulling) pullShard();
+          await Promise.race([changed, new Promise(resolve => setTimeout(resolve, 1000))]);
+          continue;
+        }
+        if (manifest.tasks.some(task => inScope(task) && manifest.states[task.id]?.status === "pending" && !resourceAvailable(task)))
           resourcePause = "model_channels_unavailable";
         break;
       }

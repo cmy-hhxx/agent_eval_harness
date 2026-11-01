@@ -15,7 +15,8 @@ import { body, json, listen } from "@eval/runtime/http";
 import { fixtureConfig, parsedMaterial } from "../fixtures/comparison.js";
 import { services } from "../fixtures/services.js";
 import { attributionAgent } from "@eval/agents/attribution";
-import { attributionWorkflow, attributionRepository, planAttribution } from "@eval/workflows/attribution";
+import { attributionWorkflow, attributionRepository } from "@eval/workflows/attribution";
+import { stagedAttributionPlan as planAttribution } from "../fixtures/shards.js";
 
 for (const borrow of [false, true])
     test(`pi: Responses ${borrow ? "borrows an equivalent gateway before a request" : "falls back on quota exhaustion"} and preserves original JSON and tool validation`, { timeout: 60000 }, async () => {

@@ -20,13 +20,13 @@ export async function runAttributionWorkflowCommand(host: AttributionHostConfig,
   if (!["preflight", "run"].includes(options.command)) throw new Error("Attribution 只支持 preflight 或 run");
   const plan = options.command === "preflight" ? await planAttribution(host.evaluation) : undefined;
   if (plan) {
+    // Input files are read shard by shard during the run; preflight only states the layout.
     console.log(JSON.stringify({ evaluator_version: host.evaluatorVersion, ...plan.summary }, null, 2));
-    return (plan.summary.issues as unknown[]).length ? 2 : 0;
+    return 0;
   }
   if (!options.runId) throw new Error("Attribution run 需要 --run-id");
   const layout = runLayout(host.evaluation.output, options.runId), saved = await exists(layout.stateFile);
   const initial = saved ? { tasks: [], inputs: {}, summary: {} } : await planAttribution(host.evaluation);
-  if (!saved && !initial.tasks.length) throw new Error("没有可评 session，请先查看 preflight");
   const routing = evaluationRouting(host, options.balanceChannels);
   const controller = new AbortController(), stop = () => controller.abort(new Error("User interrupted"));
   if (options.signal) { options.signal.addEventListener("abort", stop, { once: true }); if (options.signal.aborted) stop(); }

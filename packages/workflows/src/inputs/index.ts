@@ -4,5 +4,6 @@ export * from "./normalize.js";
 export { adapt, candidateKey, contentText, structuredQuestion, inputSources, locateRecordStream, strings } from "./records.js";
 export * from "./scan.js";
 export * from "./load.js";
+export * from "./shards.js";
 export * from "./catalog.js";
 export * from "./session.js";

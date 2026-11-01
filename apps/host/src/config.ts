@@ -30,6 +30,11 @@ const EXECUTION_DEFAULTS = {
   initialContextChars: 16000,
   failureGuard: DEFAULT_FAILURE_GUARD,
 };
+/** Declared business categories own one fixed partition directory under the source output root. */
+export const BUSINESS_PARTITIONS: Record<NonNullable<OutputTarget["business"]>, string> = {
+  daily: "0_daily_eval",
+  lost: "3_lost_user_eval",
+};
 const CLUSTERING_DEFAULTS: EvalConfig["clustering"] = {
   enabled: false,
   maxClassesPerModel: 40,
@@ -208,6 +213,11 @@ function buildEvaluationBase(source: ConfigObject): EvaluationConfig {
   output.layout ??= "business";
   if (output.reuseCompleted !== undefined && typeof output.reuseCompleted !== "boolean") throw new Error("Invalid output.reuseCompleted");
   output.reuseCompleted ??= true;
+  if (output.business !== undefined) {
+    if (output.business !== "daily" && output.business !== "lost") throw new Error("Invalid output.business");
+    if (output.layout === "business" && path.basename(path.resolve(output.path)) !== BUSINESS_PARTITIONS[output.business])
+      throw new Error("output.business=" + output.business + " 要求 output.path 以 " + BUSINESS_PARTITIONS[output.business] + " 结尾");
+  }
   if (output.receiptSources !== undefined && (!Array.isArray(output.receiptSources) ||
     output.receiptSources.some(value => typeof value !== "string" || !path.isAbsolute(value)) ||
     new Set(output.receiptSources).size !== output.receiptSources.length)) throw new Error("Invalid output.receiptSources");

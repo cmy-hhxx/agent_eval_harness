@@ -113,7 +113,7 @@ function validTableChecks(value: unknown, inputs: AttemptSpec["inputs"]): boolea
 export interface EvaluationServices {
   logger?: LogSink;
   repository: RunRepository;
-  taskSource: Pick<WorkflowDefinition, "id" | "bind" | "reconcile" | "advance" | "blockedReason" | "canStart" | "observesFailures" | "scheduling" | "isComputedTask">;
+  taskSource: Pick<WorkflowDefinition, "id" | "bind" | "reconcile" | "advance" | "blockedReason" | "canStart" | "observesFailures" | "scheduling" | "isComputedTask" | "shards" | "release">;
   agents: AgentRegistry;
 }
 
@@ -253,6 +253,10 @@ export class RunStore {
             });
           }).finally(() => { this.receiptLogs = undefined; });
         }
+        // Finished inputs leave the checkpoint only after their results reached the
+        // journal, the log and the delivery files; a pending receipt keeps its shard.
+        if (this.services.taskSource.release && !this.receiptLogs && this.outboxStats().count === 0)
+          this.services.taskSource.release(this.state, this.inputs);
       } catch (error) {
         this.outboxMetrics.failures++;
         this.outboxMetrics.lastError = error instanceof Error ? error.message : String(error);

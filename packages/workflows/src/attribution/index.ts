@@ -1,11 +1,11 @@
 import { randomUUID } from "node:crypto";
 import { Ajv2020 } from "ajv/dist/2020.js";
-import { canonical, difference, restore, projectEvidenceReferences, resolveEvidenceSelection, type AgentBinding, type JsonObject, type PlannedTask, type RunManifest, type RunState, type SubmissionReceipt, type TaskAnalysis, type WorkflowDefinition, type WorkflowScheduling } from "@eval/contracts";
+import { canonical, difference, restore, projectEvidenceReferences, resolveEvidenceSelection, type AgentBinding, type JsonObject, type PlannedTask, type RunManifest, type RunState, type ShardSource, type SubmissionReceipt, type TaskAnalysis, type WorkflowDefinition, type WorkflowScheduling } from "@eval/contracts";
 import { cite, displayEvidence, evidenceSources, parseEvidenceCoordinates, resolveEvidence, traceCallOrigins } from "@eval/tools";
 import { createRunRepository, type RunCodec } from "@eval/data";
 import { compactFields, compactResultSchema, type SessionCompact } from "@eval/agents/compact";
 import type { TraceAttributionResult } from "@eval/agents/attribution";
-import { collectInputs, contentText, loadRunInputs, normalizeInput, normalizeTraceInput, type Candidate, type EvaluationConfig, type RawInput } from "@eval/workflows/inputs";
+import { candidateKey, contentText, createInputBindings, normalizeInput, normalizeTraceInput, scanInputShards, type Candidate, type EvaluationConfig, type RawInput } from "@eval/workflows/inputs";
 import { attributionSessionSource, bindAttributionMaterial, processMaterial, processExecutionFacts, executionFactsView, processComponents, actorCatalog, presentedMaterialReads, projectComparisonEvidence, projectCompactEvidence, verifiedCompact, compactPresentedReads, validateOriginalAttributionEvidence } from "@eval/workflows/review";
 import problemSchema from "../../../../schemas/attribution/problem.schema.json" with { type: "json" };
 import traceResultSchema from "../../../../schemas/attribution/trace-result.schema.json" with { type: "json" };
@@ -121,20 +121,66 @@ function componentFollowups(task: PlannedTask, compact: SessionCompact, state: R
   return { tasks, replace };
 }
 
+/** Planning reads no input bodies: every physical file is planned, bound and released in turn. */
 export async function planAttribution(config: AttributionConfig) {
-  const indexed = await collectInputs(config, undefined, { materializeInputs: false });
-  const catalog = indexed.catalog, tasks: PlannedTask[] = [];
-  if (config.inputs.records) {
-    const order = new Map(config.inputs.records.map((record, index) =>
-      [canonical([record.model, record.input_file, record.input_index + 1]), index]));
-    catalog.sort((a, b) => order.get(canonical([a.version, a.source, a.line]))! - order.get(canonical([b.version, b.source, b.line]))!);
-  }
-  for (const candidate of catalog) tasks.push(...planAttributionUnit(candidate).tasks);
-  const inputs = await loadRunInputs({ config, tasks, inputCatalog: catalog } as RunManifest, undefined, undefined, undefined, normalizeInput);
-  return { tasks, inputs, catalog, summary: { workflow: "attribution", sessions: catalog.length,
-    compact_tasks: catalog.length, compact_field_tasks: tasks.filter(task => task.stage === "attribution-compact-field").length,
-    trace_tasks: tasks.filter(task => task.stage === "attribution-trace").length,
-    session_tasks: catalog.length, issues: indexed.issues } };
+  if (!Number.isSafeInteger(config.execution.sessionWindow) || config.execution.sessionWindow < 1)
+    throw new Error("execution.sessionWindow must be a positive integer");
+  return { tasks: [] as PlannedTask[], inputs: {}, catalog: [], summary: { workflow: "attribution", sharded: true } };
+}
+const bindings = new WeakMap<object, ReturnType<typeof createInputBindings>>();
+function inputBindings(state: RunState) {
+  const key = state.manifest;
+  let bind = bindings.get(key);
+  if (!bind) bindings.set(key, bind = createInputBindings(key.config as AttributionConfig));
+  return bind;
+}
+/** One physical input file per pull; the next file is read while this one is evaluated. */
+export function attributionShards(config: AttributionConfig, state: RunState): ShardSource {
+  const manifest = state.manifest, bind = inputBindings(state);
+  const catalog = () => manifest.inputCatalog as Candidate[];
+  const scan = scanInputShards(config, { catalog, admitted: new Set(catalog().map(candidateKey)),
+    foundScope: config.inputs.records ? new Set<string>() : undefined,
+    completed: manifest.preflight.shards as Record<string, string> | undefined });
+  return {
+    async next() {
+      const item = await scan.next();
+      if (item.done) return undefined;
+      const shard = item.value, previous = indexAttributionTasks(manifest.tasks),
+        accepted = new Set(Object.keys(state.receipts)), tasks: PlannedTask[] = [];
+      for (const candidate of shard.candidates)
+        tasks.push(...planAttributionUnit(candidate, { previousTasks: previous, acceptedTaskIds: accepted }).tasks);
+      return { ...shard, tasks, inputs: bind(shard.candidates) };
+    },
+  };
+}
+/** Finished inputs leave the checkpoint; their file stays recorded by revision. */
+export function releaseAttribution(state: RunState, inputs: Record<string, unknown>) {
+  const manifest = state.manifest, catalog = manifest.inputCatalog as Candidate[] | undefined;
+  if (!catalog?.length) return;
+  const accepted = new Set<string>();
+  for (const task of manifest.tasks)
+    if (task.stage === "attribution-session" && state.receipts[task.id]?.exported)
+      accepted.add((task.data as AttributionTaskData).candidate.input_id);
+  if (!accepted.size) return;
+  const released: Candidate[] = [];
+  for (const candidate of catalog) if (accepted.has(candidate.input_id)) { candidate.released = true; released.push(candidate); }
+  if (!released.length) return;
+  const freed = new Set(released.map(candidate => candidate.input_id));
+  manifest.tasks = manifest.tasks.filter(task => {
+    const id = (task.data as AttributionTaskData).candidate.input_id;
+    if (!freed.has(id)) return true;
+    delete manifest.states[task.id];
+    delete state.receipts[task.id];
+    return false;
+  });
+  for (const id of freed) { delete inputs[id]; delete manifest.inputs[id]; }
+  const retained = catalog.filter(candidate => !candidate.released);
+  for (const candidate of released)
+    if (!retained.some(other => other.source === candidate.source)) {
+      const shards = (manifest.preflight.shards ??= {}) as JsonObject;
+      shards[candidate.source] = candidate.source_revision!;
+    }
+  manifest.inputCatalog = retained;
 }
 const sourceCache = new WeakMap<object, Map<string, ReturnType<typeof attributionSessionSource> & { session: RawInput; compactMaterial?: JsonObject; traceMaterial?: Map<number, AgentBinding> }>>();
 function sourceFor(inputs: Record<string, unknown>, candidate: Candidate) {
@@ -381,6 +427,8 @@ export const attributionScheduling: WorkflowScheduling = {
 };
 export const attributionWorkflow: WorkflowDefinition = {
   id: "attribution", plan: config => planAttribution(config as AttributionConfig),
+  shards: (config, state) => attributionShards(config as AttributionConfig, state),
+  release: (state, inputs) => releaseAttribution(state, inputs),
   isComputedTask: task => task.stage === "attribution-compact" || task.stage === "attribution-session" && (task.data as AttributionTaskData).traceCount === 1,
   bind: (task, inputs, dependencies) => bindAttribution(task, inputs, dependencies), observesFailures: task => task.stage !== "attribution-component",
   scheduling: attributionScheduling,
@@ -410,14 +458,14 @@ export const attributionWorkflow: WorkflowDefinition = {
   async reconcile(_run, state, current) {
     const config = current as AttributionConfig, manifest = state.manifest;
     manifest.config = { ...manifest.config as AttributionConfig, execution: config.execution, inputs: config.inputs };
-    const records = new Map<string, Candidate>();
-    const inputs = await loadRunInputs(manifest, undefined, undefined, records, normalizeInput);
-    const catalog = (manifest.inputCatalog as Candidate[]).map(candidate => ({ ...records.get(candidate.input_id)!, input_id: candidate.input_id }));
+    // Pending inputs keep their source coordinates in the checkpoint; resuming re-reads
+    // only those rows, never the completed files.
+    const catalog = manifest.inputCatalog as Candidate[];
     const previous = indexAttributionTasks(manifest.tasks);
     const acceptedTaskIds = new Set(Object.keys(state.receipts));
     const tasks = catalog.flatMap(candidate => planAttributionUnit(candidate, { previousTasks: previous, acceptedTaskIds }).tasks);
-    manifest.tasks = tasks; manifest.inputCatalog = catalog;
-    return { tasks, inputs, catalog, summary: manifest.preflight };
+    manifest.tasks = tasks;
+    return { tasks, inputs: inputBindings(state)(catalog), catalog, summary: manifest.preflight };
   },
 };
 

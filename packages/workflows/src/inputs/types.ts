@@ -63,6 +63,11 @@ export interface Candidate {
   trace_id: string | null;
   source: string;
   line: number;
+  /** UTF-8 byte coordinates of the source row; readers never retain the body in state. */
+  byte_offset?: number;
+  byte_length?: number;
+  /** True once every task of this input is settled and its recovery detail has been released. */
+  released?: boolean;
   question: string;
   answer_timing: Timing;
   final_index: number;

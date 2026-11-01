@@ -186,6 +186,8 @@ export interface OutputTarget {
   path: string;
   /** Public business partitions, or an explicitly requested isolated run delivery. */
   layout?: "business" | "run";
+  /** Declared business category; its partition directory is the configured path's last segment. */
+  business?: "daily" | "lost";
   /** Explicit original run ledgers needed to verify previously organized formal rows. */
   receiptSources?: string[];
   /** False only when the caller explicitly requests a new evaluation. */
@@ -455,6 +457,21 @@ export interface TaskPlan {
   summary: JsonObject;
   catalog?: unknown[];
 }
+/** One physical input file's planned tasks and lazy readers. */
+export interface WorkflowShard {
+  source: string;
+  revision: string;
+  /** Thin catalog rows with byte coordinates; never input bodies. */
+  candidates: unknown[];
+  tasks: PlannedTask[];
+  /** Readers keyed by input id; each parses one source row on demand. */
+  inputs: Record<string, unknown>;
+  issues?: JsonObject[];
+}
+export interface ShardSource {
+  /** Next shard to plan, or undefined once every physical source has been planned. */
+  next(): Promise<WorkflowShard | undefined>;
+}
 export interface AgentRequest {
   input: JsonObject;
   sources: Record<string, { id: string; value: unknown; presentation?: import("./source-presentation.js").SourcePresentation }>;
@@ -546,6 +563,10 @@ export interface WorkflowDefinition {
   isComputedTask?(task: PlannedTask): boolean;
   plan(config: unknown, options?: unknown): Promise<TaskPlan>;
   reconcile?(run: string, state: RunState, config: unknown): Promise<TaskPlan>;
+  /** Streaming plan: physical input files are planned and released within a bounded window. */
+  shards?(config: unknown, state: RunState): ShardSource;
+  /** Drop recovery detail and readers of inputs whose accepted receipt is durably exported. */
+  release?(state: RunState, inputs: Record<string, unknown>): void;
   bind(
     task: PlannedTask,
     inputs: Record<string, unknown>,
@@ -569,6 +590,8 @@ export interface WorkflowDefinition {
 export interface RunRepository {
   /** Inspect formal results before dispatch; release shared business claims on exit. */
   prepareRun?(run: string, state: RunState, inputs: Record<string, unknown>, selectedTaskIds?: string[]): Promise<() => Promise<void>>;
+  /** Verify reusable formal results for one streamed input shard before its tasks are dispatched. */
+  prepareShard?(run: string, state: RunState, inputs: Record<string, unknown>, catalog: unknown[], tasks: PlannedTask[]): Promise<void>;
   readRun(run: string): Promise<RunState>;
   /** Decode only the requested tasks; unrelated result rows stay on disk. */
   readTasks(run: string, taskIds: string[]): Promise<RunState>;

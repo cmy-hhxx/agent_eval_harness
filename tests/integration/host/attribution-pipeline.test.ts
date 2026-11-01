@@ -6,7 +6,8 @@ import { AgentRegistry, runEvaluation } from "@eval/host";
 import { startWorker } from "@eval/runtime/worker";
 import { attributionAgent } from "@eval/agents/attribution";
 import { compactAgent } from "@eval/agents/compact";
-import { attributionWorkflow, attributionRepository, planAttribution } from "@eval/workflows/attribution";
+import { attributionWorkflow, attributionRepository } from "@eval/workflows/attribution";
+import { stagedAttributionPlan as planAttribution } from "../../fixtures/shards.js";
 import { fixtureConfig, fakeIdentity, fakeEvaluatorVersion, taskResult, draftFor, submitFor, parsedMaterial } from "../../fixtures/comparison.js";
 import { services } from "../../fixtures/services.js";
 

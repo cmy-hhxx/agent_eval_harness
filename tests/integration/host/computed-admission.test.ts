@@ -5,7 +5,8 @@ import { rm } from "node:fs/promises";
 import type { AgentBackend } from "@eval/contracts";
 import { runEvaluation } from "@eval/host";
 import { startWorker } from "@eval/runtime/worker";
-import { attributionRepository, attributionWorkflow, planAttribution } from "@eval/workflows/attribution";
+import { attributionRepository, attributionWorkflow } from "@eval/workflows/attribution";
+import { stagedAttributionPlan as planAttribution } from "../../fixtures/shards.js";
 import { services } from "../../fixtures/services.js";
 import { fakeEvaluatorVersion, fakeIdentity, fixtureConfig, raw, submitFor, taskResult } from "../../fixtures/comparison.js";
 

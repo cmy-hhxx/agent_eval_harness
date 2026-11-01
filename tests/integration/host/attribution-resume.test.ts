@@ -6,7 +6,8 @@ import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { emptyUsage, type RunState } from "@eval/contracts";
 import { writeJson, readJson } from "@eval/data";
-import { attributionRepository, planAttribution, type AttributionConfig } from "@eval/workflows/attribution";
+import { attributionRepository, type AttributionConfig } from "@eval/workflows/attribution";
+import { stagedAttributionPlan as planAttribution } from "../../fixtures/shards.js";
 import { fakeEvaluatorVersion, fakeIdentity, fixtureConfig, raw } from "../../fixtures/comparison.js";
 
 test("attribution CLI skip-failed clears the requested pause without retrying failed, timed-out or blocked tasks", { timeout: 12000 }, async t => {

@@ -15,6 +15,9 @@ export async function preflightHost(host: HostConfig, runId?: string) {
   try { await loadIdentity("pi", ROOT); }
   catch (error) { issues.push({ check: "worker_build", reason: error instanceof Error ? error.message : String(error) }); }
   if (!await exists(runtimePaths.workerEntry)) issues.push({ check: "worker_entry", reason: "Worker entry is unavailable" });
+  // A produced row must be routable to exactly one business partition; never infer it from the path.
+  if (host.workflow === "attribution" && host.evaluation.output.layout === "business" && !host.evaluation.output.business)
+    issues.push({ check: "output.business", reason: "归因正式输出必须声明业务类别（daily 或 lost）" });
   try {
     const { stdout } = await promisify(execFile)(process.env.EVAL_PYTHON || path.join(ROOT, ".venv/bin/python"), ["--version"], { timeout: 5000 });
     if (!stdout.includes("3.12.12")) throw new Error("Python 3.12.12 is required");

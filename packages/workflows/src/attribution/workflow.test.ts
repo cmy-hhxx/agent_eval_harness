@@ -10,7 +10,8 @@ import { AgentRegistry, RunStore } from "@eval/host";
 import { RunHotStore, runJournalIdentity } from "@eval/data";
 import { attributionAgent } from "@eval/agents/attribution";
 import { fixtureConfig, emptyAudit, fakeEvaluatorVersion, fakeIdentity } from "../../../../tests/fixtures/comparison.js";
-import { planAttribution, compactFieldResult, attributionRepository, attributionWorkflow, type AttributionConfig, type AttributionTaskData } from "./index.js";
+import { compactFieldResult, attributionRepository, attributionWorkflow, type AttributionConfig, type AttributionTaskData } from "./index.js";
+import { stagedAttributionPlan as planAttribution } from "../../../../tests/fixtures/shards.js";
 import type { RawInput } from "../inputs/types.js";
 
 function trace(sessionId: string, question: string, answer: string, tools: string) {
