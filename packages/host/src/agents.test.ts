@@ -30,6 +30,18 @@ function fixture() {
   return { registry: new AgentRegistry([{ id: "partial", profiles: { default: profile } }]), profile, resolutions: () => resolutions };
 }
 
+test("all model profiles accept harmless extra fields and explicit numeric/boolean strings without mutating drafts", () => {
+  const { registry } = fixture();
+  const draft = { value: "1", satisfies: "true", proof: "source", explanation: "extra formatting" };
+  assert.deepEqual(registry.resolve(binding, draft, emptyAudit()), { value: 1, satisfies: true, proof: "source" });
+  assert.equal(draft.value, "1");
+  assert.equal(draft.explanation, "extra formatting");
+  for (const value of [null, "", "not a number"])
+    assert.throws(() => registry.resolve(binding, { value, satisfies: true, proof: "source" }, emptyAudit()), ValidationError);
+  assert.throws(() => registry.resolve(binding, { value: "1", satisfies: "true", proof: "fabricated" }, emptyAudit()),
+    (error: unknown) => error instanceof ValidationError && error.issues!.some(issue => issue.code === "proof_invalid"));
+});
+
 test("submission structure and safe independent decisions share the first feedback", () => {
   const { registry, resolutions } = fixture();
   assert.throws(() => registry.resolve(binding, { value: "wrong", satisfies: false, proof: "unknown" }, emptyAudit()),

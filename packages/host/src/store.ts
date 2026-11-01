@@ -341,8 +341,10 @@ export class RunStore {
       })) this.logged.add(receipt.submissionId);
     }
   }
-  async receipt(taskId: string): Promise<SubmissionReceipt | undefined> {
-    return this.committedReceipts[taskId];
+  receipt(taskId: string): SubmissionReceipt | undefined {
+    // Streamed admission can add a verified receipt after this store was created.
+    // Its original run already committed it; pending local submissions stay private.
+    return this.committedReceipts[taskId] ?? (this.state.receipts[taskId]?.reusedFrom ? this.state.receipts[taskId] : undefined);
   }
   async dependencies(task: PlannedTask): Promise<Record<string, SubmissionReceipt>> {
     const dependencies: Record<string, SubmissionReceipt> = {};
@@ -596,7 +598,7 @@ export class RunStore {
         validationMs: performance.now() - validationStarted, validationCpuMs: (cpu.user + cpu.system) / 1000 });
     }
     const incompleteDependencies = [...new Set(Object.values(task.dependencies).flatMap(id =>
-      this.committedReceipts[id] ? this.committedReceipts[id].incompleteDependencies ?? [] : [id]))];
+      this.receipt(id) ? this.receipt(id)!.incompleteDependencies ?? [] : [id]))];
     const receipt: SubmissionReceipt = {
       ...value,
       evaluation,

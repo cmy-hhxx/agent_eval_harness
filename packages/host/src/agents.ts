@@ -21,6 +21,36 @@ import {
   type ValidationIssue,
 } from "@eval/contracts";
 
+/** Repair unambiguous model formatting without inventing missing values or changing the submitted payload. */
+function normalizeModelValue(value: unknown, validate: ReturnType<Ajv2020["compile"]>): unknown {
+  if (validate(value)) return value;
+  const errors = validate.errors ?? [];
+  // Union/required/semantic errors need an actual correction, not a guessed branch.
+  if (errors.some(error => !["additionalProperties", "type"].includes(error.keyword))) return value;
+  const draft = structuredClone(value);
+  let changed = false;
+  for (const error of errors) {
+    const tokens = error.instancePath.split("/").slice(1).map(token => token.replaceAll("~1", "/").replaceAll("~0", "~"));
+    const key = error.keyword === "additionalProperties" ? String(error.params.additionalProperty) : tokens.pop();
+    let parent = draft;
+    for (const token of tokens) {
+      if (!parent || typeof parent !== "object" || !Object.hasOwn(parent, token)) { parent = undefined; break; }
+      parent = (parent as JsonObject)[token];
+    }
+    if (key === undefined || !parent || typeof parent !== "object" || !Object.hasOwn(parent, key)) continue;
+    const record = parent as JsonObject;
+    if (error.keyword === "additionalProperties") { delete record[key]; changed = true; continue; }
+    if (typeof record[key] !== "string") continue;
+    const text = record[key].trim(), type = error.params.type;
+    if (type === "boolean" && ["true", "false"].includes(text)) { record[key] = text === "true"; changed = true; }
+    else if (["number", "integer"].includes(type) && /^-?(?:0|[1-9]\d*)(?:\.\d+)?(?:[eE][+-]?\d+)?$/u.test(text)) {
+      const number = Number(text);
+      if (Number.isFinite(number) && (type !== "integer" || Number.isSafeInteger(number))) { record[key] = number; changed = true; }
+    }
+  }
+  return changed ? draft : value;
+}
+
 /** Profiles are registered by the application; the Host never imports a concrete Agent. */
 export class AgentRegistry {
   private readonly profiles = new Map<
@@ -172,6 +202,7 @@ export class AgentRegistry {
     if (!profile.inspection || !modelInspection) throw new ValidationError([{
       category: "decision", code: "inspection_unavailable", path: "/", message: "当前 Profile 未配置材料核查。",
     }]);
+    value = normalizeModelValue(value, modelInspection);
     const modelValid = modelInspection(value), issues = modelValid ? [] : schemaIssues(modelInspection.errors, value);
     const selected = profile.evidenceSelections ? resolveEvidenceSelectionDraft(value, audit.evidenceBank ?? []) : { value, issues: [] };
     issues.push(...selected.issues);
@@ -223,6 +254,7 @@ export class AgentRegistry {
     if (profile.evidenceSelections) {
       const rawSchema = evidenceSelectionSchema(profile.modelSubmissionSchema?.(binding.request) ?? profile.submissionSchema);
       const modelValidator = new Ajv2020({ allErrors: true, strict: false }).compile(rawSchema);
+      draft = normalizeModelValue(draft, modelValidator);
       const valid = modelValidator(draft), issues = valid ? [] : schemaIssues(modelValidator.errors, draft);
       const selected = resolveEvidenceSelectionDraft(draft, audit.evidenceBank ?? []);
       issues.push(...selected.issues);
@@ -232,7 +264,7 @@ export class AgentRegistry {
         throw new ValidationError(this.feedbackProjection(binding,this.feedback(profile, binding.request, draft,
           [...new Map(issues.map(issue => [canonical(issue), issue])).values()]), audit.evidenceBank ?? []));
       }
-    }
+    } else draft = normalizeModelValue(draft, submission);
     const valid = submission(draft);
     const issues = valid ? [] : schemaIssues(submission.errors, draft);
     issues.push(...(profile.validateSubmission?.(binding.request, draft, audit) ?? []));

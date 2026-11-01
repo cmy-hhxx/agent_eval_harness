@@ -82,6 +82,27 @@ test("new runs reuse the latest complete business answer across evaluator versio
   } finally { await close(); }
 });
 
+test("resuming a partially published run verifies its own receipts without blocking unfinished work", async t => {
+  const f = await fixtureConfig([[input()], [], [], []]);
+  t.after(() => rm(f.directory, { recursive: true, force: true }));
+  const config = { ...f.config, workflow: "attribution", output: { ...f.config.output, layout: "business", reuseCompleted: true },
+    inputs: { ...f.config.inputs, batches: ["2026-10-26"], versions: f.config.inputs.versions.slice(0, 1) } } as AttributionConfig;
+  const current = await completed(config, "partially-published", "current", "完成", Date.now() + 10);
+  for (const task of current.state.manifest.tasks) if (task.stage !== "attribution-compact") {
+    delete current.state.receipts[task.id];
+    current.state.manifest.states[task.id] = { status: "pending", attempts: 0 };
+  }
+  await businessAttributionRepository.createResultWriter(current.run, current.plan.inputs)(current.state);
+  await attributionRepository.writeRun(current.run, current.state);
+  const resumed = await businessAttributionRepository.readRun(current.run);
+  const close = await businessAttributionRepository.prepareRun!(current.run, resumed, current.plan.inputs);
+  try {
+    assert(resumed.manifest.tasks.some(task => !resumed.receipts[task.id]));
+    assert(resumed.manifest.tasks.every(task => !resumed.manifest.states[task.id].admissionBlock));
+    assert.equal(Object.keys(resumed.receipts).length, 1);
+  } finally { await close(); }
+});
+
 test("organized historical verdicts retain missing newer fields and are reused from an explicitly located ledger", async t => {
   const f = await fixtureConfig([[input()], [], [], []]);
   t.after(() => rm(f.directory, { recursive: true, force: true }));

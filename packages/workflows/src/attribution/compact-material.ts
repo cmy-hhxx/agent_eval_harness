@@ -1,5 +1,5 @@
 import { cite, displayEvidence, evidenceSources, jsonRanges, messageContentSources, selectEvidenceSource, traceExchanges } from "@eval/tools";
-import { evidenceOrigin, type JsonObject } from "@eval/contracts";
+import { evidenceOrigin, overlapsImagePlaceholder, type JsonObject } from "@eval/contracts";
 import { contentText } from "@eval/workflows/inputs";
 import type { RawInput } from "../inputs/types.js";
 
@@ -10,17 +10,18 @@ const segmenter = new Intl.Segmenter("zh", { granularity: "sentence" });
 
 /** Whole paragraphs, lines or sentences; a budget never manufactures a short prefix/suffix. */
 export function compactTextRanges(text: string, start = 0, end = text.length): { start: number; end: number }[] {
-  if (end - start <= 400) return end > start ? [{ start, end }] : [];
+  if (end - start <= 400) return end > start && !overlapsImagePlaceholder(text, start, end) ? [{ start, end }] : [];
   // Minified tables have no sentence boundaries. Keep complete rows/properties at
   // their original offsets, including field names, rather than dropping the data.
   try {
-    const ranges = [...jsonRanges(text).values()].filter(range => range.start >= start && range.end <= end && range.end - range.start <= 400)
+    const ranges = [...jsonRanges(text).values()].filter(range => range.start >= start && range.end <= end && range.end - range.start <= 400 &&
+      !overlapsImagePlaceholder(text, range.start, range.end))
       .sort((a, b) => a.start - b.start || b.end - a.end);
     const result: { start: number; end: number }[] = [];
     for (const range of ranges) {
       const last = result.at(-1);
       if (last && range.start < last.end) continue;
-      if (last && range.end - last.start <= 400) last.end = range.end;
+      if (last && range.end - last.start <= 400 && !overlapsImagePlaceholder(text, last.start, range.end)) last.end = range.end;
       else result.push({ start: range.start, end: range.end });
     }
     if (result.length) return result;
@@ -43,8 +44,9 @@ export function compactTextRanges(text: string, start = 0, end = text.length): {
   add(cursor, end);
   const result: typeof units = [];
   for (const unit of units) {
+    if (overlapsImagePlaceholder(text, unit.start, unit.end)) continue;
     const last = result.at(-1);
-    if (last && unit.end - last.start <= 400) last.end = unit.end;
+    if (last && unit.end - last.start <= 400 && !overlapsImagePlaceholder(text, last.start, unit.end)) last.end = unit.end;
     else result.push({ ...unit });
   }
   return result;

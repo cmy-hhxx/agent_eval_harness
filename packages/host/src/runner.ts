@@ -34,7 +34,7 @@ import {
   type StagePause,
   type WorkflowShard,
 } from "@eval/contracts";
-import { HttpError, canonical, errorText, redact, safeId, validateEvidenceBank, validateEvidenceBankSources } from "@eval/contracts";
+import { HttpError, ValidationError, canonical, errorText, redact, safeId, validateEvidenceBank, validateEvidenceBankSources } from "@eval/contracts";
 import { body, json, listen, request } from "@eval/runtime/http";
 import { compressFile, exists, internalPath, runLayout, runLock, readJson, writeJson } from "@eval/data";
 import { loadIdentity } from "@eval/runtime/client";
@@ -1171,7 +1171,15 @@ export async function runEvaluation(options: RunOptions): Promise<Record<string,
         worker.reserved = true;
         scheduled = true;
         const promise = execute(task, worker, prepared, binding, timing)
-          .catch(error => { fatalError ??= { error }; })
+          .catch(async error => {
+            if (!(error instanceof ValidationError)) { fatalError ??= { error }; return; }
+            const state = manifest.states[task.id];
+            state.status = "failed";
+            state.reason = "Task validation failed: " + errorText(error);
+            await current.save(task.id);
+            await options.logger?.error(error, { component: "host", event: "task_validation_failed",
+              run_id: options.runId, task_id: task.id, stage: task.stage });
+          })
           .finally(() => {
             preparing.delete(task.id);
             running.delete(task.id);

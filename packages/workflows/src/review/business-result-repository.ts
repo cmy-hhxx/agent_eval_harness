@@ -43,7 +43,7 @@ export function businessResultRepository(repository: RunRepository, adapters: {
     const config = state.manifest.config as EvaluationConfig;
     const delivery = config.output.layout === "business", root = config.output.path;
     const issues = (state.manifest.preflight.issues ??= []) as JsonObject[];
-    const sourceStates = new Map<string, RunState>();
+    const sourceStates = new Map<string, RunState>([[run, state]]);
     const organization = new Map<string, Awaited<ReturnType<typeof organizedResultLines>>>();
     const checkedSources = new Set<string>();
     const sourceInputs = new Map<string, Record<string, unknown>>();
@@ -79,6 +79,7 @@ export function businessResultRepository(repository: RunRepository, adapters: {
       for (const record of records) if (prefer(latest.get(record.id), record)) latest.set(record.id, record);
     };
     async function add(catalog: Candidate[], tasks: PlannedTask[], inputs: Record<string, unknown>, selectedTaskIds?: string[]) {
+      sourceInputs.set(run, inputs);
       await ready();
       const blocks = new Map<string, string>();
       for (const candidate of catalog) {

@@ -13,6 +13,27 @@ import {
   applyRunJournalDelta, appendProgressJournal, createRunRepository, readProgressJournal, runProgressFile, RunHotStore, runJournalIdentity,
 } from "@eval/data";
 
+test("verified receipts admitted by a later shard are available to dependent tasks", async t => {
+  const run = await mkdtemp(path.join(os.tmpdir(), "eval-streamed-reuse-"));
+  t.after(() => rm(run, { recursive: true, force: true }));
+  const task: PlannedTask = { id: "child", stage: "fixture", inputIds: {}, dependencies: { compact: "reused" }, data: {} };
+  const state: RunState = { manifest: { format: "evaluation-run", debug: false, runId: "streamed-reuse", status: "running",
+    engine: { engine: "pi", version: "test", commit: "test", buildId: "test" }, evaluatorVersion: "test", config: {},
+    tasks: [task], inputs: {}, states: { reused: { status: "succeeded", attempts: 0 } }, preflight: {}, startedAt: 1 },
+    receipts: {}, usage: emptyUsage(), recordedAttempts: 0 };
+  const repository: RunRepository = { async readRun() { return state; }, async readTasks() { return state; },
+    async writeRun() {}, createResultWriter() { return async () => {}; } };
+  const store = new RunStore(run, state, {}, { agents: new AgentRegistry([]), repository,
+    taskSource: { id: "fixture", bind() { throw new Error("not used"); } } });
+  t.after(() => store.close());
+  state.receipts.reused = { taskId: "reused", attemptId: "original", submissionId: "original-submission",
+    status: "succeeded", acceptedAt: 1, evaluatorVersion: "test", judge: "fixture", evaluation: {}, usage: emptyUsage(),
+    audit: { calls: 0, requiredReadCalls: 0, traceReads: [], viewedImages: [], calculations: [], artifacts: [] } };
+  assert.equal(store.receipt("reused"), undefined, "uncommitted local submissions remain invisible");
+  state.receipts.reused.reusedFrom = { run: "original-run", taskId: "reused" };
+  assert.equal((await store.dependencies(task)).compact.submissionId, "original-submission");
+});
+
 for (const debug of [false, true]) test(`two hundred independent activations and commits do not wait for diagnostics or checkpoint projection (debug: ${debug})`, async t => {
   const run = await mkdtemp(path.join(os.tmpdir(), "eval-activation-"));
   t.after(() => rm(run, { recursive: true, force: true }));

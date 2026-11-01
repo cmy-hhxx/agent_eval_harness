@@ -5,7 +5,7 @@ import { readFile, readdir, rm } from "node:fs/promises";
 import path from "node:path";
 import { performance } from "node:perf_hooks";
 import { readFileSync } from "node:fs";
-import type { AgentBackend, AttemptRecord } from "@eval/contracts";
+import { evidenceId, type AgentBackend, type AttemptRecord } from "@eval/contracts";
 import type { SessionAttributionResult } from "@eval/agents/attribution";
 import { createFileLogger, exists, hasLiveRunOwner, internalPath, readJson, readJsonl, writeJsonl } from "@eval/data";
 import { loadRunInputs } from "@eval/workflows/inputs";
@@ -17,6 +17,39 @@ import { validateRun } from "../../fixtures/services.js";
 import { buildPlan } from "@eval/workflows/comparison";
 import { services } from "../../fixtures/services.js";
 import { inspectMaterials, inspectFor, fakeEvaluatorVersion, fakeIdentity, fixtureConfig, optionalVerificationTask, raw } from "../../fixtures/comparison.js";
+
+test("one invalid prepared evidence bank fails only its task and independent tasks continue", async t => {
+  const rows = [raw("invalid-bank"), raw("healthy-bank")], f = await fixtureConfig([rows, [], rows, []]);
+  t.after(() => rm(f.directory, { recursive: true, force: true }));
+  const full = await buildPlan(f.config), plan = { ...full, tasks: full.tasks.filter(task => task.stage === "criteria") };
+  const prepare = services.agents.prepare.bind(services.agents);
+  let injected = false, dispatched = 0;
+  t.mock.method(services.agents, "prepare", (binding: Parameters<typeof prepare>[0]) => {
+    const prepared = prepare(binding);
+    if (injected) return prepared;
+    injected = true;
+    return { ...prepared, renderAttempt(...args: Parameters<typeof prepared.renderAttempt>) {
+      const prompt = prepared.renderAttempt(...args), source = Object.values(binding.request.sources)[0]!;
+      prepared.evidenceBank.push(evidenceId(source.id, 0, "text", "/content", 0, 99999));
+      return prompt;
+    } };
+  });
+  const worker = await startWorker({ identity: fakeIdentity, async createSession(options) { return {
+    async run() { dispatched++; assert.notEqual((await submitFor(options, taskResult(options.spec))).isError, true); },
+    async abort() {}, async dispose() {},
+  }; } }, path.join(f.directory, "worker"));
+  t.after(() => worker.close());
+  await runEvaluation({ ...services, report: async () => ({}),
+    taskSource: { ...services.taskSource, async reconcile() { return plan; } },
+    runId: "isolated-validation", output: f.config.output, config: f.config, plan, engine: "pi", identity: fakeIdentity,
+    evaluatorVersion: fakeEvaluatorVersion, policy: f.config.execution, modelForStage: f.modelForStage,
+    concurrency: 1, retries: 0, retryDelaySeconds: 0, workerUrls: [worker.url], signal: AbortSignal.timeout(10_000) });
+  assert.equal(dispatched, 1);
+  const state = await readRunState(path.join(f.config.output.path, "isolated-validation"));
+  assert.equal(state.manifest.status, "finished");
+  assert.equal(Object.values(state.manifest.states).filter(value => value.status === "failed").length, 1);
+  assert.equal(Object.values(state.manifest.states).filter(value => value.status === "succeeded").length, 1);
+});
 
 test('expensive admission serves Host control before the whole cohort is prepared',async t=>{
   const rows=Array.from({length:8},(_,i)=>raw('yield-'+i)),f=await fixtureConfig([rows,[],rows,[]]);

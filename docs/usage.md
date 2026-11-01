@@ -94,6 +94,8 @@ EVAL_CONFIG_FILE=/absolute/path/config.ini npm run eval -- batch --batch-config 
 
 ## 超时与故障隔离
 
+所有评测 Agent 共用模型提交归一化：明确的数字和布尔字符串转换为 Schema 要求的类型，多余字段移除；不猜测缺失字段、空值或联合结构。原始草稿保留，输入身份、真实证据坐标和正式结果持久化继续校验。任务执行中的内容校验异常只记录该任务失败，其他独立任务继续，不因此终止整路评测。图片占位符不进入文字证据，也不跨越占位符合并引用范围。
+
 额度排队不计入模型执行期限，可以取消。`firstResponseTimeoutSeconds`、`streamIdleTimeoutSeconds`、`toolTimeoutSeconds` 分别限制首包、流式停顿与工具执行；省略时沿用 `idleTimeoutSeconds`。代码工具另受 `codeTimeoutSeconds` 约束。`submissionTimeoutSeconds` 限制提交确认等待，省略时由整体 `timeoutSeconds` 兜底，不套用模型空闲期限；`cleanupTimeoutSeconds` 默认 10 秒。
 
 只有模型首包/流式停顿最多自动重试一次；整体 deadline 终止当前任务。Worker 重建、传输重试、超时重试和内容修复分别计数，续跑保留任务累计预算。提交重试先查持久收据，已接受结果优先于失败或超时观察。

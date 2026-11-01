@@ -1,8 +1,21 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { compactFinalMaterial, compactProcessExcerpts, compactTextRanges } from "./compact-material.js";
+import { imagePlaceholder, overlapsImagePlaceholder } from "@eval/contracts";
 
 const id = "11111111-1111-4111-8111-111111111111";
+test("text evidence never includes or bridges image placeholders", () => {
+  const text = JSON.stringify({ before: "原始返回。".repeat(35), image: imagePlaceholder, after: "后续事实。".repeat(60) });
+  const ranges = compactTextRanges(text);
+  assert(ranges.length > 0);
+  assert(ranges.every(range => !overlapsImagePlaceholder(text, range.start, range.end)));
+  assert(ranges.some(range => text.slice(range.start, range.end).includes("原始返回。")));
+  assert(ranges.some(range => text.slice(range.start, range.end).includes("后续事实。")));
+  assert.deepEqual(compactTextRanges("图片：" + imagePlaceholder), []);
+  assert(compactTextRanges("正常段落。\n\n" + imagePlaceholder + "\n\n" + "完整段落。".repeat(100))
+    .every(range => !overlapsImagePlaceholder("正常段落。\n\n" + imagePlaceholder + "\n\n" + "完整段落。".repeat(100), range.start, range.end)));
+});
+
 test("field selection precedes allocation and keeps a complete workbook exception", () => {
   const error = 'Traceback (most recent call last):\n  File "make.py", line 137, in <module>\n    ws.cell(row=rr,column=cc).value=h\nAttributeError: MergedCell object value is read-only';
   const raw = { messages: [
