@@ -1,4 +1,4 @@
-import { fileSourceReader } from "@eval/data";
+import { fileSourceReader, type SourceCursor } from "@eval/data";
 import { randomUUID } from "node:crypto";
 import { canonical, evidenceSources, object, ValidationError, type ValidationIssue } from "@eval/contracts";
 import { inputAdapters, resolveAdapter } from "./adapters.js";
@@ -237,9 +237,11 @@ interface ScannedInput {
 }
 
 export async function* scanInputFile(source: string, version: VersionConfig, defaultBatch: string | undefined,
-  revision: string): AsyncGenerator<ScannedInput | undefined> {
-  for await (const { line, index, byteOffset, byteLength } of fileSourceReader.lines(source, revision)) {
-    if (!line.trim()) { yield undefined; continue; }
+  revision: string, cursor?: SourceCursor, maxRows = Infinity): AsyncGenerator<ScannedInput | undefined> {
+  let scanned = 0;
+  for await (const { line, index, byteOffset, byteLength, nextOffset } of fileSourceReader.lines(source, revision, cursor)) {
+    if (cursor) { cursor.offset = nextOffset; cursor.line = index; }
+    if (!line.trim()) { yield undefined; if (++scanned >= maxRows) return; continue; }
     const entry: ScannedInput = { index, batchId: null, caseId: null };
     try {
       const raw = object(JSON.parse(line)) as RawInput, meta = raw.meta || {};
@@ -248,8 +250,10 @@ export async function* scanInputFile(source: string, version: VersionConfig, def
       entry.caseId = id ? String(id) : null;
       // Coordinates travel with the admitted record so execution never rescans the source.
       entry.record = { ...adapt(raw, version, source, index, defaultBatch), byte_offset: byteOffset, byte_length: byteLength };
-      entry.raw = normalizeInput(raw);
+      if (!cursor) entry.raw = normalizeInput(raw);
     } catch (error) { entry.error = error; }
     yield entry;
+    if (++scanned >= maxRows) return;
   }
+  if (cursor) cursor.done = true;
 }

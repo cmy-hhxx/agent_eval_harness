@@ -257,12 +257,18 @@ export async function runEvaluation(options: RunOptions): Promise<Record<string,
     const pullShard = () => {
       if (!shardSource || shardsDone || shardPulling) return;
       shardPulling = true;
+      const before = shardPulls;
       void shardSource.next()
         .then(mergeShard)
         // A source may be blocked by its input window instead of exhausted; only report done then.
         .then(merged => { if (merged) shardPulls++; else shardsDone = shardSource.done?.() ?? true; })
         .catch(error => { fatalError ??= { error }; })
-        .finally(() => { shardPulling = false; wake(); });
+        .finally(() => {
+          shardPulling = false;
+          // A full window is not progress. Waking on an empty pull spins in microtasks
+          // and prevents the Workers and checkpoint timers from freeing that window.
+          if (shardPulls !== before || shardsDone || fatalError) wake();
+        });
     };
     const guard = new FailureGuard(manifest.pausedStages, options.failureGuard);
     const includesTask = createScopeMembership(manifest);

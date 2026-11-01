@@ -68,7 +68,7 @@ npm run eval -- model-probe --stage comparison --config configs/local/models.jso
 
 归因中的私密规范裁剪容器只用于导航；证据从未改写的原文叶子读取。业务链路检查点覆盖已登记的完整边界，分页窗口不限制可引用的后文；调查事实、环节、责任主体与证据各用自身目录编号。用户问题与设备事实不自动成为专有规范，真实本方规范继续按其作用域检查。提交仅使用工具当前 Schema 的字段和枚举，修正不增加提交上限。
 
-Attribution 的输入按物理来源文件分片流式载入：`plan` 只读取配置，不扫描输入；分片是文件粒度，每个文件在读取后立即规划、绑定并派发，下一个文件在它评测期间读取；每一轮按模型版本各取一个文件，多个模型同时开始评测，不会先把一个模型跑完。每个模型版本的常驻绑定输入分别由 `execution.sessionWindow` 约束：单个文件的输入数大于窗口时允许一次超窗到文件边界，之后必须等该版本已绑定输入释放到窗口以下才读取它的下一个文件，其他版本照常推进；会话准入也按模型版本轮转取窗，单个模型的积压不能占满窗口。`state.json` 只保留未完成输入的坐标、字节位置与来源修订号，正文按需从原文件读取；分片完成后释放任务、收据与正文，续跑只扫描未完成分片，已完成文件按来源修订号跳过，源文件变化时仅重读受影响分片。业务类别必须在 `output.business` 声明（`daily` 或 `lost`）；输入位于 `eval_input/<分区>/` 时，`output.path` 最后一级必须是同一分区（输入侧 `_input` 后缀不计，如 `0_daily_eval_input` 对应 `0_daily_eval`）；一个 run 对应一个业务根，日常与流失不得共用 `output.path`。
+Attribution 按模型版本轮转、在物理文件内部按小批流式载入：`plan` 只读取配置，不扫描输入；每次最多读取 16 行且不超过 `execution.sessionWindow`，读到首批即规划和派发，不等待首个大文件或整个数据集读完。每个版本的绑定窗口独立推进，失败且已结算的会话保留恢复信息，但不阻塞后续输入；成功会话须完成导出后才释放。`state.json` 保存未完成输入的坐标与来源修订号，以及各文件的读取字节游标，正文按需读取。续跑从游标继续，不重读已释放的前缀；只有读到文件末尾且该文件所有输入均已交付，才将文件标为完成。未读完的来源不能因暂时没有可运行任务而 finished；文件在读取期间变化时明确报错。业务类别必须在 `output.business` 声明（`daily` 或 `lost`）；输入位于 `eval_input/<分区>/` 时，`output.path` 最后一级必须是同一分区（输入侧 `_input` 后缀不计，如 `0_daily_eval_input` 对应 `0_daily_eval`）；一个 run 对应一个业务根，日常与流失不得共用 `output.path`。
 
 Attribution 的 `execution.sessionWindow` 默认 16，必须是正整数；执行、进度和续跑使用同一 effective 值。`execution.taskConcurrency` 是任务槽位硬上限且不再随模型并发放大。`execution.concurrency` 限制真实在途模型请求，`execution.modelRequestLimits` 可进一步声明各网关上限。`execution.workerSlots` 控制每个托管进程的槽位数，应用默认 4；Supervisor 按需求小批预热，每次最多并行启动两个进程，派发循环只领取就绪槽位。
 

@@ -4,7 +4,7 @@ import { appendFile, readFile, rm } from "node:fs/promises";
 import path from "node:path";
 import type { AgentBackend } from "@eval/contracts";
 import { runEvaluation } from "@eval/host";
-import { startWorker } from "@eval/runtime/worker";
+import { startWorkerPool } from "@eval/runtime/worker";
 import { buildPlan, comparisonRepository, readRunState, type TaskData } from "@eval/workflows/comparison";
 import type { RawInput } from "@eval/workflows/inputs";
 import { services, validateRun } from "../../fixtures/services.js";
@@ -28,13 +28,13 @@ async function verifyIdentity(t: test.TestContext, sources: RawInput[][], distin
       assert.equal(submitted.isError, undefined, JSON.stringify(submitted));
     }, async abort() {}, async dispose() {} };
   } };
-  const worker = await startWorker(backend, path.join(directory, "worker"));
+  const worker = await startWorkerPool(backend, path.join(directory, "worker"), 4);
   t.after(() => worker.close());
   const plan = await buildPlan(config), runId = "attribution-identity", run = path.join(config.output.path, runId);
   assert.equal(plan.tasks.filter(task => task.stage === "attribution-session").length, records.length);
   const options = { ...services, runId, output: config.output, engine: "pi" as const, identity: fakeIdentity,
     evaluatorVersion: fakeEvaluatorVersion, config, plan, policy: config.execution, modelForStage,
-    concurrency: 2, retries: 0, retryDelaySeconds: 0, workerUrls: [worker.url], debug: true };
+    concurrency: 4, retries: 0, retryDelaySeconds: 0, workerUrls: worker.urls, debug: true };
   await runEvaluation(options);
   const file = path.join(run, "results/attribution.jsonl"), original = await readFile(file, "utf8");
   const rows = original.trim().split("\n").map(line => JSON.parse(line));

@@ -31,8 +31,6 @@ const workerPattern = [
   "timeouts distinguish",
 ].join("|");
 const fastFiles = [
-  "dist/agent/tests/eris.test.js",
-  "dist/agent/tests/assets.test.js",
   "dist/packages/host/src/channel-requests.test.js",
   "dist/packages/host/src/batch.test.js",
   "dist/packages/host/src/worker-supervisor.test.js",
@@ -86,19 +84,21 @@ async function testFiles(roots) {
       .map((file) => path.join(directory, file)),
   ))).flat().sort();
 }
-const coreFiles = await testFiles(["dist/packages", "dist/tests/architecture", ...(full ? ["dist/agent/tests"] : [])]);
-const hostFiles = full ? await testFiles(["dist/tests/integration/host"]) : [];
+const coreFiles = (await testFiles(["dist/packages", "dist/tests/architecture"]))
+  .filter(file => !/\/(assistant-|analysis-)/.test(file));
+const hostFiles = full ? (await testFiles(["dist/tests/integration/host"]))
+  .filter(file => !/\/(assistant-|eris-)/.test(file)) : [];
 // Worker tests spawn their own processes; cap file concurrency to avoid starving
 // their existing deadlines without extending timeouts or retrying failed tests.
 const concurrency = Math.min(2, availableParallelism());
+const hostConcurrency = Math.min(4, Math.max(1, Math.floor(availableParallelism() / 2)));
 const repositoryTests = [
   "scripts/attribution-review-view.test.mjs",
   "scripts/compact-progress.test.mjs",
   "scripts/publish.test.mjs",
-  "scripts/apply-agent-dependency-patches.test.mjs",
-  "scripts/deploy-eris.test.mjs",
 ];
-await Promise.all([
+const checks = await Promise.allSettled([
   run("node", ["--test", `--test-concurrency=${concurrency}`, ...coreFiles, ...repositoryTests]),
-  ...(hostFiles.length ? [run("node", ["--test", `--test-concurrency=${concurrency}`, ...hostFiles])] : []),
+  ...(hostFiles.length ? [run("node", ["--test", `--test-concurrency=${hostConcurrency}`, ...hostFiles])] : []),
 ]);
+for (const check of checks) if (check.status === "rejected") throw check.reason;

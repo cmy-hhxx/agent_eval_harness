@@ -16,13 +16,15 @@
 
 | 修改范围 | 检查 |
 |---|---|
-| 开发中 | `npm run typecheck`、`npm test` |
-| 提交前、契约或跨模块收尾 | `npm run test:full`，追加 Eris 单元与 Host 集成 |
+| 局部行为修复 | `npm run typecheck`，构建一次后仅运行直接覆盖改动的测试 |
+| 评测契约、持久化或跨模块变更 | `npm run typecheck`、一次 `npm run test:full`，覆盖评测核心与 Host 集成 |
 | Worker / SDK | `npm run test:integration` |
 | 安装、构建、依赖 | `node scripts/test-clean.mjs`；本机环境用 `npm run doctor` |
 | Eris 上游与浏览器 | [Eris 验证](../agent/README.md#验证) |
 
-测试分组以 [scripts/test.mjs](../scripts/test.mjs) 和 [package.json](../package.json) 为准。`npm test`、`test:full`、`test:integration` 先构建；快速测试、完整核心与 Host 集成各组最多并行两个文件，Worker 预算回归单独运行。完整核心与 Host 集成可同时运行，因此不是全局只开两个测试文件。失败应定位原因，不自动重跑或延长时限。
+测试分组以 [scripts/test.mjs](../scripts/test.mjs) 和 [package.json](../package.json) 为准。`npm test` 和 `test:full` 使用 `build:test`，不构建 Eris 前端、不运行 Eris 用例；Eris 验证单独按其指南选择。完整核心最多并行两个文件，Host 集成按 CPU 数量最多并行四个文件；两组同时运行，快速组中的 Worker 预算回归单独运行。
+
+不要把全测作为每次编辑或每次提交的机械门禁。已选全测时，不再叠加相同覆盖的 `npm test` 与目标回归；已有有效证据优先复用，不为证明已知缓慢而重跑旧版本。只有新改动、失败或尚未覆盖的具体风险才追加相关检查；失败只重跑修复涉及的用例，不自动重跑整套或延长超时。报告实际范围、耗时与未验证项。
 
 测试只覆盖当前可观察行为：
 

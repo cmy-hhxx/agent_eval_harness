@@ -11,7 +11,7 @@ import { attributionRepository, attributionWorkflow, planAttribution } from "@ev
 import { draftFor, fakeEvaluatorVersion, fakeIdentity, fixtureConfig, submitFor, taskResult } from "../../fixtures/comparison.js";
 import { services } from "../../fixtures/services.js";
 
-test("a sharded attribution run dispatches before the corpus is read and holds the input window", async t => {
+for (const blocked of [false, true]) test(`a sharded attribution run reads every file with blocked=${blocked} and holds the input window`, async t => {
   const files = 6, window = 2;
   const f = await fixtureConfig([[], [], [], []]);
   t.after(() => rm(f.directory, { recursive: true, force: true }));
@@ -48,9 +48,15 @@ test("a sharded attribution run dispatches before the corpus is read and holds t
       return attributionWorkflow.bind(...args);
     },
   };
+  let firstTask: string | undefined;
   const worker = await startWorker({ identity: fakeIdentity, async createSession(options) {
+    firstTask ??= options.spec.taskId;
     if (firstDispatchShards < 0) firstDispatchShards = shardsRead;
-    return { async run() { assert.notEqual((await submitFor(options, draftFor(options.spec, taskResult(options.spec)))).isError, true); },
+    return { async run() {
+      if (blocked && options.spec.taskId === firstTask)
+        throw new Error("permanent fixture failure");
+      assert.notEqual((await submitFor(options, draftFor(options.spec, taskResult(options.spec)))).isError, true);
+    },
       async abort() {}, async dispose() {} };
   } }, path.join(f.directory, "worker"));
   t.after(() => worker.close());
@@ -68,15 +74,17 @@ test("a sharded attribution run dispatches before the corpus is read and holds t
     engine: "pi", identity: fakeIdentity, evaluatorVersion: fakeEvaluatorVersion, policy: config.execution,
     modelForStage: f.modelForStage, concurrency: 4, retries: 0, retryDelaySeconds: 0,
     failureGuard: { enabled: false, windowSize: 50, threshold: 5 }, workerUrls: [worker.url], signal: AbortSignal.timeout(60_000) });
-  assert.equal(result.outcome, "complete");
-  assert.equal(shardsRead, files, "every physical file is planned, including the ones after the window");
+  assert.equal(result.outcome, blocked ? "partial" : "complete");
+  assert.equal(shardsRead, files, "all shards must be read before finishing");
   assert(firstDispatchShards >= 1 && firstDispatchShards < 3,
     `the first task runs after the first file, not after the whole corpus (read ${firstDispatchShards}/${files})`);
   assert(bound.length > 0);
-  assert(Math.max(...bound) <= window - 1 + 1, "one file may overshoot the window, but only to its own boundary");
+  assert(Math.max(...bound) <= window + Number(blocked), "failed recovery detail does not hold back new files");
   const state = await attributionRepository.readRun(run);
-  assert.equal(state.manifest.tasks.length, 0, "finished inputs leave the checkpoint");
-  assert.equal(state.manifest.inputCatalog?.length ?? 0, 0);
-  assert(stateTasks <= 4 * window, "bound inputs keep the checkpoint sized by the window, not the corpus: " + stateTasks);
+  if (!blocked) {
+    assert.equal(state.manifest.tasks.length, 0, "finished inputs leave the checkpoint");
+    assert.equal(state.manifest.inputCatalog?.length ?? 0, 0);
+  }
+  assert(stateTasks <= 4 * (window + Number(blocked)), "bound inputs keep the checkpoint sized by the window, not the corpus: " + stateTasks);
   assert(stateBytes <= 2 * 1024 * 1024, "checkpoint bytes stay small: " + stateBytes);
 });

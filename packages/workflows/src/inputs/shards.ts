@@ -1,10 +1,10 @@
-import { fileSourceReader } from "@eval/data";
+import { fileSourceReader, type SourceCursor } from "@eval/data";
 import { canonical, errorText, ValidationError, type JsonObject } from "@eval/contracts";
 import { adapt, candidateKey, scanInputFile } from "./records.js";
 import { normalizeInput } from "./normalize.js";
 import type { Candidate, EvaluationConfig, VersionConfig } from "./types.js";
 
-/** One physical input file's admitted records. Candidates stay thin and carry byte coordinates. */
+/** A bounded portion of one input file. Candidates stay thin and carry byte coordinates. */
 export interface InputShard {
   source: string;
   revision: string;
@@ -21,24 +21,23 @@ export interface ShardScanOptions {
   foundScope?: Set<string>;
   /** Fully evaluated physical files by revision; an unchanged file is never read again. */
   completed?: Readonly<Record<string, string>>;
+  /** Durable read positions; a partial file must never be marked fully evaluated. */
+  cursors?: Record<string, SourceCursor & { revision: string }>;
 }
 
 interface ScopeRow { batch_id: string; case_id: string; trace_id?: string }
 
-/** One model version's physical files, advanced one file per round. */
+/** One model version's physical files, advanced one bounded row batch per round. */
 export interface InputShardScan {
-  /** Next file from a version that may still take inputs, or undefined while every version is blocked or exhausted. */
+  /** Next batch from an available version, or undefined while all versions are blocked or exhausted. */
   next(available?: (version: string) => boolean): Promise<InputShard | undefined>;
   /** True once every physical file has been planned. */
   done(): boolean;
 }
 
 /**
- * Plan one physical source at a time, one file per version per round, so every model starts and
- * advances together instead of finishing one version before the next. A file whose rows are
- * already catalogued under the same revision is re-planned from the catalogue; only a new or
- * changed file is read again. `available` holds back a version whose bound inputs still fill its
- * window while the other versions keep streaming.
+ * Read at most one small batch per version per round. Resume at byte coordinates instead of
+ * rescanning a large file; `available` holds back versions whose bound inputs fill their window.
  */
 export function createInputShardScan(config: EvaluationConfig, options: ShardScanOptions): InputShardScan {
   const scope = config.inputs.records;
@@ -46,6 +45,10 @@ export function createInputShardScan(config: EvaluationConfig, options: ShardSca
     throw new Error("输入范围包含重复坐标");
   const scopeRows = scope && new Map(scope.map(row =>
     [canonical([row.model, row.input_file, row.input_index + 1]), row as unknown as ScopeRow]));
+  const cursors = options.cursors ?? {};
+  for (const row of scope ?? [])
+    if (options.completed?.[row.input_file] || (cursors[row.input_file]?.line ?? 0) > row.input_index)
+      options.foundScope?.add(canonical([row.model, row.input_file, row.input_index + 1]));
   type VersionScan = { version: VersionConfig; label: string; files?: string[]; cursor: number };
   const scans: VersionScan[] = config.inputs.versions.map(version => ({ version,
     label: version.sources.map(source => source.path).join(", "), cursor: 0 }));
@@ -80,23 +83,29 @@ export function createInputShardScan(config: EvaluationConfig, options: ShardSca
         if (issue) {
           drained.add(scan);
           start = (index + 1) % scans.length;
-          return done() ? finish() : issue;
+          return issue;
         }
         while (scan.cursor < scan.files!.length) {
-          const source = scan.files![scan.cursor++];
+          const source = scan.files![scan.cursor];
           const known = options.catalog().filter(candidate => candidate.source === source && candidate.version === scan.version.id);
           const revision = await fileSourceReader.revision(source).catch(() => undefined);
           if (revision === undefined) {
+            scan.cursor++;
             start = (index + 1) % scans.length;
             return { source, revision: "", candidates: [], issues: [fileIssue(source, new Error("输入文件不可读"))] };
           }
           // A finished file keeps its rows in the delivery ledger, not in the state file.
-          if (options.completed?.[source] === revision) continue;
-          // Rows already catalogued at this revision are planned and bound; only new files are read.
-          if (known.some(candidate => candidate.source_revision === revision)) continue;
-          if (known.length) throw new Error("输入文件在评测期间发生变化，请重新开始：" + source);
+          if (options.completed?.[source] === revision) { scan.cursor++; continue; }
+          const cursor = cursors[source];
+          if (cursor && cursor.revision !== revision || known.some(candidate => candidate.source_revision !== revision))
+            throw new Error("输入文件在评测期间发生变化，请重新开始：" + source);
+          if (cursor?.done) { scan.cursor++; continue; }
           start = (index + 1) % scans.length;
-          return await readShard(source, revision, scan.version, config, options, scopeRows);
+          const next = cursor ? { ...cursor } : { offset: 0, line: 0, done: false, revision };
+          const shard = await readShard(source, revision, scan.version, config, options, scopeRows, next);
+          cursors[source] = next;
+          if (next.done) scan.cursor++;
+          return shard;
         }
         drained.add(scan);
       }
@@ -121,12 +130,13 @@ function fileIssue(source: string, error: unknown): JsonObject {
 }
 
 async function readShard(source: string, revision: string, version: VersionConfig, config: EvaluationConfig,
-  options: ShardScanOptions, scopeRows: Map<string, ScopeRow> | undefined): Promise<InputShard> {
+  options: ShardScanOptions, scopeRows: Map<string, ScopeRow> | undefined, cursor: SourceCursor): Promise<InputShard> {
   const candidates: Candidate[] = [], issues: JsonObject[] = [];
   const previous = new Map(options.catalog().filter(candidate => candidate.source === source)
     .map(candidate => [candidateKey(candidate), candidate]));
   try {
-    for await (const row of scanInputFile(source, version, config.inputs.default_batch_id, revision)) {
+    for await (const row of scanInputFile(source, version, config.inputs.default_batch_id, revision,
+      cursor, Math.min(16, config.execution.sessionWindow))) {
       if (!row) continue;
       const { index, batchId, caseId } = row;
       let key: string | undefined;
@@ -172,6 +182,7 @@ async function readShard(source: string, revision: string, version: VersionConfi
   } catch (error) {
     if (!(error as NodeJS.ErrnoException).code) throw error;
     issues.push(fileIssue(source, error));
+    cursor.done = true;
   }
   return { source, revision, candidates, issues };
 }

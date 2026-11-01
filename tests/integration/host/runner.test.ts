@@ -624,6 +624,7 @@ test("incomplete terminal SSE preserves the worker and reports a missing archive
   const options = {
     runId: "incomplete-events", debug: true, output: config.output, engine: "pi" as const, identity: fakeIdentity,
     evaluatorVersion: fakeEvaluatorVersion, config, ...services, plan, policy: config.execution,
+    taskSource: { ...services.taskSource, reconcile: async () => plan },
     modelForStage, concurrency: 1, retries: 0, retryDelaySeconds: 0, workerUrls: [proxy.url],
     logger: createFileLogger({ directory: path.join(directory, "log"), lockDirectory: path.join(directory, "locks") }),
   };
@@ -642,7 +643,7 @@ test("incomplete terminal SSE preserves the worker and reports a missing archive
     assert.deepEqual((await readdir(path.join(directory, "worker"))).sort(), [record.spec.attemptId, "materials"].sort());
     assert.deepEqual(await readdir(path.join(directory, "worker/materials")), [], "archive retention does not retain shared material");
     assert.match(await readFile(path.join(directory, "log/runtime.log"), "utf8"), /event_archive_incomplete/);
-    await runEvaluation(options); assert.equal(calls.get(task.id), 1, "resume may add pending workflow tasks but must not reevaluate the committed task to repair debug output");
+    await runEvaluation(options); assert.equal(calls.get(task.id), 1, "resume must not reevaluate the committed task to repair debug output");
   } finally {
     await proxy.close(); await worker.close(); await rm(directory, { recursive: true, force: true });
   }

@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import { Ajv2020 } from "ajv/dist/2020.js";
 import { canonical, difference, restore, projectEvidenceReferences, resolveEvidenceSelection, type AgentBinding, type JsonObject, type PlannedTask, type RunManifest, type RunState, type ShardSource, type SubmissionReceipt, type TaskAnalysis, type WorkflowDefinition, type WorkflowScheduling } from "@eval/contracts";
 import { cite, displayEvidence, evidenceSources, parseEvidenceCoordinates, resolveEvidence, traceCallOrigins } from "@eval/tools";
-import { createRunRepository, type RunCodec } from "@eval/data";
+import { createRunRepository, type RunCodec, type SourceCursor } from "@eval/data";
 import { compactFields, compactResultSchema, type SessionCompact } from "@eval/agents/compact";
 import type { TraceAttributionResult } from "@eval/agents/attribution";
 import { candidateKey, contentText, createInputBindings, createInputShardScan, normalizeInput, normalizeTraceInput, type Candidate, type EvaluationConfig, type RawInput } from "@eval/workflows/inputs";
@@ -134,23 +134,33 @@ function inputBindings(state: RunState) {
   if (!bind) bindings.set(key, bind = createInputBindings(key.config as AttributionConfig));
   return bind;
 }
-/** One physical input file per pull; the next file is read while this one is evaluated. */
+/** Bounded row batches start evaluation before even the first physical file is fully read. */
 export function attributionShards(config: AttributionConfig, state: RunState): ShardSource {
   const manifest = state.manifest, bind = inputBindings(state);
   const catalog = () => manifest.inputCatalog as Candidate[];
   const window = config.execution.sessionWindow;
+  const cursors = (manifest.preflight.shardCursors ??= {}) as Record<string, SourceCursor & { revision: string }>;
   const scan = createInputShardScan(config, { catalog, admitted: new Set(catalog().map(candidateKey)),
     foundScope: config.inputs.records ? new Set<string>() : undefined,
-    completed: manifest.preflight.shards as Record<string, string> | undefined });
-  // Released inputs leave the catalogue, so its rows are exactly this version's bound inputs.
-  // Each version reads its next file only after its own inputs fall below the window, so one
-  // model's backlog never stalls the others.
-  const available = (version: string) => catalog().filter(candidate => candidate.version === version).length < window;
+    completed: manifest.preflight.shards as Record<string, string> | undefined, cursors });
+  // Successful inputs occupy the window until delivery releases them. Permanently failed
+  // sessions retain recovery detail without preventing other inputs from being read.
+  const available = (version: string) => {
+    const pending = new Set(manifest.tasks.filter(task => ["pending", "running"].includes(manifest.states[task.id]?.status))
+      .flatMap(task => Object.values(task.inputIds)));
+    const failed = new Set(manifest.tasks.filter(task => task.stage === "attribution-session" &&
+      ["failed", "blocked", "cancelled", "timed_out"].includes(manifest.states[task.id]?.status))
+      .flatMap(task => Object.values(task.inputIds)));
+    return catalog().filter(candidate => candidate.version === version &&
+      (!failed.has(candidate.input_id) || pending.has(candidate.input_id))).length < window;
+  };
   return {
     done: () => scan.done(),
     async next() {
       const shard = await scan.next(available);
       if (!shard) return undefined;
+      if (cursors[shard.source]?.done && !shard.candidates.length && !catalog().some(candidate => candidate.source === shard.source))
+        ((manifest.preflight.shards ??= {}) as JsonObject)[shard.source] = shard.revision;
       const previous = indexAttributionTasks(manifest.tasks),
         accepted = new Set(Object.keys(state.receipts)), tasks: PlannedTask[] = [];
       for (const candidate of shard.candidates)
@@ -182,7 +192,8 @@ export function releaseAttribution(state: RunState, inputs: Record<string, unkno
   for (const id of freed) { delete inputs[id]; delete manifest.inputs[id]; }
   const retained = catalog.filter(candidate => !candidate.released);
   for (const candidate of released)
-    if (!retained.some(other => other.source === candidate.source)) {
+    if ((manifest.preflight.shardCursors as Record<string, SourceCursor> | undefined)?.[candidate.source]?.done &&
+        !retained.some(other => other.source === candidate.source)) {
       const shards = (manifest.preflight.shards ??= {}) as JsonObject;
       shards[candidate.source] = candidate.source_revision!;
     }

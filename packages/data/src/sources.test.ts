@@ -11,7 +11,7 @@ test("streamed input lines preserve coordinates and reject a changed source revi
   try {
     await writeFile(file, '\uFEFF{"case_id":"first"}\r\n{"case_id":"second"}\r\n{"case_id":"third"}\r{"case_id":"fourth"}\n');
     const revision = await fileSourceReader.revision(file);
-    const lines: { line: string; index: number; byteOffset: number; byteLength: number }[] = [];
+    const lines: { line: string; index: number; byteOffset: number; byteLength: number; nextOffset: number }[] = [];
     for await (const entry of fileSourceReader.lines(file, revision)) lines.push(entry);
     assert.deepEqual(lines.map(({ line, index }) => ({ line, index })), [
       { line: '{"case_id":"first"}', index: 1 },
@@ -23,6 +23,10 @@ test("streamed input lines preserve coordinates and reject a changed source revi
       assert.equal(source.subarray(byteOffset, byteOffset + byteLength).toString("utf8"), line);
       assert.equal(fileSourceReader.record(file, byteOffset, byteLength, revision), line);
     }
+    const resumed = [];
+    for await (const entry of fileSourceReader.lines(file, revision, { offset: lines[0]!.nextOffset, line: 1, done: false }))
+      resumed.push(entry);
+    assert.deepEqual(resumed, lines.slice(1), "resumed CRLF/BOM input preserves original byte and line coordinates");
     await writeFile(file, '{"case_id":"changed"}\n');
     assert.throws(() => fileSourceReader.record(file, lines[0].byteOffset, lines[0].byteLength, revision), /输入文件发生变化/);
     await assert.rejects(async () => {

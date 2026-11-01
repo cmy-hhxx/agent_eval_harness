@@ -25,7 +25,7 @@
     "eval": "node dist/apps/host/src/cli.js",
     "attribution:check-language": "node dist/apps/host/src/attribution-language-check.js",
     "test": "npm run build:test && node scripts/test.mjs --fast",
-    "test:full": "npm run build:app && node scripts/test.mjs --full",
+    "test:full": "npm run build:test && node scripts/test.mjs --full",
     "test:integration": "npm run build:app && node --test --test-concurrency=2 dist/tests/integration/*.test.js",
     "build:pi": "node scripts/build.mjs pi",
     "worker": "node dist/apps/worker/src/cli.js",

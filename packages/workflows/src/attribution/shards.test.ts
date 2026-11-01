@@ -30,7 +30,7 @@ test("attribution plans one physical input file at a time and reads bodies only 
   t.after(() => rm(f.directory, { recursive: true, force: true }));
   const state = stateFor(config), source = attributionShards(config, state);
   const opened: string[] = [], record = fileSourceReader.record, lines = fileSourceReader.lines;
-  fileSourceReader.lines = (file, revision) => { opened.push(file); return lines(file, revision); };
+  fileSourceReader.lines = (file, revision, cursor) => { opened.push(file); return lines(file, revision, cursor); };
   let reads = 0;
   fileSourceReader.record = (...args) => { reads++; return record(...args); };
   t.after(() => { fileSourceReader.lines = lines; fileSourceReader.record = record; });
@@ -70,11 +70,35 @@ test("a resumed run skips a finished file and reads only the remaining shard", a
   const state = stateFor(config);
   state.manifest.preflight.shards = { [first]: await fileSourceReader.revision(first) };
   const opened: string[] = [], lines = fileSourceReader.lines;
-  fileSourceReader.lines = (file, revision) => { opened.push(file); return lines(file, revision); };
+  fileSourceReader.lines = (file, revision, cursor) => { opened.push(file); return lines(file, revision, cursor); };
   t.after(() => { fileSourceReader.lines = lines; });
   const source = attributionShards(config, state), shard = (await source.next())!;
   assert.equal(shard.source, second);
   assert.deepEqual(opened, [second], "the completed file is never read again");
+});
+
+test("a large file yields before EOF and resumes after released rows without losing its tail", async t => {
+  const f = await fixtureConfig([[raw("one"), raw("two"), raw("three"), raw("four"), raw("five")], [], [], []]);
+  t.after(() => rm(f.directory, { recursive: true, force: true }));
+  const version = f.config.inputs.versions[0]!;
+  const config = { ...f.config, workflow: "attribution" as const, inputs: { ...f.config.inputs, versions: [version] } };
+  config.execution.sessionWindow = 2;
+  const state = stateFor(config), source = attributionShards(config, state), first = (await source.next())!;
+  assert.equal(first.candidates.length, 2, "the first tasks need only a small prefix of the file");
+  assert.equal(source.done?.(), false);
+  state.manifest.inputCatalog = first.candidates;
+  state.manifest.tasks = first.tasks;
+  for (const task of first.tasks.filter(task => task.stage === "attribution-session"))
+    state.receipts[task.id] = { exported: { id: task.id } } as never;
+  releaseAttribution(state, first.inputs);
+  assert.equal((state.manifest.inputCatalog as Candidate[]).length, 0);
+  assert.equal(state.manifest.preflight.shards, undefined, "releasing the prefix never marks the unread file complete");
+  const resumed = attributionShards(config, structuredClone(state));
+  const second = (await resumed.next())!, third = (await resumed.next())!;
+  assert.deepEqual((second.candidates as Candidate[]).map(row => row.case_id), ["three", "four"]);
+  assert.deepEqual((third.candidates as Candidate[]).map(row => row.case_id), ["five"]);
+  assert.equal(await resumed.next(), undefined);
+  assert.equal(resumed.done?.(), true);
 });
 
 test("a large corpus keeps state bounded by the window and releases every finished input", async t => {
@@ -129,8 +153,8 @@ test("a large corpus keeps state bounded by the window and releases every finish
     releaseOne();
   }
   while (Object.keys(inputs).length) releaseOne();
-  assert.equal(pulled, files, "every physical file is read exactly once");
-  assert(maxBound <= window - 1 + perFile, "one file may overshoot the window, never the corpus: " + maxBound);
+  assert.equal(pulled, files * Math.ceil(perFile / window), "every file is read through bounded row batches");
+  assert(maxBound <= window * 2 - 1, "a row batch bounds the overshoot, even for a large file: " + maxBound);
   assert(maxBytes < 4 * 1024 * 1024, "checkpoint stays sized by the window, not the corpus: " + maxBytes);
   assert.equal(state.manifest.tasks.length, 0, "finished inputs leave recovery detail");
   assert.equal(Object.keys(state.receipts).length, 0);

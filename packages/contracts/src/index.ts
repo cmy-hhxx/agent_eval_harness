@@ -457,7 +457,7 @@ export interface TaskPlan {
   summary: JsonObject;
   catalog?: unknown[];
 }
-/** One physical input file's planned tasks and lazy readers. */
+/** A bounded portion of one physical input file, with planned tasks and lazy readers. */
 export interface WorkflowShard {
   source: string;
   revision: string;
