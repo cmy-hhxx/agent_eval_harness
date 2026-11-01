@@ -46,6 +46,24 @@ test("attribution plans one physical input file at a time and reads bodies only 
   assert.equal(await source.next(), undefined);
 });
 
+test("all model versions advance one file per round instead of finishing one version first", async t => {
+  const f = await fixtureConfig([[raw("a-1")], [raw("b-1")], [], []]);
+  t.after(() => rm(f.directory, { recursive: true, force: true }));
+  const versions = f.config.inputs.versions.slice(0, 2);
+  const extra = [path.join(f.directory, "a-day-2.jsonl"), path.join(f.directory, "b-day-2.jsonl")];
+  await writeJsonl(extra[0]!, [raw("a-2")]);
+  await writeJsonl(extra[1]!, [raw("b-2")]);
+  versions.forEach((version, index) => { version.sources = [...version.sources, { kind: "file", path: extra[index]! }]; });
+  const config = { ...f.config, workflow: "attribution" as const,
+    inputs: { ...f.config.inputs, versions } } as AttributionConfig;
+  const source = attributionShards(config, stateFor(config));
+  const seen: string[] = [];
+  for (let shard = await source.next(); shard; shard = await source.next()) seen.push(path.basename(shard.source));
+  const ordered = versions.map(version => version.sources.map(source => path.basename(source.path)).sort());
+  assert.deepEqual(seen, ordered[0]!.flatMap((name, index) => [name, ordered[1]![index]!]),
+    "each round reads one file per model version");
+});
+
 test("a resumed run skips a finished file and reads only the remaining shard", async t => {
   const { f, config, first, second } = await twoFiles();
   t.after(() => rm(f.directory, { recursive: true, force: true }));
@@ -74,7 +92,11 @@ test("a large corpus keeps state bounded by the window and releases every finish
     inputs: { ...f.config.inputs, versions: [version] } } as AttributionConfig;
   config.execution.sessionWindow = window;
   const state = stateFor(config), source = attributionShards(config, state), inputs: Record<string, unknown> = {};
-  let bound = 0, maxBound = 0, maxBytes = 0, pulled = 0;
+  let maxBound = 0, maxBytes = 0, pulled = 0;
+  const sample = () => {
+    maxBound = Math.max(maxBound, Object.keys(inputs).length);
+    maxBytes = Math.max(maxBytes, JSON.stringify(state).length);
+  };
   const pull = async () => {
     const shard = await source.next();
     if (!shard) return false;
@@ -85,17 +107,11 @@ test("a large corpus keeps state bounded by the window and releases every finish
     Object.defineProperties(inputs, Object.getOwnPropertyDescriptors(shard.inputs));
     // A file is the smallest shard: its tasks join the plan even when it overshoots the window.
     for (const task of shard.tasks) { state.manifest.tasks.push(task); state.manifest.states[task.id] = { status: "pending", attempts: 0 }; }
-    bound = Object.keys(inputs).length;
-    maxBound = Math.max(maxBound, bound);
-    maxBytes = Math.max(maxBytes, JSON.stringify(state).length);
+    sample();
     return true;
   };
-  for (;;) {
-    while (Object.keys(inputs).length < window) { if (!await pull()) break; }
-    bound = Object.keys(inputs).length;
-    maxBytes = Math.max(maxBytes, JSON.stringify(state).length);
-    if (!bound) break;
-    // Evaluate one bound input, then export and release it like the outbox does.
+  // Evaluate one bound input, then export and release it like the outbox does.
+  const releaseOne = () => {
     const candidate = (state.manifest.inputCatalog as Candidate[])[0]!;
     const session = state.manifest.tasks.find(task => task.stage === "attribution-session" &&
       (task.data as { candidate: Candidate }).candidate.input_id === candidate.input_id)!;
@@ -103,7 +119,16 @@ test("a large corpus keeps state bounded by the window and releases every finish
       evaluatorVersion: "v", judge: "j", acceptedAt: 1, usage: {} as never, audit: {} as never,
       evaluation: {}, exported: { id: session.id, file: "attribution.jsonl", line: 1, row: {} } } as never;
     releaseAttribution(state, inputs);
+    sample();
+  };
+  for (;;) {
+    while (await pull());
+    if (source.done?.()) break;
+    // The source holds this version's next file until its bound inputs fall below the window.
+    assert(Object.keys(inputs).length, "a blocked source keeps bound inputs to release");
+    releaseOne();
   }
+  while (Object.keys(inputs).length) releaseOne();
   assert.equal(pulled, files, "every physical file is read exactly once");
   assert(maxBound <= window - 1 + perFile, "one file may overshoot the window, never the corpus: " + maxBound);
   assert(maxBytes < 4 * 1024 * 1024, "checkpoint stays sized by the window, not the corpus: " + maxBytes);

@@ -5,7 +5,7 @@ import { cite, displayEvidence, evidenceSources, parseEvidenceCoordinates, resol
 import { createRunRepository, type RunCodec } from "@eval/data";
 import { compactFields, compactResultSchema, type SessionCompact } from "@eval/agents/compact";
 import type { TraceAttributionResult } from "@eval/agents/attribution";
-import { candidateKey, contentText, createInputBindings, normalizeInput, normalizeTraceInput, scanInputShards, type Candidate, type EvaluationConfig, type RawInput } from "@eval/workflows/inputs";
+import { candidateKey, contentText, createInputBindings, createInputShardScan, normalizeInput, normalizeTraceInput, type Candidate, type EvaluationConfig, type RawInput } from "@eval/workflows/inputs";
 import { attributionSessionSource, bindAttributionMaterial, processMaterial, processExecutionFacts, executionFactsView, processComponents, actorCatalog, presentedMaterialReads, projectComparisonEvidence, projectCompactEvidence, verifiedCompact, compactPresentedReads, validateOriginalAttributionEvidence } from "@eval/workflows/review";
 import problemSchema from "../../../../schemas/attribution/problem.schema.json" with { type: "json" };
 import traceResultSchema from "../../../../schemas/attribution/trace-result.schema.json" with { type: "json" };
@@ -138,14 +138,20 @@ function inputBindings(state: RunState) {
 export function attributionShards(config: AttributionConfig, state: RunState): ShardSource {
   const manifest = state.manifest, bind = inputBindings(state);
   const catalog = () => manifest.inputCatalog as Candidate[];
-  const scan = scanInputShards(config, { catalog, admitted: new Set(catalog().map(candidateKey)),
+  const window = config.execution.sessionWindow;
+  const scan = createInputShardScan(config, { catalog, admitted: new Set(catalog().map(candidateKey)),
     foundScope: config.inputs.records ? new Set<string>() : undefined,
     completed: manifest.preflight.shards as Record<string, string> | undefined });
+  // Released inputs leave the catalogue, so its rows are exactly this version's bound inputs.
+  // Each version reads its next file only after its own inputs fall below the window, so one
+  // model's backlog never stalls the others.
+  const available = (version: string) => catalog().filter(candidate => candidate.version === version).length < window;
   return {
+    done: () => scan.done(),
     async next() {
-      const item = await scan.next();
-      if (item.done) return undefined;
-      const shard = item.value, previous = indexAttributionTasks(manifest.tasks),
+      const shard = await scan.next(available);
+      if (!shard) return undefined;
+      const previous = indexAttributionTasks(manifest.tasks),
         accepted = new Set(Object.keys(state.receipts)), tasks: PlannedTask[] = [];
       for (const candidate of shard.candidates)
         tasks.push(...planAttributionUnit(candidate, { previousTasks: previous, acceptedTaskIds: accepted }).tasks);
@@ -422,7 +428,8 @@ export const attributionScheduling: WorkflowScheduling = {
       const value = (manifest.config as AttributionConfig).execution.sessionWindow;
       if (!Number.isSafeInteger(value) || Number(value) < 1) throw new Error("execution.sessionWindow must be a positive integer");
       return Number(value);
-    }, completed: task => task.stage === "attribution-session" },
+    }, completed: task => task.stage === "attribution-session",
+    group: task => (task.data as AttributionTaskData).candidate.version },
   stagePriority: stage => stage === "attribution-compact" ? -1 : stage === "attribution-compact-field" ? 1 : 0,
 };
 export const attributionWorkflow: WorkflowDefinition = {

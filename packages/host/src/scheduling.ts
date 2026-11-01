@@ -48,9 +48,11 @@ export function sessionAdmissionSnapshot(
 ): SessionAdmissionSnapshot {
   const window = sessionAdmissionWindow(policy, manifest);
   const sessions = new Map<string, { started: boolean; completed: boolean; failed: boolean; blocked: boolean }>();
+  const groups = new Map<string, string>();
   for (const task of tasks) {
     const id = policy.id(task);
     if (!id) continue;
+    if (!groups.has(id)) groups.set(id, policy.group?.(task) ?? "");
     const state = states[task.id], status = state?.status ?? "pending",
       session = sessions.get(id) ?? { started: false, completed: false, failed: false, blocked: false };
     session.started ||= status !== "pending" || (state?.attempts ?? 0) > 0;
@@ -63,8 +65,17 @@ export function sessionAdmissionSnapshot(
   for (const [id, session] of sessions)
     if (session.started && (session.completed || session.failed || session.blocked)) admitted.add(id);
   const open = [...sessions].filter(([, session]) => !session.completed && !session.failed && !session.blocked);
-  const selected = [...open.filter(([, session]) => session.started), ...open.filter(([, session]) => !session.started)]
-    .slice(0, window);
+  // Waiting sessions take the window one group at a time, so a single model's backlog
+  // cannot hold every slot before the others start.
+  const buckets = new Map<string, typeof open>();
+  for (const entry of open.filter(([, session]) => !session.started)) {
+    const key = groups.get(entry[0]) ?? "", bucket = buckets.get(key);
+    if (bucket) bucket.push(entry); else buckets.set(key, [entry]);
+  }
+  const queued: typeof open = [], lists = [...buckets.values()];
+  for (let index = 0; lists.some(list => index < list.length); index++)
+    for (const list of lists) if (index < list.length) queued.push(list[index]!);
+  const selected = [...open.filter(([, session]) => session.started), ...queued].slice(0, window);
   for (const [id] of selected) admitted.add(id);
   const completed = [...sessions.values()].filter((session) => session.completed).length;
   const failed = [...sessions.values()].filter((session) => !session.completed && session.failed).length;

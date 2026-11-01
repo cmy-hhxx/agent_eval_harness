@@ -25,46 +25,84 @@ export interface ShardScanOptions {
 
 interface ScopeRow { batch_id: string; case_id: string; trace_id?: string }
 
+/** One model version's physical files, advanced one file per round. */
+export interface InputShardScan {
+  /** Next file from a version that may still take inputs, or undefined while every version is blocked or exhausted. */
+  next(available?: (version: string) => boolean): Promise<InputShard | undefined>;
+  /** True once every physical file has been planned. */
+  done(): boolean;
+}
+
 /**
- * Plan one physical source at a time. A file whose rows are already catalogued under the same
- * revision is re-planned from the catalog; only a new or changed file is read again.
+ * Plan one physical source at a time, one file per version per round, so every model starts and
+ * advances together instead of finishing one version before the next. A file whose rows are
+ * already catalogued under the same revision is re-planned from the catalogue; only a new or
+ * changed file is read again. `available` holds back a version whose bound inputs still fill its
+ * window while the other versions keep streaming.
  */
-export async function* scanInputShards(config: EvaluationConfig, options: ShardScanOptions): AsyncGenerator<InputShard> {
+export function createInputShardScan(config: EvaluationConfig, options: ShardScanOptions): InputShardScan {
   const scope = config.inputs.records;
   if (scope && new Set(scope.map(row => canonical([row.model, row.input_file, row.input_index]))).size !== scope.length)
     throw new Error("输入范围包含重复坐标");
   const scopeRows = scope && new Map(scope.map(row =>
     [canonical([row.model, row.input_file, row.input_index + 1]), row as unknown as ScopeRow]));
-  for (const version of config.inputs.versions) {
-    const label = version.sources.map(source => source.path).join(", ");
-    let files: string[];
+  type VersionScan = { version: VersionConfig; label: string; files?: string[]; cursor: number };
+  const scans: VersionScan[] = config.inputs.versions.map(version => ({ version,
+    label: version.sources.map(source => source.path).join(", "), cursor: 0 }));
+  const drained = new Set<VersionScan>();
+  let start = 0;
+  const done = () => scans.every(scan => drained.has(scan));
+  const finish = () => {
+    if (scopeRows && options.foundScope && options.foundScope.size !== scopeRows.size)
+      throw new Error("输入范围存在缺失或已变动的记录，请检查输入文件");
+    return undefined;
+  };
+  const load = async (scan: VersionScan): Promise<InputShard | undefined> => {
+    if (scan.files) return undefined;
     try {
-      files = await fileSourceReader.files(version.sources);
+      scan.files = await fileSourceReader.files(scan.version.sources);
     } catch (error) {
-      yield { source: label, revision: "", candidates: [], issues: [fileIssue(label, error)] };
-      continue;
+      scan.files = [];
+      return { source: scan.label, revision: "", candidates: [], issues: [fileIssue(scan.label, error)] };
     }
-    if (!files.length) {
-      yield { source: label, revision: "", candidates: [], issues: [{ source: label, reason: "input_file_missing", version: version.id }] };
-      continue;
-    }
-    for (const source of files) {
-      const known = options.catalog().filter(candidate => candidate.source === source && candidate.version === version.id);
-      const revision = await fileSourceReader.revision(source).catch(() => undefined);
-      if (revision === undefined) {
-        yield { source, revision: "", candidates: [], issues: [fileIssue(source, new Error("输入文件不可读"))] };
-        continue;
+    // Every declared source is empty: report it, but keep the other versions streaming.
+    return scan.files.length ? undefined
+      : { source: scan.label, revision: "", candidates: [], issues: [{ source: scan.label, reason: "input_file_missing", version: scan.version.id }] };
+  };
+  return {
+    done,
+    async next(available) {
+      if (done()) return finish();
+      for (let offset = 0; offset < scans.length; offset++) {
+        const index = (start + offset) % scans.length, scan = scans[index]!;
+        if (drained.has(scan) || available && !available(scan.version.id)) continue;
+        const issue = await load(scan);
+        if (issue) {
+          drained.add(scan);
+          start = (index + 1) % scans.length;
+          return done() ? finish() : issue;
+        }
+        while (scan.cursor < scan.files!.length) {
+          const source = scan.files![scan.cursor++];
+          const known = options.catalog().filter(candidate => candidate.source === source && candidate.version === scan.version.id);
+          const revision = await fileSourceReader.revision(source).catch(() => undefined);
+          if (revision === undefined) {
+            start = (index + 1) % scans.length;
+            return { source, revision: "", candidates: [], issues: [fileIssue(source, new Error("输入文件不可读"))] };
+          }
+          // A finished file keeps its rows in the delivery ledger, not in the state file.
+          if (options.completed?.[source] === revision) continue;
+          // Rows already catalogued at this revision are planned and bound; only new files are read.
+          if (known.some(candidate => candidate.source_revision === revision)) continue;
+          if (known.length) throw new Error("输入文件在评测期间发生变化，请重新开始：" + source);
+          start = (index + 1) % scans.length;
+          return await readShard(source, revision, scan.version, config, options, scopeRows);
+        }
+        drained.add(scan);
       }
-      // A finished file keeps its rows in the delivery ledger, not in the state file.
-      if (options.completed?.[source] === revision) continue;
-      // Rows already catalogued at this revision are planned and bound; only new files are read.
-      if (known.some(candidate => candidate.source_revision === revision)) continue;
-      if (known.length) throw new Error("输入文件在评测期间发生变化，请重新开始：" + source);
-      yield await readShard(source, revision, version, config, options, scopeRows);
-    }
-  }
-  if (scopeRows && options.foundScope && options.foundScope.size !== scopeRows.size)
-    throw new Error("输入范围存在缺失或已变动的记录，请检查输入文件");
+      return done() ? finish() : undefined;
+    },
+  };
 }
 
 function fileIssue(source: string, error: unknown): JsonObject {

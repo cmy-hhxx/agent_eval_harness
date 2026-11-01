@@ -469,8 +469,10 @@ export interface WorkflowShard {
   issues?: JsonObject[];
 }
 export interface ShardSource {
-  /** Next shard to plan, or undefined once every physical source has been planned. */
+  /** Next shard to plan, or undefined once every physical source is planned or the bound window blocks it. */
   next(): Promise<WorkflowShard | undefined>;
+  /** True once no shard remains; absent means undefined from next() is final. */
+  done?(): boolean;
 }
 export interface AgentRequest {
   input: JsonObject;
@@ -554,6 +556,8 @@ export interface WorkflowScheduling {
     /** Fixed test/workflow window, or derive the effective value from the run manifest. */
     window: number | ((manifest: RunManifest) => number);
     completed(task: PlannedTask): boolean;
+    /** Sessions sharing a group take the window in rotation, so one model cannot fill it alone. */
+    group?(task: PlannedTask): string;
   };
   stagePriority?(stage: string): number;
 }

@@ -227,10 +227,7 @@ export async function runEvaluation(options: RunOptions): Promise<Record<string,
     // Physical input files stream in one at a time: each shard is planned, bound and
     // dispatched while the next file is read, so no model task waits for the whole corpus.
     const shardSource = options.taskSource.shards?.(options.config, saved);
-    const admissionWindow = options.taskSource.scheduling?.sessionAdmission;
-    const sessionWindow = !admissionWindow ? Infinity : typeof admissionWindow.window === "function"
-      ? admissionWindow.window(manifest) : admissionWindow.window;
-    let shardsDone = !shardSource, shardPulling = false;
+    let shardsDone = !shardSource, shardPulling = false, shardPulls = 0, shardWait: string | undefined;
     const mergeShard = async (shard: WorkflowShard | undefined) => {
       if (!shard) return false;
       const catalog = (manifest.inputCatalog ??= []) as { input_id: string }[];
@@ -262,7 +259,8 @@ export async function runEvaluation(options: RunOptions): Promise<Record<string,
       shardPulling = true;
       void shardSource.next()
         .then(mergeShard)
-        .then(merged => { if (!merged) shardsDone = true; })
+        // A source may be blocked by its input window instead of exhausted; only report done then.
+        .then(merged => { if (merged) shardPulls++; else shardsDone = shardSource.done?.() ?? true; })
         .catch(error => { fatalError ??= { error }; })
         .finally(() => { shardPulling = false; wake(); });
     };
@@ -1026,8 +1024,9 @@ export async function runEvaluation(options: RunOptions): Promise<Record<string,
         continue;
       }
       if (persistencePaused) { persistencePaused = false; options.onProgress?.("run_resumed persistence_recovered"); }
-      // Bound the bound-input window by the same session admission that bounds model work.
-      if (shardSource && !shardsDone && !shardPulling && Object.keys(inputs).length < sessionWindow) pullShard();
+      // The source itself holds each model version's next file until its bound inputs fall
+      // below the window, so every version keeps starting while none loads the whole corpus.
+      if (shardSource && !shardsDone && !shardPulling) pullShard();
       // Rebuilding the schedule over a large plan is expensive. At capacity with no
       // completion since the last pass nothing can start; only quota growth reopens a
       // slot, and taskConcurrency() below still observes it. An idle run always
@@ -1212,20 +1211,28 @@ export async function runEvaluation(options: RunOptions): Promise<Record<string,
         await new Promise((resolve) => setTimeout(resolve, 1000));
       }
       else if (!scheduled) {
-        // An empty queue between shards is expected. A file is the smallest shard, so the
-        // next one waits until bound inputs fall back under the window; one file may
-        // overshoot it. Completion releases bound inputs and wakes this loop.
+        // An empty queue between shards is expected: a version's next file waits until its
+        // bound inputs fall below the window, and the periodic flush releases them. Two idle
+        // cycles without a completion, a release or a new file mean the source is blocked for
+        // good, so report capacity instead of finishing.
         if (shardSource && !shardsDone) {
-          if (Object.keys(inputs).length < sessionWindow) {
-            if (!shardPulling) pullShard();
-            await Promise.race([changed, new Promise(resolve => setTimeout(resolve, 1000))]);
+          if (!shardPulling) pullShard();
+          await Promise.race([changed, new Promise(resolve => setTimeout(resolve, 1000))]);
+          const idle = `${completions}:${Object.keys(inputs).length}:${shardPulls}`;
+          if (shardPulling || running.size || manifest.tasks.some(runnable) || idle !== shardWait) {
+            shardWait = idle;
             continue;
           }
-          if (running.size || manifest.tasks.some(runnable)) {
-            await Promise.race([changed, new Promise(resolve => setTimeout(resolve, 1000))]);
-            continue;
+          // Finished inputs reach the delivery log before they are released. Flush now so a
+          // slow projection cannot end the run with files still unread.
+          if (!running.size && !manifest.tasks.some(runnable)) {
+            const bound = Object.keys(inputs).length;
+            await current.persistCheckpoint();
+            if (shardSource.done?.() || Object.keys(inputs).length !== bound || manifest.tasks.some(runnable)) continue;
+            // Inputs stayed bound after a forced release, so no remaining file can ever load:
+            // keep the run resumable instead of finishing with files unread.
+            resourcePause = "worker_capacity_unavailable";
           }
-          // Bound window full with nothing left to run: report capacity, not completion.
         }
         if (manifest.tasks.some(task => inScope(task) && manifest.states[task.id]?.status === "pending" && !resourceAvailable(task)))
           resourcePause = "model_channels_unavailable";

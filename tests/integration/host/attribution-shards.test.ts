@@ -40,7 +40,8 @@ test("a sharded attribution run dispatches before the corpus is read and holds t
   const taskSource = { ...attributionWorkflow,
     shards(...args: Parameters<NonNullable<typeof attributionWorkflow.shards>>) {
       const source = attributionWorkflow.shards!(...args);
-      return { async next() { const shard = await source.next(); if (shard) shardsRead++; return shard; } };
+      return { async next() { const shard = await source.next(); if (shard) shardsRead++; return shard; },
+        done: () => source.done?.() ?? false };
     },
     bind(...args: Parameters<typeof attributionWorkflow.bind>) {
       bound.push(Object.keys(args[1]).length);
@@ -68,6 +69,7 @@ test("a sharded attribution run dispatches before the corpus is read and holds t
     modelForStage: f.modelForStage, concurrency: 4, retries: 0, retryDelaySeconds: 0,
     failureGuard: { enabled: false, windowSize: 50, threshold: 5 }, workerUrls: [worker.url], signal: AbortSignal.timeout(60_000) });
   assert.equal(result.outcome, "complete");
+  assert.equal(shardsRead, files, "every physical file is planned, including the ones after the window");
   assert(firstDispatchShards >= 1 && firstDispatchShards < 3,
     `the first task runs after the first file, not after the whole corpus (read ${firstDispatchShards}/${files})`);
   assert(bound.length > 0);

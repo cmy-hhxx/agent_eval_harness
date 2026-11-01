@@ -26,17 +26,18 @@ test("settled dependencies release aggregation after failure but never consume p
   assert(dependencyReady(task, "component", states, new Set(["component"])), "accepted results do not wait for slow worker cleanup");
 });
 
-function attributionSessionTasks(session: string): PlannedTask[] {
+function attributionSessionTasks(session: string, version?: string): PlannedTask[] {
+  const candidate = { input_id: session, version };
   const fields = ["plan", "key_data"].map(field => ({ id: session + "-field-" + field,
     stage: "attribution-compact-field", inputIds: {}, dependencies: {},
-    data: { candidate: { input_id: session }, compactField: field } }));
+    data: { candidate, compactField: field } }));
   const compact = { id: session + "-compact", stage: "attribution-compact", inputIds: {},
     dependencies: Object.fromEntries(fields.map(task => [(task.data as {compactField: string}).compactField, task.id])),
-    data: { candidate: { input_id: session } } };
+    data: { candidate } };
   const trace = { id: session + "-trace", stage: "attribution-trace", inputIds: {},
-    dependencies: { compact: compact.id }, data: { candidate: { input_id: session } } };
+    dependencies: { compact: compact.id }, data: { candidate } };
   const summary = { id: session + "-session", stage: "attribution-session", inputIds: {},
-    dependencies: { compact: compact.id, trace: trace.id }, data: { candidate: { input_id: session } } };
+    dependencies: { compact: compact.id, trace: trace.id }, data: { candidate } };
   return [...fields, compact, trace, summary] as PlannedTask[];
 }
 
@@ -137,6 +138,17 @@ test("a finite session window advances only when a foreground session completes 
   assert.equal(snapshot.waiting_sessions, 0);
   assert.equal(snapshot.admitted.has("session-2"), true, "failed sessions drain without holding an open window slot");
   assert.equal(snapshot.admitted.has("session-10"), true);
+});
+
+test("the session window advances every model version instead of draining one first", () => {
+  const tasks = [
+    ...Array.from({ length: 6 }, (_, index) => attributionSessionTasks(`a-${index + 1}`, "model-a")).flat(),
+    ...Array.from({ length: 6 }, (_, index) => attributionSessionTasks(`b-${index + 1}`, "model-b")).flat(),
+  ];
+  const states: RunManifest["states"] = Object.fromEntries(tasks.map(task => [task.id, { status: "pending", attempts: 0 }]));
+  const snapshot = sessionAdmissionSnapshot(tasks, states, { ...attributionScheduling.sessionAdmission!, window: 4 });
+  assert.deepEqual([...snapshot.admitted].sort(), ["a-1", "a-2", "b-1", "b-2"],
+    "waiting sessions rotate across versions so no single model takes the whole window");
 });
 
 test("session admission and foreground selection resume from durable task states", () => {
