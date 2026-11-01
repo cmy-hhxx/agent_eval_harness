@@ -285,7 +285,14 @@ export class RunStore {
   }
 
   private async checkpointNow(): Promise<void> {
-    if (this.outboxStarted) await this.flushOutbox(true);
+    if (this.outboxStarted) {
+      await this.flushOutbox(true);
+      // The projection starts the receipt log after clearing the outbox; finishing it here
+      // releases finished inputs before the snapshot instead of one flush later.
+      await this.receiptLogs;
+      if (this.services.taskSource.release && !this.receiptLogs && !this.outboxStats().count)
+        this.services.taskSource.release(this.state, this.inputs);
+    }
     const snapshotStarted = performance.now();
     this.manifest.journalSequence = this.lastDeliveredSequence;
     const snapshot = checkpointSnapshot(this.state);

@@ -186,7 +186,7 @@ export interface OutputTarget {
   path: string;
   /** Public business partitions, or an explicitly requested isolated run delivery. */
   layout?: "business" | "run";
-  /** Declared business category; its partition directory is the configured path's last segment. */
+  /** Declared business category; its partition directory follows the configured input partition. */
   business?: "daily" | "lost";
   /** Explicit original run ledgers needed to verify previously organized formal rows. */
   receiptSources?: string[];

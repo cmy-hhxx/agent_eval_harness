@@ -30,11 +30,26 @@ const EXECUTION_DEFAULTS = {
   initialContextChars: 16000,
   failureGuard: DEFAULT_FAILURE_GUARD,
 };
-/** Declared business categories own one fixed partition directory under the source output root. */
-export const BUSINESS_PARTITIONS: Record<NonNullable<OutputTarget["business"]>, string> = {
-  daily: "0_daily_eval",
-  lost: "3_lost_user_eval",
-};
+/**
+ * A source under `eval_input/<partition>/<version>/` publishes to `eval_output/<partition>`;
+ * the input folder's `_input` suffix belongs to the input side. Sources laid out directly
+ * under `eval_input/` (no partition level) declare no partition directory.
+ */
+function inputPartition(inputs: EvaluationConfig["inputs"] | undefined): string | undefined {
+  if (!Array.isArray(inputs?.versions)) return undefined;
+  const partitions = new Set<string>();
+  for (const version of inputs.versions) {
+    if (!Array.isArray(version.sources) || !version.sources.length) return undefined;
+    for (const source of version.sources) {
+      const segments = path.resolve(source.path).split(path.sep), root = segments.indexOf("eval_input");
+      // A file source's last segment is the file itself; a directory keeps its own name.
+      const below = root < 0 ? [] : segments.slice(root + 1, source.kind === "directory" ? undefined : -1);
+      if (below.length < 2) return undefined;
+      partitions.add(below[0]!);
+    }
+  }
+  return partitions.size === 1 ? [...partitions][0] : undefined;
+}
 const CLUSTERING_DEFAULTS: EvalConfig["clustering"] = {
   enabled: false,
   maxClassesPerModel: 40,
@@ -215,8 +230,9 @@ function buildEvaluationBase(source: ConfigObject): EvaluationConfig {
   output.reuseCompleted ??= true;
   if (output.business !== undefined) {
     if (output.business !== "daily" && output.business !== "lost") throw new Error("Invalid output.business");
-    if (output.layout === "business" && path.basename(path.resolve(output.path)) !== BUSINESS_PARTITIONS[output.business])
-      throw new Error("output.business=" + output.business + " 要求 output.path 以 " + BUSINESS_PARTITIONS[output.business] + " 结尾");
+    const partition = inputPartition(config.inputs), expected = partition?.replace(/_input$/u, "");
+    if (output.layout === "business" && expected && path.basename(path.resolve(output.path)) !== expected)
+      throw new Error("output.business=" + output.business + " 与输入分区 " + partition + " 不对应；output.path 最后一级应为 " + expected);
   }
   if (output.receiptSources !== undefined && (!Array.isArray(output.receiptSources) ||
     output.receiptSources.some(value => typeof value !== "string" || !path.isAbsolute(value)) ||

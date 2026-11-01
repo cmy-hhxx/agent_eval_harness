@@ -47,7 +47,9 @@ for (const failure of ["component", "trace"] as const) test(`parallel investigat
   } }, path.join(f.directory, "worker-" + index))));
   t.after(() => Promise.all(workers.map(worker => worker.close())));
   const runId = "pipeline-" + failure;
-  await runEvaluation({ ...services, report: async () => ({}), agents, repository: attributionRepository, taskSource: attributionWorkflow,
+  // Boundary assertions inspect the final task states; release itself is covered by the shard tests.
+  const taskSource = { ...attributionWorkflow, release: undefined };
+  await runEvaluation({ ...services, report: async () => ({}), agents, repository: attributionRepository, taskSource,
     runId, output: config.output, config, plan, engine: "pi", identity: fakeIdentity, evaluatorVersion: fakeEvaluatorVersion,
     policy: config.execution, modelForStage: f.modelForStage, concurrency: 2, retries: 0, retryDelaySeconds: 0,
     failureGuard: { enabled: false, windowSize: 50, threshold: 5 }, workerUrls: workers.map(worker => worker.url), signal: AbortSignal.timeout(20000) });

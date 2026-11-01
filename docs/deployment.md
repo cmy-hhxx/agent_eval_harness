@@ -62,7 +62,7 @@ Eris 的 `collectionsFile` 指向独立 JSON 清单，格式见[清单示例](..
 | 外部运行目录（共享盘） | `/mnt/fin_bench/sync_datasets/code/1_eval_harnes/runtime` |
 | 数据源 | `/mnt/fin_bench/eval_data` |
 | 日常评测产物 | `/mnt/fin_bench/eval_data/{source}/3_eval_output/0_daily_eval/` |
-| 流失样本产物 | `/mnt/fin_bench/eval_data/{source}/3_eval_output/3_lost_user_eval/` |
+| 流失样本产物 | `/mnt/fin_bench/eval_data/{source}/3_eval_output/1_lost_user_eval/` |
 | 专项评测产物 | `/mnt/fin_bench/eval_data/{source}/3_eval_output/1_task_eval/<任务>/` |
 | 测试评测产物 | `/mnt/fin_bench/eval_data/{source}/3_eval_output/test_eval/` |
 | 配置与密钥 | `runtime/config/`、`runtime/secrets/` |

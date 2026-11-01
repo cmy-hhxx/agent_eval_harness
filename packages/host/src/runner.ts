@@ -1030,8 +1030,9 @@ export async function runEvaluation(options: RunOptions): Promise<Record<string,
       if (shardSource && !shardsDone && !shardPulling && Object.keys(inputs).length < sessionWindow) pullShard();
       // Rebuilding the schedule over a large plan is expensive. At capacity with no
       // completion since the last pass nothing can start; only quota growth reopens a
-      // slot, and taskConcurrency() below still observes it.
-      const saturated = completions === scheduledCompletions && running.size >= taskConcurrency();
+      // slot, and taskConcurrency() below still observes it. An idle run always
+      // refreshes its demand: streamed planning may not have produced a task yet.
+      const saturated = running.size > 0 && completions === scheduledCompletions && running.size >= taskConcurrency();
       if (!saturated) {
         admission = sessionAdmission ? sessionAdmissionSnapshot(manifest.tasks, manifest.states, sessionAdmission, manifest) : undefined;
         readyDemand = manifest.tasks.filter(runnable).length;
@@ -1211,14 +1212,25 @@ export async function runEvaluation(options: RunOptions): Promise<Record<string,
         await new Promise((resolve) => setTimeout(resolve, 1000));
       }
       else if (!scheduled) {
-        // An empty queue between shards is expected: keep reading instead of stopping.
+        // An empty queue between shards is expected. A file is the smallest shard, so the
+        // next one waits until bound inputs fall back under the window; one file may
+        // overshoot it. Completion releases bound inputs and wakes this loop.
         if (shardSource && !shardsDone) {
-          if (!shardPulling) pullShard();
-          await Promise.race([changed, new Promise(resolve => setTimeout(resolve, 1000))]);
-          continue;
+          if (Object.keys(inputs).length < sessionWindow) {
+            if (!shardPulling) pullShard();
+            await Promise.race([changed, new Promise(resolve => setTimeout(resolve, 1000))]);
+            continue;
+          }
+          if (running.size || manifest.tasks.some(runnable)) {
+            await Promise.race([changed, new Promise(resolve => setTimeout(resolve, 1000))]);
+            continue;
+          }
+          // Bound window full with nothing left to run: report capacity, not completion.
         }
         if (manifest.tasks.some(task => inScope(task) && manifest.states[task.id]?.status === "pending" && !resourceAvailable(task)))
           resourcePause = "model_channels_unavailable";
+        else if (!manifest.pausedStages.length && manifest.tasks.some(task => inScope(task) && manifest.states[task.id]?.status === "pending"))
+          resourcePause = "worker_capacity_unavailable";
         break;
       }
     }
@@ -1243,13 +1255,14 @@ export async function runEvaluation(options: RunOptions): Promise<Record<string,
     if (manifest.status === "finished") manifest.outcome = inputDiagnostics(manifest.preflight).input_issue_count ||
       manifest.tasks.some(task => inScope(task) && (manifest.states[task.id].status !== "succeeded" || saved.receipts[task.id]?.incompleteDependencies?.length))
       ? "partial" : "complete";
-    await current.save(undefined, { manifest: true, usage: true, all: true });
-    await current.persistCheckpoint();
+    // Count before the final checkpoint releases finished inputs from the manifest.
     const executionTaskStatuses: Record<string, number> = {};
     for (const task of manifest.tasks.filter(inScope)) {
       const status = manifest.states[task.id].status;
       executionTaskStatuses[status] = (executionTaskStatuses[status] ?? 0) + 1;
     }
+    await current.save(undefined, { manifest: true, usage: true, all: true });
+    await current.persistCheckpoint();
     return { ...(options.report ? await options.report(run) : { run_id: manifest.runId, status: manifest.status }),
       execution_task_statuses: executionTaskStatuses, paused_stages: manifest.pausedStages,
       ...inputDiagnostics(manifest.preflight),

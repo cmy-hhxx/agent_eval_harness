@@ -59,6 +59,61 @@ test("a resumed run skips a finished file and reads only the remaining shard", a
   assert.deepEqual(opened, [second], "the completed file is never read again");
 });
 
+test("a large corpus keeps state bounded by the window and releases every finished input", async t => {
+  const files = 50, perFile = 20, window = 8;
+  const f = await fixtureConfig([[], [], [], []]);
+  t.after(() => rm(f.directory, { recursive: true, force: true }));
+  const version = f.config.inputs.versions[0]!, paths: string[] = [];
+  for (let file = 0; file < files; file++) {
+    const source = path.join(f.directory, `day-${file}.jsonl`);
+    await writeJsonl(source, Array.from({ length: perFile }, (_, index) => raw(`case-${file}-${index}`)));
+    paths.push(source);
+  }
+  version.sources = paths.map(path => ({ kind: "file" as const, path }));
+  const config = { ...f.config, workflow: "attribution" as const,
+    inputs: { ...f.config.inputs, versions: [version] } } as AttributionConfig;
+  config.execution.sessionWindow = window;
+  const state = stateFor(config), source = attributionShards(config, state), inputs: Record<string, unknown> = {};
+  let bound = 0, maxBound = 0, maxBytes = 0, pulled = 0;
+  const pull = async () => {
+    const shard = await source.next();
+    if (!shard) return false;
+    pulled++;
+    const candidates = shard.candidates as Candidate[];
+    state.manifest.inputCatalog = [...(state.manifest.inputCatalog as Candidate[]), ...candidates];
+    for (const candidate of candidates) state.manifest.inputs[candidate.input_id] = { id: candidate.input_id, name: candidate.input_id };
+    Object.defineProperties(inputs, Object.getOwnPropertyDescriptors(shard.inputs));
+    // A file is the smallest shard: its tasks join the plan even when it overshoots the window.
+    for (const task of shard.tasks) { state.manifest.tasks.push(task); state.manifest.states[task.id] = { status: "pending", attempts: 0 }; }
+    bound = Object.keys(inputs).length;
+    maxBound = Math.max(maxBound, bound);
+    maxBytes = Math.max(maxBytes, JSON.stringify(state).length);
+    return true;
+  };
+  for (;;) {
+    while (Object.keys(inputs).length < window) { if (!await pull()) break; }
+    bound = Object.keys(inputs).length;
+    maxBytes = Math.max(maxBytes, JSON.stringify(state).length);
+    if (!bound) break;
+    // Evaluate one bound input, then export and release it like the outbox does.
+    const candidate = (state.manifest.inputCatalog as Candidate[])[0]!;
+    const session = state.manifest.tasks.find(task => task.stage === "attribution-session" &&
+      (task.data as { candidate: Candidate }).candidate.input_id === candidate.input_id)!;
+    state.receipts[session.id] = { taskId: session.id, attemptId: "a", submissionId: "s-" + session.id, status: "succeeded",
+      evaluatorVersion: "v", judge: "j", acceptedAt: 1, usage: {} as never, audit: {} as never,
+      evaluation: {}, exported: { id: session.id, file: "attribution.jsonl", line: 1, row: {} } } as never;
+    releaseAttribution(state, inputs);
+  }
+  assert.equal(pulled, files, "every physical file is read exactly once");
+  assert(maxBound <= window - 1 + perFile, "one file may overshoot the window, never the corpus: " + maxBound);
+  assert(maxBytes < 4 * 1024 * 1024, "checkpoint stays sized by the window, not the corpus: " + maxBytes);
+  assert.equal(state.manifest.tasks.length, 0, "finished inputs leave recovery detail");
+  assert.equal(Object.keys(state.receipts).length, 0);
+  assert.equal(Object.keys(inputs).length, 0);
+  assert.equal((state.manifest.inputCatalog as Candidate[]).length, 0);
+  assert.equal(Object.keys(state.manifest.preflight.shards as object).length, files, "each finished file is recorded by revision");
+});
+
 test("an exported input releases its tasks, receipts and reader and records the finished file", async t => {
   const { f, config } = await twoFiles();
   t.after(() => rm(f.directory, { recursive: true, force: true }));

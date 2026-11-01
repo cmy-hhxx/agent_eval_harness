@@ -38,7 +38,7 @@ npm run typecheck
 npm test
 ```
 
-真实评测在服务器按[使用指南](docs/usage.md#最短路径)预检、启动和续跑。同 run ID 续跑保留已接受结果和累计预算；新 run 也先检查已有正式结果，完整成功的同一回答跨评测器版本复用。默认交付按被评模型分目录、业务日期命名文件，run 仅用于内部恢复与溯源，详见[目录约定](docs/usage.md#目录约定)。产物约定写入 `/mnt/fin_bench/eval_data/{source}/3_eval_output/`：日常在 `0_daily_eval/`，流失在 `3_lost_user_eval/`，专项在 `1_task_eval/<任务>/`，小样本与验证在 `test_eval/`。原始输入保留在数据源，不随 run 复制；具体位置由[目录配置](docs/deployment.md#目录配置)指定。
+真实评测在服务器按[使用指南](docs/usage.md#最短路径)预检、启动和续跑。同 run ID 续跑保留已接受结果和累计预算；新 run 也先检查已有正式结果，完整成功的同一回答跨评测器版本复用。默认交付按被评模型分目录、业务日期命名文件，run 仅用于内部恢复与溯源，详见[目录约定](docs/usage.md#目录约定)。产物约定写入 `/mnt/fin_bench/eval_data/{source}/3_eval_output/`：日常在 `0_daily_eval/`，流失在 `1_lost_user_eval/`，专项在 `1_task_eval/<任务>/`，小样本与验证在 `test_eval/`。原始输入保留在数据源，不随 run 复制；具体位置由[目录配置](docs/deployment.md#目录配置)指定。
 
 ## Eris
 

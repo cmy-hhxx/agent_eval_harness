@@ -647,3 +647,33 @@ test("incomplete terminal SSE preserves the worker and reports a missing archive
     await proxy.close(); await worker.close(); await rm(directory, { recursive: true, force: true });
   }
 });
+
+test("a streamed plan dispatches as soon as its first file is read under batch task capacity", async t => {
+  const f = await fixtureConfig([[raw()], [], [raw()], []]);
+  t.after(() => rm(f.directory, { recursive: true, force: true }));
+  const worker = await startWorker({ identity: fakeIdentity, async createSession(options) { return {
+    async run() { await inspectFor(options); await submitFor(options, draftFor(options.spec, taskResult(options.spec))); },
+    async abort() {}, async dispose() {},
+  }; } }, path.join(f.directory, "worker"));
+  t.after(() => worker.close());
+  const plan = await buildPlan(f.config);
+  // Batch fair share grants no task slot while every run reports zero demand, and a streamed
+  // plan has no task before its first file is read: the idle pass must not freeze at zero.
+  const taskSource = { ...services.taskSource, shards: () => {
+    let sent = false;
+    return { async next() {
+      if (sent) return undefined;
+      sent = true;
+      await new Promise(resolve => setTimeout(resolve, 50));
+      return { source: "fixture.jsonl", revision: "1", candidates: plan.catalog ?? [], tasks: plan.tasks, inputs: plan.inputs };
+    } };
+  } };
+  const result = await runEvaluation({ ...services, taskSource, runId: "streamed-admission", output: f.config.output,
+    config: f.config, plan: { ...plan, tasks: [], inputs: {}, catalog: [] }, engine: "pi", identity: fakeIdentity,
+    evaluatorVersion: fakeEvaluatorVersion, policy: f.config.execution, modelForStage: f.modelForStage,
+    concurrency: 4, taskConcurrency: 8, taskLimit: ({ running, ready }) => Math.min(8, running + ready),
+    retries: 0, retryDelaySeconds: 0, workerUrls: [worker.url], signal: AbortSignal.timeout(15_000) });
+  assert.deepEqual(Object.keys(result.execution_task_statuses), ["succeeded"]);
+  assert((result.execution_task_statuses.succeeded ?? 0) >= plan.tasks.length);
+  assert.equal(result.outcome, "complete");
+});

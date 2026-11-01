@@ -9,20 +9,25 @@ import { initializeServices } from "@eval/host-app/composition";
 import { preflightHost } from "../../../apps/host/src/preflight.js";
 import { ROOT } from "../../fixtures/services.js";
 
-test("an attribution run declares its business category and owns one partition directory", async t => {
+test("an attribution run declares its business category and mirrors the input partition", async t => {
   const directory = await mkdtemp(path.join(os.tmpdir(), "business-partition-"));
   t.after(() => rm(directory, { recursive: true, force: true }));
   const settings = parseSettings("[channel.evaluation-gateway]\nbase_url=http://127.0.0.1:1/v1\napi_key=\nmodel=fixture\nmodels=fixture\n");
   const file = path.join(directory, "run.json");
-  const layered = async (output: unknown) => {
-    await writeFile(file, JSON.stringify({ workflow: "attribution", output }));
+  const layered = async (output: unknown, partition = "1_lost_user_eval") => {
+    const inputs = { versions: [{ id: "v1", name: "v1", adapter: "a", sources: [
+      { kind: "file", path: path.join(directory, "eval_input", partition, "model", "2026-09-01.jsonl") }] }] };
+    await writeFile(file, JSON.stringify({ workflow: "attribution", inputs, output }));
     return [path.join(ROOT, "configs/host.json"), path.join(ROOT, "configs/attribution.json"), file];
   };
-  const daily = { kind: "directory", layout: "business", path: path.join(directory, "0_daily_eval"), business: "daily" };
-  assert.equal((await loadConfig(await layered(daily), settings)).evaluation.output.business, "daily");
-  const { business: _business, ...undeclared } = daily;
-  await assert.rejects(loadConfig(await layered({ ...daily, business: "lost" }), settings),
-    /要求 output.path 以 3_lost_user_eval 结尾/);
+  const lost = { kind: "directory", layout: "business", path: path.join(directory, "1_lost_user_eval"), business: "lost" };
+  assert.equal((await loadConfig(await layered(lost), settings)).evaluation.output.business, "lost");
+  // The input folder's `_input` suffix stays on the input side.
+  const daily = await loadConfig(await layered({ ...lost, business: "daily", path: path.join(directory, "0_daily_eval") }, "0_daily_eval_input"), settings);
+  assert.equal(daily.evaluation.output.business, "daily");
+  await assert.rejects(loadConfig(await layered({ ...lost, path: path.join(directory, "0_daily_eval") }), settings),
+    /与输入分区 1_lost_user_eval 不对应/);
+  const { business: _business, ...undeclared } = lost;
   const issues = await preflightHost(await loadConfig(await layered(undeclared), settings), "undeclared");
   assert(issues.some(issue => issue.check === "output.business"), "the category is never inferred from the path");
 });

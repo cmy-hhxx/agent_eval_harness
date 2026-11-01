@@ -20,7 +20,7 @@ npm run eval -- run --test-eval --run-id aime-attribution-test \
 /mnt/fin_bench/eval_data/1_aime/3_eval_output/
 ├── 0_daily_eval/aime_fast/aime_fast_attribution-2026-10-19.jsonl
 ├── 0_daily_eval/aime_expert/aime_expert_attribution-2026-10-19.jsonl
-└── 3_lost_user_eval/aime_fast/aime_fast_attribution-2026-09-17.jsonl
+└── 1_lost_user_eval/aime_fast/aime_fast_attribution-2026-09-17.jsonl
 ```
 
 以上根目录只在外部配置中声明。日期取原始记录完整的 `batch_id`，不是评测启动日，也不截取 request_time 或改换时区；日常样本与流失样本的业务 case_id 来源不同，不能用正式行里的 session_meta.case_id 代替输入索引。启动前跨 run 检查并复用可核实的完整正式结果；新旧评测器可混用，保留原判词、版本和收据来源，同一回答多份结果以最新成功接受时间为准。
