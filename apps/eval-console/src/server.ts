@@ -1,12 +1,14 @@
 import path from "node:path";
 import { randomBytes, timingSafeEqual } from "node:crypto";
 import { errorText, HttpError, redact } from "@eval/contracts";
-import { consoleLog, localFiles, readJson } from "@eval/data";
+import { localFiles, readJson } from "@eval/data";
 import { body, json, listen } from "@eval/runtime/http";
-import { ConsoleTasks, type ConsoleConfig } from "./console-tasks.js";
-import { configurationSecrets } from "./settings.js";
-import { logger } from "./composition.js";
-import { ROOT } from "./paths.js";
+import { ConsoleTasks, type ConsoleConfig } from "./tasks.js";
+import { configurationSecrets } from "@eval/host-app/settings";
+import { logger } from "@eval/host-app/composition";
+import { fileURLToPath } from "node:url";
+import { consoleLog } from "./files.js";
+const webRoot = fileURLToPath(new URL("../../../../apps/eval-console/web/", import.meta.url));
 
 export async function readConsoleConfig(file: string): Promise<ConsoleConfig> {
   const value = await readJson<ConsoleConfig>(file), root = path.dirname(path.resolve(file));
@@ -56,7 +58,7 @@ export async function serveConsole(tasks: ConsoleTasks, password: string) {
     try {
       if (req.method === "GET" && staticFiles[url.pathname]) {
         const [file, contentType] = staticFiles[url.pathname];
-        const bytes = await localFiles.read(path.join(ROOT, "apps/host/console", file));
+        const bytes = await localFiles.read(path.join(webRoot, file));
         res.writeHead(200, { "content-type": contentType }); res.end(bytes); return;
       }
       const cookie = /(?:^|;\s*)eval_console=([a-f0-9]+)/.exec(req.headers.cookie ?? "")?.[1];

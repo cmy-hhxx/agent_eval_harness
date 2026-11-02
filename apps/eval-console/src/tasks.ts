@@ -1,16 +1,16 @@
 import path from "node:path";
 import { randomUUID } from "node:crypto";
 import { HttpError, errorText } from "@eval/contracts";
-import { consolePath, exists, localFiles, readJson, runLayout, writeJson } from "@eval/data";
-import { createChannelRequests, runEvaluation } from "@eval/host";
-import { attributionWorkflow } from "@eval/workflows/attribution";
-import { comparisonWorkflow } from "@eval/workflows/comparison";
-import { createBalancedModels } from "./balanced-models.js";
-import { loadConfig, readConfigSources, type HostConfig } from "./config.js";
-import { businessAttributionRepository, businessComparisonRepository } from "./business-results.js";
-import { logger, services } from "./composition.js";
-import { preflightHost } from "./preflight.js";
-import { readSettings } from "./settings.js";
+import { localFiles, readJson, writeJson } from "@eval/data";
+import { createChannelRequests } from "@eval/host";
+import { createBalancedModels } from "@eval/host-app/config";
+import { loadConfig, readConfigSources, type HostConfig } from "@eval/host-app/config";
+import { logger } from "@eval/host-app/composition";
+import { preflightHost } from "@eval/host-app/preflight";
+import { readSettings } from "@eval/host-app/settings";
+
+import { consolePath } from "./files.js";
+import { executeConsoleTask, type Gate } from "./evaluation.js";
 
 export interface ConsolePreset {
   id: string; source: "wencai" | "aime"; name: string; configs: string[];
@@ -28,29 +28,6 @@ export interface ConsoleTask {
   error?: string; result?: Record<string, unknown>;
   warnings?: string[];
 }
-type Gate = ReturnType<typeof createChannelRequests>;
-interface Execution {
-  host: HostConfig; id: string; gate: Gate; pause: AbortSignal; channels: string[];
-  progress(message: string): void;
-}
-
-export async function executeConsoleTask({ host, id, gate, pause, channels, progress }: Execution) {
-  const workflow = host.workflow === "attribution" ? attributionWorkflow : comparisonWorkflow;
-  const repository = host.workflow === "attribution" ? businessAttributionRepository : businessComparisonRepository;
-  const routing = createBalancedModels(host.models, channels);
-  for (const stage of Object.keys(host.models.bindings)) routing.modelRoutesForTask({ stage });
-  const saved = await exists(runLayout(host.evaluation.output, id).stateFile);
-  const plan = saved ? { tasks: [], inputs: {}, summary: {} } : await workflow.plan(host.evaluation);
-  if (!saved && !plan.tasks.length && !plan.summary.sharded) throw new Error("输入中没有可评测记录");
-  return runEvaluation({ ...services, ...routing, report: undefined, taskSource: workflow, repository,
-    runtime: { ...services.runtime, workerSlots: host.evaluation.execution.workerSlots ?? 4 },
-    runId: id, output: host.evaluation.output, engine: "pi", evaluatorVersion: host.evaluatorVersion,
-    config: host.evaluation, plan, policy: host.evaluation.execution,
-    concurrency: gate.concurrency(), modelRequests: gate,
-    retries: host.evaluation.execution.retries, retryDelaySeconds: host.evaluation.execution.retryDelaySeconds,
-    failureGuard: host.evaluation.execution.failureGuard, skipFailed: true, pauseSignal: pause, onProgress: progress });
-}
-
 export class ConsoleTasks {
   readonly tasks = new Map<string, ConsoleTask>();
   private readonly active = new Map<string, { pause: AbortController; gate: Gate; done: Promise<void>; progress?: unknown }>();

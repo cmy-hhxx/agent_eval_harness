@@ -1,12 +1,13 @@
+import type { executeConsoleTask } from "./evaluation.js";
 import test from "node:test";
 import assert from "node:assert/strict";
 import path from "node:path";
 import { rm } from "node:fs/promises";
 import { readJson, writeJson } from "@eval/data";
-import { ConsoleTasks, type ConsoleConfig, type executeConsoleTask } from "../../../apps/host/src/console-tasks.js";
-import { serveConsole } from "../../../apps/host/src/console-server.js";
+import { ConsoleTasks, type ConsoleConfig } from "./tasks.js";
+import { serveConsole } from "./server.js";
 import { initializeServices } from "@eval/host-app/composition";
-import { fixtureConfig } from "../../fixtures/comparison.js";
+import { fixtureConfig } from "../../../tests/fixtures/comparison.js";
 
 test("console API previews frozen defaults, starts idempotently, drains, resumes and restores interrupted state", { timeout: 15000 }, async t => {
   const f = await fixtureConfig();

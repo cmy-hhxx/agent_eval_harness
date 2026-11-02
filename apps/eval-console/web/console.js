@@ -8,7 +8,7 @@ async function api(url, value) {
   if (!response.ok) { if (response.status === 401) showLogin(); throw new Error(result.error || '请求失败'); }
   return result;
 }
-function showLogin() { $('login').hidden = false; $('app').hidden = true; $('logout').hidden = true; }
+function showLogin() { $('login').hidden = false; $('app').hidden = true; $('logout').hidden = true; $('refresh').hidden = true; }
 async function busy(button, target, action) {
   button.disabled = true; $(target).textContent = '';
   try { await action(); } catch (error) { $(target).textContent = error.message; }
@@ -19,7 +19,7 @@ function fillPreset() {
   if (!preset) return;
   $('inputs').replaceChildren();
   for (const [index, input] of preset.inputs.entries()) {
-    const field = node('div', undefined, 'field'), label = node('label', '评测输入 · ' + input.name);
+    const field = node('div', undefined, 'field'), label = node('label', undefined, 'input-label'); label.append(node('span', input.name), node('small', '输入'));
     label.htmlFor = 'input-' + index; field.append(label);
     const element = node('textarea'); element.id = 'input-' + index; element.value = input.paths.join('\n'); element.dataset.version = input.id;
     element.rows = Math.min(3, input.paths.length); element.required = true; element.spellcheck = false;
@@ -49,12 +49,12 @@ function renderTasks() {
   // Preserve an in-progress concurrency edit across polling refreshes.
   if ($('task-list').contains(document.activeElement) && document.activeElement.tagName === 'INPUT') return;
   $('task-list').replaceChildren();
-  if (!tasks.length) { $('task-list').append(node('p', '暂无任务。预览配置后即可开始。', 'empty')); return; }
+  if (!tasks.length) { $('task-list').append(node('p', '暂无评测', 'empty')); return; }
   for (const task of tasks) {
     const row = node('div', undefined, 'task' + (task.id === state.selected ? ' selected' : ''));
     const head = node('div', undefined, 'task-head'), name = node('button', task.name, 'task-name');
     name.onclick = () => { state.selected = task.id; renderTasks(); void loadLogs(); };
-    head.append(name, node('span', names[task.status], 'status' + (['failed', 'partial'].includes(task.status) ? ' error' : '')));
+    head.append(name, node('span', names[task.status], 'status ' + task.status + (['failed', 'partial'].includes(task.status) ? ' error' : '')));
     const time = new Date(task.createdAt).toLocaleString('zh-CN', { hour12: false });
     row.append(head, node('p', time + (task.requests ? ' · 在途 ' + task.requests.active + ' / ' + task.concurrency : ' · 并发 ' + task.concurrency), 'task-meta'));
     const actions = node('div', undefined, 'task-actions');
@@ -85,10 +85,10 @@ async function loadLogs(older = false) {
     state.cursor = result.cursor; $('older').hidden = result.cursor === null;
     $('log-task').textContent = state.tasks.find(task => task.id === id)?.name || id;
     $('log-output').replaceChildren();
-    if (!result.rows.length) $('log-output').append(node('p', result.cursor === null ? '暂无符合条件的日志。' : '这一段没有符合条件的日志，可查看更早记录。', 'empty'));
+    if (!result.rows.length) $('log-output').append(node('p', result.cursor === null ? '暂无日志' : '暂无记录', 'empty'));
     for (const record of result.rows.reverse()) {
       const entry = node('details', undefined, 'log-entry');
-      entry.append(node('summary', [record.time, record.stage || record.component, record.message || record.event || record.task_id].filter(Boolean).join(' · '), record.level === 'error' ? 'error' : undefined), node('pre', JSON.stringify(record, null, 2)));
+      entry.append(node('summary', [record.time ? new Date(record.time).toLocaleTimeString('zh-CN', { hour12: false }) : '', record.stage || record.component, record.message || record.event || record.task_id].filter(Boolean).join(' · '), record.level === 'error' ? 'error' : undefined), node('pre', JSON.stringify(record, null, 2)));
       $('log-output').append(entry);
     }
   } catch (error) { $('log-error').textContent = error.message; }
@@ -99,7 +99,7 @@ async function refresh() {
 }
 async function initialize() {
   try {
-    state.presets = await api('/api/presets'); $('login').hidden = true; $('app').hidden = false; $('logout').hidden = false;
+    state.presets = await api('/api/presets'); $('login').hidden = true; $('app').hidden = false; $('logout').hidden = false; $('refresh').hidden = false;
     source(state.source); await refresh();
   } catch (error) { if ($('app').hidden) $('login-error').textContent = error.message === '请先登录' ? '' : error.message; else $('config-error').textContent = error.message; }
 }

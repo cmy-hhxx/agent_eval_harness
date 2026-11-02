@@ -1,6 +1,6 @@
 # 可编排评测 Host
 
-TypeScript Host 编排评测任务，Pi Worker 执行模型与工具调用。通过 CLI 或[评测控制台](docs/console.md)显式选择输入、启动与续跑评测；Eris 提供已有结果的只读分析。
+TypeScript Host 编排评测任务，Pi Worker 执行模型与工具调用。通过 CLI 或[评测控制台](apps/eval-console/README.md)显式选择输入、启动与续跑评测；Eris 提供已有结果的只读分析。
 
 评测能力包括 Criteria、Attribution、指令遵循归因、Score、Comparison、Clustering 和 Rewrite。Attribution 按 compact → 组件并行调查 → trace 摘要 → session 归因流水线；Comparison 对整场 session 做两两比较。开发先读 [AGENTS.md](AGENTS.md)，当前行为以源码、配置和 Schema 为准。
 
@@ -54,7 +54,7 @@ bash agent/run.sh --config /absolute/path/eris.json
 
 | 任务 | 文档 |
 |---|---|
-| 极小操作页、任务 API、暂停与并发 | [评测控制台](docs/console.md) |
+| 极小操作页、任务 API、暂停与并发 | [评测控制台](apps/eval-console/README.md) |
 | 配置、输入、运行、恢复、产物 | [使用指南](docs/usage.md) |
 | 服务器目录、部署与启动 | [部署指南](docs/deployment.md) |
 | 输入、判决与证据 | [数据契约](docs/contract.md) · [Schema](schemas/README.md) · [字段用途](docs/schema-fields.md) |

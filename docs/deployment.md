@@ -79,7 +79,7 @@ Eris 的 `collectionsFile` 指向独立 JSON 清单，格式见[清单示例](..
 
 ## 评测控制台
 
-控制台独立于 Eris，部署到 `/opt/eval_harness/` 下独立 checkout。按[控制台指南](console.md)配置管理员密码文件、独立状态目录、日志目录和评测预设；生产预设复用已有模型及阶段配置。隔离验证使用独立端口、状态与测试输出，只控制自己创建的任务，不接管旧 Host。
+控制台独立于 Eris，部署到 `/opt/eval_harness/` 下独立 checkout。按[控制台指南](../apps/eval-console/README.md)配置管理员密码文件、独立状态目录、日志目录和评测预设；生产预设复用已有模型及阶段配置。隔离验证使用独立端口、状态与测试输出，只控制自己创建的任务，不接管旧 Host。
 
 ## 评测 Host
 

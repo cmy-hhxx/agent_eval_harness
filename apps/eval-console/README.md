@@ -1,8 +1,12 @@
 # 评测控制台
 
-[返回首页](../README.md) · [部署](deployment.md) · [运行与产物](usage.md)
+[返回首页](../../README.md) · [部署](../../docs/deployment.md) · [运行与产物](../../docs/usage.md)
 
 一个独立操作页，问财执行对比，AIME 执行归因。用户只修改评测输入、评测输出和并发；启动前预览这三项与只读日志位置，可以下载同样的业务配置。模型、双渠道、各阶段推理配置、超时与业务规则均来自服务器预设，不在页面提供调整入口。Eris 保持只读。
+
+## 模块边界
+
+页面在 `web/`；HTTP、任务管理、文件查询与评测适配在 `src/`；测试和配置样例也在本目录。模块单向使用 Host 的公开配置、预检、组装入口与通用 Workflow/Runtime/Data 能力，原 CLI、Worker 和 Eris 不依赖控制台。已有 case 跳过与动态模型请求额度属于评测底层能力，两种入口共用。
 
 ## 操作
 
@@ -21,9 +25,9 @@
 
 ## 部署
 
-仅在服务器运行真实评测。本地可以构建与模拟测试。控制台使用独立 checkout，沿用已有 `config.ini`；新环境先完成 [Host 安装构建](deployment.md#评测-host)。
+仅在服务器运行真实评测。本地可以构建与模拟测试。控制台使用独立 checkout，沿用已有 `config.ini`；新环境先完成 [Host 安装构建](../../docs/deployment.md#评测-host)。
 
-复制 [console.example.json](../configs/console.example.json) 到外部配置目录，填写实际路径。`presets[].configs` 顺序与原评测的配置链一致，各文件相对路径按自身位置解析；输入白名单 `inputRoots`、管理员密码文件及状态/日志目录相对控制台配置文件解析。`concurrency` 是预设初始值。
+复制 [config.example.json](config.example.json) 到外部配置目录，填写实际路径。`presets[].configs` 顺序与原评测的配置链一致，各文件相对路径按自身位置解析；输入白名单 `inputRoots`、管理员密码文件及状态/日志目录相对控制台配置文件解析。`concurrency` 是预设初始值。
 
 管理员密码文件只保存密码，至少 16 位，限制文件权限为 `600`。文件不得提交到 Git。启动：
 

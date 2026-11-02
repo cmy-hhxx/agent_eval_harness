@@ -74,6 +74,8 @@ test("public package boundaries, independent Agents and acyclic implementation a
           );
       }
       if (!target) continue;
+      if (from !== "apps/eval-console")
+        assert(owner(target) !== "apps/eval-console", `${file}: existing evaluation modules must not depend on the console`);
       if (from === "packages/agents" && target.startsWith("packages/agents/src/"))
         assert.equal(
           file.split("/")[3],

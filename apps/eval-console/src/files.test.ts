@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { mkdtemp, mkdir, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { consoleLog, consolePath } from "./console-files.js";
+import { consoleLog, consolePath } from "./files.js";
 
 test("console paths reject traversal and symlink escapes, while allowing new output directories", async t => {
   const root = await mkdtemp(path.join(tmpdir(), "console-paths-"));

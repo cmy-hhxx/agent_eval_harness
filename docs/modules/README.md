@@ -6,7 +6,8 @@
 
 | 模块 | 职责 | 入口 |
 |---|---|---|
-| apps/host | CLI、控制台、配置、评测与 Eris 组装 | [cli.ts](../../apps/host/src/cli.ts)、[console.ts](../../apps/host/src/console.ts)、[composition.ts](../../apps/host/src/composition.ts)、[agent.ts](../../apps/host/src/agent.ts) |
+| apps/host | CLI、配置、评测与 Eris 组装 | [cli.ts](../../apps/host/src/cli.ts)、[composition.ts](../../apps/host/src/composition.ts)、[agent.ts](../../apps/host/src/agent.ts) |
+| apps/eval-console | 独立评测操作页、任务 API 与管理状态；通过公开入口调用 Host | [模块说明](../../apps/eval-console/README.md) |
 | apps/worker | Worker 进程入口 | [cli.ts](../../apps/worker/src/cli.ts) |
 | agent | Eris 定义、产品接口与界面 | [Agent 说明](../../agent/README.md) |
 | Contracts | 纯类型、协议、证据坐标与共用规则 | [index.ts](../../packages/contracts/src/index.ts) |

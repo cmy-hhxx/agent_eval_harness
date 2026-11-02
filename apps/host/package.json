@@ -17,6 +17,10 @@
     "./settings": {
       "types": "./settings.d.ts",
       "import": "./settings.js"
+    },
+    "./preflight": {
+      "types": "./preflight.d.ts",
+      "import": "./preflight.js"
     }
   }
 }

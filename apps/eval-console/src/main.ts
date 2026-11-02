@@ -1,10 +1,10 @@
 import { parseArgs } from "node:util";
 import path from "node:path";
 import { localFiles, runLock } from "@eval/data";
-import { readConsoleConfig, serveConsole } from "./console-server.js";
-import { ConsoleTasks } from "./console-tasks.js";
-import { applySettings, readSettings } from "./settings.js";
-import { initializeServices, logger } from "./composition.js";
+import { readConsoleConfig, serveConsole } from "./server.js";
+import { ConsoleTasks } from "./tasks.js";
+import { applySettings, readSettings } from "@eval/host-app/settings";
+import { initializeServices, logger } from "@eval/host-app/composition";
 
 const { values } = parseArgs({ options: { config: { type: "string" } } });
 if (!values.config) throw new Error("console requires --config FILE");

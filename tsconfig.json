@@ -98,6 +98,9 @@
       ],
       "@eval/agents/compact": [
         "./packages/agents/src/compact/index.ts"
+      ],
+      "@eval/host-app/preflight": [
+        "./apps/host/src/preflight.ts"
       ]
     }
   },

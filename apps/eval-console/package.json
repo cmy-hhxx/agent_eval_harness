@@ -1,0 +1,9 @@
+{
+  "name": "@eval/console",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "start": "node ../../dist/apps/eval-console/src/main.js",
+    "test": "node --test ../../dist/apps/eval-console/src/*.test.js"
+  }
+}

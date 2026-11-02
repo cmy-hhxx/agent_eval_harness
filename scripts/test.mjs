@@ -84,7 +84,7 @@ async function testFiles(roots) {
       .map((file) => path.join(directory, file)),
   ))).flat().sort();
 }
-const coreFiles = (await testFiles(["dist/packages", "dist/tests/architecture"]))
+const coreFiles = (await testFiles(["dist/packages", "dist/tests/architecture", "dist/apps/eval-console/src"]))
   .filter(file => !/\/(assistant-|analysis-)/.test(file));
 const hostFiles = full ? (await testFiles(["dist/tests/integration/host"]))
   .filter(file => !/\/(assistant-|eris-)/.test(file)) : [];
