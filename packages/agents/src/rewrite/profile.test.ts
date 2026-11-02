@@ -27,13 +27,13 @@ test("pair rewrites must state the accepted preference and retain ties", () => {
   rewriteProfile.validate!(request, { rewrites: [{ id: request.input.items[0].id,
     text: "双方都好：均已完成核心任务，现有差异不足以证明某一方更可用。" }] }, audit);
 });
-test("both-bad rewrites retain relative preference while keeping the accepted verdict prefix", () => {
+test("a relative winner among failed answers must retain both the winner and the failure qualifier", () => {
   const request = { sources: {}, input: { kind: "comparison", items: [
-    { id: "verdict.A__vs__B.reason", label: "偏好", text: "双方都没给回测结果，B组Fast相对更好，提供了代码，A组Fast只有方法。", preference: "双方都差" },
+    { id: "verdict.A__vs__B.reason", label: "偏好", text: "双方都没给回测结果，B组Fast相对更好，提供了可运行的完整代码，A组Fast只有方法。", preference: "B组Fast相对更好，但双方均未完成核心要求" },
   ] } };
-  const result = { rewrites: [{ id: request.input.items[0].id, text: "双方都差：都没给回测结果，B组Fast相对更好，提供了代码，A组Fast只有方法。" }] };
+  const result = { rewrites: [{ id: request.input.items[0].id, text: "B组Fast相对更好，但双方均未完成核心要求：都没给回测结果，B组Fast提供了可运行的完整代码，A组Fast只有方法。" }] };
   rewriteProfile.validate!(request, result, audit);
-  for (const text of ["B组Fast更好：提供了代码。", "双方都好：都提供了方法。", "双方都差："]) {
+  for (const text of ["B组Fast更好：提供了代码。", "B组Fast相对更好：提供了代码。", "双方都差：都没给回测结果。", "双方都好：都提供了方法。", request.input.items[0].preference + "："]) {
     result.rewrites[0].text = text;
     assert.throws(() => rewriteProfile.validate!(request, result, audit), /已确定偏好/);
   }

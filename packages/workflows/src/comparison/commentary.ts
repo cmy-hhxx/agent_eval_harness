@@ -78,7 +78,8 @@ export function comparisonSlots(result: ComparisonResult, scope: "verdicts" | "i
         tiers.get(second) ?? 0,
       );
       const winner = decision.winner === "first" ? first : second;
-      const preference = decision.outcome === "win" ? `【候选${winner}】更好`
+      const preference = decision.basis === "incomplete" ? `【候选${winner}】相对更好，但双方均未完成核心要求`
+        : decision.outcome === "win" ? `【候选${winner}】更好`
         : decision.outcome === "both_good" ? "双方都好" : "双方都差";
       items.push({
         id: verdictSlotId(first, second),

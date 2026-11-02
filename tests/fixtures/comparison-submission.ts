@@ -13,7 +13,7 @@ export function comparisonSubmission(result: ComparisonResult, slots: Comparison
     : slot.criterion_ids.some(id => row.criterion_ids.includes(id)) || Object.entries(slot.finding_indices).some(([label,indices]) =>
      indices.some(index => row.assessments[label]?.finding_indices.includes(index))));
    if (!row && slot.optional) return undefined;
-   if (slot.kind === 'resource') return { slot_index, kind: slot.kind, importance: row?.importance ?? 'medium' };
+   if (slot.kind === 'resource') return { slot_index, kind: slot.kind, importance: row?.importance ?? 'low' };
    const assessments = row?.assessments ?? Object.fromEntries(Object.keys(result.assessments).map(label=>[label,{status:'met',evidence_status:'已确认',summary:'受控检查已完成。',finding_indices:[]}]));
    return { slot_index, kind: slot.kind, importance: row?.importance ?? 'medium', better_candidate: row?.better_candidates[0] ?? null,
      assessments:Object.entries(assessments).map(([candidate,assessment])=>({candidate,...assessment})) };

@@ -62,6 +62,10 @@ export function validateEvaluation(request:AgentRequest,result:unknown,_audit:To
   if(!labels.includes(candidate))continue;
   if(assessment.meets_core===null&&value.status!=='needs_review')add('assessment_review_required','/review_requests','核心交付不能判定时必须保留具体待复核原因。',candidate);
   if(assessment.meets_core!==false&&assessment.core_failure_refs.length)add('core_failure_refs_unexpected',`/assessments/${candidate}/core_failure_refs`,'只有核心失败填写失败要求。',candidate);
+  if(assessment.meets_core===true&&value.decision_basis.comparisons.some(row=>row.importance==='high'&&
+   row.criterion_ids.some(id=>input.task_analysis.requirements.some(criterion=>criterion.id===id&&criterionAppliesToPair(input,criterion)))&&
+   row.assessments[candidate]?.status==='unmet'&&row.assessments[candidate]?.evidence_status==='已确认'))
+   add('core_met_contradiction',`/assessments/${candidate}/meets_core`,'共同核心要求已确认完全未满足，不能同时判主要交付可用；依据归因统一本方状态、核心结论与失败引用。',candidate);
   if(assessment.meets_core===false){
    if(!assessment.core_failure_refs.length)add('core_failure_unproven',`/assessments/${candidate}/core_failure_refs`,'核心失败须引用共同 requirements 及本次比较中已证实的缺陷。',candidate);
    for(const id of assessment.core_failure_refs){
@@ -108,8 +112,12 @@ export function validateEvaluation(request:AgentRequest,result:unknown,_audit:To
   if(!isDeepStrictEqual(ranked.slice().sort(),labels.slice().sort()))add('ranking_incomplete','/ranking','排名须恰好覆盖双方一次。');
   const tier=(label:string)=>value.ranking.findIndex(row=>row.includes(label));
   const failed=labels.filter(label=>value.assessments[label]?.meets_core===false),passed=labels.filter(label=>value.assessments[label]?.meets_core===true);
-  if(new Set(failed.map(tier)).size>1||passed.some(label=>failed.some(other=>tier(label)>=tier(other))))add('core_ranking_contradiction','/ranking','核心失败同层且排在通过者之后。');
-  if(passed.length===labels.length&&value.ranking.length>1){const winner=value.ranking[0][0];if(!value.decision_basis.comparisons.some(row=>row.importance!=='low'&&row.better_candidates.includes(winner)))add('ranking_unproven','/ranking','双方可用时，分层须由确证的实质共同优势支持。');}
+  if(passed.some(label=>failed.some(other=>tier(label)>=tier(other))))add('core_ranking_contradiction','/ranking','核心可用者须排在不可用者之前。');
+  if(passed.length===labels.length||failed.length===labels.length){
+   const advantages=new Set(value.decision_basis.comparisons.filter(row=>row.importance!=='low').flatMap(row=>row.better_candidates));
+   if(value.ranking.length>1&&!advantages.has(value.ranking[0][0]))add('ranking_unproven','/ranking','核心状态相同时，分层须由已确认的中高影响共同优势支持。');
+   if(value.ranking.length===1&&advantages.size===1)add('ranking_advantage_ignored','/ranking','中高影响共同优势只指向一方，不能同时判平局；按真实影响统一 importance、better_candidate 与 quality_winner，不把局部但实质的优势当作无差异。');
+  }
  }
  if(errors.length)throw new ValidationError(errors);
 }

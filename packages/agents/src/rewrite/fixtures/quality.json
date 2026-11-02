@@ -99,44 +99,46 @@
     "review": "不得将另一方数字当成本方交付；无法核验不能升级为满足或不满足。"
   },
   {
-    "name": "都差时保留原裁决的相对优劣",
+    "name": "双方失败仍保留有实质依据的相对胜者",
     "origin": "本轮用户要求的受控样例",
     "item": {
       "id": "verdict.A__vs__B.reason",
       "label": "本场偏好",
-      "text": "双方均未给实际回测结果。A组Fast相对更好，给出可执行代码；B组Fast只有方法介绍，但代码仍有未验证的假设。",
-      "preference": "双方都差"
+      "text": "双方均未给实际回测结果。A组Fast相对更好，给出可执行的完整代码，明显减少补齐交付的工作；B组Fast只有方法介绍，但代码仍有未验证的假设。",
+      "preference": "A组Fast相对更好，但双方均未完成核心要求"
     },
-    "approved": "双方都差：都没给实际回测结果。A组Fast相对更好，给了可执行代码，B组Fast只有方法，但代码的假设仍未验证。",
+    "approved": "A组Fast相对更好，但双方均未完成核心要求：都没给实际回测结果。A组Fast给了可执行的完整代码，明显减少后续工作，B组Fast只有方法，但代码的假设仍未验证。",
     "rejected": "双方都差：都没给回测结果，没有实质差距。",
-    "review": "不能因都差抹去原裁决已确认的相对优势，也不能删除影响取舍的未验证假设；需语义复核。"
+    "error_code": "rewrite_preference_missing",
+    "review": "不能因双方失败抹去原裁决已确认的胜者，也不能删除影响取舍的未验证假设。"
   },
   {
-    "name": "都差时不能反转相对优劣",
+    "name": "双方失败的相对胜者不能反转",
     "origin": "本轮相对偏好保真的受控样例",
     "item": {
       "id": "verdict.A__vs__B.reason",
       "label": "本场偏好",
       "text": "双方均未给实际回测结果。B组Fast相对更好，给出代码，A组Fast只有方法介绍。",
-      "preference": "双方都差"
+      "preference": "B组Fast相对更好，但双方均未完成核心要求"
     },
-    "approved": "双方都差：都没给回测结果。B组Fast相对更好，给出了代码，A组Fast只有方法介绍。",
+    "approved": "B组Fast相对更好，但双方均未完成核心要求：都没给回测结果。B组Fast给出了代码，A组Fast只有方法介绍。",
     "rejected": "双方都差：A组Fast相对更好，比B组Fast给出了更多可用内容。",
-    "review": "保留原裁决指定的主体与理由，不因模型名称或局部优势反转取舍；需语义复核。"
+    "error_code": "rewrite_preference_missing",
+    "review": "保留原裁决指定的主体与理由，不因模型名称或局部优势反转取舍。"
   },
   {
-    "name": "都差时仍须保留正式判决",
+    "name": "相对胜出仍须保留双方失败限定",
     "origin": "本轮都差与相对优劣分离的受控样例",
     "item": {
       "id": "verdict.A__vs__B.reason",
       "label": "本场偏好",
       "text": "双方没给回测结果，A组Fast提供了代码而相对更好。",
-      "preference": "双方都差"
+      "preference": "A组Fast相对更好，但双方均未完成核心要求"
     },
-    "approved": "双方都差：都没给回测结果，A组Fast提供了代码，相对更好。",
+    "approved": "A组Fast相对更好，但双方均未完成核心要求：都没给回测结果，A组Fast提供了代码。",
     "rejected": "A组Fast更好：提供了代码。",
     "error_code": "rewrite_preference_missing",
-    "review": "相对较好不改变都差前缀及统计判决。"
+    "review": "相对胜出不代表核心任务已经完成。"
   },
   {
     "name": "都差且确实无差距时不硬选",

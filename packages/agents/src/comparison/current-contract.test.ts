@@ -61,6 +61,63 @@ test('comparison records existing defect as common core failure without an attri
  Object.assign(draft.comparisons[0]!.assessments!.find(item=>item.candidate==='A')!,{status:'unmet',evidence_status:'已确认',finding_indices:[0],summary:'现有问题证明加法结果错误。'});
  draft.relative_preference='B';const result=accept(request,draft);assert.deepEqual(result.ranking,[['B'],['A']]);assert.deepEqual(result.assessments.A.core_failure_refs,['sum']);
 });
+test('confirmed unmet core requirements cannot coexist with usable core, while partial defects can',()=>{
+ const {request,input,draft}=fixture();problem(input);
+ const cell=draft.comparisons[0]!.assessments!.find(item=>item.candidate==='A')!;
+ Object.assign(cell,{status:'unmet',finding_indices:[0]});
+ rejected(()=>accept(request,draft),'core_met_contradiction');
+ cell.status='partial';
+ assert.equal(accept(request,draft).assessments.A.meets_core,true);
+});
+test('one-sided material advantage must produce a winner but low-impact differences remain ties',()=>{
+ const {request,draft}=fixture();
+ draft.comparisons[0]!.importance='medium';draft.comparisons[0]!.better_candidate='B';
+ rejected(()=>accept(request,draft),'ranking_advantage_ignored');
+ draft.quality_winner='B';draft.relative_preference='B';
+ assert.deepEqual(accept(request,draft).ranking,[['B'],['A']]);
+ draft.comparisons[0]!.importance='low';
+ rejected(()=>accept(request,draft),'quality_winner_unproven');
+ draft.quality_winner=null;
+ assert.deepEqual(accept(request,draft).ranking,[['A','B']]);
+});
+test('opposing material advantages may remain a tie after weighing the actual tradeoff',()=>{
+ const {request,input,draft}=fixture();
+ input.task_analysis.scoring_points.push({id:'clarity',text:'解释便于使用。',applies_to:[],acceptance_rule:'说明计算方法。'});
+ draft.comparisons[0]!.better_candidate='A';
+ draft.comparisons.push({...structuredClone(draft.comparisons[0]!),slot_index:1,better_candidate:'B'});
+ draft.quality_winner=null;draft.relative_preference=null;
+ draft.tradeoff='两方答案均可用；一方核算更充分，另一方步骤更清楚，两项交付优势相当。';
+ assert.deepEqual(accept(request,draft).ranking,[['A','B']]);
+});
+test('both failed answers can have a relative winner without citing their shared failure as a winning difference',()=>{
+ for(const winner of ['A','B'] as const){
+  const {request,input,draft}=fixture(),loser=winner==='A'?'B':'A';
+  for(const candidate of ['A','B']){
+   problem(input,candidate);
+   Object.assign(draft.assessments.find(item=>item.candidate===candidate)!,{meets_core:false,core_failure_refs:['sum'],summary:'未给出所求结果。'});
+   Object.assign(draft.comparisons[0]!.assessments!.find(item=>item.candidate===candidate)!,{status:'unmet',finding_indices:[0]});
+  }
+  input.attributions[loser].Problem.push({...structuredClone(input.attributions[loser].Problem[0]!),problem_path:'/turns/0/problem/1',text:'无来源却编造结果',reason:'未查询到所求结果，却给出无来源数字。'});
+  input.task_analysis.scoring_points.push({id:'reliability',text:'如实说明数据缺口。',applies_to:[],acceptance_rule:'不把无依据的数值当事实。'});
+  draft.comparisons.push({slot_index:1,kind:'criterion',importance:'medium',better_candidate:winner,assessments:[
+   {candidate:winner,status:'met',evidence_status:'已确认',finding_indices:[],summary:'如实说明未查询到结果。'},
+   {candidate:loser,status:'partial',evidence_status:'已确认',finding_indices:[1],summary:'额外编造了结果数字。'},
+  ]});
+  const before=structuredClone(input.attributions);
+  rejected(()=>accept(request,draft),'ranking_advantage_ignored');
+  draft.quality_winner=winner;draft.relative_preference=winner;
+  draft.tradeoff=`双方都未给出可核实结果；【候选${winner}】如实说明缺口，【候选${loser}】编造数字会误导使用，因此前者相对更好。`;
+  const result=accept(request,draft);
+  assert.deepEqual(result.ranking,[[winner],[loser]]);
+  assert(Object.values(result.assessments).every(item=>item.meets_core===false));
+  assert.deepEqual(result.decision_basis.decisive_findings,[{candidate:loser,finding_index:1}]);
+  assert.deepEqual(input.attributions,before);
+  draft.comparisons[1]!.better_candidate=null;
+  rejected(()=>accept(request,draft),'quality_winner_unproven');
+  draft.quality_winner=null;draft.relative_preference=null;
+  assert.deepEqual(accept(request,draft).ranking,[['A','B']]);
+ }
+});
 test('comparison rejects confirmed failed requirement without a registered Problem',()=>{
  const {request,draft}=fixture();draft.comparisons[0]!.assessments!.find(item=>item.candidate==='A')!.status='partial';
  rejected(()=>accept(request,draft),'comparison_defect_unregistered');

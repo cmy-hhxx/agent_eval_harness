@@ -149,8 +149,7 @@ export function resolveComparison(request: AgentRequest, draft: unknown): Compar
   const failed = labels.filter(label => assessments[label].meets_core === false), passed = labels.filter(label => assessments[label].meets_core === true);
   const advantages = labels.filter(label => comparisons.some(row => row.importance !== "low" && row.better_candidates.includes(label)));
   let ranking: string[][];
-  if (failed.length === labels.length) ranking = [labels];
-  else if (failed.length) ranking = [passed, failed];
+  if (failed.length && passed.length) ranking = [passed, failed];
   else if (qualityWinner && advantages.includes(qualityWinner)) ranking = [[qualityWinner], labels.filter(label => label !== qualityWinner)];
   else if (qualityWinner) throw new ValidationError([{ category: "decision", code: "quality_winner_unproven", path: "/quality_winner",
     message: "正式胜者须有该候选已确认的中高重要性共同优势支持；没有实质优势时 quality_winner=null。" }]);

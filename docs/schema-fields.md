@@ -25,7 +25,7 @@
 | table checks | 表格核验工具 | 疑点定位 | 仅作为核查线索，正式判断及必要计算写入对应 Problem。 |
 | comparisons[].slot_index / kind / assessments | Comparison | 排名派生、逐项展示 | 槽位与候选身份显式提交，不依赖数组顺序或动态对象键；共同且可比的差异是判决依据，不能靠问题数替代。 |
 | assessments[].summary / tradeoff | Comparison 内部提交 | 正式总评及 decision_basis.tradeoff | 两方摘要描述各自交付；单一 tradeoff 解释整场取舍，避免拼接自相矛盾的两段理由。 |
-| quality_winner / relative_preference | Comparison 内部提交 | 排名与偏好展示 | quality_winner 只在双方核心可用且存在实质优势时给出正式胜者；并列内的相对倾向单独表达，完全等价允许 null。 |
+| quality_winner / relative_preference | Comparison 内部提交 | 排名与偏好展示 | 双方核心状态相同且存在实质优势时，quality_winner 给出正式胜者，包括双方失败；相对胜出不代表合格。并列内仅保留低影响倾向，无有意义偏好时允许 null。 |
 | category | Clustering、问题库 | 问题主题、聚类树、目录维护 | 一个问题类只有一个问题方向；单值字段直接表达，不再包装为路径数组。 |
 | scope_conflicts[].slot_index / reason | Comparison 内部提交 | 来源复核请求派生 | 共同要求的口径冲突不能从 core 布尔推导；只选择现有共同槽，由程序生成双方既有 review_requests 并停止排名，不改源归因。 |
 | assessments.meets_core | Comparison | 正式判决 | 由比较阶段按已接受归因结论判断交付可用性，缺少决定性结论时保留未知。 |

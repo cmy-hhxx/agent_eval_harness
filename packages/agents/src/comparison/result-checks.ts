@@ -6,9 +6,11 @@ import type { ComparisonInput, ComparisonResult, FindingRef } from "./types.js";
 export function comparisonDecisiveFindings(input: ComparisonInput, result: Pick<ComparisonResult, "ranking" | "assessments" | "decision_basis">): FindingRef[] {
   const winner = result.ranking.length === 2 && result.ranking[0].length === 1 ? result.ranking[0][0] : undefined;
   if (!winner) return [];
-  const failed = Object.entries(result.assessments).filter(([, assessment]) => assessment.meets_core === false);
+  const failed = Object.entries(result.assessments).filter(([candidate, assessment]) => candidate !== winner && assessment.meets_core === false);
   return result.decision_basis.comparisons.flatMap(row => {
-    const coreFailure = failed.some(([, assessment]) => row.criterion_ids.some(id => assessment.core_failure_refs.includes(id)));
+    const coreFailure = result.assessments[winner].meets_core === true && row.importance === "high" &&
+      failed.some(([candidate, assessment]) => row.criterion_ids.some(id => assessment.core_failure_refs.includes(id)) &&
+        row.assessments[candidate]?.evidence_status === "已确认" && ["partial", "unmet"].includes(row.assessments[candidate].status));
     if (!coreFailure && (row.importance === "low" || !row.better_candidates.includes(winner))) return [];
     return Object.entries(row.assessments).flatMap(([candidate, cell]) => cell.finding_indices.flatMap(finding_index => {
       const finding = input.attributions[candidate]?.Problem[finding_index];
