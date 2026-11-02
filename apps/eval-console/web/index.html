@@ -17,7 +17,7 @@
   <div class="drawer-header"><span id="create-title">新建评测</span><button id="close-create" class="icon-button" aria-label="关闭新建评测">×</button></div>
   <div class="drawer-body"><form id="configuration">
     <div class="form-row"><div><label for="preset">评测类型</label><select id="preset"></select></div><div class="concurrency-field"><label for="concurrency">并发</label><input id="concurrency" type="number" min="1" step="1" required></div></div>
-    <label for="batch-id">缺省批次</label><input id="batch-id" type="text" placeholder="例如 search_eval" aria-describedby="batch-hint"><p id="batch-hint" class="check-meta">原始输入缺少 batch_id 时使用；已有批次保持原值。</p>
+    <label for="batch-id">缺省批次</label><input id="batch-id" type="text" placeholder="每次新建任务时填写" required aria-describedby="batch-hint"><p id="batch-hint" class="check-meta">原始输入缺少 batch_id 时使用；已有批次保持原值。</p>
     <label class="field-label" for="input-directory">评测输入父目录</label><textarea id="input-directory" rows="3" spellcheck="false" required></textarea>
     <div class="field-label">评测输出</div><div id="output-field"></div>
   </form><div id="preview-summary" hidden></div><p id="config-error" role="alert"></p></div>

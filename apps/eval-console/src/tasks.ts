@@ -96,7 +96,6 @@ export class ConsoleTasks {
       return { id: preset.id, source: preset.source, name: preset.name,
         inputDirectory: commonInputDirectory(host.evaluation.inputs.versions),
         concurrency: preset.concurrency, output: host.evaluation.output.path, logs: this.logPaths(),
-        batchId: host.evaluation.inputs.default_batch_id ?? "",
         inputs: host.evaluation.inputs.versions.map(version => ({ id: version.id, name: version.display_name || version.name,
           paths: version.sources.map(source => source.path) })) };
     }));
@@ -119,8 +118,8 @@ export class ConsoleTasks {
     const preset = this.config.presets.find(item => item.id === presetId);
     if (!preset) throw new HttpError(400, "未知评测预设");
     this.checkConcurrency(concurrency);
-    if (batchId !== undefined && typeof batchId !== "string") throw new HttpError(400, "批次须为文本");
-    if (typeof batchId === "string" && batchId.trim()) businessBatch(batchId.trim());
+    if (typeof batchId !== "string" || !batchId.trim()) throw new HttpError(400, "请填写缺省批次");
+    const batch = businessBatch(batchId.trim());
     const host = await this.load(preset.configs);
     this.assertWorkflow(preset, host);
     if (inputDirectory !== undefined && inputs !== undefined) throw new HttpError(400, "父目录与模型路径只能选择一种输入方式");
@@ -149,10 +148,7 @@ export class ConsoleTasks {
     if (discovered?.ignored) warnings.push("另有 " + discovered.ignored + " 个 JSONL 文件未匹配预设模型，不会读入。");
     const raw = await readConfigSources(preset.configs);
     raw.inputs = { ...host.evaluation.inputs, versions };
-    if (typeof batchId === "string") {
-      if (batchId.trim()) (raw.inputs as Record<string, unknown>).default_batch_id = batchId.trim();
-      else delete (raw.inputs as Record<string, unknown>).default_batch_id;
-    }
+    (raw.inputs as Record<string, unknown>).default_batch_id = batch;
     const inputsChanged = versions.some((version, index) => JSON.stringify(version.sources.map(source => source.path)) !==
       JSON.stringify(host.evaluation.inputs.versions[index]!.sources.map(source => source.path)));
     // A finite record selection belongs to its original files. New paths must not evaluate old coordinates.

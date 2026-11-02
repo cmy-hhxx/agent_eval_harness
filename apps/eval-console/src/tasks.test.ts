@@ -27,7 +27,7 @@ test("console API previews frozen defaults, starts idempotently, drains, resumes
   const inputDirectory = path.join(f.directory, "input");
   for (const version of f.config.inputs.versions) await writeJsonl(path.join(inputDirectory, version.id + ".jsonl"), [raw()]);
   const models = { judge: { channel: "evaluation-gateway", model: "fixture", thinking: "off" } };
-  await writeJson(source, { ...f.config, inputs: { ...f.config.inputs, limit: 1, case_ids: ["not-in-parent"] },
+  await writeJson(source, { ...f.config, inputs: { ...f.config.inputs, default_batch_id: "preset_batch", limit: 1, case_ids: ["not-in-parent"] },
     evaluatorVersion: "fixture", models, bindings: f.models.bindings });
   const config: ConsoleConfig = { hostname: "127.0.0.1", port: 0, stateDirectory: path.join(f.directory, "console"),
     logDirectory: process.env.EVAL_LOG_DIR, passwordFile: "unused", channels: ["evaluation-gateway"],
@@ -50,6 +50,10 @@ test("console API previews frozen defaults, starts idempotently, drains, resumes
   };
   assert.equal((await request("/api/tasks", undefined, false)).status, 401);
   assert.equal((await request("/api/tasks", {}, false)).status, 403);
+  for (const batchId of [undefined, "", "   "]) {
+    const invalid = await request("/api/previews", { preset: "wencai", concurrency: 2, inputDirectory, output: f.config.output.path, batchId });
+    assert.equal(invalid.status, 400); assert.match(String(invalid.data.error), /请填写缺省批次/);
+  }
   const preview = await request("/api/previews", { preset: "wencai", concurrency: 2, output: f.config.output.path,
     inputDirectory, batchId: "search_eval" });
   assert.equal(preview.status, 201, JSON.stringify(preview.data));
@@ -98,11 +102,11 @@ test("console API previews frozen defaults, starts idempotently, drains, resumes
   release!();
   for (let n = 0; n < 100 && manager.get(id).status === "running"; n++) await new Promise(resolve => setTimeout(resolve, 10));
   assert.equal(manager.get(id).status, "finished");
-  const overlap = await request("/api/previews", { preset: "wencai", concurrency: 2, output: path.join(inputDirectory, "output"), inputDirectory });
+  const overlap = await request("/api/previews", { preset: "wencai", concurrency: 2, batchId: "search_eval", output: path.join(inputDirectory, "output"), inputDirectory });
   assert.equal(overlap.status, 400); assert.match(String(overlap.data.error), /重叠/);
   for (const version of f.config.inputs.versions) await writeJsonl(version.sources[0].path, [{ ...raw("invalid"), messages: [] }]);
   for (const version of f.config.inputs.versions) await writeJsonl(path.join(inputDirectory, version.id + ".jsonl"), [{ ...raw("invalid"), messages: [] }]);
-  const empty = await request("/api/previews", { preset: "wencai", concurrency: 2, output: f.config.output.path, inputDirectory });
+  const empty = await request("/api/previews", { preset: "wencai", concurrency: 2, batchId: "search_eval", output: f.config.output.path, inputDirectory });
   assert.equal(empty.status, 201);
   for (let n = 0; n < 100 && manager.get(String(empty.data.id)).dataCheck?.status === "checking"; n++) await new Promise(resolve => setTimeout(resolve, 10));
   assert.equal((await request("/api/tasks", { previewId: empty.data.id })).status, 409);
@@ -139,7 +143,7 @@ test("console API previews frozen defaults, starts idempotently, drains, resumes
   t.after(() => releaseCheck());
   const files = fileSourceReader.files;
   t.mock.method(fileSourceReader, "files", async (...args: Parameters<typeof files>) => { await allowCheck; return files(...args); });
-  const checking = await request("/api/previews", { preset: "wencai", concurrency: 2, output: f.config.output.path, inputDirectory });
+  const checking = await request("/api/previews", { preset: "wencai", concurrency: 2, batchId: "search_eval", output: f.config.output.path, inputDirectory });
   assert.equal(checking.status, 201);
   const checkingId = String(checking.data.id);
   assert.equal(manager.get(checkingId).dataCheck?.status, "checking");
@@ -214,13 +218,13 @@ test("a data check completing behind a queued start preserves the running task i
   });
   await manager.initialize();
   const inputs = Object.fromEntries(f.config.inputs.versions.map(version => [version.id, version.sources.map(item => item.path)]));
-  const first = await manager.preview({ preset: "wencai", concurrency: 1, inputs, output: f.config.output.path });
+  const first = await manager.preview({ preset: "wencai", concurrency: 1, batchId: "search_eval", inputs, output: f.config.output.path });
   for (let n = 0; n < 100 && manager.get(first.id).dataCheck?.status === "checking"; n++) await new Promise(resolve => setTimeout(resolve, 10));
   assert.equal(manager.get(first.id).dataCheck?.status, "ready");
   // Flush the first check's queued save before preparing the next task.
   await manager.concurrency(first.id, 1);
   holdCheck = true;
-  const second = await manager.preview({ preset: "wencai", concurrency: 1, inputs, output: path.join(f.directory, "other-output") });
+  const second = await manager.preview({ preset: "wencai", concurrency: 1, batchId: "search_eval", inputs, output: path.join(f.directory, "other-output") });
   assert.equal(manager.get(second.id).dataCheck?.status, "checking");
   heldTask = first.id;
   const startingFirst = manager.start(first.id);

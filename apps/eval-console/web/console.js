@@ -30,7 +30,7 @@ function outputEditor(file) {
 function fillPreset() {
   const preset = state.presets.find(p => p.id === $('preset').value); if (!preset) return;
   $('input-directory').value = preset.inputDirectory;
-  $('batch-id').value = preset.batchId || '';
+  $('batch-id').value = '';
   $('output-field').replaceChildren(outputEditor(preset.output));
   $('concurrency').value = preset.concurrency; $('config-error').textContent = '';
 }
