@@ -75,10 +75,13 @@ export async function checkData(host: HostConfig, check: DataCheck, signal: Abor
   const destinations = new Set<string>();
   const selection = config.inputs.records && new Map(config.inputs.records.map(r => [canonical([r.model, r.input_file, r.input_index + 1]), r]));
   const found = new Set<string>();
+  const logBatch: DataCheck["issues"] = [];
+  const flushIssues = async () => { await Promise.all(logBatch.splice(0).map(issue)); };
   const report = async (file: string, line: number | undefined, reason: string) => {
     const value = { file, line, reason };
     if (check.issues.length < 20) check.issues.push(value);
-    await issue(value);
+    logBatch.push(value);
+    if (logBatch.length >= 100) await flushIssues();
   };
   for (const [modelIndex, item] of files.entries()) for (const file of item.files) {
     signal.throwIfAborted();
@@ -123,7 +126,7 @@ export async function checkData(host: HostConfig, check: DataCheck, signal: Abor
         }
         check.elapsedMs = Date.now() - started;
       }
-    } finally { lines.close(); stream.destroy(); }
+    } finally { lines.close(); stream.destroy(); await flushIssues(); }
     const after = await stat(file);
     if (before.size !== after.size || before.mtimeMs !== after.mtimeMs) throw new Error("统计期间文件发生变化，请重新 Check data: " + file);
     check.checkedFiles++;

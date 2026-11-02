@@ -78,3 +78,19 @@ test("malformed JSON and incomplete answers are counted, while record selection 
   const controller = new AbortController(); controller.abort();
   await assert.rejects(checkData(host, emptyDataCheck("attribution"), controller.signal, async () => {}));
 });
+
+test("bad rows use bounded log batches instead of one storage round trip per record", async t => {
+  const f = await fixtureConfig([[], [], [], []]); t.after(() => rm(f.directory, { recursive: true, force: true }));
+  f.config.inputs.versions = [f.config.inputs.versions[0]];
+  await writeFile(f.config.inputs.versions[0].sources[0].path, 'invalid\n'.repeat(120));
+  let active = 0, peak = 0, saved = 0;
+  const result = emptyDataCheck("comparison");
+  await checkData({ workflow: "comparison", evaluation: f.config, models: f.models, evaluatorVersion: "fixture" }, result,
+    new AbortController().signal, async () => {
+      peak = Math.max(peak, ++active);
+      await new Promise(resolve => setImmediate(resolve)); active--; saved++;
+    });
+  assert(peak > 1, "error writes must share a batch instead of serial storage waits");
+  assert(peak <= 100, "error buffering must stay bounded");
+  assert.equal(saved, 120); assert.equal(result.invalidRecords, 120);
+});
