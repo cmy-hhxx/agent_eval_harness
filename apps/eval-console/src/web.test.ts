@@ -1,7 +1,7 @@
 import test, { type TestContext } from "node:test";
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
-import { JSDOM } from "jsdom";
+import { JSDOM, VirtualConsole } from "jsdom";
 
 const task = (index: number, status = "draft", source = "wencai") => ({
   id: "console-00000000-0000-4000-8000-" + String(index).padStart(12, "0"), name: "任务" + index, source, status,
@@ -16,30 +16,44 @@ async function until(condition: () => boolean) {
   for (let i = 0; i < 100; i++) { if (condition()) return; await new Promise(resolve => setImmediate(resolve)); }
   assert.fail("UI did not reach the expected state");
 }
-async function view(t: TestContext) {
+async function view(t: TestContext, authenticated = true) {
   const [html, script] = await Promise.all(["index.html", "console.js"].map(file =>
     readFile(new URL("../../../../apps/eval-console/web/" + file, import.meta.url), "utf8")));
-  const dom = new JSDOM(html, { runScripts: "outside-only", url: "http://console.test" });
+  const navigations: string[] = [], errors: Error[] = [], console = new VirtualConsole();
+  console.on("jsdomError", error => {
+    if (error.message.includes("Not implemented: navigation")) navigations.push(error.message);
+    else errors.push(error);
+  });
+  const dom = new JSDOM(html, { runScripts: "outside-only", url: "http://console.test", virtualConsole: console });
   t.after(() => dom.window.close());
+  t.after(() => assert.deepEqual(errors, [], "no unhandled browser errors"));
   const { window } = dom, document = window.document;
   const fixture = { tasks: [task(1), task(2, "finished"), task(3, "running"), task(4, "draft", "aime")],
-    failing: new Set<string>(), deletes: [] as string[], confirm: true, prompts: [] as string[], created: [] as { parent: string; name: string }[] };
+    failing: new Set<string>(), deletes: [] as string[], confirm: true, prompts: [] as string[], created: [] as { parent: string; name: string }[],
+    authenticated, invalidDirectory: false, presetRequests: 0, navigations };
   window.setInterval = () => 1;
   window.confirm = message => { fixture.prompts.push(String(message)); return fixture.confirm; };
   window.HTMLDialogElement.prototype.showModal = function () { this.setAttribute("open", ""); };
   window.HTMLDialogElement.prototype.close = function () { this.removeAttribute("open"); this.dispatchEvent(new window.Event("close")); };
   window.fetch = (async (source: string, init?: RequestInit) => {
     const url = new URL(source, "http://console.test"), stats = { files: 2, records: 42, pendingFiles: 0, checkedAt: "2026-11-02T08:00:00Z" };
+    if (url.pathname === "/api/login") {
+      if (JSON.parse(String(init?.body)).password !== "fixture-console-password") return Response.json({ error: "密码不正确" }, { status: 401 });
+      fixture.authenticated = true; return Response.json({ authenticated: true });
+    }
+    if (!fixture.authenticated) return Response.json({ error: "请先登录" }, { status: 401 });
+    if (url.pathname === "/api/logout") { fixture.authenticated = false; return Response.json({ authenticated: false }); }
     if (url.pathname.endsWith("/delete")) {
       const id = url.pathname.split("/")[3]; fixture.deletes.push(id);
       if (fixture.failing.has(id)) return Response.json({ error: "删除失败，请重试" }, { status: 500 });
       fixture.tasks = fixture.tasks.filter(item => item.id !== id); return Response.json({ deleted: true });
     }
     if (url.pathname === "/api/tasks") return Response.json(fixture.tasks);
-    if (url.pathname === "/api/presets") return Response.json([{
+    if (url.pathname === "/api/presets") { fixture.presetRequests++; return Response.json([{
       id: "wencai", source: "wencai", name: "问财", inputDirectory: "/inputs", output: "/outputs", concurrency: 2,
-    }]);
+    }]); }
     if (url.pathname === "/api/directories") {
+      if (fixture.invalidDirectory) return Response.json({ root: "/", path: "/inputs", parent: "/" });
       if (init?.method === "POST") {
         const value = JSON.parse(String(init.body)); fixture.created.push(value);
         return Response.json({ path: value.parent + "/" + value.name });
@@ -53,7 +67,7 @@ async function view(t: TestContext) {
     return Response.json({ error: "Unexpected request " + source }, { status: 404 });
   }) as typeof window.fetch;
   window.eval(script);
-  await until(() => document.querySelectorAll("#task-list tr").length === 3);
+  await until(() => authenticated ? document.querySelectorAll("#task-list tr").length === 3 : !document.querySelector<HTMLElement>('#login')!.hidden);
   const click = (selector: string) => { const element = document.querySelector<HTMLElement>(selector); assert(element, selector); element.click(); };
   return { fixture, document, window, click };
 }
@@ -134,4 +148,43 @@ test("output folder creation uses the current filesystem location and can be sel
   await until(() => document.querySelector('#folder-selected')!.textContent === '/outputs/新结果');
   assert.equal(fixture.created[0].parent, '/outputs'); assert.equal(fixture.created[0].name, '新结果');
   click('#use-folder'); assert.equal(document.querySelector<HTMLTextAreaElement>('#output')!.value, '/outputs/新结果');
+});
+
+test("an expired session reloads the open page before it can reuse stale directory code", async t => {
+  const { fixture, document, click } = await view(t);
+  click('#new-task'); fixture.authenticated = false; click('#choose-input');
+  await until(() => !document.querySelector<HTMLElement>('#login')!.hidden);
+  assert.equal(fixture.navigations.length, 1, "reload HTML and script after the server loses its session");
+  assert.equal(document.querySelector<HTMLDialogElement>('#folder-picker')!.open, false);
+});
+
+test("an unauthenticated initial visit shows login without reloading repeatedly", async t => {
+  const { fixture, document } = await view(t, false);
+  assert.equal(document.querySelector<HTMLElement>('#login')!.hidden, false);
+  assert.equal(fixture.navigations.length, 0);
+});
+
+test("successful login loads a fresh page; rejected credentials do not reload", async t => {
+  const { fixture, document, window, click } = await view(t);
+  click('#logout'); await until(() => !document.querySelector<HTMLElement>('#login')!.hidden);
+  const submit = () => document.querySelector('#login')!.dispatchEvent(new window.Event('submit', { bubbles: true, cancelable: true }));
+  document.querySelector<HTMLInputElement>('#password')!.value = 'wrong'; submit();
+  await until(() => document.querySelector('#login-error')!.textContent === '密码不正确');
+  assert.equal(fixture.navigations.length, 0);
+  document.querySelector<HTMLInputElement>('#password')!.value = 'fixture-console-password'; submit();
+  await until(() => document.querySelector<HTMLInputElement>('#password')!.value === '');
+  assert.equal(fixture.navigations.length, 1, "login must replace the loaded page, not initialize its old script again");
+  assert.equal(fixture.presetRequests, 1);
+});
+
+test("an incomplete directory response reports an error without enabling selection", async t => {
+  const { fixture, document, window, click } = await view(t);
+  click('#new-task'); click('#choose-input');
+  await until(() => document.querySelectorAll('.folder-option').length === 3);
+  fixture.invalidDirectory = true; click('#folder-reload');
+  await until(() => !!document.querySelector('#folder-error')!.textContent);
+  assert.match(document.querySelector('#folder-error')!.textContent!, /目录响应不完整/);
+  document.querySelector('#folder-search')!.dispatchEvent(new window.Event('input'));
+  assert.equal(document.querySelectorAll('.folder-option').length, 0, "search must not revive stale directory data");
+  assert.equal(document.querySelector<HTMLButtonElement>('#use-folder')!.disabled, true);
 });

@@ -54,6 +54,8 @@ EVAL_CONFIG_FILE=/absolute/runtime/config/config.ini \
 
 浏览器登录使用 HttpOnly、SameSite=Strict 会话 Cookie；写请求携带 `X-Console-Request: 1`。脚本可使用 `Authorization: Bearer <管理员密码>`。密码不放 URL。所有业务 API 均需认证。
 
+已登录页面遇到会话失效（包括控制服务重启）会重新加载工作台；登录成功也重新加载 HTML 与脚本，避免已打开的页面继续使用服务更新前的代码。首次未登录访问和密码错误只显示登录表单或错误，不反复刷新。目录响应不完整时显示明确错误并禁用选择，不将缺失目录当成空列表。
+
 | 方法与路径 | 用途 |
 |---|---|
 | `POST /api/login` | `{ "password": "…" }` 登录 |

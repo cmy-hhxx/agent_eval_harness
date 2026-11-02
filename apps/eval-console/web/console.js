@@ -7,7 +7,14 @@ const basename = file => file.replace(/\/$/, '').split('/').at(-1);
 async function api(url, value) {
   const response = await fetch(url, value === undefined ? {} : { method: 'POST', headers: { 'content-type': 'application/json', 'x-console-request': '1' }, body: JSON.stringify(value) });
   const result = await response.json();
-  if (!response.ok) { if (response.status === 401) showLogin(); throw new Error(result.error || '请求失败'); }
+  if (!response.ok) {
+    if (response.status === 401) {
+      const wasSignedIn = !$('app').hidden;
+      showLogin();
+      if (wasSignedIn) window.location.reload();
+    }
+    throw new Error(result.error || '请求失败');
+  }
   return result;
 }
 function showLogin() { document.querySelectorAll('dialog[open]').forEach(el => el.close()); $('login').hidden = false; $('app').hidden = true; $('logout').hidden = true; }
@@ -131,6 +138,8 @@ async function loadFolders(directory, quiet = false, remember = true) {
     const data = await api('/api/directories?kind=' + kind + '&hidden=' + Number($('folder-hidden').checked) +
       (directory ? '&path=' + encodeURIComponent(directory) : ''));
     if (request !== state.folderRequest) return;
+    if (!data || !Array.isArray(data.entries) || typeof data.path !== 'string' || typeof data.root !== 'string')
+      throw new Error('目录响应不完整，请刷新工作台后重试。');
     state.folderData = data;
     if (!quiet && remember && state.folderHistory[state.folderIndex] !== data.path) {
       state.folderHistory = state.folderHistory.slice(0, state.folderIndex + 1); state.folderHistory.push(data.path); state.folderIndex++;
@@ -152,7 +161,15 @@ async function loadFolders(directory, quiet = false, remember = true) {
     $('folder-error').textContent = data.error || '';
     renderFolders();
     return data.path;
-  } catch (error) { if (request === state.folderRequest) { $('folder-error').textContent = error.message; if (!quiet) $('folder-list').replaceChildren(); } }
+  } catch (error) {
+    if (request === state.folderRequest) {
+      $('folder-error').textContent = error.message;
+      if (!quiet) {
+        state.folderData = null; state.folderSelected = null;
+        $('folder-list').replaceChildren(); $('folder-status').textContent = ''; updateFolderSelection();
+      }
+    }
+  }
 }
 function openFolders(kind) {
   state.folderKind = kind; state.folderData = null; state.folderSelected = null;
@@ -316,7 +333,7 @@ async function initialize() {
   try { state.presets = await api('/api/presets'); $('login').hidden = true; $('app').hidden = false; $('logout').hidden = false; setSource(state.source); await refresh(); }
   catch (error) { ($('app').hidden ? $('login-error') : $('task-error')).textContent = error.message === '请先登录' ? '' : error.message; }
 }
-$('login').onsubmit = event => { event.preventDefault(); void busy($('login').querySelector('button'), 'login-error', async () => { await api('/api/login', { password: $('password').value }); $('password').value = ''; await initialize(); }); };
+$('login').onsubmit = event => { event.preventDefault(); void busy($('login').querySelector('button'), 'login-error', async () => { await api('/api/login', { password: $('password').value }); $('password').value = ''; window.location.reload(); }); };
 $('logout').onclick = () => busy($('logout'), 'task-error', async () => { await api('/api/logout', {}); showLogin(); });
 document.querySelectorAll('[data-source]').forEach(el => el.onclick = () => setSource(el.dataset.source));
 document.querySelectorAll('[data-detail]').forEach(el => el.onclick = () => setDetail(el.dataset.detail));
