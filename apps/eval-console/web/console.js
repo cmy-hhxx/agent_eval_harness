@@ -58,7 +58,8 @@ function readPath(file, label = basename(file)) {
 function summary(task, target) {
   target.replaceChildren();
   const inputs = node('div');
-  for (const input of task.inputs) for (const file of input.paths) inputs.append(readPath(file));
+  for (const input of task.inputs) inputs.append(readPath(input.paths.join('\n'),
+    input.paths.length > 1 ? input.name + ' · ' + input.paths.length + ' 个文件' : basename(input.paths[0])));
   const logs = node('div'); for (const file of task.logs) logs.append(readPath(file));
   for (const [label, content] of [['输入', inputs], ['输出', readPath(task.output, shortPath(task.output))], ['并发', node('span', String(task.concurrency))], ['日志', logs]]) {
     const row = node('div', undefined, 'summary-row'), value = node('div', undefined, 'summary-value'); value.append(content); row.append(node('span', label), value); target.append(row);
