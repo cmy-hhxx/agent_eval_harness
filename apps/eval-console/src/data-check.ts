@@ -69,7 +69,7 @@ export async function checkData(host: HostConfig, check: DataCheck, signal: Abor
     check.models.push({ name: item.version.display_name || item.version.name, files: item.files.length, records: 0 });
     for (const file of item.files) check.bytes += (await stat(file)).size;
   }
-  const completed = config.output.layout === "business" ? await readCompletedCases(config.output.path, config.inputs.versions.map(v => v.id), pairs) : new Set<string>();
+  const completed = config.output.layout === "business" ? await readCompletedCases(config.output.path, host.workflow === "comparison" ? [] : config.inputs.versions.map(v => v.id), pairs) : new Set<string>();
   type Row = Pick<Candidate, "batch_id" | "case_id" | "session_id" | "version" | "question" | "reference">;
   const cases = new Map<string, Map<string, Row>>(), seen = new Map<string, { file: string; line: number }>();
   const destinations = new Set<string>();

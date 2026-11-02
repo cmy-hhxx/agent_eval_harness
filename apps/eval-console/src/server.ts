@@ -89,17 +89,18 @@ export async function serveConsole(tasks: ConsoleTasks, password: string) {
       if (url.pathname === "/api/presets" && req.method === "GET") return send(await tasks.presets());
       if (url.pathname === "/api/previews" && req.method === "POST") return send(await tasks.preview(await body(req, 64 * 1024)), 201);
       if (url.pathname === "/api/tasks" && req.method === "GET")
-        return send([...tasks.tasks.values()].filter(task => task.status !== "draft").sort((a, b) => b.createdAt.localeCompare(a.createdAt)).map(task => tasks.get(task.id)));
+        return send([...tasks.tasks.values()].sort((a, b) => b.createdAt.localeCompare(a.createdAt)).map(task => tasks.get(task.id)));
       if (url.pathname === "/api/tasks" && req.method === "POST") {
         const value = await body(req, 4096) as { previewId?: unknown };
         if (typeof value?.previewId !== "string") throw new HttpError(400, "请先预览配置");
         return send(await tasks.start(value.previewId), 202);
       }
-      const match = /^\/api\/tasks\/(console-[0-9a-f-]{36})(?:\/(pause|resume|concurrency|configuration|logs))?$/.exec(url.pathname);
+      const match = /^\/api\/tasks\/(console-[0-9a-f-]{36})(?:\/(pause|resume|check|concurrency|configuration|logs))?$/.exec(url.pathname);
       if (!match) throw new HttpError(404, "Not found");
       const [, id, action] = match;
       tasks.get(id);
       if (!action && req.method === "GET") return send(tasks.get(id));
+      if (action === "check" && req.method === "POST") return send(await tasks.recheck(id), 202);
       if (action === "pause" && req.method === "POST") return send(await tasks.pause(id), 202);
       if (action === "resume" && req.method === "POST") return send(await tasks.start(id), 202);
       if (action === "concurrency" && req.method === "POST") {

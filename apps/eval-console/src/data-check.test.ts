@@ -53,6 +53,9 @@ test("comparison check counts pairs, completed output and missing/conflicting an
   f.config.inputs.versions = [f.config.inputs.versions[0], f.config.inputs.versions[2]];
   f.config.comparisons = [["a_fast", "b_fast"]]; f.config.output.layout = "business";
   await writeJsonl(path.join(f.config.output.path, "comparison/a_fast_vs_b_fast/a_fast_vs_b_fast-2026-11-02.jsonl"), [{ case: { case_id: "done" } }]);
+  // Comparison precheck must not scan unrelated attribution bodies.
+  await writeJsonl(path.join(f.config.output.path, "a_fast/a_fast_attribution-2026-11-02.jsonl"), []);
+  await writeFile(path.join(f.config.output.path, "a_fast/a_fast_attribution-2026-11-02.jsonl"), "unrelated-invalid-json\n");
   const result = emptyDataCheck("comparison");
   await checkData({ workflow: "comparison", evaluation: f.config, models: f.models, evaluatorVersion: "fixture" }, result, new AbortController().signal, async () => {});
   assert.equal(result.readRecords, 7); assert.equal(result.total, 2); assert.equal(result.skipped, 1);

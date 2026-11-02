@@ -53,6 +53,8 @@ test("console API previews frozen defaults, starts idempotently, drains, resumes
   assert.equal(preview.status, 201, JSON.stringify(preview.data));
   assert.equal(starts, 0);
   const id = String(preview.data.id);
+  const visible = (await request("/api/tasks")).data as unknown as { id: string }[];
+  assert(visible.some(task => task.id === id), "Check data must immediately create a visible task");
   for (let n = 0; n < 100 && manager.get(id).dataCheck?.status === "checking"; n++) await new Promise(resolve => setTimeout(resolve, 10));
   assert.equal(manager.get(id).dataCheck?.status, "ready");
   const frozen = await readJson<{ models: unknown; bindings: unknown; inputs: Record<string, unknown> }>(path.join(config.stateDirectory, id, "config.json"));
@@ -61,9 +63,17 @@ test("console API previews frozen defaults, starts idempotently, drains, resumes
   assert.deepEqual(Object.keys((await request(`/api/tasks/${id}/configuration`)).data).sort(), ["concurrency", "inputDirectory", "logs", "output", "preset"]);
   assert.equal(manager.get(id).inputDirectory, await realpath(inputDirectory));
   assert.equal(manager.get(id).dataCheck?.total, 1);
+  // A fresh manager restores the checked draft; no browser-local state is required.
+  const restoredDraft = new ConsoleTasks(config);
+  for (let n = 0; n < 100 && (await readJson<{ dataCheck: { status: string } }>(path.join(config.stateDirectory, id, "task.json"))).dataCheck.status !== "ready"; n++) await new Promise(resolve => setTimeout(resolve, 10));
+  await restoredDraft.initialize();
+  assert.equal(restoredDraft.get(id).status, "draft");
+  assert.equal(restoredDraft.get(id).dataCheck?.total, 1);
+
   await Promise.all([request("/api/tasks", { previewId: id }), request("/api/tasks", { previewId: id })]);
   for (let n = 0; n < 100 && starts === 0; n++) await new Promise(resolve => setTimeout(resolve, 10));
   assert.equal(starts, 1);
+  assert.equal((await request(`/api/tasks/${id}/check`, {})).status, 409);
   assert.deepEqual(manager.get(id).progress, { completed: 1, total: 4, failed: 0 });
   await request(`/api/tasks/${id}/concurrency`, { concurrency: 5 });
   assert.equal(execution!.gate.concurrency(), 5);
@@ -91,6 +101,12 @@ test("console API previews frozen defaults, starts idempotently, drains, resumes
   for (let n = 0; n < 100 && manager.get(String(empty.data.id)).dataCheck?.status === "checking"; n++) await new Promise(resolve => setTimeout(resolve, 10));
   assert.equal((await request("/api/tasks", { previewId: empty.data.id })).status, 409);
   assert.equal(starts, 2, "checking invalid inputs must never start evaluation");
+  for (const version of f.config.inputs.versions) await writeJsonl(path.join(inputDirectory, version.id + ".jsonl"), [raw()]);
+  const retry = await request(`/api/tasks/${empty.data.id}/check`, {});
+  assert.equal(retry.status, 202); assert.equal(retry.data.id, empty.data.id);
+  for (let n = 0; n < 100 && manager.get(String(empty.data.id)).dataCheck?.status === "checking"; n++) await new Promise(resolve => setTimeout(resolve, 10));
+  assert.equal(manager.get(String(empty.data.id)).dataCheck?.total, 1);
+
   const invalid = await executeConsoleTask({ host: { workflow: "comparison", evaluation: f.config, models: f.models, evaluatorVersion: "fixture" },
     id: "console-invalid-input", gate: createChannelRequests({ "evaluation-gateway": 1 }), pause: new AbortController().signal,
     channels: ["evaluation-gateway"], progress() {} });

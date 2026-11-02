@@ -169,19 +169,35 @@ export class ConsoleTasks {
         inputs: versions.map(version => ({ id: version.id, name: version.display_name || version.name,
           paths: version.sources.map(source => source.path) })) };
       await this.save(task);
-      this.checking = checkData(prepared, task.dataCheck!, this.checkStop.signal, async issue => {
-        await logger.error(new Error(issue.file + ":" + (issue.line ?? "") + " " + issue.reason),
-          { component: "console", event: "console_data_check_rejected", run_id: id });
-      }, id).catch(async error => {
-        task.dataCheck!.status = "failed"; task.dataCheck!.error = errorText(error);
-        await logger.error(error, { component: "console", event: "console_data_check_failed", run_id: id });
-      }).finally(async () => { try { await this.exclusive(() => this.save(task)); } finally { this.checking = undefined; } });
-      void this.checking.catch(error => logger.error(error, { component: "console", event: "console_state_failed", run_id: id }));
+      this.launchCheck(task, prepared);
       return this.get(id);
     } catch (error) {
       await localFiles.remove(this.directory(id), { recursive: true, force: true });
       throw error;
     }
+  }
+  private launchCheck(task: ConsoleTask, host: HostConfig) {
+    const id = task.id;
+    this.checking = checkData(host, task.dataCheck!, this.checkStop.signal, async issue => {
+      await logger.error(new Error(issue.file + ":" + (issue.line ?? "") + " " + issue.reason),
+        { component: "console", event: "console_data_check_rejected", run_id: id });
+    }, id).catch(async error => {
+      task.dataCheck!.status = "failed"; task.dataCheck!.error = errorText(error);
+      await logger.error(error, { component: "console", event: "console_data_check_failed", run_id: id });
+    }).finally(async () => { try { await this.exclusive(() => this.save(task)); } finally { this.checking = undefined; } });
+    void this.checking.catch(error => logger.error(error, { component: "console", event: "console_state_failed", run_id: id }));
+  }
+  async recheck(id: string) {
+    return this.exclusive(async () => {
+      if (this.closing || this.checking) throw new HttpError(409, "已有数据检查进行中或服务正在关闭");
+      const task = this.tasks.get(id);
+      if (!task || task.status !== "draft") throw new HttpError(409, "仅待启动任务可以重新检查");
+      const host = await this.load(this.configFile(id));
+      task.dataCheck = emptyDataCheck(host.workflow);
+      await this.save(task);
+      this.launchCheck(task, host);
+      return this.get(id);
+    });
   }
   private checkConcurrency(value: unknown): asserts value is number {
     if (!Number.isSafeInteger(value) || Number(value) < 1) throw new HttpError(400, "并发必须为正整数");

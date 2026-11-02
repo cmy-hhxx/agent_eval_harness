@@ -81,11 +81,24 @@ function summary(task, target) {
   if (check?.status === 'ready') target.append(node('p', '数量以本次检查为准，启动时按最新结果跳过。', 'check-meta'));
 }
 function formatBytes(value) { return value >= 1024 ** 3 ? (value / 1024 ** 3).toFixed(2) + ' GB' : (value / 1024 ** 2).toFixed(1) + ' MB'; }
-function checking(task) {
+function checkText(task) {
   const check = task.dataCheck;
-  const text = node('p', '已检查 ' + check.checkedFiles + ' / ' + check.files + ' 个文件 · 已读取 ' + check.readRecords.toLocaleString() + ' 条', 'check-meta');
-  const bar = node('progress'); bar.setAttribute('aria-label', '数据检查进度');
-  $('preview-summary').replaceChildren(text, bar);
+  return check?.status === 'checking' ? '已读取 ' + check.readRecords.toLocaleString() + ' 条 · ' + check.checkedFiles + '/' + check.files + ' 文件' :
+    check?.status === 'ready' ? '待评 ' + check.pending.toLocaleString() + ' · 跳过 ' + check.skipped.toLocaleString() : '—';
+}
+function previewTask(task) {
+  state.preview = task;
+  $('configuration').hidden = true; $('preview-summary').hidden = false; $('preview-button').hidden = true;
+  $('back').hidden = true; $('download-preview').hidden = false; $('download-preview').href = '/api/tasks/' + task.id + '/configuration';
+  $('create-title').textContent = task.name + ' · ' + task.id.slice(8, 16);
+  $('config-error').textContent = task.dataCheck?.error || '';
+  summary(task, $('preview-summary'));
+  if (task.dataCheck?.status === 'checking') {
+    const bar = node('progress'); bar.setAttribute('aria-label', '数据检查进度');
+    $('preview-summary').prepend(node('p', checkText(task), 'check-meta'), bar);
+  }
+  $('start').hidden = task.dataCheck?.status !== 'ready'; $('start').disabled = !task.dataCheck?.total;
+  if (!$('create').open) $('create').showModal();
 }
 function openCapacity(task) { state.capacity = task.id; $('capacity-value').value = task.concurrency; $('capacity-error').textContent = ''; $('capacity').showModal(); $('capacity-value').select(); }
 function renderTasks() {
@@ -94,11 +107,11 @@ function renderTasks() {
   for (const task of tasks) {
     const row = node('tr'), title = node('td');
     title.append(button(task.name, () => openDetail(task.id, 'config'), 'task-title'), node('span', task.id.slice(8, 16), 'task-id'));
-    const status = node('td'); status.append(node('span', task.status === 'running' && !task.progress && !task.requests?.active ? '加载输入' : names[task.status], 'status ' + task.status));
-    if (task.error) { const error = node('span', task.error, 'task-error-mark'); error.title = task.error; status.append(error); }
+    const status = node('td'); status.append(node('span', task.status === 'draft' ? ({checking: '检查中', ready: '待启动', failed: '检查失败'}[task.dataCheck?.status] || '待检查') : task.status === 'running' && !task.progress && !task.requests?.active ? '加载输入' : names[task.status], 'status ' + task.status));
+    if (task.error || task.dataCheck?.error) { const error = node('span', task.error || task.dataCheck.error, 'task-error-mark'); error.title = error.textContent; status.append(error); }
     const progress = node('td'), p = task.progress, finished = task.status === 'finished';
-    progress.append(node('span', finished ? (task.result?.skipped_cases ? '跳过 ' + task.result.skipped_cases + ' 项' : '已完成') : p?.total ? p.completed + ' / ' + p.total + ' 步' : '—', 'progress-text'));
-    if (p?.total || finished || task.status === 'running') { const bar = node('progress'); bar.setAttribute('aria-label', '评测进度'); if (finished || p?.total) { bar.max = finished ? 1 : p.total; bar.value = finished ? 1 : p.completed; } progress.append(bar); }
+    progress.append(node('span', task.status === 'draft' ? checkText(task) : finished ? (task.result?.skipped_cases ? '跳过 ' + task.result.skipped_cases + ' 项' : '已完成') : p?.total ? p.completed + ' / ' + p.total + ' 步' : '—', 'progress-text'));
+    if (p?.total || finished || task.status === 'running' || task.dataCheck?.status === 'checking') { const bar = node('progress'); bar.setAttribute('aria-label', '评测进度'); if (finished || p?.total) { bar.max = finished ? 1 : p.total; bar.value = finished ? 1 : p.completed; } progress.append(bar); }
     const capacity = node('td', undefined, 'num'); capacity.append(finished ? node('span', String(task.concurrency)) : button(String(task.concurrency), () => openCapacity(task)));
     if (!finished) capacity.querySelector('button').setAttribute('aria-label', task.name + ' 调整并发');
     const date = node('td', new Date(task.createdAt).toLocaleString('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hour12: false }), 'date-cell');
@@ -108,11 +121,17 @@ function renderTasks() {
     } else if (['paused', 'failed', 'partial'].includes(task.status)) {
       const resume = button('继续', () => busy(resume, 'task-error', async () => { await api('/api/tasks/' + task.id + '/resume', {}); await refresh(); })); actions.append(resume);
     }
+    if (task.status === 'draft') {
+      actions.append(button('预览', () => previewTask(task)));
+      if (task.dataCheck?.status === 'failed') { const retry = button('重新检查', () => busy(retry, 'task-error', async () => { await api('/api/tasks/' + task.id + '/check', {}); await refresh(); })); actions.append(retry); }
+    }
     actions.append(button('日志', () => openDetail(task.id, 'logs')), button('配置', () => openDetail(task.id, 'config'))); operations.append(actions);
     row.append(title, status, progress, capacity, date, operations); $('task-list').append(row);
   }
 }
 async function openDetail(id, tab) {
+  const draft = state.tasks.find(t => t.id === id && t.status === 'draft');
+  if (draft && tab === 'config') { previewTask(draft); return; }
   state.selected = id; state.cursor = null; const task = state.tasks.find(t => t.id === id); if (!task) return;
   $('detail-title').textContent = task.name + ' · ' + id.slice(8, 16); summary(task, $('detail-config'));
   $('download-task').href = '/api/tasks/' + id + '/configuration'; setDetail(tab); if (!$('detail').open) $('detail').showModal();
@@ -136,7 +155,7 @@ async function loadLogs(older = false) {
     }
   } catch (error) { $('log-error').textContent = error.message; }
 }
-async function refresh() { state.tasks = await api('/api/tasks'); renderTasks(); $('freshness').textContent = new Date().toLocaleTimeString('zh-CN', { hour12: false }) + ' 更新'; }
+async function refresh() { state.tasks = await api('/api/tasks'); renderTasks(); if ($('create').open && state.preview?.dataCheck?.status === 'checking') { const task = state.tasks.find(t => t.id === state.preview.id); if (task?.status === 'draft') previewTask(task); } $('freshness').textContent = new Date().toLocaleTimeString('zh-CN', { hour12: false }) + ' 更新'; }
 async function initialize() {
   try { state.presets = await api('/api/presets'); $('login').hidden = true; $('app').hidden = false; $('logout').hidden = false; setSource(state.source); await refresh(); }
   catch (error) { ($('app').hidden ? $('login-error') : $('task-error')).textContent = error.message === '请先登录' ? '' : error.message; }
@@ -151,25 +170,8 @@ $('close-detail').onclick = $('close-detail-bottom').onclick = () => $('detail')
 $('configuration').addEventListener('invalid', event => { const details = event.target.closest('details'); if (details) details.open = true; }, true);
 $('configuration').onsubmit = event => {
   event.preventDefault(); void busy($('preview-button'), 'config-error', async () => {
-    state.preview = await api('/api/previews', { preset: $('preset').value, inputDirectory: $('input-directory').value.trim(), output: $('output').value.trim(), concurrency: Number($('concurrency').value) });
-    const id = state.preview.id;
-    $('configuration').hidden = true; $('preview-summary').hidden = false; $('preview-button').hidden = true; $('back').hidden = false; $('create-title').textContent = 'Check data';
-    while (state.preview?.id === id && state.preview.dataCheck.status === 'checking') {
-      checking(state.preview);
-      await new Promise(resolve => setTimeout(resolve, 700));
-      const task = await api('/api/tasks/' + id);
-      if (state.preview?.id !== id) return;
-      state.preview = task;
-    }
-    if (state.preview?.id !== id) return;
-    $('back').hidden = false;
-    if (state.preview.dataCheck.status === 'failed') {
-      $('preview-summary').replaceChildren(); throw new Error(state.preview.dataCheck.error);
-    }
-    summary(state.preview, $('preview-summary')); $('download-preview').href = '/api/tasks/' + state.preview.id + '/configuration';
-    $('configuration').hidden = true; $('preview-summary').hidden = false; $('preview-button').hidden = true; $('start').hidden = false; $('back').hidden = false; $('download-preview').hidden = false; $('create-title').textContent = '确认评测';
-    $('start').disabled = !state.preview.dataCheck.total;
-    $('create').querySelector('.drawer-body').scrollTop = 0; $('start').focus();
+    await api('/api/previews', { preset: $('preset').value, inputDirectory: $('input-directory').value.trim(), output: $('output').value.trim(), concurrency: Number($('concurrency').value) });
+    $('create').close(); await refresh();
   });
 };
 $('start').onclick = () => busy($('start'), 'config-error', async () => { const task = await api('/api/tasks', { previewId: state.preview.id }); state.selected = task.id; $('create').close(); await refresh(); });
