@@ -28,6 +28,7 @@ test("console API previews frozen defaults, starts idempotently, drains, resumes
   let starts = 0, release: (() => void) | undefined, execution: Parameters<typeof executeConsoleTask>[0] | undefined;
   const manager = new ConsoleTasks(config, { preflight: async () => [], execute: async value => {
     execution = value; starts++;
+    value.progress('progress {"complete":1,"queued":2,"running":1,"failed":0}');
     await new Promise<void>(resolve => { release = resolve; });
     return { execution_task_statuses: { succeeded: 1 }, paused_stages: [] };
   } });
@@ -53,6 +54,7 @@ test("console API previews frozen defaults, starts idempotently, drains, resumes
   await Promise.all([request("/api/tasks", { previewId: id }), request("/api/tasks", { previewId: id })]);
   for (let n = 0; n < 100 && starts === 0; n++) await new Promise(resolve => setTimeout(resolve, 10));
   assert.equal(starts, 1);
+  assert.deepEqual(manager.get(id).progress, { completed: 1, total: 4, failed: 0 });
   await request(`/api/tasks/${id}/concurrency`, { concurrency: 5 });
   assert.equal(execution!.gate.concurrency(), 5);
   await request(`/api/tasks/${id}/concurrency`, { concurrency: 1 });

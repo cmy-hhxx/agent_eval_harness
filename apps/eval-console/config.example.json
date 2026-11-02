@@ -1,6 +1,6 @@
 {
-  "hostname": "127.0.0.1",
-  "port": 5010,
+  "hostname": "0.0.0.0",
+  "port": 5004,
   "stateDirectory": "/absolute/runtime/state/console",
   "logDirectory": "/absolute/runtime/log",
   "passwordFile": "/absolute/runtime/secrets/console-password",

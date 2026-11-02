@@ -57,6 +57,15 @@ function renderTasks() {
     head.append(name, node('span', names[task.status], 'status ' + task.status + (['failed', 'partial'].includes(task.status) ? ' error' : '')));
     const time = new Date(task.createdAt).toLocaleString('zh-CN', { hour12: false });
     row.append(head, node('p', time + (task.requests ? ' · 在途 ' + task.requests.active + ' / ' + task.concurrency : ' · 并发 ' + task.concurrency), 'task-meta'));
+    const progress = task.progress;
+    if (progress?.total > 0 || task.status === 'finished') {
+      const line = node('div', undefined, 'progress-line');
+      const finished = task.status === 'finished';
+      line.append(node('span', finished ? '已完成' : (task.source === 'aime' ? '当前批次 ' : '步骤 ') + progress.completed + ' / ' + progress.total));
+      if (progress?.failed) line.append(node('span', progress.failed + ' 项失败', 'error'));
+      const bar = node('progress'); bar.max = finished ? 1 : progress.total; bar.value = finished ? 1 : progress.completed;
+      bar.setAttribute('aria-label', '评测进度'); row.append(line, bar);
+    } else if (task.status === 'running') row.append(node('p', '准备输入…', 'task-meta'));
     const actions = node('div', undefined, 'task-actions');
     if (['starting', 'running', 'pausing'].includes(task.status)) {
       const pause = node('button', task.status === 'pausing' ? '等待在途完成' : '暂停'); pause.disabled = task.status === 'pausing';

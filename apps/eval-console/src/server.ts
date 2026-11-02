@@ -89,7 +89,7 @@ export async function serveConsole(tasks: ConsoleTasks, password: string) {
       if (url.pathname === "/api/presets" && req.method === "GET") return send(await tasks.presets());
       if (url.pathname === "/api/previews" && req.method === "POST") return send(await tasks.preview(await body(req, 64 * 1024)), 201);
       if (url.pathname === "/api/tasks" && req.method === "GET")
-        return send([...tasks.tasks.values()].filter(task => task.status !== "draft").reverse().map(task => tasks.get(task.id)));
+        return send([...tasks.tasks.values()].filter(task => task.status !== "draft").sort((a, b) => b.createdAt.localeCompare(a.createdAt)).map(task => tasks.get(task.id)));
       if (url.pathname === "/api/tasks" && req.method === "POST") {
         const value = await body(req, 4096) as { previewId?: unknown };
         if (typeof value?.previewId !== "string") throw new HttpError(400, "请先预览配置");

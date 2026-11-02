@@ -20,17 +20,18 @@ export interface ConsoleConfig {
   hostname: string; port: number; stateDirectory: string; logDirectory: string; passwordFile: string;
   channels: string[]; presets: ConsolePreset[];
 }
+export interface ConsoleProgress { completed: number; total: number; failed: number; }
 export interface ConsoleTask {
   id: string; preset: string; source: string; name: string;
   status: "draft" | "starting" | "running" | "pausing" | "paused" | "finished" | "partial" | "failed";
   createdAt: string; updatedAt: string; concurrency: number; output: string;
   inputs: { id: string; name: string; paths: string[] }[];
-  error?: string; result?: Record<string, unknown>;
+  error?: string; result?: Record<string, unknown>; progress?: ConsoleProgress;
   warnings?: string[];
 }
 export class ConsoleTasks {
   readonly tasks = new Map<string, ConsoleTask>();
-  private readonly active = new Map<string, { pause: AbortController; gate: Gate; done: Promise<void>; progress?: unknown }>();
+  private readonly active = new Map<string, { pause: AbortController; gate: Gate; done: Promise<void>; progress?: ConsoleProgress }>();
   private serial: Promise<unknown> = Promise.resolve();
   private closing = false;
   constructor(readonly config: ConsoleConfig, private readonly dependencies = {
@@ -74,7 +75,9 @@ export class ConsoleTasks {
     const task = this.tasks.get(id);
     if (!task) throw new HttpError(404, "评测任务不存在");
     const live = this.active.get(id);
-    return { ...task, logs: this.logPaths(), ...(live ? { requests: live.gate.snapshot(), progress: live.progress } : {}) };
+    const snapshot = live?.gate.snapshot();
+    return { ...task, logs: this.logPaths(), ...(live ? { requests: { active: snapshot!.active, limit: task.concurrency },
+      progress: live.progress ?? task.progress } : {}) };
   }
   logPaths() { return ["runtime.log", "evaluation.log"].map(name => path.join(this.config.logDirectory, name)); }
   async presets() {
@@ -169,7 +172,7 @@ export class ConsoleTasks {
       task.status = "starting"; delete task.error; delete task.result;
       await this.save(task);
       const pause = new AbortController(), gate = createChannelRequests(this.limits(task.concurrency), undefined, undefined, undefined, task.concurrency);
-      const live = { pause, gate, done: Promise.resolve(), progress: undefined as unknown };
+      const live = { pause, gate, done: Promise.resolve(), progress: task.progress as ConsoleProgress | undefined };
       this.active.set(id, live);
       live.done = Promise.resolve().then(async () => {
         try {
@@ -177,15 +180,28 @@ export class ConsoleTasks {
           const result = await this.dependencies.execute({ host, id, gate, pause: pause.signal, channels: this.config.channels,
             progress: message => {
               if (message.startsWith("progress ")) {
-                try { live.progress = JSON.parse(message.slice(9)); } catch { /* Host messages also contain plain progress. */ }
+                try {
+                  const value = JSON.parse(message.slice(9));
+                  live.progress = { completed: value.complete ?? 0,
+                    total: ["complete", "partial", "queued", "running", "repairing", "preparing", "failed", "blocked", "cancelled"]
+                      .reduce((sum, key) => sum + (value[key] ?? 0), 0),
+                    failed: (value.failed ?? 0) + (value.partial ?? 0) };
+                } catch { /* Host messages also contain plain progress. */ }
               }
             } });
           await this.exclusive(async () => {
             const current = this.tasks.get(id)!;
-            current.result = result;
+            current.result = result; current.progress = live.progress;
             const counts = result.execution_task_statuses as Record<string, number> | undefined;
             current.status = pause.signal.aborted ? "paused" : result.outcome === "partial" || result.resource_pause || result.input_issue_count || result.input_rejected ||
               (result.paused_stages as unknown[] | undefined)?.length || Object.entries(counts ?? {}).some(([key, count]) => key !== "succeeded" && count) ? "partial" : "finished";
+            if (current.status === "partial") current.error = [
+              result.input_issue_count ? "输入异常 " + result.input_issue_count + " 条" : "",
+              counts?.failed || counts?.timed_out ? "评测失败 " + ((counts.failed ?? 0) + (counts.timed_out ?? 0)) + " 项" : "",
+              result.resource_pause ? "资源等待：" + result.resource_pause : "",
+            ].filter(Boolean).join("；") || "存在未完成评测，请查看日志";
+            if (counts) current.progress = { completed: counts.succeeded ?? 0, total: Object.values(counts).reduce((a, b) => a + b, 0),
+              failed: (counts.failed ?? 0) + (counts.timed_out ?? 0) };
             await this.save(current);
             this.active.delete(id);
           });
@@ -193,7 +209,7 @@ export class ConsoleTasks {
           await logger.error(error, { component: "console", event: "console_task_failed", run_id: id });
           await this.exclusive(async () => {
             const current = this.tasks.get(id)!;
-            current.status = "failed"; current.error = errorText(error);
+            current.status = "failed"; current.error = errorText(error); current.progress = live.progress;
             await this.save(current);
             this.active.delete(id);
           });
