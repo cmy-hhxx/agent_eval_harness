@@ -96,10 +96,12 @@ function renderFolders() {
   }
   if (!items.length) $('folder-list').append(node('p', query ? '没有匹配目录' : '没有子目录，可使用当前目录。', 'check-meta'));
 }
-async function loadFolders(directory) {
+async function loadFolders(directory, quiet = false) {
   const request = ++state.folderRequest, kind = state.folderKind;
-  $('folder-error').textContent = ''; $('use-folder').disabled = true;
-  $('folder-list').replaceChildren(node('p', '读取目录…', 'check-meta'));
+  if (!quiet) {
+    $('folder-error').textContent = ''; $('use-folder').disabled = true;
+    $('folder-list').replaceChildren(node('p', '读取目录…', 'check-meta'));
+  }
   try {
     const data = await api('/api/directories?preset=' + encodeURIComponent($('preset').value) + '&kind=' + kind +
       (directory ? '&path=' + encodeURIComponent(directory) : ''));
@@ -112,7 +114,7 @@ async function loadFolders(directory) {
       (data.refreshing ? '后台正在更新统计；已完成的目录会陆续显示数量。' : '每小时增量更新，记录数尚未校验有效性。') : '输出目录可在此选择，也可返回手动填写新路径。';
     $('folder-error').textContent = [data.error, ...(data.unavailable || []).map(item => item.path + '：' + item.reason)].filter(Boolean).join('；');
     renderFolders();
-  } catch (error) { if (request === state.folderRequest) { $('folder-error').textContent = error.message; $('folder-list').replaceChildren(); } }
+  } catch (error) { if (request === state.folderRequest) { $('folder-error').textContent = error.message; if (!quiet) $('folder-list').replaceChildren(); } }
 }
 function openFolders(kind) {
   state.folderKind = kind; state.folderData = null; $('folder-search').value = '';
@@ -320,5 +322,14 @@ $('delete-selected').onclick = async () => {
 };
 $('log-kind').onchange = () => { $('errors-only').disabled = $('log-kind').value === 'evaluation'; if ($('errors-only').disabled) $('errors-only').checked = false; void loadLogs(); };
 $('errors-only').onchange = () => loadLogs(); $('older').onclick = () => loadLogs(true);
-setInterval(async () => { if ($('app').hidden || document.hidden || state.polling) return; state.polling = true; try { await refresh(); } catch (error) { $('task-error').textContent = '刷新失败：' + error.message; } finally { state.polling = false; } }, 4000);
+setInterval(async () => {
+  if ($('app').hidden || document.hidden || state.polling) return;
+  state.polling = true;
+  try {
+    await refresh();
+    if ($('folder-picker').open && state.folderKind === 'input' && state.folderData?.refreshing)
+      await loadFolders(state.folderData.path || undefined, true);
+  } catch (error) { $('task-error').textContent = '刷新失败：' + error.message; }
+  finally { state.polling = false; }
+}, 4000);
 void initialize();
