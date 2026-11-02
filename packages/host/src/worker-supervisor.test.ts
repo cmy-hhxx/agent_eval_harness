@@ -117,3 +117,62 @@ test("IPC startup failures retain unconfirmed processes in quarantine across bat
     assert.equal(supervisor.snapshot().quarantined_slots, 1);
   } finally { await assert.rejects(supervisor.close(), /Worker shutdown failed/); }
 });
+
+test("confirmed retirement replaces capacity without spending the unexpected-exit budget", async () => {
+  const http = await listen(async (_req, res) => json(res, { identity, tools: [], activeAttempt: null }));
+  let starts = 0;
+  const supervisor = new WorkerSupervisor({ identity, runtime: { root: "unused", workerEntry: "unused" },
+    directory: "unused", retries: 1, retryDelaySeconds: 0, wake() {}, event() {}, spawn: async () => {
+      const pid = ++starts;
+      let exited!: (value: WorkerExit) => void;
+      return { pid, url: http.url, urls: [http.url], exited: new Promise(resolve => { exited = resolve; }),
+        async close() { exited({ pid, url: http.url, exitCode: 0, signal: null, expectedClose: true,
+          disconnectedAt: null, exitedAt: Date.now(), stderr: "" }); } };
+    } });
+  try {
+    supervisor.setDemand("active-run", 1);
+    await waitForTestState(async () => supervisor.slots.length, count => count === 1, "initial Worker ready");
+    for (let cycle = 0; cycle < 4; cycle++) {
+      const owner = supervisor.slots[0].owner;
+      supervisor.retire(supervisor.slots[0], "attempt cleanup requires process replacement");
+      await waitForTestState(async () => supervisor.slots[0]?.owner,
+        replacement => !!replacement && replacement !== owner, "retired Worker capacity is replaced", 1000);
+      assert.equal(supervisor.snapshot().quarantined_slots, 0);
+    }
+    assert.equal(starts, 5);
+  } finally { await supervisor.close(); await http.close(); }
+});
+
+test("active demand probes quarantined capacity while healthy Workers keep running", async (t) => {
+  t.mock.timers.enable({ apis: ["Date"], now: 100_000 });
+  const http = await listen(async (_req, res) => json(res, { identity, tools: [], activeAttempt: null }));
+  let starts = 0;
+  const exits = new Map<WorkerProcess, () => void>();
+  const supervisor = new WorkerSupervisor({ identity, runtime: { root: "unused", workerEntry: "unused" },
+    directory: "unused", retries: 1, retryDelaySeconds: 0, wake() {}, event() {}, spawn: async () => {
+      const pid = ++starts;
+      let exited!: (value: WorkerExit) => void;
+      const owner: WorkerProcess = { pid, url: http.url, urls: [http.url],
+        exited: new Promise(resolve => { exited = resolve; }), async close() {} };
+      exits.set(owner, () => exited({ pid, url: http.url, exitCode: 1, signal: null, expectedClose: false,
+        disconnectedAt: null, exitedAt: Date.now(), stderr: "unexpected exit fixture" }));
+      return owner;
+    } });
+  try {
+    supervisor.setDemand("active-run", 2);
+    await waitForTestState(async () => supervisor.slots.length, count => count === 2, "both Workers ready");
+    const healthy = supervisor.slots[1].owner!;
+    exits.get(supervisor.slots[0].owner!)!();
+    await waitForTestState(async () => starts === 3 && supervisor.slots.length === 2, Boolean, "first crash is retried");
+    exits.get(supervisor.slots.find(slot => slot.owner !== healthy)!.owner!)!();
+    await waitForTestState(async () => supervisor.snapshot().quarantined_slots, count => count === 1, "repeated crashes exhaust capacity");
+    supervisor.setDemand("active-run", 2);
+    assert.equal(starts, 3, "scheduler demand cannot bypass the recovery cooldown");
+    assert.equal(supervisor.slots[0].owner, healthy);
+    t.mock.timers.tick(30_001);
+    supervisor.setDemand("active-run", 2);
+    await waitForTestState(async () => supervisor.slots.length, count => count === 2, "partial capacity recovers after cooldown", 1000);
+    assert.equal(supervisor.snapshot().quarantined_slots, 0);
+    assert(supervisor.slots.some(slot => slot.owner === healthy), "healthy capacity stays in service");
+  } finally { await supervisor.close(); await http.close(); }
+});

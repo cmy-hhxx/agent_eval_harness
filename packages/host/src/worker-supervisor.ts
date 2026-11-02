@@ -39,6 +39,7 @@ export class WorkerSupervisor {
     if (slots) this.demand.set(run, slots); else this.demand.delete(run);
     const total = [...this.demand.values()].reduce((sum, count) => sum + count, 0);
     const slotsPerProcess = this.options.runtime.workerSlots ?? 1;
+    if (total) this.retryQuarantined();
     this.setTarget(this.options.maxSlots === undefined ? total : Math.min(this.options.maxSlots, Math.ceil(total / slotsPerProcess) * slotsPerProcess));
   }
   retryQuarantined() {
@@ -96,8 +97,10 @@ export class WorkerSupervisor {
         this.remove(process);
         if (!this.closed) {
           unit.owner = undefined; unit.retryAt = Date.now();
-          unit.restarts++;
+          unit.restarts = exit.expectedClose ? 0 : unit.restarts + 1;
           unit.exhausted = unit.restarts > Math.max(1, this.options.retries);
+          if (unit.exhausted) this.options.event("worker_capacity_quarantined",
+            { slots: unit.size, restarts: unit.restarts, error: "Unexpected Worker exit retry budget exhausted" });
           this.options.event("worker_exited", { ...exit }); this.options.wake(); this.pump();
         }
       });
