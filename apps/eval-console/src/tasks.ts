@@ -116,9 +116,10 @@ export class ConsoleTasks {
   }
   private async preparePreview(value: unknown) {
     if (!value || typeof value !== "object") throw new HttpError(400, "配置不能为空");
-    const { preset: presetId, inputs, inputDirectory, output, concurrency, batchId } = value as Record<string, unknown>;
+    const { preset: presetId, name, inputs, inputDirectory, output, concurrency, batchId } = value as Record<string, unknown>;
     const preset = this.config.presets.find(item => item.id === presetId);
     if (!preset) throw new HttpError(400, "未知评测预设");
+    const taskName = this.taskName(name);
     this.checkConcurrency(concurrency);
     if (typeof batchId !== "string" || !batchId.trim()) throw new HttpError(400, "请填写缺省批次");
     const batch = businessBatch(batchId.trim());
@@ -169,7 +170,7 @@ export class ConsoleTasks {
       for (const stage of Object.keys(prepared.models.bindings)) routing.modelRoutesForTask({ stage });
       const issues = await this.dependencies.preflight(prepared);
       if (issues.length) throw new HttpError(400, "启动检查未通过: " + issues.map(issue => issue.check + ": " + issue.reason).join("；"));
-      const task: ConsoleTask = { id, preset: preset.id, source: preset.source, name: preset.name, status: "draft",
+      const task: ConsoleTask = { id, preset: preset.id, source: preset.source, name: taskName, status: "draft",
         createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(), concurrency: concurrency as number,
         output: destination.path, warnings, inputDirectory: discovered?.directory, dataCheck: emptyDataCheck(host.workflow),
         batchId: prepared.evaluation.inputs.default_batch_id,
@@ -315,9 +316,27 @@ export class ConsoleTasks {
   }
   async configuration(id: string) {
     const task = this.get(id);
-    return { preset: task.preset, ...(task.inputDirectory ? { inputDirectory: task.inputDirectory } :
+    return { preset: task.preset, name: task.name, ...(task.inputDirectory ? { inputDirectory: task.inputDirectory } :
       { inputs: Object.fromEntries(task.inputs.map(input => [input.id, input.paths])) }),
       output: task.output, concurrency: task.concurrency, batchId: task.batchId, logs: this.logPaths() };
+  }
+  private taskName(value: unknown) {
+    if (typeof value !== "string" || !value.trim()) throw new HttpError(400, "请填写任务名称");
+    if (value.trim().length > 100) throw new HttpError(400, "任务名称不能超过 100 个字符");
+    return value.trim();
+  }
+  async rename(id: string, value: unknown) {
+    const name = this.taskName(value);
+    return this.exclusive(async () => {
+      if (this.closing) throw new HttpError(409, "控制服务正在关闭");
+      this.get(id);
+      const task = this.tasks.get(id)!;
+      const previous = task.name;
+      task.name = name;
+      try { await this.save(task); }
+      catch (error) { task.name = previous; throw error; }
+      return this.get(id);
+    });
   }
   async remove(id: string) {
     return this.exclusive(async () => {

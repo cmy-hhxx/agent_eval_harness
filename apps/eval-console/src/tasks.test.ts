@@ -62,15 +62,20 @@ test("console API previews frozen defaults, starts idempotently, drains, resumes
   assert.equal(created.status, 201);
   assert.equal((await request("/api/directories?kind=output&path=" + encodeURIComponent(String(created.data.path)))).status, 200);
   assert.equal((await request("/api/directories", { kind: "output", parent: f.directory, name: "评测结果" })).status, 409);
+  for (const name of [undefined, "", "   ", 123, "长".repeat(101)]) {
+    const invalid = await request("/api/previews", { preset: "wencai", name, concurrency: 2, inputDirectory, output: f.config.output.path, batchId: "search_eval" });
+    assert.equal(invalid.status, 400); assert.match(String(invalid.data.error), /任务名称/);
+  }
   for (const batchId of [undefined, "", "   "]) {
-    const invalid = await request("/api/previews", { preset: "wencai", concurrency: 2, inputDirectory, output: f.config.output.path, batchId });
+    const invalid = await request("/api/previews", { preset: "wencai", name: "搜索评测", concurrency: 2, inputDirectory, output: f.config.output.path, batchId });
     assert.equal(invalid.status, 400); assert.match(String(invalid.data.error), /请填写缺省批次/);
   }
-  const preview = await request("/api/previews", { preset: "wencai", concurrency: 2, output: f.config.output.path,
+  const preview = await request("/api/previews", { preset: "wencai", name: "搜索评测", concurrency: 2, output: f.config.output.path,
     inputDirectory, batchId: "search_eval" });
   assert.equal(preview.status, 201, JSON.stringify(preview.data));
   assert.equal(starts, 0);
   const id = String(preview.data.id);
+  assert.equal(preview.data.name, "搜索评测");
   const visible = (await request("/api/tasks")).data as unknown as { id: string }[];
   assert(visible.some(task => task.id === id), "Check data must immediately create a visible task");
   for (let n = 0; n < 100 && manager.get(id).dataCheck?.status === "checking"; n++) await new Promise(resolve => setTimeout(resolve, 10));
@@ -80,7 +85,7 @@ test("console API previews frozen defaults, starts idempotently, drains, resumes
   assert.equal(frozen.inputs.limit, undefined); assert.equal(frozen.inputs.case_ids, undefined);
   assert.equal(frozen.inputs.default_batch_id, "search_eval");
   assert.equal(manager.get(id).batchId, "search_eval");
-  assert.deepEqual(Object.keys((await request(`/api/tasks/${id}/configuration`)).data).sort(), ["batchId", "concurrency", "inputDirectory", "logs", "output", "preset"]);
+  assert.deepEqual(Object.keys((await request(`/api/tasks/${id}/configuration`)).data).sort(), ["batchId", "concurrency", "inputDirectory", "logs", "name", "output", "preset"]);
   assert.equal(manager.get(id).inputDirectory, await realpath(inputDirectory));
   assert.equal(manager.get(id).dataCheck?.total, 1);
   // A fresh manager restores the checked draft; no browser-local state is required.
@@ -89,10 +94,19 @@ test("console API previews frozen defaults, starts idempotently, drains, resumes
   await restoredDraft.initialize();
   assert.equal(restoredDraft.get(id).status, "draft");
   assert.equal(restoredDraft.get(id).dataCheck?.total, 1);
+  assert.equal(restoredDraft.get(id).name, "搜索评测");
 
   await Promise.all([request("/api/tasks", { previewId: id }), request("/api/tasks", { previewId: id })]);
   for (let n = 0; n < 100 && starts === 0; n++) await new Promise(resolve => setTimeout(resolve, 10));
   assert.equal(starts, 1);
+  for (const name of [undefined, "", "   ", 123, "长".repeat(101)]) {
+    assert.equal((await request(`/api/tasks/${id}/name`, { name })).status, 400);
+    assert.equal(manager.get(id).name, "搜索评测");
+  }
+  const renamed = await request(`/api/tasks/${id}/name`, { name: "  搜索评测 · 第一次对比  " });
+  assert.equal(renamed.status, 200); assert.equal(renamed.data.name, "搜索评测 · 第一次对比");
+  assert.equal(renamed.data.status, "running"); assert.equal(starts, 1);
+  assert.equal((await request(`/api/tasks/${id}/configuration`)).data.name, "搜索评测 · 第一次对比");
   assert.equal((await request(`/api/tasks/${id}/delete`, {})).status, 409);
   assert.equal((await request(`/api/tasks/${id}/check`, {})).status, 409);
   assert.deepEqual(manager.get(id).progress, { completed: 1, total: 4, failed: 0 });
@@ -111,14 +125,16 @@ test("console API previews frozen defaults, starts idempotently, drains, resumes
   assert.equal(starts, 2); assert.equal(execution!.id, id);
   const restored = new ConsoleTasks(config);
   await restored.initialize(); assert.equal(restored.get(id).status, "paused");
+  assert.equal(restored.get(id).name, "搜索评测 · 第一次对比");
   release!();
   for (let n = 0; n < 100 && manager.get(id).status === "running"; n++) await new Promise(resolve => setTimeout(resolve, 10));
   assert.equal(manager.get(id).status, "finished");
-  const overlap = await request("/api/previews", { preset: "wencai", concurrency: 2, batchId: "search_eval", output: path.join(inputDirectory, "output"), inputDirectory });
+  assert.equal((await request(`/api/tasks/${id}/name`, { name: "搜索评测 · 已完成" })).data.name, "搜索评测 · 已完成");
+  const overlap = await request("/api/previews", { preset: "wencai", name: "搜索评测", concurrency: 2, batchId: "search_eval", output: path.join(inputDirectory, "output"), inputDirectory });
   assert.equal(overlap.status, 400); assert.match(String(overlap.data.error), /重叠/);
   for (const version of f.config.inputs.versions) await writeJsonl(version.sources[0].path, [{ ...raw("invalid"), messages: [] }]);
   for (const version of f.config.inputs.versions) await writeJsonl(path.join(inputDirectory, version.id + ".jsonl"), [{ ...raw("invalid"), messages: [] }]);
-  const empty = await request("/api/previews", { preset: "wencai", concurrency: 2, batchId: "search_eval", output: f.config.output.path, inputDirectory });
+  const empty = await request("/api/previews", { preset: "wencai", name: "搜索评测", concurrency: 2, batchId: "search_eval", output: f.config.output.path, inputDirectory });
   assert.equal(empty.status, 201);
   for (let n = 0; n < 100 && manager.get(String(empty.data.id)).dataCheck?.status === "checking"; n++) await new Promise(resolve => setTimeout(resolve, 10));
   assert.equal((await request("/api/tasks", { previewId: empty.data.id })).status, 409);
@@ -155,7 +171,7 @@ test("console API previews frozen defaults, starts idempotently, drains, resumes
   t.after(() => releaseCheck());
   const files = fileSourceReader.files;
   t.mock.method(fileSourceReader, "files", async (...args: Parameters<typeof files>) => { await allowCheck; return files(...args); });
-  const checking = await request("/api/previews", { preset: "wencai", concurrency: 2, batchId: "search_eval", output: f.config.output.path, inputDirectory });
+  const checking = await request("/api/previews", { preset: "wencai", name: "搜索评测", concurrency: 2, batchId: "search_eval", output: f.config.output.path, inputDirectory });
   assert.equal(checking.status, 201);
   const checkingId = String(checking.data.id);
   assert.equal(manager.get(checkingId).dataCheck?.status, "checking");
@@ -231,13 +247,13 @@ test("a data check completing behind a queued start preserves the running task i
   });
   await manager.initialize();
   const inputs = Object.fromEntries(f.config.inputs.versions.map(version => [version.id, version.sources.map(item => item.path)]));
-  const first = await manager.preview({ preset: "wencai", concurrency: 1, batchId: "search_eval", inputs, output: f.config.output.path });
+  const first = await manager.preview({ preset: "wencai", name: "搜索评测", concurrency: 1, batchId: "search_eval", inputs, output: f.config.output.path });
   for (let n = 0; n < 100 && manager.get(first.id).dataCheck?.status === "checking"; n++) await new Promise(resolve => setTimeout(resolve, 10));
   assert.equal(manager.get(first.id).dataCheck?.status, "ready");
   // Flush the first check's queued save before preparing the next task.
   await manager.concurrency(first.id, 1);
   holdCheck = true;
-  const second = await manager.preview({ preset: "wencai", concurrency: 1, batchId: "search_eval", inputs, output: path.join(f.directory, "other-output") });
+  const second = await manager.preview({ preset: "wencai", name: "搜索评测", concurrency: 1, batchId: "search_eval", inputs, output: path.join(f.directory, "other-output") });
   assert.equal(manager.get(second.id).dataCheck?.status, "checking");
   heldTask = first.id;
   const startingFirst = manager.start(first.id);

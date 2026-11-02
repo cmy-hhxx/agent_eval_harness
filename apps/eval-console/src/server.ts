@@ -104,12 +104,16 @@ export async function serveConsole(tasks: ConsoleTasks, password: string, direct
         if (typeof value?.previewId !== "string") throw new HttpError(400, "请先预览配置");
         return send(await tasks.start(value.previewId), 202);
       }
-      const match = /^\/api\/tasks\/(console-[0-9a-f-]{36})(?:\/(pause|resume|check|concurrency|configuration|logs|delete))?$/.exec(url.pathname);
+      const match = /^\/api\/tasks\/(console-[0-9a-f-]{36})(?:\/(pause|resume|check|concurrency|configuration|logs|delete|name))?$/.exec(url.pathname);
       if (!match) throw new HttpError(404, "Not found");
       const [, id, action] = match;
       tasks.get(id);
       if (!action && req.method === "GET") return send(tasks.get(id));
       if (action === "delete" && req.method === "POST") return send(await tasks.remove(id));
+      if (action === "name" && req.method === "POST") {
+        const value = await body(req, 4096) as { name?: unknown };
+        return send(await tasks.rename(id, value?.name));
+      }
       if (action === "check" && req.method === "POST") return send(await tasks.recheck(id), 202);
       if (action === "pause" && req.method === "POST") return send(await tasks.pause(id), 202);
       if (action === "resume" && req.method === "POST") return send(await tasks.start(id), 202);

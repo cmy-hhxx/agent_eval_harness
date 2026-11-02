@@ -30,7 +30,7 @@ async function view(t: TestContext, authenticated = true) {
   const { window } = dom, document = window.document;
   const fixture = { tasks: [task(1), task(2, "finished"), task(3, "running"), task(4, "draft", "aime")],
     failing: new Set<string>(), deletes: [] as string[], confirm: true, prompts: [] as string[], created: [] as { parent: string; name: string }[],
-    authenticated, invalidDirectory: false, presetRequests: 0, navigations };
+    authenticated, invalidDirectory: false, presetRequests: 0, navigations, previews: [] as { name: string }[], renames: [] as { id: string; name: string }[] };
   window.setInterval = () => 1;
   window.confirm = message => { fixture.prompts.push(String(message)); return fixture.confirm; };
   window.HTMLDialogElement.prototype.showModal = function () { this.setAttribute("open", ""); };
@@ -43,6 +43,16 @@ async function view(t: TestContext, authenticated = true) {
     }
     if (!fixture.authenticated) return Response.json({ error: "请先登录" }, { status: 401 });
     if (url.pathname === "/api/logout") { fixture.authenticated = false; return Response.json({ authenticated: false }); }
+    if (url.pathname.endsWith("/name")) {
+      const id = url.pathname.split("/")[3], value = JSON.parse(String(init?.body));
+      fixture.renames.push({ id, name: value.name });
+      if (fixture.failing.has(id)) return Response.json({ error: "名称保存失败" }, { status: 500 });
+      const item = fixture.tasks.find(item => item.id === id)!; item.name = value.name; return Response.json(item);
+    }
+    if (url.pathname === "/api/previews") {
+      const value = JSON.parse(String(init?.body)); fixture.previews.push(value);
+      const item = { ...task(5), name: value.name }; fixture.tasks.push(item); return Response.json(item);
+    }
     if (url.pathname.endsWith("/delete")) {
       const id = url.pathname.split("/")[3]; fixture.deletes.push(id);
       if (fixture.failing.has(id)) return Response.json({ error: "删除失败，请重试" }, { status: 500 });
@@ -187,4 +197,32 @@ test("an incomplete directory response reports an error without enabling selecti
   document.querySelector('#folder-search')!.dispatchEvent(new window.Event('input'));
   assert.equal(document.querySelectorAll('.folder-option').length, 0, "search must not revive stale directory data");
   assert.equal(document.querySelector<HTMLButtonElement>('#use-folder')!.disabled, true);
+});
+
+test("new tasks submit the chosen name and a subsequent new task starts with a blank name", async t => {
+  const { fixture, document, window, click } = await view(t);
+  click('#new-task');
+  const name = document.querySelector<HTMLInputElement>('#task-name')!;
+  assert.equal(name.value, ''); assert.equal(name.required, true);
+  name.value = '  搜索评测 · fast 基线  ';
+  document.querySelector<HTMLInputElement>('#batch-id')!.value = 'search_eval';
+  document.querySelector('#configuration')!.dispatchEvent(new window.Event('submit', { bubbles: true, cancelable: true }));
+  await until(() => document.querySelector('#task-list')!.textContent!.includes('搜索评测 · fast 基线'));
+  assert.equal(fixture.previews[0].name, '搜索评测 · fast 基线');
+  click('#new-task'); assert.equal(name.value, '');
+});
+
+test("existing tasks can be renamed; failed saves keep their current name and the editor open", async t => {
+  const { fixture, document, window } = await view(t);
+  const rename = () => [...document.querySelectorAll<HTMLButtonElement>('#task-list tr:first-child .row-actions button')].find(button => button.textContent === '重命名')!.click();
+  const submit = () => document.querySelector('#rename-form')!.dispatchEvent(new window.Event('submit', { bubbles: true, cancelable: true }));
+  rename(); assert.equal(document.querySelector<HTMLInputElement>('#rename-value')!.value, '任务1');
+  document.querySelector<HTMLInputElement>('#rename-value')!.value = '  搜索对比 · 第一批  '; submit();
+  await until(() => document.querySelector('#task-list .task-title')!.textContent === '搜索对比 · 第一批');
+  assert.deepEqual(fixture.renames[0], { id: task(1).id, name: '搜索对比 · 第一批' });
+  rename(); fixture.failing.add(task(1).id);
+  document.querySelector<HTMLInputElement>('#rename-value')!.value = '未保存的名字'; submit();
+  await until(() => document.querySelector('#rename-error')!.textContent === '名称保存失败');
+  assert.equal(document.querySelector<HTMLDialogElement>('#rename')!.open, true);
+  assert.equal(document.querySelector('#task-list .task-title')!.textContent, '搜索对比 · 第一批');
 });

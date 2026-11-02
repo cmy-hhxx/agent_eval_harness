@@ -54,6 +54,7 @@ function editMode() {
 }
 function openCreate() {
   editMode(); $('preset').replaceChildren(...state.presets.filter(p => p.source === state.source).map(p => { const option = node('option', p.name); option.value = p.id; return option; }));
+  $('task-name').value = '';
   fillPreset(); $('create').showModal();
 }
 function readPath(file, label = basename(file)) {
@@ -285,7 +286,8 @@ function renderTasks() {
       actions.append(button('预览', () => previewTask(task)));
       if (!task.dataCheck || task.dataCheck.status === 'failed') { const retry = button(task.dataCheck ? '重新检查' : 'Check data', () => busy(retry, 'task-error', async () => { await api('/api/tasks/' + task.id + '/check', {}); await refresh(); })); actions.append(retry); }
     }
-    actions.append(button('日志', () => openDetail(task.id, 'logs')), button('配置', () => openDetail(task.id, 'config')));
+    actions.append(button('日志', () => openDetail(task.id, 'logs')), button('配置', () => openDetail(task.id, 'config')),
+      button('重命名', () => { $('rename-form').dataset.task = task.id; $('rename-value').value = task.name; $('rename-error').textContent = ''; $('rename').showModal(); $('rename-value').select(); }));
     const remove = button('删除', () => {
       if (!confirm(`删除“${task.name} · ${task.id.slice(8, 16)}”？\n仅删除工作台任务记录和配置，保留原始输入、评测结果与日志。`)) return;
       void busy(remove, 'task-error', async () => {
@@ -366,10 +368,19 @@ $('new-folder-form').onsubmit = event => {
 };
 $('close-create').onclick = () => $('create').close(); $('create').onclose = () => { state.preview = null; };
 $('close-detail').onclick = $('close-detail-bottom').onclick = () => $('detail').close(); $('close-capacity').onclick = () => $('capacity').close();
+$('close-rename').onclick = () => $('rename').close();
+$('rename-form').onsubmit = event => {
+  event.preventDefault(); void busy($('apply-rename'), 'rename-error', async () => {
+    const task = await api('/api/tasks/' + $('rename-form').dataset.task + '/name', { name: $('rename-value').value.trim() });
+    $('rename').close(); await refresh();
+    if (state.selected === task.id && $('detail').open) $('detail-title').textContent = task.name + ' · ' + task.id.slice(8, 16);
+    if (state.preview?.id === task.id && $('create').open) previewTask(task);
+  });
+};
 $('configuration').addEventListener('invalid', event => { const details = event.target.closest('details'); if (details) details.open = true; }, true);
 $('configuration').onsubmit = event => {
   event.preventDefault(); void busy($('preview-button'), 'config-error', async () => {
-    await api('/api/previews', { preset: $('preset').value, inputDirectory: $('input-directory').value.trim(), output: $('output').value.trim(), concurrency: Number($('concurrency').value), batchId: $('batch-id').value.trim() });
+    await api('/api/previews', { preset: $('preset').value, name: $('task-name').value.trim(), inputDirectory: $('input-directory').value.trim(), output: $('output').value.trim(), concurrency: Number($('concurrency').value), batchId: $('batch-id').value.trim() });
     $('create').close(); await refresh();
   });
 };
