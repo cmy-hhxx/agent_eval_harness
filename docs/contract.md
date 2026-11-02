@@ -95,7 +95,7 @@ Compact 使用固定浅层字段；模型用 evidence 整数数组选择原文�
 
 ### 归因与共同基准
 
-Criteria 提交三组 `{source_indices,text}`：requirements、scoring_points、red_flags。程序生成 ID、来源交集作用域和含完整原文的 acceptance_rule。同一来源可支持多个独立检查项；三个数组中作用于全部候选的共同项去重后合计5–12项，私有项不计入共同数量，全部项最多24项。数量在提交解析及正式结果校验时检查，不自动填充。原问与质量来源须由共同 requirement 覆盖。SYS/DEV与已确认加载Skill不进入共同基准和主归因，统一由后置独立指令遵循归因处理。公开要求的数量、必交范围、可选性与例外按原文保留。标准答案不进入 Criteria 来源目录，完整保留给 Attribution 核对事实。
+Criteria 提交三组 `{source_indices,text}`：requirements、scoring_points、red_flags。程序生成 ID、来源交集作用域和含完整原文的 acceptance_rule。同一来源可支持多个独立检查项；共同项通常1–4项，去重后允许1–12项，私有项不计入共同数量，全部项最多24项。数量在提交解析及正式结果校验时检查，不自动填充。原问与质量来源须由共同 requirement 覆盖。SYS/DEV与已确认加载Skill不进入共同基准和主归因，统一由后置独立指令遵循归因处理。公开要求的数量、必交范围、可选性与例外按原文保留。标准答案不进入 Criteria 来源目录，完整保留给 Attribution 核对事实。
 
 Attribution 正式结果顶层为 `session_meta/turns/session_summary/session_problem`；过程摘要独立保留在 `compact.jsonl`，使用固定浅层结构。逐轮问题与正确性见[正式契约](attribution.md#正式契约)。
 
@@ -115,7 +115,7 @@ Attribution 正式结果顶层为 `session_meta/turns/session_summary/session_pr
 
 ### 对比与定向补查
 
-主线每场一次 Comparison，**不自动补查归因**。定向复核、标准答案复核和事后核验各有显式入口。
+主线每场一次 Comparison，**只读已接受归因结论，不自动补查归因**。默认模型材料仅含共同标准、归因总结与问题理由、核查覆盖及资源指标，不含原始回答、证据摘录或来源目录，也不注册调查工具或要求重复读取图片。决定性结论缺失或冲突时保留待复核。定向复核、标准答案复核和事后核验各有显式入口，独立核验仍检查原始材料与图片覆盖。
 
 Comparison 按 comparison_slots 显式选择 slot_index 与 kind，提交 importance、普通格可选 better_candidate 和双方 candidate 评估；核心完成 assessments 也逐候选提交。每个比较槽最多一行，候选专有且无需评审的槽可省略，不提交 null 或重复槽。整体另交可选 quality_winner、必填 relative_preference 及一段完整 tradeoff。取舍先说明决定性差异，再解释实际存在的重要反向事实为何不足以逆转。逐格点评、状态、关联、核心失败引用和排名由程序从已接受归因派生。
 
@@ -194,7 +194,7 @@ Workflow 从当前有效 Attribution 派生 `model-behavior.jsonl`，按来源�
 
 Rewrite 只接收选定文本槽位，不接触原题、原始消息或证据。Workflow 负责候选称谓、槽位分组、回填和展示；盲标 `候选A/B` 无论是否带【】都按当次语义映射回填为显示名，证据引文保持原文。模型保持事实、数字、限定、不确定性与既定取舍。
 
-整场点评的待改文本只取已接受的 `decision_basis.tradeoff`。正式判决前提与候选身份放在表达上下文，固定偏好仍由 `preference` 校验；不再拼入分项点评让改写重新选择胜因。逐项点评只在各自槽位中润色，取舍本身遗漏的重要事实应由 Comparison 修正。
+默认每场只改写最终偏好及理由，待改文本取已接受的 `decision_basis.tradeoff`。正式判决前提与候选身份放在表达上下文，固定偏好由 `preference` 校验；不拼入分项点评让改写重新选择胜因。双方总评和逐项点评默认保留原文，仅显式启用 `rewrite.comparisonItems` 才额外润色；取舍遗漏的重要事实应由 Comparison 修正。每场来源接受后即可优先改写，不等待其他业务样本。
 
 整场都好／都差且源收据已给出相对倾向时，Workflow 从源提交的结构化 `relative_preference` 读取身份，将正式结论与相对倾向合并到现有 `preference` 前缀；改写须原样保留此前缀。完全等价的 null 不生成偏好，正式胜者不重复追加同向表态。不从自然语言判词反推身份，也不靠后置多数票补写偏好。前缀正确仍不保证正文理由没有漂移。
 

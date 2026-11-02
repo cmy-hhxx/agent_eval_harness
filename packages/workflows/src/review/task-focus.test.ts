@@ -187,17 +187,12 @@ test("public judgment bindings keep global indices and separate blind originals 
       assert(!Object.hasOwn(shown, "task_analysis")); assert(!Object.hasOwn(shown, "task_focus"));
       assert.deepEqual({ task, inputs, dependencies }, before); continue;
     }
-    const focus = shown.task_focus as ReturnType<typeof taskFocus> | undefined;
     assert.deepEqual((shown.task_analysis as ReturnType<typeof taskAnalysisPresentation>).requirements.map(item => item.requirement_index), [0, 1, 2, 3]);
-    const finalAnswer = (shown.candidates as Record<string, { final_answer: string }>).A.final_answer;
-    const question = focus!.question;
-    assert.equal(finalAnswer, "A 完整最终回答。");
-    {
-      assert(!Object.hasOwn(focus!, "goal"));
-      assert(!Object.hasOwn(focus!, "common_requirements"));
-      assert(!JSON.stringify(focus).includes(analysis.requirements[1]!.text));
-      assert.equal(focus!.answers.A!.question_timestamp, "2026-09-24T22:07:25.270Z");
-    }
+    const candidate = (shown.candidates as Record<string, { question: string; final_answer?: string }>).A;
+    const question = candidate.question;
+    assert.equal(candidate.final_answer, undefined);
+    assert.equal(shown.task_focus, undefined);
+    assert(Object.hasOwn(shown, "attributions"));
     const profile = agentPrompt("comparison", [], { fileSubmission: false });
     const prompt = profile.renderPrompt(shown);
     assert(profile.systemPrompt.includes(profile.instructions), "fixed stage instructions belong to the system prompt");

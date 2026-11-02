@@ -161,7 +161,7 @@ test("configuration composes layered files and resolves bound models", async () 
   assert.equal(host.models.bindings.rewrite?.profile, "judge");
   assert.equal(host.models.models.judge?.thinking, "low");
   assert.equal(host.evaluation.execution.concurrency, 8);
-  assert.deepEqual(host.evaluation.rewrite, { attribution: true, comparison: true, comparisonItems: true, clustering: true });
+  assert.deepEqual(host.evaluation.rewrite, { attribution: true, comparison: true, comparisonItems: false, clustering: true });
   for (const version of host.evaluation.inputs.versions)
     assert.equal(version.sources[0].path, path.join(ROOT, "data/sources/model-answers", version.id));
   assert.throws(() => createModelResolver(host.models)("attribution"), /Missing model id/);

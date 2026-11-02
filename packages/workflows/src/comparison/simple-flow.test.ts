@@ -12,6 +12,9 @@ import { ROOT } from "../../../../tests/fixtures/services.js";
 import { buildPlan } from "./input.js";
 import { comparisonWorkflow } from "./workflow.js";
 import type { TaskData } from "./types.js";
+import { comparisonSlots } from "./commentary.js";
+import example from "../../../agents/src/comparison/fixtures/example.json" with { type: "json" };
+import type { ComparisonResult } from "@eval/agents/comparison";
 
 test("evaluation with explicit rewrites off has one comparison and no mandatory verification or source-review cells", async () => {
   const f = await fixtureConfig([[raw()], [], [raw()], []]);
@@ -34,7 +37,7 @@ test("evaluation with explicit rewrites off has one comparison and no mandatory 
 
 test("real config defaults polish each attribution and comparison, then separately enabled clustering", async () => {
   const defaults = (await loadComparisonConfig(path.join(ROOT, "configs/host.json"), testSettings("http://127.0.0.1:1/v1"))).evaluation;
-  assert.deepEqual(defaults.rewrite, { attribution: true, comparison: true, comparisonItems: true, clustering: true });
+  assert.deepEqual(defaults.rewrite, { attribution: true, comparison: true, comparisonItems: false, clustering: true });
   assert.equal(defaults.clustering.enabled, false);
   assert.equal(defaults.standardAnswerReview, false);
   const f = await fixtureConfig([[raw()], [], [raw()], []]);
@@ -51,6 +54,13 @@ test("real config defaults polish each attribution and comparison, then separate
       assert.equal(polish.length, 1);
       assert.equal((polish[0].data as TaskData).rewriteOf!.stage, source.stage === "attribution-session" ? "attribution" : source.stage);
       assert.deepEqual(polish[0].dependencies, { source: source.id });
+      if (source.stage === "comparison") {
+        assert.equal((polish[0].data as TaskData).comparisonRewriteScope, undefined);
+        const slots = comparisonSlots(example.result as ComparisonResult, (polish[0].data as TaskData).comparisonRewriteScope);
+        assert.equal(slots.length, 1);
+        assert.match(slots[0].id, /^verdict\./);
+        assert.equal(slots[0].text, example.result.decision_basis.tradeoff);
+      }
       assert.equal((source.data as TaskData).verificationAudit, undefined);
       assert.equal((source.data as TaskData).verificationOf, undefined);
       assert(Object.values(source.dependencies).every(id => primary.tasks.find(task => task.id === id)?.stage !== "rewrite"));

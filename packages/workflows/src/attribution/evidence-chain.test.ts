@@ -199,14 +199,16 @@ test("Criteria and Comparison bind original multi-turn messages and accepted att
     const material = (binding.request.input.candidates as Record<string, JsonObject>)[label]!;
     assert.deepEqual(material.final_message_indices, [6, 13]);
     assert.deepEqual(material.source_positions, original.positions);
-    assert(prepared.evidenceBank.some(id => {
-      const point = parseEvidenceCoordinates(id);
+    const findings = (binding.request.input.attributions as Record<string, { Problem: { evidence: { evidence_id: string }[] }[] }>)[label].Problem;
+    assert(findings.some(finding => finding.evidence.some(item => {
+      const point = parseEvidenceCoordinates(item.evidence_id);
       return point?.input_id === candidate.input_id && point.message_index === 10;
-    }));
-    assert(binding.presentedReads!.some(read => read.candidate === label && read.message_index === 10));
+    })), "accepted source coordinates remain available for provenance");
   }
+  assert.deepEqual(prepared.evidenceBank, [], "default comparison does not investigate original evidence");
+  assert.equal(binding.presentedReads, undefined);
   assert(!prepared.prompt.includes("PRIVATE_RULE"));
-  assert(prepared.prompt.includes("LOADED_SKILL_BODY"));
+  assert(!prepared.prompt.includes("LOADED_SKILL_BODY"));
   assert(!prepared.prompt.includes("PRIVATE_OUTER"));
   assert(!prepared.prompt.includes('"evidence_id":"p1:'));
   const verification = { ...task, id: "verify-source-chain", dependencies: { ...task.dependencies, draft: task.id },

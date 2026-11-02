@@ -5,8 +5,6 @@ import { workflowText } from "@eval/prompts";
 import { canonical, presentSource, type AgentBinding, type PlannedTask, type SubmissionReceipt, type TaskAnalysis } from "@eval/contracts";
 import { cite, evidenceSources, messageContentSources, instructionSources, normativeSources } from "@eval/tools";
 import { attributionSessionSource } from "../review/public-trace.js";
-import { attributionPresentation } from "../review/attribution-presentation.js";
-import { presentedMaterialReads } from "../review/evidence-presentation.js";
 import { projectComparisonEvidence } from "../review/evidence-presentation.js";
 import { sessionQas } from "../inputs/session.js";
 import type { TaskData, ComparisonResult } from "./types.js";
@@ -24,7 +22,7 @@ import { citationInventory } from "../review/citations.js";
 import { criterionInstructionSources } from "../review/instruction-bindings.js";
 import { bindRewriteItems } from "./rewrite-presentation.js";
 import { comparisonScope, comparisonSlotChoices } from "@eval/agents/comparison";
-import { taskAnalysisPresentation, taskFocus } from "../review/task-focus.js";
+import { taskAnalysisPresentation } from "../review/task-focus.js";
 import { verificationPresentation, verificationInspectionPresentation } from "./verification-presentation.js";
 import { getAnswerGeneration } from "../review/answer-generation.js";
 import { comparisonAttribution } from "./comparison-attribution.js";
@@ -305,14 +303,10 @@ function bindSourceTask(
   }
   const input = { task_analysis, ground_truth: { available: data.reference !== null, value: reference }, candidates: materials,
     ...(comparisonDraft ? { comparison_draft: comparisonDraft } : {}), attributions, review_coverage: reviewCoverage };
-  const focus = taskFocus(materials, input.ground_truth,
-    Object.fromEntries(Object.entries(data.candidates).map(([label, candidate]) =>
-      [label, inputs[candidate.input_id] as RawInput])));
-  for (const answer of Object.values(focus.answers)) delete answer.final_answer;
   const binding: AgentBinding = {
     agent: "comparison",
     profile: data.verificationAudit ? "verification" : "default",
-    projectModelInput: projectComparisonEvidence,
+    ...(data.verificationAudit ? { projectModelInput: projectComparisonEvidence } : {}),
     request: { input, sources },
     modelInput: data.verificationAudit ? verificationPresentation({ ...input, candidates: Object.fromEntries(Object.entries(materials).map(([label, material]) => {
           const projected = modelMaterial(material, label, sources[label].value as RawInput, sources[label].id);
@@ -320,19 +314,19 @@ function bindSourceTask(
             criterion_instruction_sources: criterionInstructionSources(sources[label].value as RawInput,
               material.final_message_index, task_analysis as TaskAnalysis, data.candidates[label].input_id) }];
         })) }, sources, task_analysis as TaskAnalysis)
-      : { ...input, task_analysis: taskAnalysisPresentation(task_analysis as TaskAnalysis,
+      : { task_analysis: taskAnalysisPresentation(task_analysis as TaskAnalysis,
           Object.fromEntries(Object.entries(sources).map(([label,source]) => [label,source.id]))),
-        task_focus: focus,
+        review_coverage: reviewCoverage,
         comparison_scope: comparisonScope({ input, sources }),
         comparison_slots: comparisonSlotChoices({ input, sources }),
-        attributions: Object.fromEntries(Object.entries(attributions).map(([label, result]) => [label,
-          attributionPresentation(result, label, sources[label].value, sources[label].id)])),
-        candidates: Object.fromEntries(Object.entries(materials).map(([label, material]) => {
-          const { turns: _turns, initial_material: _initial,
-            citation_inventory: _citations, answer_generation: _generation, note: _note, ...delivery } =
-            { ...material, ...modelMaterial(material, label, sources[label].value as RawInput, sources[label].id) };
-          return [label, delivery];
-        })) },
+        attributions: Object.fromEntries(Object.entries(attributions).map(([label, result]) => [label, {
+          ...result, Problem: result.Problem.map(({ evidence: _evidence, ...finding }) => finding),
+        }])),
+        candidates: Object.fromEntries(Object.entries(materials).map(([label, material]) => [label, {
+          question: material.question,
+          original_answer_timing: material.original_answer_timing,
+          original_answer_usage: material.original_answer_usage,
+        }])) },
   };
   if (data.prediction && binding.modelInput)
     binding.modelInput.prediction_evaluation = workflowText("prediction-evaluation");
@@ -341,8 +335,5 @@ function bindSourceTask(
     binding.inspectionInput = binding.modelInput;
     binding.modelInput = verificationInspectionPresentation(binding.modelInput as ReturnType<typeof verificationPresentation>, task_analysis as TaskAnalysis);
   }
-  if (!data.verificationAudit) binding.presentedReads = Object.entries(binding.modelInput!.candidates as Record<string, Record<string, unknown>>)
-    .flatMap(([label, material]) => [...presentedMaterialReads(material, label, sources[label].id),
-      ...presentedMaterialReads({ process_evidence: ((binding.modelInput!.attributions as Record<string, { Problem: { evidence: unknown[] }[] }>)[label].Problem).flatMap(problem => problem.evidence) }, label, sources[label].id)]);
   return binding;
 }

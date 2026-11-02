@@ -641,6 +641,8 @@ export function resolveVerification(request: AgentRequest, draft: unknown, audit
 }
 
 export function validateVerification(request: AgentRequest, result: unknown, audit: ToolAudit): void {
+  const materialIssues = [...comparisonFinalImageIssues(request, audit), ...comparisonDeferredFinalIssues(request, audit)];
+  if (materialIssues.length) throw new ValidationError(materialIssues);
   const inspection = audit.inspection?.value as unknown as ComparisonMaterialInspection | undefined;
   if (inspection) validateMaterialInspection(request, inspection, { ...audit, ...audit.inspection!.proof });
   const localReviews = verificationConcerns(audit).filter(concern => !concern.criterion_ids.length).map(localReview);

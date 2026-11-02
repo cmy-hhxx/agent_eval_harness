@@ -23,10 +23,11 @@ test("fixed flat key_data assigns indices and resolves original values without g
   assert.deepEqual(result, { value: [{ key_data_idx: 1, key_data_content: "2.492108",
     evidence: [{ evidence_id: f.original.evidence_id, quote: "2.492108" }] }] });
   assert.deepEqual(draft, before);
+  for (const extra of [{ key_data_idx: 99 }, { key_data_content: { nested: "不采用" } }, { extra: {} }])
+    assert.deepEqual(f.registry.resolve(f.binding, { value: [{ ...draft.value[0], ...extra }] }, f.audit), result,
+      "extra fields are removed before program-owned values are bound");
   for (const value of [
-    { 任意分组: draft.value }, [{ ...draft.value[0], key_data_idx: 99 }],
-    [{ ...draft.value[0], key_data_content: { nested: "不允许" } }],
-    [{ ...draft.value[0], extra: {} }], [{ ...draft.value[0], evidence: [] }],
+    { 任意分组: draft.value }, [{ ...draft.value[0], evidence: [] }],
     [{ ...draft.value[0], evidence: [2] }], [{ ...draft.value[0], evidence: [1, 1] }],
   ]) assert.throws(() => f.registry.resolve(f.binding, { value }, f.audit), ValidationError);
   assert.throws(() => f.registry.resolve({ ...f.binding, request: { ...f.binding.request,
@@ -64,7 +65,7 @@ test("component extraction requires the exact actual script name in selected sou
   f.registry.validate(f.binding, result, f.audit);
   assert.throws(() => f.registry.resolve(f.binding, { value: [{ ...draft.value[0], components_name: "模型推理生成" }] }, f.audit), error =>
     error instanceof ValidationError && error.issues?.some(issue => issue.code === "component_actor_name") === true);
-  assert.throws(() => f.registry.resolve(f.binding, { value: [{ ...draft.value[0], details: { purpose: "多余层" } }] }, f.audit), ValidationError);
+  assert.deepEqual(f.registry.resolve(f.binding, { value: [{ ...draft.value[0], details: { purpose: "多余层" } }] }, f.audit), result);
 });
 
 test("field prompts contain a fixed example and permit one targeted structural repair", () => {

@@ -7,7 +7,7 @@ import { buildPlan } from "./input.js";
 import { bindTask } from "./binding.js";
 import { attributionResult, criteriaResultForTask, emptyAudit, fakeEvaluatorVersion, fakeJudge, fixtureConfig, raw } from "../../../../tests/fixtures/comparison.js";
 
-test("comparison presents long delivery exactly once without requiring a duplicate read", async t => {
+test("comparison receives accepted conclusions without raw answers, evidence or investigation tools", async t => {
   const answer = "完整交付不得截断。".repeat(3000);
   const f = await fixtureConfig([[raw("q1", "4", answer)], [], [raw()], []]);
   t.after(() => rm(f.directory, { recursive: true, force: true }));
@@ -20,8 +20,14 @@ test("comparison presents long delivery exactly once without requiring a duplica
   const before = structuredClone(dependencies);
   const binding = bindTask(task, plan.inputs, dependencies, { tasks: plan.tasks });
   const prompt = comparisonProfile.renderPrompt(binding.modelInput!);
-  assert.equal(prompt.split(answer).length - 1, 1);
-  assert.deepEqual(comparisonProfile.requiredReads!(binding.request), []);
+  assert(!prompt.includes(answer));
+  assert(prompt.includes(attributionResult().session_summary));
+  for (const field of ["final_answer", "final_evidence", "evidence_id", "catalog", "input_file", "task_focus"])
+    assert(!prompt.includes('"' + field + '"'), field);
+  assert.deepEqual(comparisonProfile.toolNames, []);
+  assert.equal(comparisonProfile.requiredReads, undefined);
+  assert.equal(comparisonProfile.validateSubmission, undefined);
+  assert(JSON.stringify(binding.request.sources).includes(answer), "trusted sources remain intact for result provenance");
   assert.deepEqual(dependencies, before);
   assert.equal(comparisonProfile.jsonStringSubmission, undefined);
 });

@@ -1,5 +1,5 @@
 {
-  "evaluatorVersion": "r515",
+  "evaluatorVersion": "r516",
   "inputs": {
     "timing_unit": "ms",
     "versions": [
@@ -71,7 +71,7 @@
     "comparison": true,
     "attribution": true,
     "clustering": true,
-    "comparisonItems": true
+    "comparisonItems": false
   },
   "clustering": {
     "enabled": false,

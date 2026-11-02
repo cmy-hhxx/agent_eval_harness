@@ -11,7 +11,7 @@
 | evaluator_version / judge | Host 收据 | 结果追溯、条件分层 | 保存接受时身份，同 run 可以混合，不能用当前配置倒填。 |
 | Criteria 请求的 question / instruction sources | Workflow | Criteria | 原问与适用规范定义交付义务；已匹配调用与返回的技能保留 tool 来源，普通工具事实不成为规范。此阶段不接收标准答案，避免将参考背景变为额外要求。 |
 | session_meta / turns[].meta | Workflow | 正式归因JSONL、恢复、Eris | 原样保留外层与各轮输入元信息，不由模型填写；运行与评测器身份由来源收据保存。 |
-| ground_truth / 原始标准引用 | 输入适配器、Workflow | Attribution、Comparison 事实核对及正式导出 | 保留完整标准以核验用户所求事实，不能据此扩展题意；不进入 Criteria 请求。 |
+| ground_truth / 原始标准引用 | 输入适配器、Workflow | Attribution、独立核验及正式导出 | 保留完整标准以核验用户所求事实，不能据此扩展题意；不进入 Criteria 或默认 Comparison 模型请求。 |
 | requirements / scoring_points / red_flags | Criteria | Attribution、Comparison | 有不同验收含义；统一作用域和来源绑定避免私规外溢。 |
 | is_correct / correct_reason | Attribution | 标准一致性核对 | 只判断与给定标准答案是否一致，独立于问题归因；无标准时 is_correct 固定 null，correct_reason 由程序填写未提供标准的说明。 |
 | Problem | Attribution | Comparison、Score、Clustering、报告 | 正式问题及依据、实际影响与严重程度；允许充分评审后的空数组，摘要不替代问题。 |
@@ -28,7 +28,7 @@
 | quality_winner / relative_preference | Comparison 内部提交 | 排名与偏好展示 | quality_winner 只在双方核心可用且存在实质优势时给出正式胜者；并列内的相对倾向单独表达，完全等价允许 null。 |
 | category | Clustering、问题库 | 问题主题、聚类树、目录维护 | 一个问题类只有一个问题方向；单值字段直接表达，不再包装为路径数组。 |
 | scope_conflicts[].slot_index / reason | Comparison 内部提交 | 来源复核请求派生 | 共同要求的口径冲突不能从 core 布尔推导；只选择现有共同槽，由程序生成双方既有 review_requests 并停止排名，不改源归因。 |
-| assessments.meets_core | Comparison | 正式判决 | 由比较阶段按实际交付判断，不从已删除的归因核心字段补造。 |
+| assessments.meets_core | Comparison | 正式判决 | 由比较阶段按已接受归因结论判断交付可用性，缺少决定性结论时保留未知。 |
 | ranking / verdicts | Workflow 确定性派生 | Eris、对战统计、报告 | 模型不重复手写；不同层面供当前消费者直接使用，保持外部契约。 |
 | decisive_findings / assessments.*.core_failure_refs | Comparison 校验与 Workflow | 裁决复核、来源追溯 | 从已接受来源选出与胜负方向一致的依据，保留可定位链。 |
 | has_standard_answer | Workflow | 统计分母、正式结果消费者 | 与 ground_truth.available 有冗余，正式消费者直接读取，保持现有导出字段。 |

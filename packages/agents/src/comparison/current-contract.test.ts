@@ -23,6 +23,13 @@ test('comparison accepts independent met judgments with evidence-backed no-probl
  assert(new Ajv2020({strict:false}).compile(comparisonProfile.requestSchema!)(request.input));
  const result=accept(request,draft);assert.equal(result.status,'decided');assert.deepEqual(result.ranking,[['A','B']]);assert.deepEqual(input.attributions,before);
 });
+test('default comparison accepts attribution conclusions without reading deferred original delivery',()=>{
+ const {request,input,draft}=fixture();
+ input.candidates.A.deferred_final_material=[{message_index:1,path:'/content',total_chars:30000}];
+ assert.deepEqual(comparisonProfile.toolNames,[]);
+ assert.equal(comparisonProfile.requiredReads,undefined);
+ assert.equal(accept(request,draft).status,'decided');
+});
 test('comparison resolves flat rows by slot_index and rejects nested candidate cells',()=>{
  const request=structuredClone(example.request) as AgentRequest,input=request.input as unknown as ComparisonInput;
  input.candidates.A.original_answer_timing.finish_seconds=4;input.candidates.B.original_answer_timing.finish_seconds=6;

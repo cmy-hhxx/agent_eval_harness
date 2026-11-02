@@ -790,8 +790,7 @@ test("a rejected file submission preserves the model working file for the next f
       const valid = draftFor(options.spec, taskResult(options.spec));
       const working = path.join(options.workdir, "evaluation-draft.json");
       await writeFile(working, JSON.stringify(valid));
-      const invalid = { ...(structuredClone(valid) as Record<string, unknown>),
-        item: { criterion_id: "r4", status: "met" } };
+      const invalid = invalidDraft(options.spec);
       const rejected = await submitFor(options, invalid);
       assert.equal(rejected.isError, true);
       assert.deepEqual(await readJson(working), valid, "Worker cannot overwrite the model's valid working file with a different rejected draft");
@@ -815,7 +814,7 @@ test("loaded file submissions retain exact rejected JSON after the same path is 
   let rejectedObject: unknown, acceptedObject: unknown;
   const fixture = await harness(async options => ({ async run() {
     acceptedObject = draftFor(options.spec,taskResult(options.spec));
-    rejectedObject = { ...(structuredClone(acceptedObject) as Record<string,unknown>), unexpected: true };
+    rejectedObject = invalidDraft(options.spec);
     const file = path.join(options.workdir,"submission-rejected.json");
     await writeFile(file,JSON.stringify(rejectedObject));
     assert.equal((await options.execute("submit_evaluation_file",{path:"submission-rejected.json"})).isError,true);

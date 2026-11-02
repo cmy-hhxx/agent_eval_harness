@@ -46,10 +46,10 @@ export function comparisonDeferredFinalIssues(request: AgentRequest, audit: Tool
   return errors;
 }
 
-export function validateEvaluation(request:AgentRequest,result:unknown,audit:ToolAudit,inspectionReviews:ComparisonResult['review_requests']=[]):void{
+export function validateEvaluation(request:AgentRequest,result:unknown,_audit:ToolAudit,inspectionReviews:ComparisonResult['review_requests']=[]):void{
  if(!validator(result))throw new ValidationError(schemaIssues(validator.errors,result));
  const input=request.input as unknown as ComparisonInput,value=result as ComparisonResult,labels=Object.keys(input.candidates);
- const errors:ValidationIssue[]=[...comparisonResultIssues(request,value),...comparisonFinalImageIssues(request,audit),...comparisonDeferredFinalIssues(request,audit)];
+ const errors:ValidationIssue[]=[...comparisonResultIssues(request,value)];
  const add=(code:string,path:string,message:string,candidate?:string,actual?:unknown)=>errors.push({category:'decision',code,path,message,candidate,actual});
  if(!isDeepStrictEqual(value.task_analysis,input.task_analysis))add('task_analysis_changed','/task_analysis','共同评测规则不得改写。');
  const criteria=[...input.task_analysis.requirements,...input.task_analysis.scoring_points,...input.task_analysis.red_flags];

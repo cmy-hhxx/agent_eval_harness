@@ -46,40 +46,40 @@ test("model quality remains a required common source", () => {
   rejects(() => accepted(req, missing), "criterion_required_source_missing");
 });
 
-test("a simple concept question has five common checks without optional deliveries", () => {
+test("a simple concept question needs only its actual common requirement", () => {
   const req = request("交易密码和登录密码是同一个吗？");
   const result = accepted(req, { requirements: [
-    "有依据地判断两类密码是否相同。", "区分所指账户体系与适用场景。",
-    "密码用途等实际陈述与事实一致。", "联动与例外的依据支持对应主体和方向。",
-    "区分明确、措辞不使用户混用两类密码。",
+    "有依据地判断两类密码是否相同，明确适用体系且表述清楚。",
   ].map(text => ({ source_indices: [1, qualityIndex(req)], text })), scoring_points: [], red_flags: [] });
-  assert.equal(result.requirements.length, 5);
+  assert.equal(result.requirements.length, 1);
   assert(result.requirements.every(item => !item.applies_to.length));
   assert.deepEqual(result.scoring_points, []);
   assert.deepEqual(result.red_flags, []);
 });
 
-test("common check budget is 5–12 after deduplication and private checks do not count", () => {
+test("common check budget is 1–12 after deduplication and private checks do not count", () => {
   const req = request(), base = draft(req);
-  for (const count of [4, 13]) {
+  for (const count of [1, 4, 13]) {
     const value = structuredClone(base);
     value.requirements = Array.from({length: count}, (_, i) => ({source_indices: [1, qualityIndex(req)], text: `独立检查 ${i}`}));
-    rejects(() => accepted(req, value), "criteria_common_budget");
+    if (count > 12) rejects(() => accepted(req, value), "criteria_common_budget");
+    else assert.equal(accepted(req, value).requirements.length, count);
   }
   const twelve = structuredClone(base);
   twelve.requirements.push(...Array.from({length: 7}, (_, i) => ({source_indices: [1], text: `其他独立条件 ${i}`})));
   assert.equal(accepted(req, twelve).requirements.length, 12);
   const duplicated = structuredClone(base);
   duplicated.requirements[4] = structuredClone(duplicated.requirements[0]);
-  rejects(() => accepted(req, duplicated), "criteria_common_budget");
+  assert.equal(accepted(req, duplicated).requirements.length, 4);
   const input = req.input as unknown as CriteriaInput;
   input.candidates[0].context = [{message_index: 0, role: "user", content: "只用一句话回答。"}];
   const own = criteriaSources(input).find(source => source.kind === "context")!;
-  const privateFifth = draft(req);
-  privateFifth.requirements[4] = {source_indices: [own.source_index], text: own.text};
-  rejects(() => accepted(req, privateFifth), "criteria_common_budget");
-  const direct = accepted(req, draft(req)); direct.requirements.pop();
-  rejects(() => criteriaProfile.validate!(req, direct, audit), "criteria_common_budget");
+  const withPrivate = structuredClone(twelve);
+  withPrivate.requirements[0].source_indices = [1, qualityIndex(req)];
+  withPrivate.requirements.push({source_indices: [own.source_index], text: own.text});
+  assert.equal(accepted(req, withPrivate).requirements.length, 13);
+  const direct = accepted(req, draft(req)); direct.requirements = [];
+  rejects(() => criteriaProfile.validate!(req, direct, audit), "schema_minItems");
   const split = draft(req);
   split.scoring_points.push(split.requirements.pop()!);
   assert.equal(accepted(req, split).scoring_points.length, 1, "all common groups share one budget");
@@ -208,7 +208,7 @@ test("automatic context wrappers remain excluded while system requirements are v
 
 test("checks are bounded flat source choices without model-owned identifiers", () => {
   const value = draft(); (value.requirements[0] as unknown as Record<string,unknown>).id = "made-up";
-  rejects(() => accepted(request(),value),"schema_additionalProperties");
+  assert.equal(accepted(request(),value).requirements[0].id,"r1", "extra submitted identifiers are discarded before binding program-owned IDs");
   const excessive = draft(); excessive.requirements = Array.from({length:25},(_,index)=>({source_indices:[1],text:`核查交付${index+1}。`}));
   rejects(() => accepted(request(),excessive),"schema_maxItems");
 });

@@ -445,10 +445,10 @@ export function draftFor(spec: Pick<AttemptSpec, "evaluation" | "inputs" | "prom
   return result;
 }
 
-/** A complete current submission whose first finding selects beyond the provided bank. */
+/** Missing required content remains invalid after ordinary field normalization. */
 export function invalidDraft(spec: Pick<AttemptSpec, "evaluation" | "inputs" | "prompt" | "evidenceBank">): unknown {
-  const draft=draftFor(spec,taskResult(spec)) as {session_summary?:unknown; summary?:unknown};
-  if ("session_overview" in draft) (draft as Record<string, unknown>).session_overview = 42;
-  else if ("session_summary" in draft) draft.session_summary=42; else draft.summary=42;
+  const draft = draftFor(spec,taskResult(spec)) as Record<string, unknown>;
+  const field = (spec.evaluation.outputSchema as { required: string[] }).required[0]!;
+  delete draft[field];
   return draft;
 }

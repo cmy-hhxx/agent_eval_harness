@@ -82,7 +82,7 @@ test("dimension export and repeated recovery preserve its own result and origina
   assert.equal(JSON.stringify(binding.request).includes(evaluation.summary), false);
 });
 
-test("the selected primary battles finish before independent reviews and polish start", () => {
+test("polish starts after its own source while independent reviews wait for selected battles", () => {
   const tasks = [
     { id: "a", stage: "attribution-session", dependencies: {} },
     { id: "c", stage: "comparison", dependencies: { answer: "a" } },
@@ -93,10 +93,14 @@ test("the selected primary battles finish before independent reviews and polish 
   const manifest = { tasks, executionScope: ["a", "c", "i", "r"], states: Object.fromEntries(tasks.map(task =>
     [task.id, { status: "pending", attempts: 0 }])) } as RunManifest;
   manifest.states.a.status = "succeeded";
-  for (const task of tasks.slice(2, 4)) assert.equal(comparisonWorkflow.canStart!(task, manifest), false);
+  assert.equal(comparisonWorkflow.canStart!(tasks[2], manifest), false);
+  assert.equal(comparisonWorkflow.canStart!(tasks[3], manifest), true);
   assert.equal(comparisonWorkflow.canStart!(tasks[1], manifest), true);
   manifest.states.c.status = "succeeded";
   for (const task of tasks.slice(2, 4)) assert.equal(comparisonWorkflow.canStart!(task, manifest), true);
   manifest.states.c.status = "failed";
   assert.equal(comparisonWorkflow.canStart!(tasks[3], manifest), true, "a failed battle does not strand healthy polish");
+  manifest.states.a.status = "pending";
+  assert.equal(comparisonWorkflow.canStart!(tasks[3], manifest), false, "polish still needs its own accepted source");
+  assert(comparisonWorkflow.scheduling!.stagePriority!("rewrite") < comparisonWorkflow.scheduling!.stagePriority!("comparison"));
 });

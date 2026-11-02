@@ -22,12 +22,14 @@ export const comparisonWorkflow: WorkflowDefinition = {
     stagePriority: stage => {
       if (attributionDimension(stage)) return 5;
       return ({ comparison: 0, "attribution-session": 1, "attribution-trace": 2,
-        "attribution-compact": 3, criteria: 4, rewrite: 6, clustering: 7 } as Record<string, number>)[stage] ?? 4;
+        "attribution-compact": 3, criteria: 4, rewrite: -1, clustering: 7 } as Record<string, number>)[stage] ?? 4;
     },
   },
   canStart: (task, manifest) => task.stage === "comparison"
     ? Object.values(task.dependencies).every(id => manifest.states[id]?.status === "succeeded")
-    : task.stage === "rewrite" || !!attributionDimension(task.stage)
+    : task.stage === "rewrite"
+    ? Object.values(task.dependencies).every(id => manifest.states[id]?.status === "succeeded")
+    : !!attributionDimension(task.stage)
     ? !manifest.tasks.some(item => !isDeferred(item.stage) &&
       (!manifest.executionScope || manifest.executionScope.includes(item.id)) &&
       ["pending", "running"].includes(manifest.states[item.id].status))
