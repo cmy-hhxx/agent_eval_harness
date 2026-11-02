@@ -21,6 +21,8 @@ test("pair rewrites must state the accepted preference and retain ties", () => {
   for (const text of ["双方都完成了核心要求，未见共同遗漏。", "A组Fast更好：更完整。", "B组Fast更好："])
     assert.throws(() => rewriteProfile.validate!(request, { rewrites: [{ id: request.input.items[0].id, text }] }, audit), /已确定偏好/);
   rewriteProfile.validate!(request, { rewrites: [{ id: request.input.items[0].id, text: "B组Fast更好：补充了近期事件催化，解释更贴题。" }] }, audit);
+  assert.throws(() => rewriteProfile.validate!(request, { rewrites: [{ id: request.input.items[0].id,
+    text: "B组Fast更好：候选A未解释近期事件，候选B补充了催化。" }] }, audit), /实际模型名称/);
   request.input.items[0].preference = "双方都好";
   rewriteProfile.validate!(request, { rewrites: [{ id: request.input.items[0].id,
     text: "双方都好：均已完成核心任务，现有差异不足以证明某一方更可用。" }] }, audit);

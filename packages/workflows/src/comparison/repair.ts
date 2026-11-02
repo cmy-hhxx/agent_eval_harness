@@ -221,10 +221,6 @@ export async function prepareComparisonRewrites(run: string, selection: RewriteS
         if (chosen) throw new Error("对比尚未接受，先补跑失败任务：" + source.id);
         continue;
       }
-      if ((receipt.evaluation as ComparisonResult).status === "needs_review") {
-        if (chosen) throw new Error("待复核结果没有正式裁决改写槽位：" + source.id);
-        continue;
-      }
       const available = comparisonSlots(receipt.evaluation as ComparisonResult, selection.scope);
       for (const id of requested)
         if (!available.some((item) => item.id === id)) throw new Error(`结果 ${source.id} 没有槽位 ${id}`);

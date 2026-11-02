@@ -35,9 +35,9 @@ function analysisComparisonResult(task: SavedTask): "accepted" | "pending_review
   if (task.stage !== "comparison" || task.data.verificationAudit || task.status !== "succeeded") return null;
   const exported = task.receipt?.exported;
   if (!exported) return null;
-  // The current codec omits a stage's default filename; comparison-review keeps it explicitly.
+  // Outcome status is indexed independently of the shared delivery file.
   const file = exported.file ?? "comparison.jsonl";
-  if (file === "comparison-review.jsonl") return "pending_review";
+  if (exported.comparisonStatus === "needs_review" || file === "comparison-review.jsonl") return "pending_review";
   return file === "comparison.jsonl" ? "accepted" : null;
 }
 

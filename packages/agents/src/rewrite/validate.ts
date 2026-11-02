@@ -29,6 +29,8 @@ export function validateEvaluation(request: AgentRequest, result: unknown, audit
     else if (seen.has(item.id))
       issue("rewrite_duplicate_id", `/rewrites/${index}/id`, "同一槽位只能改写一次", item.id);
     seen.add(item.id);
+    if (input.kind === "comparison" && /候选\s*[A-Z]/u.test(item.text))
+      issue("rewrite_blind_identity", `/rewrites/${index}/text`, "对比理由必须沿用请求中的实际模型名称，不能输出匿名候选称谓", item.text);
     if (forbiddenPrefixes.get(item.id)?.some((prefix) => item.text.trimStart().startsWith(prefix)))
       issue("rewrite_context_prefix", `/rewrites/${index}/text`, "不要把对照信息或优势标签复制为点评前缀；直接写该槽位本身的事实，保持事实主体不变", item.text);
     const preference = preferences.get(item.id);

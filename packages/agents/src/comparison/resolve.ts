@@ -3,7 +3,7 @@ import { schemaIssues, ValidationError, type AgentRequest, type ValidationIssue 
 import { comparisonText, comparisonResourceText } from "@eval/prompts";
 import schema from "../../../../schemas/comparison/submission.schema.json" with { type: "json" };
 import type { ComparisonInput, ComparisonResult, ComparisonSubmission } from "./types.js";
-import { criterionAppliesToPair, findingAppliesToPair } from "./pair-scope.js";
+import { criterionAppliesToPair } from "./pair-scope.js";
 import { comparisonDecisiveFindings } from "./result-checks.js";
 import { comparisonSlots, comparisonSlotChoices, comparisonSlotCellState, comparisonAdvantageCandidates, comparisonResourceMetrics, comparisonResourceAdvantage, comparisonResourcesComparable, requiredSourceReviews } from "./slots.js";
 
@@ -158,23 +158,6 @@ export function resolveComparison(request: AgentRequest, draft: unknown): Compar
   const winner = ranking.length > 1 ? ranking[0][0] : null;
   if (winner && value.relative_preference !== winner) throw new ValidationError([{ category: "decision", code: "relative_preference_winner_mismatch",
     path: "/relative_preference", message: "正式胜者已确定，relative_preference 必须与胜者一致。", expected: winner, actual: value.relative_preference }]);
-  if (value.relative_preference === null) {
-    // Matching codes are necessary for equivalence, not proof of equivalent meaning.
-    const commonIds = new Set(slots.filter(slot => slot.shared).flatMap(slot => slot.criterion_ids));
-    const metrics = labels.map(candidate => comparisonResourceMetrics(input, candidate));
-    const resourceDifference = (["finish_seconds", "total_tokens"] as const).some(key =>
-      metrics.every(metric => metric[key] !== null) && metrics.some(metric => metric[key] !== metrics[0][key]));
-    const sharedDifference = comparisons.some(row => row.better_candidates.length ||
-      row.criterion_ids.some(id => commonIds.has(id)) && Object.values(row.assessments).some(cell =>
-        cell.evidence_status !== "已确认" || cell.status !== row.assessments[labels[0]].status));
-    // Unmapped facts have no paired equivalence check, even when they cannot change a both-bad verdict.
-    const unpairedObservation = labels.some(candidate => input.attributions[candidate].Problem.some((finding, index) =>
-      finding.evidence_status === "已确认" &&
-      findingAppliesToPair(input, candidate, index, request.sources[candidate]?.value) &&
-      !comparisons.some(row => row.assessments[candidate].finding_indices.includes(index))));
-    if (sharedDifference || resourceDifference || unpairedObservation) throw new ValidationError([{ category: "decision", code: "relative_preference_required",
-      path: "/relative_preference", message: "只有共同交付已确认等价、没有已确认差异时才可不表达相对偏好；当前仍有优势、状态差异、待核事实、资源差异或未进入对比格的已确认共同观察。请依据实际取舍选择 A 或 B。" }]);
-  }
   const resources = comparisons.find(row => !row.criterion_ids.length &&
     Object.values(row.assessments).every(cell => !cell.finding_indices.length));
   const resourceText = resources ? " " + labels.map(candidate => comparisonText("tradeoff_candidate")

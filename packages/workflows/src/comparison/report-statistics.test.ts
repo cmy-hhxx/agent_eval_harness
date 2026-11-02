@@ -22,7 +22,7 @@ function source(row: JsonObject): PlannedTask {
 }
 function pair(first: string, second: string, core: [boolean, boolean], refs: [string, string],
   batch = "day", caseId = "case", winner: string | null = null): JsonObject {
-  return { comparison_id: `${batch}:${caseId}:${first}:${second}`, case: { batch_id: batch, case_id: caseId },
+  return { status: "decided", comparison_id: `${batch}:${caseId}:${first}:${second}`, case: { batch_id: batch, case_id: caseId },
     models: { [first]: {}, [second]: {} }, ranking: winner ? [[winner], [[first, second].find((id) => id !== winner)!]] : [[first, second]],
     assessments: { [first]: { meets_core: core[0] }, [second]: { meets_core: core[1] } },
     attribution_task_ids: { [first]: refs[0], [second]: refs[1] },
@@ -56,7 +56,7 @@ test("report surfaces comparison coverage and standard conflicts", async () => {
     await writeOverview(directory, { ...totals, run_id: "coverage", status: "finished", evaluator_versions: ["test"],
       by_batch: {}, tokens: { totalTokens: 0 }, attempts_without_final_metrics: 0 });
     const report = await readFile(path.join(directory, "report.md"), "utf8");
-    assert.match(report, /比较覆盖：已决 40；待核 1；未完成 2（计划 43）。标准冲突待核：1 例（见 stats.json）。/);
+    assert.match(report, /比较覆盖：已决 40；无法判定 1；未完成 2（计划 43）。标准冲突待核：1 例（见 stats.json）。/);
   } finally { await rm(directory, { recursive: true, force: true }); }
 });
 

@@ -99,7 +99,7 @@ Criteria 提交三组 `{source_indices,text}`：requirements、scoring_points、
 
 Attribution 正式结果顶层为 `session_meta/turns/session_summary/session_problem`；过程摘要独立保留在 `compact.jsonl`，使用固定浅层结构。逐轮问题与正确性见[正式契约](attribution.md#正式契约)。
 
-普通 Comparison 可用 `source_reviews` 提交决定性来源疑点，每项选择已有 `slot_index`、该槽 `reviewable_candidates` 中的 `candidate` 并说明 `reason`。程序绑定该候选原判据和 finding，保留 `needs_review`、空排名和空决定性引用，不改变归因。非空复核禁止同时提交正式或相对偏好；资源槽、不适用候选及重复选择均拒绝。双方门槛不一致继续用 `scope_conflicts`，同槽不重复提交两种复核。此入口约束已识别的语义风险，结构校验本身不保证模型能识别所有误读。
+普通 Comparison 可用 `source_reviews` 提交决定性来源疑点，每项选择已有 `slot_index`、该槽 `reviewable_candidates` 中的 `candidate` 并说明 `reason`。程序绑定该候选原判据和 finding，保留表示无法判定的 `needs_review`、空排名和空决定性引用，不改变归因。非空复核禁止同时提交正式或相对偏好；资源槽、不适用候选及重复选择均拒绝。双方门槛不一致继续用 `scope_conflicts`，同槽不重复提交两种复核。此入口约束已识别的语义风险，结构校验本身不保证模型能识别所有误读。
 
 `is_correct` 只表示与给定标准答案的一致性，不代表整体质量。1 表示一致，0 表示不一致，null 表示没有标准或给定标准无法支持判断。`correct_reason` 说明对象、依据和具体原因；没有标准时不编造正确性。
 
@@ -115,13 +115,15 @@ Attribution 正式结果顶层为 `session_meta/turns/session_summary/session_pr
 
 ### 对比与定向补查
 
-主线每场一次 Comparison，**只读已接受归因结论，不自动补查归因**。默认模型材料仅含共同标准、归因总结与问题理由、核查覆盖及资源指标，不含原始回答、证据摘录或来源目录，也不注册调查工具或要求重复读取图片。决定性结论缺失或冲突时保留待复核。定向复核、标准答案复核和事后核验各有显式入口，独立核验仍检查原始材料与图片覆盖。
+主线每场一次 Comparison，**只读已接受归因结论，不自动补查归因**。默认模型材料仅含共同标准、归因总结与问题理由、核查覆盖及资源指标，不含原始回答、证据摘录或来源目录，也不注册调查工具或要求重复读取图片。局部未知不影响已有充分胜因时照常裁决；只有决定性结论缺失或冲突使核心判断无法成立时标记无法判定。定向复核、标准答案复核和事后核验各有显式入口，独立核验仍检查原始材料与图片覆盖。
 
 Comparison 按 comparison_slots 显式选择 slot_index 与 kind，提交 importance、普通格可选 better_candidate 和双方 candidate 评估；核心完成 assessments 也逐候选提交。每个比较槽最多一行，候选专有且无需评审的槽可省略，不提交 null 或重复槽。整体另交可选 quality_winner、必填 relative_preference 及一段完整 tradeoff。取舍先说明决定性差异，再解释实际存在的重要反向事实为何不足以逆转。逐格点评、状态、关联、核心失败引用和排名由程序从已接受归因派生。
 
 普通 Comparison 对尚未统一、且可能改变核心可用性、正式胜负或使主胜因失效的共同口径冲突，提交可选 `scope_conflicts: [{slot_index, reason}]`。reason 说明双方口径及受影响的结论。索引沿用已有零起始 comparison_slots，只允许共同 criterion 槽；程序派生双方现有来源复核请求，结果为 needs_review、空排名，不改源 Attribution。非空冲突时不得同时给出正式或相对偏好；重复、越界、资源与私规槽均拒绝，importance=low 不能绕过已提报的关键冲突。普通质量差距、等价表达或不影响独立充分胜因的局部瑕疵不进入该入口；不可靠的次要理由不作为优势，保留限制后可继续裁决。识别及影响判断由同一次 Comparison 调用负责，程序只约束来源与状态转换。执行边界见[归因执行边界](quality.md#归因执行边界)。
 
-横向优势须来自共同适用、双方 established 的同方面事实；普通项不能选择已确认 status 更差的一方，资源项方向由双方同种有效原始指标的支配关系重算并校验。没有同名 finding 不等于另一方没做到；私规不参与共同优势。核心未知、基准不一致或已知材料冲突保留 needs_review，不进入正式胜负、都好、都差。双方核心均已确认失败时，额外未关联问题不阻塞都差。
+横向优势须来自共同适用、双方 established 的同方面事实；普通项不能选择已确认 status 更差的一方，资源项方向由双方同种有效原始指标的支配关系重算并校验。没有同名 finding 不等于另一方没做到；私规不参与共同优势。核心未知、决定性基准不一致或材料冲突保留 needs_review，不进入正式胜负、都好、都差。双方核心均已确认失败时，额外未关联问题不阻塞都差。 局部未知与轻微资源差异不强迫相对选边，relative_preference 可为 null。所有主线比较统一进入 comparison.jsonl；无法判定的 verdict.result 为 undetermined、胜者为空，仍可改写并交付，不自动启动复核。原有 needs_review 状态仅表达未裁决，不阻塞工作流。
+
+对局 verdict.reason 先包含具体取舍事实，Rewrite 接受后直接回填该字段，并保留 rewritten 中的槽位及版本溯源。续跑时也回填已接受的改写，不重评既有裁决。候选身份按本场固定 A/B 映射展开为实际模型名，改写不能改变胜者、数值归属或判决；归因原文与证据引用保持原样。
 
 ### 提交方式与反馈
 

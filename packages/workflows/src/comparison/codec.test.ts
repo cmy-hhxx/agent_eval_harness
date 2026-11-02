@@ -64,7 +64,7 @@ test("exported comparison patches keep candidate identity when the label mapping
   const basis = { tradeoff: "", comparisons: [], decisive_findings: [] };
   const evaluation = { status: "decided", review_requests: [], task_analysis: {},
     ranking: [["A"], ["B"]], assessments: { A: {}, B: {} }, decision_basis: basis };
-  const row = { task_analysis: {}, ranking: [["a_fast"], ["b_fast"]],
+  const row = { status: "decided", task_analysis: {}, ranking: [["a_fast"], ["b_fast"]],
     assessments: { a_fast: {}, b_fast: {} }, decision_basis: basis };
   const data = { stage: "comparison", candidates: { A: { version: "a_fast" }, B: { version: "b_fast" } } };
   const state = {

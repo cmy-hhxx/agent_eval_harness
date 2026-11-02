@@ -21,6 +21,13 @@ export async function reconcileRun(_run: string, state: RunState, current: unkno
   options?: { extendVersions: boolean; preserveCompletedResults?: boolean }): Promise<TaskPlan> {
   const config = state.manifest.config as EvalConfig,
     supplied = current as EvalConfig;
+  for (const task of state.manifest.tasks) {
+    const old = state.manifest.states[task.id];
+    if (task.stage === "rewrite" && old?.status === "blocked" &&
+      (state.receipts[task.dependencies.source]?.evaluation as ComparisonResult | undefined)?.status === "needs_review" &&
+      (task.data as TaskData).rewriteOf?.stage === "comparison")
+      state.manifest.states[task.id] = pendingTaskProgress(old);
+  }
   configureStandardReview(state, supplied.standardAnswerReview === true);
   if (state.manifest.executionScope) {
     state.manifest.config = { ...config, execution: supplied.execution, standardAnswerReview: supplied.standardAnswerReview === true };

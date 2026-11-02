@@ -13,7 +13,8 @@ test("time scope distinguishes evaluation, accepted-result dates and unknown sou
   const start = Date.parse("2026-10-09T23:00:00Z"), end = Date.parse("2026-10-10T12:00:00Z");
   const accepted = task("comparison", "succeeded", { reference: null }, {}, "");
   accepted.receipt!.acceptedAt = start + 3600000;
-  const ignored = task("comparison", "succeeded", { reference: null }, {}, "comparison-review.jsonl");
+  const ignored = task("comparison", "succeeded", { reference: null }, {}, "comparison.jsonl");
+  ignored.receipt!.exported!.comparisonStatus = "needs_review";
   ignored.receipt!.acceptedAt = end;
   const saved = { runId: "run", status: "finished", startedAt: start, finishedAt: end,
     config: { inputs: { versions: [] } }, inputs: {}, tasks: { accepted, ignored } } as unknown as Parameters<typeof analysisProgress>[0];
@@ -47,12 +48,13 @@ test("whole-run progress counts business identities and accepted outputs without
       audit: task("comparison", "succeeded", { reference: null, verificationAudit: true, verificationOf: { taskId: "acceptedComparison" } }, {}, "comparison-verification.jsonl"),
       acceptedComparison: task("comparison", "succeeded", { reference: null }, {}, ""),
       failedVerification: task("comparison", "failed", { reference: null, verificationAudit: true, verificationOf: { taskId: "acceptedComparison" } }),
-      pendingReview: task("comparison", "succeeded", { reference: null }, {}, "comparison-review.jsonl"),
+      pendingReview: task("comparison", "succeeded", { reference: null }, {}, "comparison.jsonl"),
       directComparison: task("comparison", "running"),
       rewrite: task("rewrite", "blocked"),
       clustering: task("clustering", "cancelled"),
     },
   } as unknown as Parameters<typeof analysisProgress>[0];
+  saved.tasks.pendingReview!.receipt!.exported!.comparisonStatus = "needs_review";
   const before = structuredClone(saved), summary = analysisProgress(saved);
   assert.equal(summary.inputCount, 4);
   assert.equal(summary.evaluatedInputCount, 1, "successful review of one answer does not evaluate its factual peer; repeated reviews do not create more answers");

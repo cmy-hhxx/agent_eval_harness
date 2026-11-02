@@ -37,10 +37,4 @@ export const comparisonWorkflow: WorkflowDefinition = {
     .filter(item => item.stage === "attribution-session" && (!(item.data as TaskData).reviewOf ||
       (item.data as TaskData).standardConflictReview))
     .every(item => !["pending", "running"].includes(manifest.states[item.id].status)),
-  blockedReason: (task, dependencies) => {
-    if (task.stage !== "rewrite") return undefined;
-    return Object.values(dependencies).some((receipt) =>
-      (receipt.evaluation as { status?: string }).status === "needs_review")
-      ? "Comparison remains unresolved" : undefined;
-  },
 };

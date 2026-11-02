@@ -47,6 +47,12 @@ for (const [subject, text, expected] of [
   assert.equal(polished.verdicts.a_expert__vs__b_expert.reason, expected);
   assert.equal(polished.verdicts.a_expert__vs__b_expert.winner_name, "B组Expert");
   assert.deepEqual(polished.evaluations.a_expert, before);
+  state.receipts[task.id] = { ...source, exported: { id: String(row.comparison_id), file: "comparison.jsonl", row } };
+  const written = encodeResult(rewrite, state, {})!.row as any;
+  assert.equal(written.verdicts.a_expert__vs__b_expert.reason, expected,
+    "the durable JSONL must apply the accepted rewrite to verdict.reason, not only attach rewritten");
+  assert.equal(written.verdicts.a_expert__vs__b_expert.winner_version, "b_expert");
+  assert.doesNotMatch(written.verdicts.a_expert__vs__b_expert.reason, /候选[A-Z]/u);
   const saved = structuredClone(row) as any;
   saved.decision_basis.tradeoff = text;
   saved.assessments.b_expert.summary = text;

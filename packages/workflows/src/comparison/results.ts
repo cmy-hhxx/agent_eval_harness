@@ -21,6 +21,7 @@ import { acceptedRewriteProjection } from "./rewrite-projection.js";
 import { sessionAttributionResultSchema } from "@eval/agents/attribution";
 export { acceptedRewrites, acceptedRewriteProjection, sourceRewriteTasks } from "./rewrite-projection.js";
 import { displayComparison } from "./candidate-display.js";
+import { polishComparisonRow } from "./commentary.js";
 export { display, displayComparison } from "./candidate-display.js";
 
 /** Refresh display-only fields of a durable row without changing judgments or evidence. */
@@ -40,7 +41,9 @@ export function displayComparisonRow(row: JsonObject, task: PlannedTask): JsonOb
     for (const assessment of Object.values(item.assessments as Record<string, JsonObject>)) prose(assessment, "summary");
   }
   if (view.rewritten) for (const item of (view.rewritten as JsonObject).rewrites as JsonObject[]) prose(item, "text");
-  return view;
+  const rewrites = (view.rewritten as { rewrites: { id: string; text: string }[] } | undefined)?.rewrites;
+  return rewrites ? polishComparisonRow(view, task, { of: id => id === task.id
+    ? Object.fromEntries(rewrites.map(item => [item.id, item.text])) : undefined }) : view;
 }
 
 /** Derive every two-way verdict from the group ranking plus per-candidate core classification. */
@@ -50,7 +53,6 @@ function deriveVerdicts(
   group: string[],
   labels: Record<string, string>,
 ): Record<string, JsonObject> {
-  if (result.status !== "decided") throw new Error("待复核结果不能推导对战判决");
   const labelOf = new Map(Object.entries(candidates).map(([label, c]) => [c.version, label]));
   const tiers = tierOf(result.ranking);
   const verdicts: Record<string, JsonObject> = {};
@@ -60,6 +62,11 @@ function deriveVerdicts(
         vb = group[j]!,
         la = labelOf.get(va)!,
         lb = labelOf.get(vb)!;
+      if (result.status !== "decided") {
+        verdicts[va + "__vs__" + vb] = { result: "undetermined", winner_version: null, winner_name: null,
+          reason: displayComparison(result.review_requests.map(item => `【候选${item.candidate}】：${item.reason}`).join("；") || result.decision_basis.tradeoff, labels) };
+        continue;
+      }
       const decision = decideVerdict(
         result.assessments[la]!.meets_core!,
         result.assessments[lb]!.meets_core!,
@@ -72,7 +79,7 @@ function deriveVerdicts(
         result: decision.outcome,
         winner_version: winnerVersion,
         winner_name: winnerLabel ? labels[winnerLabel] : null,
-        reason: displayComparison(verdictReason(decision, la, lb), labels),
+        reason: displayComparison(`${verdictReason(decision, la, lb)} ${result.decision_basis.tradeoff}`, labels),
       };
     }
   return verdicts;
@@ -102,7 +109,7 @@ export function comparisonRow(
   const first = data.candidates[Object.keys(data.candidates).find((label) => data.candidates[label]!.version === group[0])!]!;
   const raw = inputs[first.input_id] as RawInput;
   return {
-    request_time: raw.request_time ?? null,
+    request_time: raw?.request_time ?? null,
     has_standard_answer: data.reference !== null,
     evaluator_version: evaluatorVersion,
     status: result.status,
@@ -230,10 +237,9 @@ export function encodeResult(task: PlannedTask, state: RunState, inputs: Record<
   if (task.stage === "attribution-compact" && !validateCompact(receipt.evaluation))
     throw new Error("Compact 导出契约无效：" + ajv.errorsText(validateCompact.errors));
   // Durable exports have already crossed the acceptance boundary. Reuse their exact row on resume.
-  if (receipt.exported && task.stage !== "rewrite") {
+  if (receipt.exported && task.stage !== "rewrite" && receipt.exported.file !== "comparison-review.jsonl") {
     const data = task.data as TaskData;
     const file = receipt.exported.file ?? (data.stage === "comparison" && data.verificationAudit ? "comparison-verification.jsonl"
-      : data.stage === "comparison" && (receipt.evaluation as ComparisonResult).status === "needs_review" ? "comparison-review.jsonl"
       : resultFile(data.stage === "rewrite" ? data.rewriteOf!.stage : task.stage as Stage));
     if (task.stage === "comparison" && receipt.exported.row.evaluation_type === "group_model_comparison") {
       const row = displayComparisonRow(receipt.exported.row, task);
@@ -277,8 +283,8 @@ export function encodeResult(task: PlannedTask, state: RunState, inputs: Record<
         batch_id: candidate.batch_id, case_id: candidate.case_id, version: candidate.version, rewritten,
       } };
     }
-    return { ...exported, row: replaceStageResult(source.stage, exported.row,
-      { ...stageResult(source.stage, exported.row), rewritten }), auxiliary: true };
+    const row = replaceStageResult(source.stage, exported.row, { ...stageResult(source.stage, exported.row), rewritten });
+    return { ...exported, row: source.stage === "comparison" ? displayComparisonRow(row, sourceTask) : row, auxiliary: true };
   }
 
   if (task.stage === "clustering") {
@@ -296,13 +302,6 @@ export function encodeResult(task: PlannedTask, state: RunState, inputs: Record<
       evaluation_type: "comparison_verification", evaluator_version: receipt.evaluatorVersion,
       task_id: task.id, comparison_id: (task.data as TaskData).comparisonId,
       source_task_id: (task.data as TaskData).verificationOf!.taskId, result,
-    } };
-  }
-  if (result.status === "needs_review") {
-    if (!validateComparison(result)) throw new Error("复核结果 schema 无效：" + ajv.errorsText(validateComparison.errors));
-    return { id: task.id, file: "comparison-review.jsonl", row: {
-    evaluation_type: "comparison_review", evaluator_version: receipt.evaluatorVersion, task_id: task.id,
-    comparison_id: (task.data as TaskData).comparisonId, result: receipt.evaluation,
     } };
   }
   const row = comparisonRow(inputs, task, result, new Map(Object.entries(state.receipts)), names, receipt.evaluatorVersion);

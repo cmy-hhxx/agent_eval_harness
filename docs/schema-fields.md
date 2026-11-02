@@ -34,6 +34,7 @@
 | has_standard_answer | Workflow | 统计分母、正式结果消费者 | 与 ground_truth.available 有冗余，正式消费者直接读取，保持现有导出字段。 |
 | winner_name | Workflow | Eris、导出阅读 | 可从 winner_version 与模型表推导，当前外部契约保留。 |
 | task_analysis / evaluations | Workflow | 独立正式行、报告、结果恢复 | 单行消费及恢复依赖完整上下文；正文只保存在正式 JSONL，state 保留引用。 |
+| verdicts.*.reason / rewritten | Comparison Workflow | 对局交付 | reason 回填已接受改写后的具体取舍理由；rewritten 保留槽位与版本。实际模型名按该场候选映射展开，判决不变。无法判定也交付同一 comparison.jsonl，result=undetermined，不计入胜负和平局统计。 |
 | rewritten / 原归因判词 | Rewrite 与 Workflow | 展示、逐槽复核 | 归因改写独立写入 results/rewrite.jsonl，按源任务关联；正式归因四字段保持不变，失败保留原文。 |
 | Rewrite items[].preference | Workflow 从正式结果和源提交派生 | Rewrite 前缀校验与展示 | 复用既有文字字段，固定正式结论及非空相对倾向；不用正文推测身份，null 不造偏好。正文语义仍单独审阅。 |
 | Rewrite 整场 items[].text | Workflow 取已接受 tradeoff | Rewrite | 只改这一段既定取舍，不拼接分项重新综合；判决前提放 context。 |

@@ -12,9 +12,14 @@ import { buildPlan } from "./input.js";
 import { bindTask } from "./binding.js";
 import { comparisonCodec } from "./codec.js";
 import { encodeResult, originalResultRow, stageResult } from "./results.js";
-import { readRunState, writeRunState } from "./run-data.js";
+import { readRunState, writeRunState, reconcileRun } from "./run-data.js";
 import { prepareComparisonVerification } from "./verification-preparation.js";
 import type { TaskData } from "./types.js";
+import { comparisonWorkflow } from "./workflow.js";
+import { comparisonSlots } from "./commentary.js";
+import { analysisProgress } from "./analysis-progress.js";
+import { deliveryCoverage } from "./delivery.js";
+import { summarizeResults } from "./report.js";
 
 const receiptFor = (task: PlannedTask, evaluation: unknown): SubmissionReceipt => ({
   taskId: task.id, attemptId: randomUUID(), submissionId: randomUUID(), status: "succeeded", acceptedAt: 1,
@@ -43,6 +48,50 @@ async function setup() {
   await new RunStore(run, state, plan.inputs, services).save();
   return { ...fixture, plan, state: await readRunState(run), source, result, run };
 }
+
+test("unresolved comparisons deliver through the main file, can be rewritten and never count as wins or ties", async () => {
+  const f = await setup();
+  try {
+    const result = structuredClone(f.result);
+    result.status = "needs_review"; result.ranking = [];
+    result.assessments.A.meets_core = null;
+    result.review_requests = [{ candidate: "A", criterion_ids: ["r1"], finding_indices: [], reason: "核心结果缺少归因结论。" }];
+    f.state.receipts[f.source.id] = receiptFor(f.source, result);
+    const rewrite = f.state.manifest.tasks.find(task => (task.data as TaskData).rewriteOf?.taskId === f.source.id)!;
+    assert(rewrite);
+    for (const frozen of [false, true]) {
+      f.state.manifest.executionScope = frozen ? [rewrite.id] : undefined;
+      f.state.manifest.states[rewrite.id] = { status: "blocked", attempts: 2, reason: "Comparison remains unresolved" };
+      await reconcileRun(f.run, f.state, f.config);
+      assert.equal(f.state.manifest.states[rewrite.id].status, "pending");
+      assert.equal(f.state.manifest.states[rewrite.id].attempts, 2);
+    }
+    assert.equal(comparisonWorkflow.canStart!(rewrite, f.state.manifest), true);
+    assert.equal(comparisonWorkflow.blockedReason, undefined);
+    assert.equal(comparisonSlots(result).length, 1);
+    const exported = encodeResult(f.source, f.state, f.plan.inputs)!;
+    assert.equal(exported.file, "comparison.jsonl");
+    assert.equal(Object.values(exported.row.verdicts as Record<string, { result: string }>)[0].result, "undetermined");
+    assert.doesNotMatch(JSON.stringify(exported.row.verdicts), /候选[A-Z]/u);
+    f.state.receipts[f.source.id].exported = exported;
+    const bound = bindTask(rewrite, {}, { source: f.state.receipts[f.source.id] }, { tasks: f.state.manifest.tasks });
+    const items = bound.request.input.items as { id: string; text: string; preference: string }[];
+    f.state.receipts[rewrite.id] = receiptFor(rewrite, { rewrites: items.map(item => ({ id: item.id, text: item.preference + "：" + item.text })) });
+    f.state.manifest.states[rewrite.id] = { status: "succeeded", attempts: 1 };
+    const run = path.join(f.directory, "undetermined-run");
+    await new RunStore(run, f.state, f.plan.inputs, services).save();
+    const resumed = await readRunState(run), row = resumed.receipts[f.source.id].exported!.row;
+    assert.deepEqual(resumed.receipts[f.source.id].evaluation, result);
+    assert.equal(deliveryCoverage(resumed, { rewriteScopes: ["verdicts"] }).valid, true);
+    const progress = analysisProgress(comparisonCodec.encode(resumed) as any);
+    assert.equal(progress.formalComparisonsAccepted, 0);
+    assert.equal(progress.comparisonsPendingReview, 1);
+    const stats = summarizeResults([f.source], [], [], [row], [], [], [{ case: row.case }]);
+    assert.deepEqual(stats.head_to_head, {});
+    assert.equal(stats.coverage.decided, 0);
+    assert.equal(stats.coverage.pending, 1);
+  } finally { await rm(f.directory, { recursive: true, force: true }); }
+});
 
 test("optional verification previews without mutation, freezes only audit work and reuses its paid task", async () => {
   const f = await setup();

@@ -102,6 +102,19 @@ test('unknown core remains pending and cannot become both_good',()=>{
  assessment.meets_core=null;assessment.summary='关键交付的必要来源尚不能核实。';draft.relative_preference=null;
  const result=accept(request,draft);assert.equal(result.status,'needs_review');assert.deepEqual(result.ranking,[]);
 });
+test('local uncertainty and small resource differences do not require a preference or source review',()=>{
+ const {request,input,draft}=fixture();
+ draft.comparisons[0]!.assessments!.find(item=>item.candidate==='A')!.status='unknown';
+ draft.relative_preference=null;draft.quality_winner=null;
+ const result=accept(request,draft);
+ assert.equal(result.status,'decided');assert.deepEqual(result.review_requests,[]);
+ assert.deepEqual(result.ranking,[['A','B']]);
+ input.candidates.A.original_answer_timing.finish_seconds=1.885;
+ input.candidates.B.original_answer_timing.finish_seconds=1.846;
+ const resourceDraft=requestComparisonSubmission(request,structuredClone(example.result) as ComparisonResult);
+ resourceDraft.relative_preference=null;resourceDraft.quality_winner=null;
+ assert.equal(accept(request,resourceDraft).status,'decided');
+});
 test('reference mismatch alone does not set whole-answer core failure',()=>{
  const {request,input,draft}=fixture();input.attributions.A.is_correct=false;input.attributions.A.correct_reason='给定标准与已核实交付口径不同。';
  assert.equal(accept(request,draft).assessments.A.meets_core,true);

@@ -92,6 +92,8 @@ function encodeState(state: RunState): Checkpoint {
         const rewriteIds = task.stage === "rewrite"
           ? (evaluation as { rewrites: { id: string }[] }).rewrites.map((item) => item.id) : undefined;
         const reference = exported && {
+          ...(task.stage === "comparison" && !taskData.verificationAudit
+            ? { comparisonStatus: (evaluation as ComparisonResult).status } : {}),
           ...(task.stage === "comparison" && !(task.data as TaskData).verificationAudit && exported.file !== "comparison-review.jsonl" ? { comparisonId: exported.id } : { taskId: exported.id }),
           ...(exported.file ? { file: exported.file } : {}),
           ...(exported.line !== undefined ? { line: exported.line } : {}),
@@ -129,7 +131,7 @@ function evaluationFromRow(data: TaskData, row: JsonObject): ComparisonResult {
   );
   const basis = row.decision_basis as ComparisonResult["decision_basis"];
   return {
-    status: "decided",
+    status: row.status as ComparisonResult["status"],
     review_requests: [],
     task_analysis: row.task_analysis as ComparisonResult["task_analysis"],
     ranking: (row.ranking as string[][]).map((tier) => tier.map((version) => labels.get(version)!)),

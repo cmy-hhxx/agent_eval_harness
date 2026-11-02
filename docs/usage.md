@@ -72,7 +72,7 @@ Attribution 按模型版本轮转、在物理文件内部按小批流式载入�
 
 Attribution 的 `execution.sessionWindow` 默认 16，必须是正整数；执行、进度和续跑使用同一 effective 值。`execution.taskConcurrency` 是任务槽位硬上限且不再随模型并发放大。`execution.concurrency` 限制真实在途模型请求，`execution.modelRequestLimits` 可进一步声明各网关上限。`execution.workerSlots` 控制每个托管进程的槽位数，应用默认 4；Supervisor 按需求小批预热，每次最多并行启动两个进程，派发循环只领取就绪槽位。
 
-Criteria 通常提取 1–4 条真实独立要求，不再按固定维度凑数；复杂题共同项最多 12 条，来源覆盖与适用范围仍须完整。默认 Comparison 只接收已接受的归因总结、问题结论、共同标准及资源指标，不接收原始回答、证据摘录或调查工具；缺少决定性结论时保留待复核。显式的独立 verification 入口仍按原始证据核验。
+Criteria 通常提取 1–4 条真实独立要求，不再按固定维度凑数；复杂题共同项最多 12 条，来源覆盖与适用范围仍须完整。默认 Comparison 只接收已接受的归因总结、问题结论、共同标准及资源指标，不接收原始回答、证据摘录或调查工具；非决定性未知不阻塞裁决，真正缺少决定性结论时交付无法判定。显式的独立 verification 入口仍按原始证据核验。
 
 Comparison 续跑保留已接受结果、任务 UUID 与累计预算；复核依赖通过一次建立的任务 ID 索引查询，避免大任务图在恢复时逐依赖重复扫描全量任务。
 
@@ -121,7 +121,7 @@ Worker 启动和重建预算属于容量，耗尽后隔离容量而不把健康�
 | {source}/3_eval_output/0_daily_eval/<模型>/<模型>_attribution-YYYY-MM-DD.jsonl | 日常单模型归因 |
 | {source}/3_eval_output/1_lost_user_eval/<模型>/<模型>_attribution-YYYY-MM-DD.jsonl | 流失样本归因 |
 | <正式根>/criteria/criteria-YYYY-MM-DD.jsonl | 当天共享的共同标准 |
-| <正式根>/comparison/<模型A>_vs_<模型B>/<模型A>_vs_<模型B>-YYYY-MM-DD.jsonl | 当天对局；comparison-review、comparison-verification 等对应产物采用相同的模型对/日期命名 |
+| <正式根>/comparison/<模型A>_vs_<模型B>/<模型A>_vs_<模型B>-YYYY-MM-DD.jsonl | 当天所有对局（含无法判定）；comparison-verification 采用相同的模型对/日期命名 |
 | <正式根>/<模型>/<其他产物>/<模型>-YYYY-MM-DD.jsonl | 其他单模型正式产物 |
 | <正式根>/.delivery/provenance/YYYY-MM-DD.jsonl | 正式行与原始业务回答、来源收据、评测器和判官的溯源索引，不保存正文 |
 | <正式根>/.runs/<run ID>/ | 内部运行账本、恢复状态与来源结果，不作为默认交付入口 |
@@ -274,7 +274,7 @@ Worker 启动或任务准备期间若有任务完成，Host 会重新排序可�
 
 中断报告只呈现正式 session 归因和 comparison；组件、trace 收据保留在恢复状态中，不当作 comparison 导出。
 
-问财执行所选范围的标准、归因与比较；每场已接受结果的改写立即优先派发，尽早交付对局。独立指令遵循归因仍等主评测收尾后执行，成功收据在同 run 续跑中保留。指令遵循归因的来源目录按消息字段和规范标题提供原文读取坐标，完整输入快照仍可按需读取。
+问财执行所选范围的标准、归因与比较；每场已接受结果（含无法判定）的改写立即优先派发，接受后直接覆盖 verdict.reason 并保留 rewritten 溯源。主线统一写 comparison.jsonl，不另建 comparison-review；无法判定不计胜负或平局。独立指令遵循归因仍等主评测收尾后执行，成功收据在同 run 续跑中保留。指令遵循归因的来源目录按消息字段和规范标题提供原文读取坐标，完整输入快照仍可按需读取。
 
 ## 可选复核与后置聚类
 
@@ -301,7 +301,7 @@ npm run eval -- validate-stability --run-id stability-001 \
 
 独立审阅结果写入实验根目录 `semantic-review.json` 数组：每项包含 `task_id`、`submission_id`、`reviewer: {kind: "agent" | "human", name}`、`result: "passed" | "failed"` 和 `rationale`。只绑定当前已接受的改写收据；重复、过期或未知引用会报错。未记录的改写保持未审，整链中的改写也进入覆盖分母。重建报告保留已记录的语义失败，不改写原判词。
 
-按[归因执行边界](quality.md#归因执行边界)填写审阅：保真硬错误为 failed；仅有非决定性措辞缺陷可为 passed，并在 rationale 留下缺陷与不影响原意的依据。Comparison 的 needs_review 表示已停下等待来源或关键口径复核，单列在未裁决数量中，不等于执行失败，也不冒充胜负或平局。
+按[归因执行边界](quality.md#归因执行边界)填写审阅：保真硬错误为 failed；仅有非决定性措辞缺陷可为 passed，并在 rationale 留下缺陷与不影响原意的依据。Comparison 的 needs_review 表示无法判定，仍落盘和改写，单列在未裁决数量中，不等于执行失败，也不冒充胜负或平局。
 
 停止实验 Host 后，用 `npm run eval -- report --run /mnt/fin_bench/eval_data/0_wencai/3_eval_output/test_eval/stability-001` 重新生成实验报告，不调用模型。
 
@@ -394,7 +394,6 @@ npm run eval -- rewrite-comparisons --run /mnt/fin_bench/eval_data/0_wencai/3_ev
 | results/compact.jsonl | 会话过程摘要，作为归因必需输入 |
 | results/attribution.jsonl | 单回答归因与证据 |
 | results/comparison.jsonl | 已决的正式两两对比 |
-| results/comparison-review.jsonl | 主线待核，不计对战结果 |
 | results/comparison-verification.jsonl | 可选独立核验 |
 | results/clustering.jsonl | 归类与来源引用 |
 | 源结果的 rewritten / results/rewrite.jsonl | 改写文案；归因与独立聚类作业使用独立 rewrite.jsonl，其他改写附在源结果中 |

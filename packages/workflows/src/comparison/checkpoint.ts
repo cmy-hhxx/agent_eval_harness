@@ -2,7 +2,7 @@ import type { ResultReference, RunManifest, RunState, SubmissionReceipt, TaskSta
 import type { Candidate } from "../inputs/types.js";
 import type { Stage, TaskData } from "./types.js";
 
-type DiskReference = { file?: string; comparisonId?: string; taskId?: string; line?: number };
+type DiskReference = { file?: string; comparisonId?: string; taskId?: string; line?: number; comparisonStatus?: "decided" | "needs_review" };
 export type Patch = { path: string[]; value?: unknown; from?: string[] }[];
 export type SavedReceipt = Omit<SubmissionReceipt, "exported" | "evaluation" | "submitted"> & {
   evaluation?: unknown;

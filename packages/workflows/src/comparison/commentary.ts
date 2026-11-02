@@ -60,12 +60,17 @@ export function comparisonSlots(result: ComparisonResult, scope: "verdicts" | "i
     { id: "tradeoff", label: "整体取舍依据", text: result.decision_basis.tradeoff },
   ];
   const items: RewriteItem[] = [];
-  const labels = result.ranking.flat();
+  const labels = Object.keys(result.assessments);
   const tiers = tierOf(result.ranking);
   for (let i = 0; i < labels.length; i++)
     for (let j = i + 1; j < labels.length; j++) {
       const first = labels[i]!,
         second = labels[j]!;
+      if (result.status !== "decided") {
+        items.push({ id: verdictSlotId(first, second), label: `【候选${first}】与【候选${second}】无法判定的理由`,
+          preference: "无法判定", text: result.review_requests.map(item => `【候选${item.candidate}】：${item.reason}`).join("；") || result.decision_basis.tradeoff });
+        continue;
+      }
       const decision = decideVerdict(
         result.assessments[first]?.meets_core ?? false,
         result.assessments[second]?.meets_core ?? false,

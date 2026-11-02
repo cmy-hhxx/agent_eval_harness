@@ -8,7 +8,7 @@ import { sessionCorrectness, sessionProblems, type SessionAttributionResult } fr
 import type { ComparisonResult, EvalConfig, TaskData } from "./types.js";
 import { toRewrites, type Rewrites } from "@eval/agents/rewrite";
 import { outputSchema } from "./schema.js";
-import { comparisonRow, acceptedRewriteProjection } from "./results.js";
+import { encodeResult, acceptedRewriteProjection } from "./results.js";
 import { loadRunInputs } from "../inputs/load.js";
 import { readRunState, writeRunState, createResultWriter } from "./run-data.js";
 import { syncProblemLibrary, type ProblemLibraryStats } from "./problem-library.js";
@@ -97,6 +97,7 @@ export function summarizeResults(
       core.rows.push({ comparison_id: row.comparison_id, value: typeof assessment?.meets_core === "boolean" ? assessment.meets_core : null });
     }
     for (const [name, verdict] of Object.entries((row.verdicts as Record<string, JsonObject>) || {})) {
+      if (verdict.result === "undetermined") continue;
       const stats = (headToHead[name] ??= {
         evaluated: 0,
         wins: Object.fromEntries(name.split("__vs__").map((v) => [v, 0])),
@@ -236,13 +237,13 @@ export function summarizeResults(
     },
     coverage: {
       planned: tasks.filter((task) => task.stage === "comparison" && !(task.data as TaskData).verificationAudit).length,
-      decided: comparisons.length,
+      decided: comparisons.filter(row => row.status === "decided").length,
       pending: pending.length,
       incomplete: Math.max(0, tasks.filter((task) => task.stage === "comparison" && !(task.data as TaskData).verificationAudit).length -
-        comparisons.length - pending.length),
+        comparisons.filter(row => row.status === "decided").length - pending.length),
     },
     task_statuses: statuses,
-    completed_comparisons: comparisons.length,
+    completed_comparisons: comparisons.filter(row => row.status === "decided").length,
     head_to_head: headToHead,
     standings: rounded,
     ...(diagnostics.length ? { statistical_diagnostics: diagnostics } : {}),
@@ -271,7 +272,7 @@ export async function reportRun(run: string, options: { details?: boolean } = {}
       receipts.set(task.id, receipt);
     }
   }
-  // Accepted rewrites are presentation-only; reports prefer them, formal JSONL keeps the judge wording alongside rewritten.
+  // Accepted rewrites update display slots in both formal JSONL and reports; judgments remain unchanged.
   const commentaryBySource = new Map<string, Rewrites>();
   for (const task of manifest.tasks) {
     if (task.stage !== "rewrite") continue;
@@ -336,11 +337,8 @@ export async function reportRun(run: string, options: { details?: boolean } = {}
       review = result.status === "needs_review";
     if (review) {
       pendingComparisons.push({ case: taskIdentity(data), candidates: data.candidates });
-      markdown.push(`## ${data.candidates.A.batch_id} / ${data.candidates.A.case_id}`, "", "**状态**：待复核", "",
-        ...result.review_requests.map((item) => `- ${names[data.candidates[item.candidate]!.version]}：${item.reason}`), "");
-      continue;
     }
-    const row = receipt.exported?.row || comparisonRow(inputs, task, result, receipts, names, receipt.evaluatorVersion);
+    const row = encodeResult(task, state, inputs)!.row;
     if (!validateOutput(row)) throw new Error("导出 schema 无效：" + ajv.errorsText(validateOutput.errors));
     comparisons.push(row);
     receipt.exported = { id: String(row.comparison_id), row };
@@ -420,9 +418,9 @@ export async function reportRun(run: string, options: { details?: boolean } = {}
       .map((c) => `${names[c.version]}：${c.answer_timing.finish_seconds!.toFixed(3)} 秒`);
     if (timingLines.length) markdown.push("**原始回答耗时**：" + timingLines.join("；"), "");
     for (const [id, review] of Object.entries(reviews)) {
-      const assessment = (view.assessments as JsonObject)[id] as { meets_core: boolean; summary: string };
+      const assessment = (view.assessments as JsonObject)[id] as { meets_core: boolean | null; summary: string };
       markdown.push(
-        `## ${names[id] || id}（${assessment.meets_core ? "完成核心要求" : "未完成核心要求"}）`,
+        `## ${names[id] || id}（${assessment.meets_core === null ? "核心交付无法判定" : assessment.meets_core ? "完成核心要求" : "未完成核心要求"}）`,
         "",
         assessment.summary,
         "",
@@ -560,8 +558,6 @@ export async function reportRun(run: string, options: { details?: boolean } = {}
   );
   const resultArtifacts = ["results/attribution.jsonl"];
   if (manifest.tasks.some((task) => task.stage === "criteria" && receipts.has(task.id))) resultArtifacts.push("results/criteria.jsonl");
-  if (manifest.tasks.some((task) => task.stage === "comparison" && !(task.data as TaskData).verificationAudit &&
-    (receipts.get(task.id)?.evaluation as ComparisonResult | undefined)?.status === "needs_review")) resultArtifacts.push("results/comparison-review.jsonl");
   if (comparisons.length) resultArtifacts.push("results/comparison.jsonl");
   if (manifest.tasks.some(task => (task.data as TaskData).verificationAudit && receipts.has(task.id)))
     resultArtifacts.push("results/comparison-verification.jsonl");
@@ -660,7 +656,7 @@ export async function writeOverview(
     `# 评测运行 ${summary.run_id}\n\n状态：${summary.status}；评测器：${summaryVersions}；完成比较：${summary.completed_comparisons}。\n\n` +
       `执行失败：${failures}；依赖阻塞：${statuses.blocked || 0}；已取消：${statuses.cancelled || 0}；输入跳过对比组：${skipped}。\n\n` +
       (coverage
-        ? `比较覆盖：已决 ${coverage.decided}；待核 ${coverage.pending}；未完成 ${coverage.incomplete}（计划 ${coverage.planned}）。` +
+        ? `比较覆盖：已决 ${coverage.decided}；无法判定 ${coverage.pending}；未完成 ${coverage.incomplete}（计划 ${coverage.planned}）。` +
           (standardConflicts ? `标准冲突待核：${standardConflicts} 例（见 stats.json）。` : "") + "\n\n"
         : "") +
       `离线校验：${validation ? (validation.valid ? "通过" : `未通过（${validation.errors.length} 项错误）`) : "尚未校验"}。` +

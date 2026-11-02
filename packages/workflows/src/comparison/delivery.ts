@@ -77,10 +77,6 @@ export function deliveryCoverage(state: RunState, requirements: DeliveryRequirem
       continue;
     }
     counts.accepted++;
-    if ((receipt.evaluation as ComparisonResult).status === "needs_review") {
-      errors.push(`${task.id}: comparison remains unresolved`);
-      continue;
-    }
     const expected = [...scopes].flatMap((scope) => comparisonSlots(receipt.evaluation as ComparisonResult, scope as "items" | "verdicts"));
     const saved = receipt.exported && stageResult("comparison", receipt.exported.row).rewritten as
       { rewrites: { id: string; text: string }[] } | undefined;
