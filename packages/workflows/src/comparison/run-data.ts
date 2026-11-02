@@ -61,6 +61,7 @@ export async function reconcileRun(_run: string, state: RunState, current: unkno
     catalog: state.manifest.inputCatalog,
   }, { acceptedTaskIds: new Set(Object.keys(state.receipts)) });
   const tasks = new Map(plan.tasks.map((task) => [task.id, task]));
+  const priorReviews = new Set(previous.filter(task => (task.data as TaskData).reviewOf).map(task => task.id));
   // Accepted work is immutable within a run. Only unfinished/new tasks use the latest source records.
   for (const task of previous) {
     if (task.stage.startsWith("attribution-") && !state.receipts[task.id] && !tasks.has(task.id) && !(task.data as TaskData).reviewOf) continue;
@@ -70,8 +71,7 @@ export async function reconcileRun(_run: string, state: RunState, current: unkno
     }
     if (task.stage === "clustering" && !state.receipts[task.id] && !selected.clustering.enabled) continue;
     if (task.stage === "rewrite" || state.receipts[task.id] || !tasks.has(task.id) || (task.data as TaskData).reviewOf ||
-      Object.values(task.dependencies).some((id) =>
-        previous.some((item) => item.id === id && !!(item.data as TaskData).reviewOf))) tasks.set(task.id, task);
+      Object.values(task.dependencies).some(id => priorReviews.has(id))) tasks.set(task.id, task);
   }
   // Pending polish alone must not keep an obsolete, unaccepted attribution alive after expansion.
   const dependencies = new Set([...tasks.values()].filter(task => task.stage !== "rewrite")

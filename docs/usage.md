@@ -74,6 +74,8 @@ Attribution 的 `execution.sessionWindow` 默认 16，必须是正整数；执�
 
 Criteria 通常提取 1–4 条真实独立要求，不再按固定维度凑数；复杂题共同项最多 12 条，来源覆盖与适用范围仍须完整。默认 Comparison 只接收已接受的归因总结、问题结论、共同标准及资源指标，不接收原始回答、证据摘录或调查工具；缺少决定性结论时保留待复核。显式的独立 verification 入口仍按原始证据核验。
 
+Comparison 续跑保留已接受结果、任务 UUID 与累计预算；复核依赖通过一次建立的任务 ID 索引查询，避免大任务图在恢复时逐依赖重复扫描全量任务。
+
 Comparison workflow 中，Rewrite 在自己的来源成功后立即优先执行，不等待整批主流程结束。共用配置默认 `rewrite.comparisonItems:false`，每场对局只润色最终偏好及理由，逐项点评与双方总评保留 Comparison 原文；`true` 才额外润色这些字段。共用配置的 Rewrite 推理档位为 `low`，轻量专项可显式配置 Criteria、Comparison、Rewrite 为 `off`；Attribution 沿用自己的设置。降低档位不替代语义保真检查。
 
 `run / reattribute / cluster --balance-channels` 显式声明评测渠道可互换：各阶段的模型、思考档位、协议和能力必须相同。每次模型请求在真正发出前选择有额度的渠道；在途流保持原路由，普通工具执行不占模型额度。鉴权或账户额度失效会隔离对应渠道，保留未完成任务；其他健康渠道继续。全部所需渠道不可用时明确暂停，修复配置或额度后同 run ID 续跑。

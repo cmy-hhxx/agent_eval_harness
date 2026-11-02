@@ -2,10 +2,31 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { rm } from "node:fs/promises";
 import { emptyUsage, type PlannedTask, type RunState } from "@eval/contracts";
-import { attributionResult, comparisonResult, criteriaResultForTask, emptyAudit, fakeEvaluatorVersion, fakeIdentity, fakeJudge, fixtureConfig } from "../../../../tests/fixtures/comparison.js";
+import { attributionResult, comparisonResult, criteriaResultForTask, emptyAudit, fakeEvaluatorVersion, fakeIdentity, fakeJudge, fixtureConfig, raw } from "../../../../tests/fixtures/comparison.js";
 import { buildPlan } from "./input.js";
 import { reconcileRun } from "./run-data.js";
 import type { EvalConfig, TaskData } from "./types.js";
+
+test("resuming a batch does not rescan the saved task list for each dependency", async t => {
+  const rows = Array.from({ length: 20 }, (_, index) => raw(`case-${index}`));
+  const f = await fixtureConfig([rows, [], rows, []]);
+  t.after(() => rm(f.directory, { recursive: true, force: true }));
+  const plan = await buildPlan(f.config), originalIds = plan.tasks.map(task => task.id).sort();
+  let visited = 0;
+  Object.defineProperty(plan.tasks, "some", { value: (predicate: (task: PlannedTask, index: number, tasks: PlannedTask[]) => unknown) =>
+    Array.prototype.some.call(plan.tasks, (task: PlannedTask, index: number) => {
+      visited++; return predicate(task, index, plan.tasks);
+    }) });
+  const state: RunState = { usage: emptyUsage(), receipts: {}, recordedAttempts: 0, manifest: {
+    format: "evaluation-run", runId: "batch-resumption", debug: false, status: "interrupted", startedAt: 1,
+    evaluatorVersion: fakeEvaluatorVersion, engine: fakeIdentity, config: f.config,
+    tasks: plan.tasks, inputCatalog: plan.catalog, inputs: {}, preflight: plan.summary,
+    states: Object.fromEntries(plan.tasks.map(task => [task.id, { status: "pending", attempts: 0 }])),
+  } };
+  await reconcileRun(f.directory, state, f.config);
+  assert.deepEqual(state.manifest.tasks.map(task => task.id).sort(), originalIds);
+  assert(visited <= originalIds.length * 4, `saved-list scans visited ${visited} entries for ${originalIds.length} tasks`);
+});
 
 for (const accepted of [false, true]) for (const frozen of [false, true])
   test(`standalone comparison keeps its identity on resume (accepted: ${accepted}, frozen: ${frozen})`, async () => {
