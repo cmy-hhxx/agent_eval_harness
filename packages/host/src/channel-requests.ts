@@ -16,12 +16,16 @@ export function createChannelRequests(limits: Record<string, number>, weights: R
   const runLimits = new Map<string, number>(), runActive = new Map<string, number>();
   const waiting: { runId: string; channels: string[]; group: string; priority: number; grant(channel: string): void; deny(): void }[] = [];
   const admissible = (item: typeof waiting[number]) => (runActive.get(item.runId) ?? 0) < (runLimits.get(item.runId) ?? Infinity);
+  const channels = Object.keys(limits);
+  let nextChannel = 0;
   function pump() {
-    for (const channel of Object.keys(limits)) {
-      if (disabled.has(channel)) continue;
-      const credit = credits.get(channel) ?? new Map<string, number>();
-      credits.set(channel, credit);
-      while ((active.get(channel) ?? 0) < limits[channel] && [...active.values()].reduce((sum, value) => sum + value, 0) < totalLimit) {
+    while ([...active.values()].reduce((sum, value) => sum + value, 0) < totalLimit) {
+      let granted = false;
+      for (let offset = 0; offset < channels.length; offset++) {
+        const channelIndex = (nextChannel + offset) % channels.length, channel = channels[channelIndex];
+        if (disabled.has(channel) || (active.get(channel) ?? 0) >= limits[channel]) continue;
+        const credit = credits.get(channel) ?? new Map<string, number>();
+        credits.set(channel, credit);
         let selected: string | undefined, total = 0;
         const groups = Object.keys(weights).filter(group => waiting.some(item => item.channels.includes(channel) && item.group === group && admissible(item)));
         const bestPriority = Math.min(...groups.map(group => groupPriority[group] ?? 0));
@@ -32,7 +36,7 @@ export function createChannelRequests(limits: Record<string, number>, weights: R
           credit.set(group, (credit.get(group) ?? 0) + weight);
           if (!selected || credit.get(group)! > credit.get(selected)!) selected = group;
         }
-        if (!selected) break;
+        if (!selected) continue;
         credit.set(selected, credit.get(selected)! - total);
         let index = -1;
         for (let candidate = 0; candidate < waiting.length; candidate++) {
@@ -41,7 +45,11 @@ export function createChannelRequests(limits: Record<string, number>, weights: R
               (index < 0 || item.priority < waiting[index].priority)) index = candidate;
         }
         waiting.splice(index, 1)[0].grant(channel);
+        nextChannel = (channelIndex + 1) % channels.length;
+        granted = true;
+        break;
       }
+      if (!granted) break;
     }
   }
   return {

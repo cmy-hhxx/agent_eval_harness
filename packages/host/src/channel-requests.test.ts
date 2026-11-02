@@ -93,6 +93,27 @@ test("a queued equivalent request borrows the other gateway without moving an ac
   borrowed.release(); first.release();
 });
 
+test("equivalent requests round-robin both gateways under one total limit", async () => {
+  const control = createChannelRequests({ first: 4, second: 4 }, undefined, undefined, undefined, 4);
+  const signal = new AbortController().signal, order: string[] = [];
+  const call = async (id: string) => {
+    const request = context("first", id); request.routes = [request.model, context("second", "").model];
+    const permit = await control.acquire(request, signal); order.push(permit.model.provider); return permit;
+  };
+  const permits = [];
+  for (let n = 0; n < 4; n++) permits.push(await call(String(n)));
+  assert.deepEqual(order, ["first", "second", "first", "second"]);
+  assert.equal(control.snapshot().channels.first.active, 2);
+  assert.equal(control.snapshot().channels.second.active, 2);
+  let granted = false;
+  const waiting = call("queued").then(permit => { granted = true; return permit; });
+  await Promise.resolve(); assert.equal(granted, false);
+  permits[1].release(); const next = await waiting;
+  assert.equal(next.model.provider, "first", "the rotation advances independently of the released channel");
+  assert.equal(control.snapshot().active, 4);
+  next.release(); permits.forEach(permit => permit.release());
+});
+
 test("priority lanes hand traffic over directly and total requests stay bounded", async () => {
   const control = createChannelRequests({ first: 2 }, { recovery: 1, daily: 1 }, undefined, { recovery: 0, daily: 1 }, 1);
   const signal = new AbortController().signal, order: string[] = [];
