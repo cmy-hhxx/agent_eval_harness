@@ -1,21 +1,32 @@
 <!doctype html>
 <html lang="zh-CN">
-<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>评测</title><link rel="stylesheet" href="/console.css"><script src="/console.js" defer></script></head>
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>评测工作台</title><link rel="stylesheet" href="/console.css"><script src="/console.js" defer></script></head>
 <body>
-<header class="shell"><a class="brand" href="/" aria-label="评测首页"><svg aria-hidden="true" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M4 5h5v14H4M20 5h-5v14h5M7 12h10"/></svg><h1>评测</h1></a><div class="header-actions"><span id="freshness" class="muted"></span><button id="refresh" class="quiet" hidden>刷新</button><button id="logout" class="quiet" hidden>退出</button></div></header>
-<main class="shell">
-<form id="login" class="login" hidden><h1>评测</h1><label for="password">管理员密码</label><input id="password" name="password" type="password" autocomplete="current-password" required><button class="primary">登录</button><p id="login-error" role="alert"></p></form>
-<div id="app" hidden>
-<div class="navigation"><nav aria-label="评测来源"><button data-source="wencai" aria-pressed="true">问财</button><button data-source="aime" aria-pressed="false">AIME</button></nav><select id="preset" aria-label="评测预设"></select></div>
-<div class="workspace">
-<form id="configuration">
-<div id="inputs"></div>
-<div class="output-field"><label for="output">评测输出</label><input id="output" required spellcheck="false"></div>
-<div class="submit-row"><label for="concurrency">并发</label><input id="concurrency" type="number" min="1" step="1" required><button class="primary" id="preview-button">预览配置 <span aria-hidden="true">↗</span></button></div>
-<div class="location"><span>日志位置</span><div id="log-paths"></div></div><p id="config-error" role="alert"></p>
-</form>
-<div class="side"><section class="tasks" aria-label="评测任务"><span id="task-count" class="sr-only"></span><div id="task-list"><p class="empty">加载中…</p></div><p id="task-error" role="alert"></p></section>
-<section class="logs" aria-label="任务日志"><div class="log-toolbar"><select id="log-kind" aria-label="日志类型"><option value="runtime">运行日志</option><option value="evaluation">评测日志</option></select><label class="check"><input type="checkbox" id="errors-only">仅错误</label><button id="older" class="quiet" hidden>更早记录</button><span id="log-task" class="sr-only"></span></div><div id="log-output" class="log-output"><p class="empty">暂无日志</p></div><p id="log-error" role="alert"></p></section></div>
-</div></div></main>
-<dialog id="preview" aria-label="启动前确认"><form method="dialog" class="dialog-close"><button aria-label="关闭预览" class="quiet">关闭</button></form><div id="preview-summary"></div><div class="dialog-actions"><a id="download">下载配置</a><button id="start" class="primary">开始评测</button></div><p id="start-error" role="alert"></p></dialog>
+<header class="topbar"><a class="brand" href="/" aria-label="评测首页"><svg aria-hidden="true" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M4 5h5v14H4M20 5h-5v14h5M7 12h10"/></svg><span>评测工作台</span></a><button id="logout" class="text-button" hidden>退出</button></header>
+<main>
+<form id="login" class="login" hidden><div class="login-title">登录工作台</div><label for="password">管理员密码</label><input id="password" type="password" autocomplete="current-password" required><button class="primary">登录</button><p id="login-error" role="alert"></p></form>
+<div id="app" class="sheet" hidden>
+  <div class="title-row"><h1>评测任务</h1><button id="new-task" class="primary"><span aria-hidden="true">＋</span> 新建评测</button></div>
+  <div class="toolbar"><nav class="tabs" aria-label="评测来源"><button data-source="wencai" aria-pressed="true">问财<span data-count="wencai">0</span></button><button data-source="aime" aria-pressed="false">AIME<span data-count="aime">0</span></button></nav><div class="refresh-group"><span id="freshness"></span><button id="refresh" class="text-button">刷新</button></div></div>
+  <p id="task-error" role="alert"></p>
+  <div class="table-wrap"><table><thead><tr><th>任务</th><th>状态</th><th>进度</th><th class="num">并发</th><th>创建时间</th><th class="actions-heading">操作</th></tr></thead><tbody id="task-list"></tbody></table></div>
+  <div id="empty" class="empty-state" hidden><svg aria-hidden="true" width="40" height="40" viewBox="0 0 40 40" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="8" y="5" width="24" height="30" rx="3"/><path d="M14 13h12M14 20h7M14 27h12"/></svg><span>暂无评测任务</span><button id="empty-create" class="text-button">创建第一个任务</button></div>
+</div>
+</main>
+<dialog id="create" class="drawer" aria-labelledby="create-title"><div class="drawer-frame">
+  <div class="drawer-header"><span id="create-title">新建评测</span><button id="close-create" class="icon-button" aria-label="关闭新建评测">×</button></div>
+  <div class="drawer-body"><form id="configuration">
+    <div class="form-row"><div><label for="preset">评测类型</label><select id="preset"></select></div><div class="concurrency-field"><label for="concurrency">并发</label><input id="concurrency" type="number" min="1" step="1" required></div></div>
+    <div class="field-label">评测输入</div><div id="inputs" class="path-list"></div>
+    <div class="field-label">评测输出</div><div id="output-field"></div>
+  </form><div id="preview-summary" hidden></div><p id="config-error" role="alert"></p></div>
+  <div class="drawer-footer"><a id="download-preview" hidden>下载配置</a><button id="back" hidden>返回修改</button><button id="preview-button" form="configuration" class="primary">下一步</button><button id="start" class="primary" hidden>创建并启动</button></div>
+</div></dialog>
+<dialog id="detail" class="drawer" aria-labelledby="detail-title"><div class="drawer-frame">
+  <div class="drawer-header"><span id="detail-title">任务详情</span><button id="close-detail" class="icon-button" aria-label="关闭任务详情">×</button></div>
+  <div class="detail-tabs tabs"><button data-detail="logs" aria-pressed="true">日志</button><button data-detail="config" aria-pressed="false">配置</button></div>
+  <div class="drawer-body"><div id="logs-panel"><div class="log-toolbar"><select id="log-kind" aria-label="日志类型"><option value="runtime">运行日志</option><option value="evaluation">评测日志</option></select><label class="check"><input type="checkbox" id="errors-only">仅错误</label><button id="refresh-logs" class="text-button">刷新</button></div><div id="log-output"></div><button id="older" hidden>更早记录</button><p id="log-error" role="alert"></p></div><div id="detail-config" hidden></div></div>
+  <div class="drawer-footer"><a id="download-task">下载配置</a><button id="close-detail-bottom">关闭</button></div>
+</div></dialog>
+<dialog id="capacity" class="capacity-dialog" aria-labelledby="capacity-title"><form id="capacity-form"><div class="drawer-header"><span id="capacity-title">调整并发</span><button type="button" id="close-capacity" class="icon-button" aria-label="关闭调整并发">×</button></div><div class="capacity-body"><label for="capacity-value">并发数</label><input id="capacity-value" type="number" min="1" step="1" required><p id="capacity-error" role="alert"></p></div><div class="drawer-footer"><button class="primary" id="apply-capacity">应用</button></div></form></dialog>
 </body></html>
