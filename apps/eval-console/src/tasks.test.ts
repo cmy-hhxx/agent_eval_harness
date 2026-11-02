@@ -1,6 +1,7 @@
 import { createChannelRequests } from "@eval/host";
 import { consoleLog } from "./files.js";
 import { executeConsoleTask } from "./evaluation.js";
+import { loadInputSchedule } from "./rounds.js";
 import test from "node:test";
 import assert from "node:assert/strict";
 import path from "node:path";
@@ -147,7 +148,7 @@ test("console API previews frozen defaults, starts idempotently, drains, resumes
 
   const invalid = await executeConsoleTask({ host: { workflow: "comparison", evaluation: f.config, models: f.models, evaluatorVersion: "fixture" },
     id: "console-invalid-input", gate: createChannelRequests({ "evaluation-gateway": 1 }), pause: new AbortController().signal,
-    channels: ["evaluation-gateway"], progress() {} });
+    inputSchedule: path.join(f.directory, "invalid-schedule.json"), channels: ["evaluation-gateway"], progress() {} });
   assert.equal(invalid.outcome, "partial");
   assert.deepEqual(invalid.execution_task_statuses, {});
   const errors = await consoleLog(path.join(config.logDirectory, "runtime.log"), "console-invalid-input", true);
@@ -200,9 +201,11 @@ test("console resume retries unfinished failures and clears stage pauses within 
   await comparisonRepository.writeRun(run, state);
   // Stop before dispatch so the checkpoint exposes resume admission without starting a Worker.
   const pause = new AbortController(); pause.abort();
+  const inputSchedule = path.join(f.directory, "resume-schedule.json");
+  await loadInputSchedule({ workflow: "comparison", evaluation: f.config, models: f.models, evaluatorVersion: "fixture" }, inputSchedule, new AbortController().signal);
   await executeConsoleTask({ host: { workflow: "comparison", evaluation: f.config, models: f.models, evaluatorVersion: "fixture" },
     id, gate: createChannelRequests({ "evaluation-gateway": 1 }), pause: pause.signal,
-    channels: ["evaluation-gateway"], progress() {} });
+    inputSchedule, channels: ["evaluation-gateway"], progress() {} });
   const restored = await comparisonRepository.readRun(run);
   assert.deepEqual(restored.manifest.pausedStages, []);
   assert(restored.manifest.tasks.length > 0);
@@ -212,7 +215,7 @@ test("console resume retries unfinished failures and clears stage pauses within 
   }
 });
 
-test("a data check completing behind a queued start preserves the running task in memory and on disk", { timeout: 10000 }, async t => {
+test("a queued data check publishes its schedule before exposing ready or allowing a start", { timeout: 10000 }, async t => {
   const f = await fixtureConfig([[raw()], [], [raw()], []]);
   const source = path.join(f.directory, "source.json");
   await writeJson(source, { ...f.config, evaluatorVersion: "fixture",
@@ -258,12 +261,15 @@ test("a data check completing behind a queued start preserves the running task i
   heldTask = first.id;
   const startingFirst = manager.start(first.id);
   await preflightEntered;
-  const startingSecond = manager.start(second.id);
+  const startingSecond = assert.rejects(manager.start(second.id), /请先完成 Check data/);
   releaseCheck();
-  for (let n = 0; n < 100 && manager.get(second.id).dataCheck?.status === "checking"; n++) await new Promise(resolve => setTimeout(resolve, 10));
-  assert.equal(manager.get(second.id).dataCheck?.status, "ready");
+  for (let n = 0; n < 100 && manager.get(second.id).dataCheck?.checkedFiles !== 4; n++) await new Promise(resolve => setTimeout(resolve, 10));
+  assert.equal(manager.get(second.id).dataCheck?.status, "checking");
   releasePreflight();
   await Promise.all([startingFirst, startingSecond]);
+  for (let n = 0; n < 100 && manager.get(second.id).dataCheck?.status !== "ready"; n++) await new Promise(resolve => setTimeout(resolve, 10));
+  assert.equal(await exists(path.join(config.stateDirectory, second.id, "input-schedule.json")), true);
+  await manager.start(second.id);
   // This serial mutation waits for the check-completion save queued after start.
   await manager.concurrency(second.id, 2);
   assert.equal(manager.get(second.id).status, "running");

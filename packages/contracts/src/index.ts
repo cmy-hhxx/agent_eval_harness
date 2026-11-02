@@ -546,6 +546,8 @@ export interface AgentBinding {
   resolveSubmission?(value: unknown): unknown;
 }
 export interface WorkflowScheduling {
+  /** Workflow-owned foreground task/dependency set, recomputed once per scheduling pass. */
+  admit?(manifest: RunManifest): ReadonlySet<string>;
   /** Finite session admission derived from task states; lower stage priorities run first. */
   sessionAdmission?: {
     id(task: PlannedTask): string | undefined;

@@ -12,6 +12,7 @@ import { readSettings } from "@eval/host-app/settings";
 import { consolePath } from "./files.js";
 import { executeConsoleTask, type Gate } from "./evaluation.js";
 import { checkData, commonInputDirectory, emptyDataCheck, parentInputs, type DataCheck } from "./data-check.js";
+import { emptyInputSchedule } from "./rounds.js";
 
 export interface ConsolePreset {
   id: string; source: "wencai" | "aime"; name: string; configs: string[];
@@ -186,11 +187,19 @@ export class ConsoleTasks {
   }
   private launchCheck(task: ConsoleTask, host: HostConfig) {
     const id = task.id, stop = new AbortController();
+    const schedule = emptyInputSchedule();
     this.checkingTask = { id, stop };
     this.checking = checkData(host, task.dataCheck!, stop.signal, async issue => {
       await logger.error(new Error(issue.file + ":" + (issue.line ?? "") + " " + issue.reason),
         { component: "console", event: "console_data_check_rejected", run_id: id });
-    }, id).catch(async error => {
+    }, id, schedule).then(async () => {
+      task.dataCheck!.status = "checking";
+      await this.exclusive(async () => {
+        if (!this.tasks.has(id) || stop.signal.aborted) return;
+        await writeJson(path.join(this.directory(id), "input-schedule.json"), schedule);
+        task.dataCheck!.status = "ready";
+      });
+    }).catch(async error => {
       if (!this.tasks.has(id)) return;
       task.dataCheck!.status = "failed"; task.dataCheck!.error = errorText(error);
       await logger.error(error, { component: "console", event: "console_data_check_failed", run_id: id });
@@ -242,6 +251,7 @@ export class ConsoleTasks {
         try {
           await logger.event("console_task_started", { component: "console", run_id: id });
           const result = await this.dependencies.execute({ host, id, gate, pause: pause.signal, channels: this.config.channels,
+            inputSchedule: path.join(this.directory(id), "input-schedule.json"),
             progress: message => {
               if (message.startsWith("progress ")) {
                 try {

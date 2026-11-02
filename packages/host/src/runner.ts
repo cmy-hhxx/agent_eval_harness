@@ -439,9 +439,10 @@ export async function runEvaluation(options: RunOptions): Promise<Record<string,
     let workerUrls = options.workerUrls || [];
     const sessionAdmission = options.taskSource.scheduling?.sessionAdmission;
     let admission: ReturnType<typeof sessionAdmissionSnapshot> | undefined;
+    let foreground: ReadonlySet<string> | undefined;
     const admitted = (task: PlannedTask) => {
       const id = sessionAdmission?.id(task);
-      return !id || admission?.admitted.has(id);
+      return (!foreground || foreground.has(task.id)) && (!id || admission?.admitted.has(id));
     };
     const runnable = (task: PlannedTask) => !current.admissionPaused() &&
       manifest.states[task.id].status === "pending" && !running.has(task.id) && !executionStopReason(manifest) && dispatchable(task) &&
@@ -1041,6 +1042,7 @@ export async function runEvaluation(options: RunOptions): Promise<Record<string,
       const saturated = running.size > 0 && completions === scheduledCompletions && running.size >= taskConcurrency();
       if (!saturated) {
         admission = sessionAdmission ? sessionAdmissionSnapshot(manifest.tasks, manifest.states, sessionAdmission, manifest) : undefined;
+        foreground = options.taskSource.scheduling?.admit?.(manifest);
         readyDemand = manifest.tasks.filter(runnable).length;
       }
       taskConcurrency();

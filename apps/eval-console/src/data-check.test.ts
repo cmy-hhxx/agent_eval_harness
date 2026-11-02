@@ -6,6 +6,18 @@ import { writeJsonl } from "@eval/data";
 import type { HostConfig } from "@eval/host-app/config";
 import { fixtureConfig, raw, sessionRaw } from "../../../tests/fixtures/comparison.js";
 import { checkData, commonInputDirectory, emptyDataCheck, parentInputs } from "./data-check.js";
+import { emptyInputSchedule } from "./rounds.js";
+
+test("Check data and scheduling use physical JSONL lines rather than splitting embedded carriage returns", async t => {
+  const f = await fixtureConfig(); t.after(() => rm(f.directory, { recursive: true, force: true }));
+  f.config.inputs.versions = [f.config.inputs.versions[0]];
+  await writeFile(f.config.inputs.versions[0].sources[0].path, '{"broken":"one\rtwo"}\n' + JSON.stringify(raw("valid")) + '\n');
+  const result = emptyDataCheck("attribution"), schedule = emptyInputSchedule();
+  await checkData({ workflow: "attribution", evaluation: { ...f.config, workflow: "attribution" }, models: f.models, evaluatorVersion: "fixture" }, result,
+    new AbortController().signal, async () => {}, "lines", schedule);
+  assert.equal(result.readRecords, 2); assert.equal(result.invalidRecords, 1);
+  assert.equal(schedule.records[0].line, 2); assert.equal(schedule.records[0].case_id, "valid");
+});
 
 test("parent directory includes .archive while excluding other hidden directories, unknown models and symlinks", async t => {
   const f = await fixtureConfig(); t.after(() => rm(f.directory, { recursive: true, force: true }));

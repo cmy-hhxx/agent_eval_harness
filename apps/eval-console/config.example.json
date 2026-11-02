@@ -11,8 +11,15 @@
     {
       "id": "wencai",
       "source": "wencai",
-      "name": "问财对比",
+      "name": "问财搜索对比",
       "configs": ["host.json", "/absolute/runtime/config/models.json", "/absolute/runtime/config/wencai.json"],
+      "concurrency": 2
+    },
+    {
+      "id": "wencai-daily",
+      "source": "wencai",
+      "name": "问财日常对比",
+      "configs": ["host.json", "/absolute/runtime/config/models.json", "/absolute/runtime/config/wencai-daily.json"],
       "concurrency": 2
     },
     {

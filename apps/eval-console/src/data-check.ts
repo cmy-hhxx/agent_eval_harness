@@ -1,13 +1,22 @@
 import path from "node:path";
 import { readdir, stat } from "node:fs/promises";
-import { createReadStream } from "node:fs";
-import { createInterface } from "node:readline";
 import { canonical, errorText, HttpError, object } from "@eval/contracts";
 import { completedCaseKey, fileSourceReader, readCompletedCases, runLayout } from "@eval/data";
 import { adapt, type Candidate, type VersionConfig } from "@eval/workflows/inputs";
 import { expandComparisonPairs, type EvalConfig } from "@eval/workflows/comparison";
 import type { HostConfig } from "@eval/host-app/config";
 import { consolePath } from "./files.js";
+export interface ScheduledInput {
+  batch_id: string; case_id: string; version: string; input_id: string;
+  source: string; line: number; byte_offset: number; byte_length: number;
+}
+export interface EvaluationUnit { batch_id: string; case_id: string; models: string[]; aliases?: string[]; }
+export interface InputSchedule {
+  files: { source: string; revision: string }[];
+  records: ScheduledInput[];
+  units: EvaluationUnit[];
+  issues: { source: string; line?: number; reason: string }[];
+}
 
 export interface DataCheck {
   status: "checking" | "ready" | "failed";
@@ -60,7 +69,7 @@ export function emptyDataCheck(workflow: string): DataCheck {
 }
 
 /** One streaming pass, no task graph, evidence expansion, Worker, model call or copied input. */
-export async function checkData(host: HostConfig, check: DataCheck, signal: AbortSignal, issue: (value: DataCheck["issues"][number]) => Promise<void>, runId = "preview") {
+export async function checkData(host: HostConfig, check: DataCheck, signal: AbortSignal, issue: (value: DataCheck["issues"][number]) => Promise<void>, runId = "preview", schedule?: InputSchedule) {
   const started = Date.now(), config = host.evaluation;
   const pairs = host.workflow === "comparison" ? expandComparisonPairs((config as EvalConfig).comparisons) : [];
   const files = await Promise.all(config.inputs.versions.map(async version => ({ version, files: await fileSourceReader.files(version.sources) })));
@@ -79,6 +88,7 @@ export async function checkData(host: HostConfig, check: DataCheck, signal: Abor
   const flushIssues = async () => { await Promise.all(logBatch.splice(0).map(issue)); };
   const report = async (file: string, line: number | undefined, reason: string) => {
     const value = { file, line, reason };
+    schedule?.issues.push({ source: file, line, reason });
     if (check.issues.length < 20) check.issues.push(value);
     logBatch.push(value);
     if (logBatch.length >= 100) await flushIssues();
@@ -86,13 +96,12 @@ export async function checkData(host: HostConfig, check: DataCheck, signal: Abor
   for (const [modelIndex, item] of files.entries()) for (const file of item.files) {
     signal.throwIfAborted();
     const before = await stat(file);
-    const stream = createReadStream(file, { highWaterMark: 1024 * 1024, signal });
-    const lines = createInterface({ input: stream, crlfDelay: Infinity });
+    const revision = await fileSourceReader.revision(file);
+    const lines = fileSourceReader.lines(file, revision);
     let index = 0;
     try {
-      for await (let line of lines) {
-        index++; signal.throwIfAborted();
-        if (index === 1) line = line.replace(/^\uFEFF/, "");
+      for await (const row of lines) {
+        const { line, byteOffset, byteLength } = row; index = row.index; signal.throwIfAborted();
         if (!line.trim()) continue;
         const coordinate = canonical([item.version.id, file, index]);
         if (selection && !selection.has(coordinate)) continue;
@@ -119,6 +128,8 @@ export async function checkData(host: HostConfig, check: DataCheck, signal: Abor
           seen.set(key!, { file, line: index });
           group!.set(c.version, { batch_id: c.batch_id, case_id: c.case_id, session_id: c.session_id,
             version: c.version, question: c.question.replace(/\s+/gu, ""), reference: c.reference });
+          schedule?.records.push({ batch_id: c.batch_id, case_id: c.case_id, version: c.version, input_id: c.input_id,
+            source: file, line: index, byte_offset: byteOffset, byte_length: byteLength });
         } catch (error) {
           if (!counted) { check.readRecords++; check.models[modelIndex].records++; }
           check.invalidRecords++;
@@ -126,13 +137,15 @@ export async function checkData(host: HostConfig, check: DataCheck, signal: Abor
         }
         check.elapsedMs = Date.now() - started;
       }
-    } finally { lines.close(); stream.destroy(); await flushIssues(); }
+    } finally { await flushIssues(); }
     const after = await stat(file);
     if (before.size !== after.size || before.mtimeMs !== after.mtimeMs) throw new Error("统计期间文件发生变化，请重新 Check data: " + file);
+    schedule?.files.push({ source: file, revision });
     check.checkedFiles++;
   }
   if (selection && found.size !== selection.size) throw new Error("输入范围存在缺失记录，请重新选择输入目录");
-  const selectedCases = [...cases.values()].slice(0, selection ? undefined : config.inputs.limit);
+  const selectedCases = [...cases.values()].sort((a, b) => ([...b.values()][0]?.batch_id ?? "").localeCompare([...a.values()][0]?.batch_id ?? ""))
+    .slice(0, selection ? undefined : config.inputs.limit);
   const done = (stage: string, rows: Row[]) => rows.every(row => [row.case_id, row.session_id].some(id => id &&
     completed.has(completedCaseKey(stage, rows.map(r => r.version), row.batch_id, id))));
   for (const group of selectedCases) {
@@ -140,6 +153,8 @@ export async function checkData(host: HostConfig, check: DataCheck, signal: Abor
     if (host.workflow !== "comparison") {
       for (const row of rows) {
         check.total++; if (done("attribution-session", [row])) check.skipped++;
+        schedule?.units.push({ batch_id: row.batch_id, case_id: row.case_id, models: [row.version],
+          ...(row.session_id ? { aliases: [row.session_id] } : {}) });
         destinations.add(path.join(config.output.path, row.version, row.version + "_attribution-" + row.batch_id + ".jsonl"));
       }
     } else for (const pair of pairs) {
@@ -152,6 +167,7 @@ export async function checkData(host: HostConfig, check: DataCheck, signal: Abor
         check.unavailable++; continue;
       }
       check.total++; if (done("comparison", present)) check.skipped++;
+      schedule?.units.push({ batch_id: present[0].batch_id, case_id: present[0].case_id, models: [...pair].sort() });
       const name = [...pair].sort().join("_vs_");
       destinations.add(path.join(config.output.path, "comparison", name, name + "-" + present[0].batch_id + ".jsonl"));
     }

@@ -1,9 +1,9 @@
 import { exists, runLayout } from "@eval/data";
 import { runEvaluation } from "@eval/host";
 import { createChannelRequests } from "@eval/host";
-import { attributionWorkflow, attributionRepository } from "@eval/workflows/attribution";
-import { comparisonRepository } from "@eval/workflows/comparison";
-import { consoleComparisonWorkflow } from "./comparison.js";
+import { attributionRepository } from "@eval/workflows/attribution";
+import { comparisonRepository, comparisonWorkflow, type EvalConfig } from "@eval/workflows/comparison";
+import { createRoundWorkflow, loadInputSchedule } from "./rounds.js";
 import { businessResultRepository } from "@eval/workflows/review";
 import { createBalancedModels, type HostConfig } from "@eval/host-app/config";
 import { services, logger } from "@eval/host-app/composition";
@@ -13,6 +13,7 @@ const businessComparisonRepository = businessResultRepository(comparisonReposito
 export type Gate = ReturnType<typeof createChannelRequests>;
 interface Execution {
   host: HostConfig; id: string; gate: Gate; pause: AbortSignal; channels: string[];
+  inputSchedule: string;
   progress(message: string): void;
 }
 
@@ -21,8 +22,10 @@ async function logInputIssues(id: string, issues: Record<string, unknown>[]) {
     String(issue.reason ?? "记录无效"), { cause: issue }), { component: "console", event: "console_input_rejected", run_id: id });
 }
 
-export async function executeConsoleTask({ host, id, gate, pause, channels, progress }: Execution) {
-  const workflow = host.workflow === "attribution" ? attributionWorkflow : consoleComparisonWorkflow;
+export async function executeConsoleTask({ host, id, gate, pause, channels, progress, inputSchedule }: Execution) {
+  const config = host.evaluation as EvalConfig;
+  const workflow = host.workflow === "comparison" && (config.clustering.enabled || config.prediction || config.inputs.records) ? comparisonWorkflow :
+    createRoundWorkflow(host, await loadInputSchedule(host, inputSchedule, pause));
   const repository = host.workflow === "attribution" ? businessAttributionRepository : businessComparisonRepository;
   const routing = createBalancedModels(host.models, channels);
   for (const stage of Object.keys(host.models.bindings)) routing.modelRoutesForTask({ stage });
