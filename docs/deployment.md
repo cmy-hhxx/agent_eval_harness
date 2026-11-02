@@ -139,7 +139,7 @@ unset ERIS_ADMIN_PASSWORD
 
 初始化只在缺失时创建 `runtime/config/eris.ini`、`runtime/config/eris.json` 和 `runtime/secrets/eris/accounts.json`。渠道取显式指定的服务器 INI，产物目录取 `--collections-file`；独立绑定实际模型 `deepseek-v4.1-flash`，推理默认 `high`、支持 `low / high / xhigh / max`。已有文件须符合当前配置 Schema，不自动覆盖或转换；已有账号不重置密码，后续更新可不传初始化密码。
 
-`eris` tmux 会话内前台运行 `bash agent/run.sh --config <runtime/config/eris.json>`；内部 `0.0.0.0:5004`，外部既有映射为 `http://117.50.195.94:3928`。启动使用实例锁，端口冲突直接报错。部署不自动关闭旧 `eris` 会话，更新前应只停止该会话中的 Eris。
+`eris` tmux 会话内前台运行 `bash agent/run.sh --config <runtime/config/eris.json>`；端口由外部配置指定。当前 `5004` 与外部 `http://117.50.195.94:3928` 已分配给评测控制台，Eris 应使用独立端口。启动使用实例锁，端口冲突直接报错。部署不自动关闭旧 `eris` 会话，更新前应只停止该会话中的 Eris。
 
 Comparison 的预计算统计由评测写入端保存到 `overview.json`。评测 Host 也需使用包含该写入逻辑的代码；仅更新 `eris-code` 不会改变评测产物。既有当前契约运行停止后，可用 `node scripts/rebuild-run-overviews.mjs <运行根目录>` 重建索引。归档报告与独立问题树通过公开资产工具直接读取，不转换归档状态。
 

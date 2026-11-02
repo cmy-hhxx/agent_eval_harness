@@ -48,7 +48,7 @@ Eris 保留聊天、账户、模型选择、结果与证据读取、搜索和图
 bash agent/run.sh --config /absolute/path/eris.json
 ```
 
-服务器地址为 `http://117.50.195.94:3928`，内部端口 `5004`。部署、账号与恢复见 [Eris](agent/README.md) 和[部署指南](docs/deployment.md)。本机只进行开发与模拟验证。
+当前 `http://117.50.195.94:3928`（内部 `5004`）由评测控制台使用。Eris 启用时在外部配置中指定独立端口；部署、账号与恢复见 [Eris](agent/README.md) 和[部署指南](docs/deployment.md)。本机只进行开发与模拟验证。
 
 ## 按任务阅读
 

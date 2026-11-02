@@ -50,7 +50,7 @@ test("console API previews frozen defaults, starts idempotently, drains, resumes
   const id = String(preview.data.id);
   const frozen = await readJson<{ models: unknown; bindings: unknown }>(path.join(config.stateDirectory, id, "config.json"));
   assert.deepEqual(frozen.models, models); assert.deepEqual(frozen.bindings, JSON.parse(JSON.stringify(f.models.bindings)));
-  assert.deepEqual(Object.keys((await request(`/api/tasks/${id}/configuration`)).data).sort(), ["concurrency", "inputs", "output", "preset"]);
+  assert.deepEqual(Object.keys((await request(`/api/tasks/${id}/configuration`)).data).sort(), ["concurrency", "inputs", "logs", "output", "preset"]);
   await Promise.all([request("/api/tasks", { previewId: id }), request("/api/tasks", { previewId: id })]);
   for (let n = 0; n < 100 && starts === 0; n++) await new Promise(resolve => setTimeout(resolve, 10));
   assert.equal(starts, 1);

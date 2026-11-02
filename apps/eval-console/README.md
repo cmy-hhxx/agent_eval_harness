@@ -58,7 +58,7 @@ EVAL_CONFIG_FILE=/absolute/runtime/config/config.ini \
 | `POST /api/tasks/:id/pause` | 排空在途工作后暂停 |
 | `POST /api/tasks/:id/resume` | 继续缺失工作 |
 | `POST /api/tasks/:id/concurrency` | `{ "concurrency": 8 }` 动态调整请求上限 |
-| `GET /api/tasks/:id/configuration` | 下载可再次预览的业务配置，不含模型参数或密钥 |
+| `GET /api/tasks/:id/configuration` | 下载业务配置与只读日志位置，可再次预览，不含模型参数或密钥 |
 | `GET /api/tasks/:id/logs` | `kind=runtime\|evaluation`、`errors=1`、`cursor=字节位置` |
 
 预览请求：

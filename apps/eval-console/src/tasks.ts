@@ -253,7 +253,7 @@ export class ConsoleTasks {
   async configuration(id: string) {
     const task = this.get(id);
     return { preset: task.preset, inputs: Object.fromEntries(task.inputs.map(input => [input.id, input.paths])),
-      output: task.output, concurrency: task.concurrency };
+      output: task.output, concurrency: task.concurrency, logs: this.logPaths() };
   }
   async close() {
     this.closing = true;
