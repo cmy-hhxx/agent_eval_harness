@@ -17,10 +17,10 @@
   <div class="drawer-header"><span id="create-title">新建评测</span><button id="close-create" class="icon-button" aria-label="关闭新建评测">×</button></div>
   <div class="drawer-body"><form id="configuration">
     <div class="form-row"><div><label for="preset">评测类型</label><select id="preset"></select></div><div class="concurrency-field"><label for="concurrency">并发</label><input id="concurrency" type="number" min="1" step="1" required></div></div>
-    <div class="field-label">评测输入</div><div id="inputs" class="path-list"></div>
+    <label class="field-label" for="input-directory">评测输入父目录</label><textarea id="input-directory" rows="3" spellcheck="false" required></textarea>
     <div class="field-label">评测输出</div><div id="output-field"></div>
   </form><div id="preview-summary" hidden></div><p id="config-error" role="alert"></p></div>
-  <div class="drawer-footer"><a id="download-preview" hidden>下载配置</a><button id="back" hidden>返回修改</button><button id="preview-button" form="configuration" class="primary">下一步</button><button id="start" class="primary" hidden>创建并启动</button></div>
+  <div class="drawer-footer"><a id="download-preview" hidden>下载配置</a><button id="back" hidden>返回修改</button><button id="preview-button" form="configuration" class="primary">Check data</button><button id="start" class="primary" hidden>创建并启动</button></div>
 </div></dialog>
 <dialog id="detail" class="drawer" aria-labelledby="detail-title"><div class="drawer-frame">
   <div class="drawer-header"><span id="detail-title">任务详情</span><button id="close-detail" class="icon-button" aria-label="关闭任务详情">×</button></div>

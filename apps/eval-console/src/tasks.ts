@@ -11,6 +11,7 @@ import { readSettings } from "@eval/host-app/settings";
 
 import { consolePath } from "./files.js";
 import { executeConsoleTask, type Gate } from "./evaluation.js";
+import { checkData, commonInputDirectory, emptyDataCheck, parentInputs, type DataCheck } from "./data-check.js";
 
 export interface ConsolePreset {
   id: string; source: "wencai" | "aime"; name: string; configs: string[];
@@ -28,12 +29,15 @@ export interface ConsoleTask {
   inputs: { id: string; name: string; paths: string[] }[];
   error?: string; result?: Record<string, unknown>; progress?: ConsoleProgress;
   warnings?: string[];
+  inputDirectory?: string; dataCheck?: DataCheck;
 }
 export class ConsoleTasks {
   readonly tasks = new Map<string, ConsoleTask>();
   private readonly active = new Map<string, { pause: AbortController; gate: Gate; done: Promise<void>; progress?: ConsoleProgress }>();
   private serial: Promise<unknown> = Promise.resolve();
   private closing = false;
+  private checking?: Promise<void>;
+  private readonly checkStop = new AbortController();
   constructor(readonly config: ConsoleConfig, private readonly dependencies = {
     execute: executeConsoleTask, preflight: preflightHost,
   }) {}
@@ -63,6 +67,10 @@ export class ConsoleTasks {
       try { task = await readJson<ConsoleTask>(path.join(this.directory(name), "task.json")); }
       catch (error) { if ((error as NodeJS.ErrnoException).code === "ENOENT") continue; throw error; }
       if (task.id !== name) throw new Error("Task identity mismatch: " + name);
+      if (task.dataCheck?.status === "checking") {
+        task.dataCheck.status = "failed"; task.dataCheck.error = "数据检查曾中断，请重新 Check data";
+        await this.save(task);
+      }
       if (["starting", "running", "pausing"].includes(task.status)) {
         task.status = "paused";
         task.error = "控制服务曾中断；已保存的结果保留，请手动继续";
@@ -85,6 +93,7 @@ export class ConsoleTasks {
       const host = await this.load(preset.configs);
       this.assertWorkflow(preset, host);
       return { id: preset.id, source: preset.source, name: preset.name,
+        inputDirectory: commonInputDirectory(host.evaluation.inputs.versions),
         concurrency: preset.concurrency, output: host.evaluation.output.path, logs: this.logPaths(),
         inputs: host.evaluation.inputs.versions.map(version => ({ id: version.id, name: version.display_name || version.name,
           paths: version.sources.map(source => source.path) })) };
@@ -95,15 +104,25 @@ export class ConsoleTasks {
       throw new Error("预设来源与评测流程不一致: " + preset.id);
   }
   async preview(value: unknown) {
+    if (this.closing) throw new HttpError(409, "控制服务正在关闭");
+    // Serialize preparation too, so concurrent submissions cannot launch overlapping full scans.
+    return this.exclusive(async () => {
+      if (this.checking) throw new HttpError(409, "已有数据检查进行中，请稍后重试");
+      return this.preparePreview(value);
+    });
+  }
+  private async preparePreview(value: unknown) {
     if (!value || typeof value !== "object") throw new HttpError(400, "配置不能为空");
-    const { preset: presetId, inputs, output, concurrency } = value as Record<string, unknown>;
+    const { preset: presetId, inputs, inputDirectory, output, concurrency } = value as Record<string, unknown>;
     const preset = this.config.presets.find(item => item.id === presetId);
     if (!preset) throw new HttpError(400, "未知评测预设");
     this.checkConcurrency(concurrency);
     const host = await this.load(preset.configs);
     this.assertWorkflow(preset, host);
-    if (!inputs || typeof inputs !== "object" || Array.isArray(inputs)) throw new HttpError(400, "请指定各模型的输入位置");
-    const entries = inputs as Record<string, unknown>;
+    if (inputDirectory !== undefined && inputs !== undefined) throw new HttpError(400, "父目录与模型路径只能选择一种输入方式");
+    const discovered = inputDirectory === undefined ? undefined : await parentInputs(inputDirectory, host.evaluation.inputs.versions, preset.inputRoots);
+    const entries = discovered?.inputs ?? inputs as Record<string, unknown>;
+    if (!entries || typeof entries !== "object" || Array.isArray(entries)) throw new HttpError(400, "请指定输入父目录");
     if (Object.keys(entries).length !== host.evaluation.inputs.versions.length) throw new HttpError(400, "输入模型数量与预设不符");
     const versions = await Promise.all(host.evaluation.inputs.versions.map(async version => {
       const paths = entries[version.id];
@@ -115,18 +134,23 @@ export class ConsoleTasks {
       })) };
     }));
     const destination = await consolePath(output);
+    if (discovered && (destination.path === discovered.directory || destination.path.startsWith(discovered.directory + path.sep) ||
+        discovered.directory.startsWith(destination.path + path.sep))) throw new HttpError(400, "输入父目录和输出目录不能重叠");
     for (const version of versions) for (const source of version.sources) {
       const input = source.path;
       if (input === destination.path || input.startsWith(destination.path + path.sep) || destination.path.startsWith(input + path.sep))
         throw new HttpError(400, "输入和输出目录不能重叠: " + input);
     }
     const warnings = consolePathWarnings(versions, destination.path);
+    if (discovered?.ignored) warnings.push("另有 " + discovered.ignored + " 个 JSONL 文件未匹配预设模型，不会读入。");
     const raw = await readConfigSources(preset.configs);
     raw.inputs = { ...host.evaluation.inputs, versions };
     const inputsChanged = versions.some((version, index) => JSON.stringify(version.sources.map(source => source.path)) !==
       JSON.stringify(host.evaluation.inputs.versions[index]!.sources.map(source => source.path)));
     // A finite record selection belongs to its original files. New paths must not evaluate old coordinates.
     if (inputsChanged) delete (raw.inputs as Record<string, unknown>).records;
+    if (discovered) for (const key of ["records", "limit", "batches", "case_ids", "dataset_id"])
+      delete (raw.inputs as Record<string, unknown>)[key];
     raw.output = { ...host.evaluation.output, path: destination.path };
     raw.execution = { ...host.evaluation.execution, concurrency, taskConcurrency: concurrency,
       modelRequestLimits: this.limits(concurrency as number) };
@@ -141,9 +165,18 @@ export class ConsoleTasks {
       if (issues.length) throw new HttpError(400, "启动检查未通过: " + issues.map(issue => issue.check + ": " + issue.reason).join("；"));
       const task: ConsoleTask = { id, preset: preset.id, source: preset.source, name: preset.name, status: "draft",
         createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(), concurrency: concurrency as number,
-        output: destination.path, warnings, inputs: versions.map(version => ({ id: version.id, name: version.display_name || version.name,
+        output: destination.path, warnings, inputDirectory: discovered?.directory, dataCheck: emptyDataCheck(host.workflow),
+        inputs: versions.map(version => ({ id: version.id, name: version.display_name || version.name,
           paths: version.sources.map(source => source.path) })) };
-      await this.exclusive(() => this.save(task));
+      await this.save(task);
+      this.checking = checkData(prepared, task.dataCheck!, this.checkStop.signal, async issue => {
+        await logger.error(new Error(issue.file + ":" + (issue.line ?? "") + " " + issue.reason),
+          { component: "console", event: "console_data_check_rejected", run_id: id });
+      }, id).catch(async error => {
+        task.dataCheck!.status = "failed"; task.dataCheck!.error = errorText(error);
+        await logger.error(error, { component: "console", event: "console_data_check_failed", run_id: id });
+      }).finally(async () => { try { await this.exclusive(() => this.save(task)); } finally { this.checking = undefined; } });
+      void this.checking.catch(error => logger.error(error, { component: "console", event: "console_state_failed", run_id: id }));
       return this.get(id);
     } catch (error) {
       await localFiles.remove(this.directory(id), { recursive: true, force: true });
@@ -164,6 +197,8 @@ export class ConsoleTasks {
       const task = structuredClone(this.tasks.get(id)!);
       if (this.active.has(id) || task.status === "finished") return this.get(id);
       if (!["draft", "paused", "failed", "partial"].includes(task.status)) throw new HttpError(409, "当前状态不能启动");
+      if (task.status === "draft" && task.dataCheck?.status !== "ready") throw new HttpError(409, "请先完成 Check data");
+      if (task.status === "draft" && !task.dataCheck?.total) throw new HttpError(409, "没有可评测数据，请检查输入");
       if ([...this.active.keys()].some(key => this.tasks.get(key)!.output === task.output))
         throw new HttpError(409, "已有任务正在写入这个输出位置，请先暂停它");
       const host = await this.load(this.configFile(id));
@@ -252,11 +287,14 @@ export class ConsoleTasks {
   }
   async configuration(id: string) {
     const task = this.get(id);
-    return { preset: task.preset, inputs: Object.fromEntries(task.inputs.map(input => [input.id, input.paths])),
+    return { preset: task.preset, ...(task.inputDirectory ? { inputDirectory: task.inputDirectory } :
+      { inputs: Object.fromEntries(task.inputs.map(input => [input.id, input.paths])) }),
       output: task.output, concurrency: task.concurrency, logs: this.logPaths() };
   }
   async close() {
     this.closing = true;
+    this.checkStop.abort(new Error("数据检查已中断，请重新 Check data"));
+    await this.checking?.catch(() => {});
     await Promise.all([...this.active.keys()].map(id => this.pause(id)));
     await Promise.allSettled([...this.active.values()].map(live => live.done));
   }

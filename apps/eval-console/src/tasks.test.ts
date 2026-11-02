@@ -4,7 +4,7 @@ import { executeConsoleTask } from "./evaluation.js";
 import test from "node:test";
 import assert from "node:assert/strict";
 import path from "node:path";
-import { rm } from "node:fs/promises";
+import { realpath, rm } from "node:fs/promises";
 import { readJson, writeJson, writeJsonl } from "@eval/data";
 import { ConsoleTasks, type ConsoleConfig } from "./tasks.js";
 import { serveConsole } from "./server.js";
@@ -22,8 +22,11 @@ test("console API previews frozen defaults, starts idempotently, drains, resumes
   });
   await initializeServices();
   const source = path.join(f.directory, "source.json");
+  const inputDirectory = path.join(f.directory, "input");
+  for (const version of f.config.inputs.versions) await writeJsonl(path.join(inputDirectory, version.id + ".jsonl"), [raw()]);
   const models = { judge: { channel: "evaluation-gateway", model: "fixture", thinking: "off" } };
-  await writeJson(source, { ...f.config, evaluatorVersion: "fixture", models, bindings: f.models.bindings });
+  await writeJson(source, { ...f.config, inputs: { ...f.config.inputs, limit: 1, case_ids: ["not-in-parent"] },
+    evaluatorVersion: "fixture", models, bindings: f.models.bindings });
   const config: ConsoleConfig = { hostname: "127.0.0.1", port: 0, stateDirectory: path.join(f.directory, "console"),
     logDirectory: process.env.EVAL_LOG_DIR, passwordFile: "unused", channels: ["evaluation-gateway"],
     presets: [{ id: "wencai", source: "wencai", name: "问财对比", concurrency: 2, configs: [source], inputRoots: [f.directory] }] };
@@ -46,13 +49,18 @@ test("console API previews frozen defaults, starts idempotently, drains, resumes
   assert.equal((await request("/api/tasks", undefined, false)).status, 401);
   assert.equal((await request("/api/tasks", {}, false)).status, 403);
   const preview = await request("/api/previews", { preset: "wencai", concurrency: 2, output: f.config.output.path,
-    inputs: Object.fromEntries(f.config.inputs.versions.map(v => [v.id, v.sources.map(s => s.path)])) });
+    inputDirectory });
   assert.equal(preview.status, 201, JSON.stringify(preview.data));
   assert.equal(starts, 0);
   const id = String(preview.data.id);
-  const frozen = await readJson<{ models: unknown; bindings: unknown }>(path.join(config.stateDirectory, id, "config.json"));
+  for (let n = 0; n < 100 && manager.get(id).dataCheck?.status === "checking"; n++) await new Promise(resolve => setTimeout(resolve, 10));
+  assert.equal(manager.get(id).dataCheck?.status, "ready");
+  const frozen = await readJson<{ models: unknown; bindings: unknown; inputs: Record<string, unknown> }>(path.join(config.stateDirectory, id, "config.json"));
   assert.deepEqual(frozen.models, models); assert.deepEqual(frozen.bindings, JSON.parse(JSON.stringify(f.models.bindings)));
-  assert.deepEqual(Object.keys((await request(`/api/tasks/${id}/configuration`)).data).sort(), ["concurrency", "inputs", "logs", "output", "preset"]);
+  assert.equal(frozen.inputs.limit, undefined); assert.equal(frozen.inputs.case_ids, undefined);
+  assert.deepEqual(Object.keys((await request(`/api/tasks/${id}/configuration`)).data).sort(), ["concurrency", "inputDirectory", "logs", "output", "preset"]);
+  assert.equal(manager.get(id).inputDirectory, await realpath(inputDirectory));
+  assert.equal(manager.get(id).dataCheck?.total, 1);
   await Promise.all([request("/api/tasks", { previewId: id }), request("/api/tasks", { previewId: id })]);
   for (let n = 0; n < 100 && starts === 0; n++) await new Promise(resolve => setTimeout(resolve, 10));
   assert.equal(starts, 1);
@@ -74,7 +82,15 @@ test("console API previews frozen defaults, starts idempotently, drains, resumes
   release!();
   for (let n = 0; n < 100 && manager.get(id).status === "running"; n++) await new Promise(resolve => setTimeout(resolve, 10));
   assert.equal(manager.get(id).status, "finished");
+  const overlap = await request("/api/previews", { preset: "wencai", concurrency: 2, output: path.join(inputDirectory, "output"), inputDirectory });
+  assert.equal(overlap.status, 400); assert.match(String(overlap.data.error), /重叠/);
   for (const version of f.config.inputs.versions) await writeJsonl(version.sources[0].path, [{ ...raw("invalid"), messages: [] }]);
+  for (const version of f.config.inputs.versions) await writeJsonl(path.join(inputDirectory, version.id + ".jsonl"), [{ ...raw("invalid"), messages: [] }]);
+  const empty = await request("/api/previews", { preset: "wencai", concurrency: 2, output: f.config.output.path, inputDirectory });
+  assert.equal(empty.status, 201);
+  for (let n = 0; n < 100 && manager.get(String(empty.data.id)).dataCheck?.status === "checking"; n++) await new Promise(resolve => setTimeout(resolve, 10));
+  assert.equal((await request("/api/tasks", { previewId: empty.data.id })).status, 409);
+  assert.equal(starts, 2, "checking invalid inputs must never start evaluation");
   const invalid = await executeConsoleTask({ host: { workflow: "comparison", evaluation: f.config, models: f.models, evaluatorVersion: "fixture" },
     id: "console-invalid-input", gate: createChannelRequests({ "evaluation-gateway": 1 }), pause: new AbortController().signal,
     channels: ["evaluation-gateway"], progress() {} });

@@ -5,7 +5,6 @@ function node(tag, text, className) { const el = document.createElement(tag); if
 function button(text, action, className = 'text-button') { const el = node('button', text, className); el.type = 'button'; el.onclick = action; return el; }
 const basename = file => file.replace(/\/$/, '').split('/').at(-1);
 const shortPath = file => '…/' + file.replace(/\/$/, '').split('/').slice(-2).join('/');
-const lines = text => text.split('\n').map(s => s.trim()).filter(Boolean);
 async function api(url, value) {
   const response = await fetch(url, value === undefined ? {} : { method: 'POST', headers: { 'content-type': 'application/json', 'x-console-request': '1' }, body: JSON.stringify(value) });
   const result = await response.json();
@@ -18,23 +17,20 @@ async function busy(el, target, action) {
   try { await action(); } catch (error) { $(target).textContent = error.message; }
   finally { el.disabled = false; }
 }
-function pathEditor(name, paths, id, output = false) {
-  const details = node('details', undefined, 'path-editor' + (output ? ' output-editor' : ''));
+function outputEditor(file) {
+  const details = node('details', undefined, 'path-editor output-editor');
   const summary = node('summary'), label = node('span', undefined, 'path-label');
-  const title = node('span', output ? shortPath(paths[0]) : name.replace(/^AA-fast-/i, ''), 'path-name');
-  const value = node('span', paths.length > 1 ? paths.length + ' 个输入路径' : basename(paths[0]), 'path-short');
-  label.append(title); if (!output) label.append(value); summary.append(label); summary.title = paths.join('\n');
-  const field = node('textarea'); field.id = id; field.value = paths.join('\n'); field.rows = 3; field.required = true; field.spellcheck = false;
-  field.setAttribute('aria-label', output ? '评测输出路径' : name + ' 输入路径');
-  field.oninput = () => { const files = lines(field.value); summary.title = field.value; if (output) title.textContent = files[0] ? shortPath(files[0]) : '填写输出路径'; else value.textContent = files.length > 1 ? files.length + ' 个输入路径' : basename(files[0] || '未填写'); };
+  const title = node('span', shortPath(file), 'path-name');
+  label.append(title); summary.append(label); summary.title = file;
+  const field = node('textarea'); field.id = 'output'; field.value = file; field.rows = 3; field.required = true; field.spellcheck = false;
+  field.setAttribute('aria-label', '评测输出路径');
+  field.oninput = () => { summary.title = field.value; title.textContent = field.value.trim() ? shortPath(field.value.trim()) : '填写输出路径'; };
   details.append(summary, field); return details;
 }
 function fillPreset() {
   const preset = state.presets.find(p => p.id === $('preset').value); if (!preset) return;
-  $('inputs').replaceChildren(...preset.inputs.map((input, i) => {
-    const el = pathEditor(input.name, input.paths, 'input-' + i); el.querySelector('textarea').dataset.version = input.id; return el;
-  }));
-  $('output-field').replaceChildren(pathEditor('评测输出', [preset.output], 'output', true));
+  $('input-directory').value = preset.inputDirectory;
+  $('output-field').replaceChildren(outputEditor(preset.output));
   $('concurrency').value = preset.concurrency; $('config-error').textContent = '';
 }
 function setSource(value) {
@@ -57,14 +53,39 @@ function readPath(file, label = basename(file)) {
 }
 function summary(task, target) {
   target.replaceChildren();
+  const check = task.dataCheck;
+  if (check?.status === 'ready') {
+    const counts = node('div', undefined, 'check-counts');
+    for (const [label, value, unit] of [['将读入', check.readRecords, '条输入'], ['可评测', check.total, check.unit], ['已有结果跳过', check.skipped, check.unit], ['预计待评', check.pending, check.unit]]) {
+      const item = node('div'); item.append(node('span', label), node('strong', value.toLocaleString()), node('small', unit)); counts.append(item);
+    }
+    target.append(counts, node('p', check.files + ' 个文件 · ' + formatBytes(check.bytes) + ' · 检查 ' + (check.elapsedMs / 1000).toFixed(1) + ' 秒', 'check-meta'));
+    if (check.invalidRecords || check.unavailable) {
+      const detail = node('details', undefined, 'check-issues');
+      detail.append(node('summary', [check.invalidRecords ? '无效输入 ' + check.invalidRecords + ' 条' : '', check.unavailable ? '无法配对 ' + check.unavailable + ' 场' : ''].filter(Boolean).join(' · ')));
+      for (const issue of check.issues) detail.append(node('div', issue.file + ':' + (issue.line || '') + ' ' + issue.reason, 'full-path'));
+      target.append(detail);
+    }
+  }
   const inputs = node('div');
+  if (task.inputDirectory) inputs.append(readPath(task.inputDirectory, shortPath(task.inputDirectory)));
   for (const input of task.inputs) inputs.append(readPath(input.paths.join('\n'),
     input.paths.length > 1 ? input.name + ' · ' + input.paths.length + ' 个文件' : basename(input.paths[0])));
   const logs = node('div'); for (const file of task.logs) logs.append(readPath(file));
-  for (const [label, content] of [['输入', inputs], ['输出', readPath(task.output, shortPath(task.output))], ['并发', node('span', String(task.concurrency))], ['日志', logs]]) {
+  const output = node('div'); output.append(readPath(task.output, shortPath(task.output)));
+  if (check?.destinations.length) output.append(readPath(check.destinations.join('\n'), '主要结果文件 · ' + check.destinations.length));
+  for (const [label, content] of [['输入', inputs], ['输出', output], ['并发', node('span', String(task.concurrency))], ['日志', logs]]) {
     const row = node('div', undefined, 'summary-row'), value = node('div', undefined, 'summary-value'); value.append(content); row.append(node('span', label), value); target.append(row);
   }
   for (const warning of task.warnings || []) target.append(node('p', warning, 'path-warning'));
+  if (check?.status === 'ready') target.append(node('p', '数量以本次检查为准，启动时按最新结果跳过。', 'check-meta'));
+}
+function formatBytes(value) { return value >= 1024 ** 3 ? (value / 1024 ** 3).toFixed(2) + ' GB' : (value / 1024 ** 2).toFixed(1) + ' MB'; }
+function checking(task) {
+  const check = task.dataCheck;
+  const text = node('p', '已检查 ' + check.checkedFiles + ' / ' + check.files + ' 个文件 · 已读取 ' + check.readRecords.toLocaleString() + ' 条', 'check-meta');
+  const bar = node('progress'); bar.setAttribute('aria-label', '数据检查进度');
+  $('preview-summary').replaceChildren(text, bar);
 }
 function openCapacity(task) { state.capacity = task.id; $('capacity-value').value = task.concurrency; $('capacity-error').textContent = ''; $('capacity').showModal(); $('capacity-value').select(); }
 function renderTasks() {
@@ -125,14 +146,29 @@ $('logout').onclick = () => busy($('logout'), 'task-error', async () => { await 
 document.querySelectorAll('[data-source]').forEach(el => el.onclick = () => setSource(el.dataset.source));
 document.querySelectorAll('[data-detail]').forEach(el => el.onclick = () => setDetail(el.dataset.detail));
 $('new-task').onclick = openCreate; $('empty-create').onclick = openCreate; $('preset').onchange = fillPreset; $('back').onclick = editMode;
-$('close-create').onclick = () => $('create').close(); $('close-detail').onclick = $('close-detail-bottom').onclick = () => $('detail').close(); $('close-capacity').onclick = () => $('capacity').close();
+$('close-create').onclick = () => $('create').close(); $('create').onclose = () => { state.preview = null; };
+$('close-detail').onclick = $('close-detail-bottom').onclick = () => $('detail').close(); $('close-capacity').onclick = () => $('capacity').close();
 $('configuration').addEventListener('invalid', event => { const details = event.target.closest('details'); if (details) details.open = true; }, true);
 $('configuration').onsubmit = event => {
   event.preventDefault(); void busy($('preview-button'), 'config-error', async () => {
-    const inputs = {}; $('inputs').querySelectorAll('textarea').forEach(el => { inputs[el.dataset.version] = lines(el.value); });
-    state.preview = await api('/api/previews', { preset: $('preset').value, inputs, output: $('output').value.trim(), concurrency: Number($('concurrency').value) });
+    state.preview = await api('/api/previews', { preset: $('preset').value, inputDirectory: $('input-directory').value.trim(), output: $('output').value.trim(), concurrency: Number($('concurrency').value) });
+    const id = state.preview.id;
+    $('configuration').hidden = true; $('preview-summary').hidden = false; $('preview-button').hidden = true; $('back').hidden = false; $('create-title').textContent = 'Check data';
+    while (state.preview?.id === id && state.preview.dataCheck.status === 'checking') {
+      checking(state.preview);
+      await new Promise(resolve => setTimeout(resolve, 700));
+      const task = await api('/api/tasks/' + id);
+      if (state.preview?.id !== id) return;
+      state.preview = task;
+    }
+    if (state.preview?.id !== id) return;
+    $('back').hidden = false;
+    if (state.preview.dataCheck.status === 'failed') {
+      $('preview-summary').replaceChildren(); throw new Error(state.preview.dataCheck.error);
+    }
     summary(state.preview, $('preview-summary')); $('download-preview').href = '/api/tasks/' + state.preview.id + '/configuration';
     $('configuration').hidden = true; $('preview-summary').hidden = false; $('preview-button').hidden = true; $('start').hidden = false; $('back').hidden = false; $('download-preview').hidden = false; $('create-title').textContent = '确认评测';
+    $('start').disabled = !state.preview.dataCheck.total;
     $('create').querySelector('.drawer-body').scrollTop = 0; $('start').focus();
   });
 };
