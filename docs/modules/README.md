@@ -6,7 +6,7 @@
 
 | 模块 | 职责 | 入口 |
 |---|---|---|
-| apps/host | CLI、配置、评测与 Eris 组装 | [cli.ts](../../apps/host/src/cli.ts)、[composition.ts](../../apps/host/src/composition.ts)、[agent.ts](../../apps/host/src/agent.ts) |
+| apps/host | CLI、控制台、配置、评测与 Eris 组装 | [cli.ts](../../apps/host/src/cli.ts)、[console.ts](../../apps/host/src/console.ts)、[composition.ts](../../apps/host/src/composition.ts)、[agent.ts](../../apps/host/src/agent.ts) |
 | apps/worker | Worker 进程入口 | [cli.ts](../../apps/worker/src/cli.ts) |
 | agent | Eris 定义、产品接口与界面 | [Agent 说明](../../agent/README.md) |
 | Contracts | 纯类型、协议、证据坐标与共用规则 | [index.ts](../../packages/contracts/src/index.ts) |
@@ -20,7 +20,7 @@
 | Clustering | 归类、建类、合并与纯问题库规则 | [公开入口](../../packages/agents/src/clustering/index.ts) |
 | Rewrite | 文本槽位校验 | [公开入口](../../packages/agents/src/rewrite/index.ts) |
 | Workflow Inputs | 共用输入类型、来源编目、适配与按原始坐标重读 | [公开入口](../../packages/workflows/src/inputs/index.ts) |
-| Workflow Review | 共用归因材料、证据、过程投影及业务结果复用与溯源 | [公开入口](../../packages/workflows/src/review/index.ts) · [正式结果复用](../../packages/workflows/src/review/business-result-repository.ts) |
+| Workflow Review | 共用归因材料、证据、过程投影、已有 case 跳过与结果溯源 | [公开入口](../../packages/workflows/src/review/index.ts) · [完成 case 跳过](../../packages/workflows/src/review/business-result-repository.ts) |
 | 归因维度 | 维度登记、独立材料绑定与结果封装 | [dimensions.ts](../../packages/workflows/src/review/dimensions.ts) |
 | Comparison Workflow | 输入、盲测、阶段绑定、改写回填、责任摘要、稳定性实验与报告 | [index.ts](../../packages/workflows/src/comparison/index.ts) |
 | Attribution Workflow | 独立 session 归因的任务规划、提交、恢复与正式导出 | [index.ts](../../packages/workflows/src/attribution/index.ts) |

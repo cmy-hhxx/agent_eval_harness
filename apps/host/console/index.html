@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="zh-CN">
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>评测控制台</title><link rel="stylesheet" href="/console.css"><script src="/console.js" defer></script></head>
+<body>
+<header><div class="shell"><span class="wordmark"><svg aria-hidden="true" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M3 5h7v14H3M21 5h-7v14h7M7 12h10"/></svg>Eval / 评测控制台</span><button id="logout" hidden>退出</button></div></header>
+<main class="shell">
+<form id="login" class="login" hidden><h1>登录评测控制台</h1><label for="password">管理员密码</label><input id="password" name="password" type="password" autocomplete="current-password" required><button class="primary">登录</button><p id="login-error" role="alert"></p></form>
+<div id="app" hidden>
+<div class="title"><h1>评测</h1><span id="freshness" class="muted">正在连接…</span><button id="refresh">刷新</button></div>
+<nav aria-label="评测来源"><button data-source="wencai" aria-pressed="true">问财 <span>对比</span></button><button data-source="aime" aria-pressed="false">AIME <span>归因</span></button></nav>
+<div class="workspace">
+<form id="configuration">
+<div class="section-line"><label for="preset">评测配置</label><select id="preset" aria-label="评测预设"></select></div>
+<div id="inputs"></div>
+<label for="output">评测输出</label><input id="output" required spellcheck="false">
+<div class="submit-row"><div><label for="concurrency">并发</label><input id="concurrency" type="number" min="1" step="1" required></div><button class="primary" id="preview-button">预览配置</button></div>
+<div class="location"><span>日志位置</span><div id="log-paths"></div></div>
+<p id="config-error" role="alert"></p>
+</form>
+<div class="side"><section class="tasks" aria-labelledby="tasks-title"><div class="section-line"><h2 id="tasks-title">任务</h2><span id="task-count" class="muted"></span></div><div id="task-list"><p class="empty">正在读取任务…</p></div><p id="task-error" role="alert"></p></section>
+<section class="logs" aria-labelledby="logs-title"><div class="section-line"><h2 id="logs-title">日志</h2><span id="log-task" class="muted"></span><select id="log-kind" aria-label="日志类型"><option value="runtime">运行日志</option><option value="evaluation">评测日志</option></select><label class="check"><input type="checkbox" id="errors-only">仅错误</label><button id="older" hidden>更早记录</button></div><div id="log-output" class="log-output"><p class="empty">选择一个任务查看日志。</p></div><p id="log-error" role="alert"></p></section></div>
+</div>
+</div>
+</main>
+<dialog id="preview"><form method="dialog"><div class="section-line"><h2>启动前确认</h2><button aria-label="关闭预览">关闭</button></div></form><div id="preview-summary"></div><div class="dialog-actions"><a id="download">下载配置</a><button id="start" class="primary">开始评测</button></div><p id="start-error" role="alert"></p></dialog>
+</body></html>

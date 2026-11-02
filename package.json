@@ -23,6 +23,7 @@
     "typecheck": "tsc --noEmit",
     "doctor": "node scripts/doctor.mjs",
     "eval": "node dist/apps/host/src/cli.js",
+    "console": "node dist/apps/host/src/console.js",
     "attribution:check-language": "node dist/apps/host/src/attribution-language-check.js",
     "test": "npm run build:test && node scripts/test.mjs --fast",
     "test:full": "npm run build:test && node scripts/test.mjs --full",

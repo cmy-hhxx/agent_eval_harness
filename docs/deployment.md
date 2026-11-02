@@ -8,7 +8,7 @@
 
 ## 服务器数据目录
 
-服务器数据根目录为 `/mnt/fin_bench/eval_data/`：
+服务器常用数据目录示例如下；具体输入和输出以用户填写的外部配置为准，不强制迁移到此布局：
 
 ```text
 /mnt/fin_bench/eval_data/
@@ -46,7 +46,7 @@
 
 ### 目录配置
 
-以上目录是服务器工作约定，代码不内置数据根目录、来源名称或输出目录名。Host 的服务器覆盖配置显式填写 `inputs.versions[].sources[].path`、`output.path`、`output.testPath` 和 `problemLibrary.path`；相对路径按各自配置文件解析。已有整理产物需要核对原收据时，通过 `output.receiptSources` 登记实际保留的具体 run 目录，不默认递归扫描整个归档。`output.layout` 默认 `business`，主交付采用[模型/日期文件](usage.md#目录约定)；只有明确要求隔离 run 时才设为 `run`。`--test-eval`、`--pilot-cases`、归因试跑和稳定性实验只使用 `output.testPath`，请求的子目录必须位于该根目录内；未配置时明确报错。
+以上目录仅为示例，评测输出由用户填写，代码不内置数据根目录、来源名称或输出目录名。Host 的服务器覆盖配置显式填写 `inputs.versions[].sources[].path`、`output.path`、`output.testPath` 和 `problemLibrary.path`；相对路径按各自配置文件解析。续跑直接查看指定输出目录中的最终 case 结果，不回查归档或旧收据。`output.layout` 默认 `business`，主交付采用[模型/日期文件](usage.md#目录约定)；只有明确要求隔离 run 时才设为 `run`。`--test-eval`、`--pilot-cases`、归因试跑和稳定性实验只使用 `output.testPath`，请求的子目录必须位于该根目录内；未配置时明确报错。
 
 Eris 的 `collectionsFile` 指向独立 JSON 清单，格式见[清单示例](../configs/collections.example.json)。每条记录用 `id` 表示稳定业务坐标，`path` 指向实际产物目录，`test:true` 标记仅在显式纳入测试时展示的目录；不标记时为正式目录。相对路径按清单文件位置解析。ID 与物理目录名独立，新增来源、改名或迁移目录只更新清单，不修改代码。ID 或路径重复、配置字段无效直接报错。
 
@@ -61,10 +61,10 @@ Eris 的 `collectionsFile` 指向独立 JSON 清单，格式见[清单示例](..
 | Eris checkout | `/opt/eval_harness/eris-code` |
 | 外部运行目录（共享盘） | `/mnt/fin_bench/sync_datasets/code/1_eval_harnes/runtime` |
 | 数据源 | `/mnt/fin_bench/eval_data` |
-| 日常评测产物 | `/mnt/fin_bench/eval_data/{source}/3_eval_output/0_daily_eval/` |
-| 流失样本产物 | `/mnt/fin_bench/eval_data/{source}/3_eval_output/1_lost_user_eval/` |
-| 专项评测产物 | `/mnt/fin_bench/eval_data/{source}/3_eval_output/1_task_eval/<任务>/` |
-| 测试评测产物 | `/mnt/fin_bench/eval_data/{source}/3_eval_output/test_eval/` |
+| 日常评测产物示例 | `/mnt/fin_bench/eval_data/{source}/3_eval_output/0_daily_eval/` |
+| 流失样本产物示例 | `/mnt/fin_bench/eval_data/{source}/3_eval_output/1_lost_user_eval/` |
+| 专项评测产物示例 | `/mnt/fin_bench/eval_data/{source}/3_eval_output/1_task_eval/<任务>/` |
+| 测试评测产物示例 | `/mnt/fin_bench/eval_data/{source}/3_eval_output/test_eval/` |
 | 配置与密钥 | `runtime/config/`、`runtime/secrets/` |
 | 状态与锁 | `runtime/state/` |
 | 日志 | `runtime/log/runtime.log`、`runtime/log/evaluation.log` |
@@ -76,6 +76,10 @@ Eris 的 `collectionsFile` 指向独立 JSON 清单，格式见[清单示例](..
 所有分支、提交或专项用途的代码均部署在上述系统盘代码根目录的独立子目录，目录名由操作者按用途指定；外部 `runtime/` 专用于持久配置、密钥、账号、聊天、状态和日志，不存放 checkout。停止使用 `user_workspace` 下的代码和运行目录，不保留指向旧位置的软链接。不同 checkout 共用外部配置时仍须遵守实例锁，更新代码不会自动启动评测或调度任务。
 
 废弃的进程、checkout、一次性脚本、实验配置与状态、历史输入副本、旧运行日志及迁移备份直接清理，不留档。保留当前服务配置、密钥、账号与聊天、跨 run 问题库及统计记录；数据源的原始输入和正式评测结果不属于部署清理范围。
+
+## 评测控制台
+
+控制台独立于 Eris，部署到 `/opt/eval_harness/` 下独立 checkout。按[控制台指南](console.md)配置管理员密码文件、独立状态目录、日志目录和评测预设；生产预设复用已有模型及阶段配置。隔离验证使用独立端口、状态与测试输出，只控制自己创建的任务，不接管旧 Host。
 
 ## 评测 Host
 

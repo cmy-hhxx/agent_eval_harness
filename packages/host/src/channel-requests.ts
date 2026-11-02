@@ -45,6 +45,16 @@ export function createChannelRequests(limits: Record<string, number>, weights: R
     }
   }
   return {
+    setCapacity(next: Record<string, number>, total: number) {
+      if (Object.keys(next).length !== Object.keys(limits).length ||
+          Object.keys(limits).some(channel => !Object.hasOwn(next, channel)) ||
+          Object.values(next).some(value => !Number.isSafeInteger(value) || value < 1) ||
+          !Number.isSafeInteger(total) || total < 1)
+        throw new Error("Capacity requires the existing channels and positive integer limits");
+      limits = { ...next };
+      totalLimit = total;
+      pump();
+    },
     setRunLimit(runId: string, limit: number | undefined) {
       if (limit !== undefined && (!Number.isSafeInteger(limit) || limit < 1)) throw new Error("Run request limit must be a positive integer");
       if (limit === undefined) runLimits.delete(runId); else runLimits.set(runId, limit);

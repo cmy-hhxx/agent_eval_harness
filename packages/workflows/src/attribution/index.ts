@@ -151,7 +151,7 @@ export function attributionShards(config: AttributionConfig, state: RunState): S
     const failed = new Set(manifest.tasks.filter(task => task.stage === "attribution-session" &&
       ["failed", "blocked", "cancelled", "timed_out"].includes(manifest.states[task.id]?.status))
       .flatMap(task => Object.values(task.inputIds)));
-    return catalog().filter(candidate => candidate.version === version &&
+    return catalog().filter(candidate => !candidate.released && candidate.version === version &&
       (!failed.has(candidate.input_id) || pending.has(candidate.input_id))).length < window;
   };
   return {
@@ -173,7 +173,7 @@ export function attributionShards(config: AttributionConfig, state: RunState): S
 export function releaseAttribution(state: RunState, inputs: Record<string, unknown>) {
   const manifest = state.manifest, catalog = manifest.inputCatalog as Candidate[] | undefined;
   if (!catalog?.length) return;
-  const accepted = new Set<string>();
+  const accepted = new Set(catalog.filter(candidate => candidate.released).map(candidate => candidate.input_id));
   for (const task of manifest.tasks)
     if (task.stage === "attribution-session" && state.receipts[task.id]?.exported)
       accepted.add((task.data as AttributionTaskData).candidate.input_id);

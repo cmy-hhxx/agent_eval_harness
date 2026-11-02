@@ -1,7 +1,6 @@
 import { canonical, safeId, type PlannedTask, type RunState } from "@eval/contracts";
 import { businessDate, type BusinessAnswer } from "@eval/data";
 import type { Candidate } from "../inputs/types.js";
-import { isDeepStrictEqual } from "node:util";
 
 export function businessCandidates(task: PlannedTask, state: RunState, tasks?: ReadonlyMap<string, PlannedTask>): Candidate[] {
   const data = task.data as { candidate?: Candidate; candidates?: Record<string, Candidate>; rewriteOf?: { taskId: string } };
@@ -17,9 +16,6 @@ export function businessAnswer(candidate: Candidate): BusinessAnswer {
     traces: candidate.turns?.map(turn => turn.trace_id) ?? [candidate.trace_id],
     source: candidate.source, line: candidate.line, ...(candidate.source_revision ? { revision: candidate.source_revision } : {}) };
 }
-export function answerBusinessKey(value: Pick<BusinessAnswer, "batch" | "caseId" | "model" | "session" | "traces">) {
-  return canonical([value.batch, value.caseId, value.model, value.session, value.traces]);
-}
 /** Conditions that change the evaluated material, excluding run IDs and evaluator settings. */
 export function businessScope(task: PlannedTask) {
   const data = task.data as Record<string, unknown>;
@@ -30,12 +26,6 @@ export function businessScope(task: PlannedTask) {
     prediction: data.prediction !== undefined, verification: data.verificationAudit === true,
     standardAnswerReview: data.standardAnswerReview === true,
     ...(!["criteria", "attribution-session", "comparison"].includes(task.stage) ? { instance: task.id, scope: data.scope ?? null } : {}) };
-}
-/** Compare source-owned material in its original ledger, without copying it into an index. */
-export function sameBusinessMaterial(first: PlannedTask, second: PlannedTask): boolean {
-  const a = first.data as Record<string, unknown>, b = second.data as Record<string, unknown>;
-  return ["reference", "reviewQuestions", "prediction"].every(key => isDeepStrictEqual(a[key] ?? null, b[key] ?? null)) &&
-    isDeepStrictEqual(businessScope(first), businessScope(second));
 }
 export function businessResultKey(stage: string, answers: BusinessAnswer[], scope: unknown) {
   return canonical([stage, answers.map(answer => [answer.model, answer.id]).sort(), scope]);

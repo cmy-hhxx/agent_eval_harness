@@ -1,7 +1,7 @@
 import path from "node:path";
-import { open, readdir, stat } from "node:fs/promises";
+import { readdir, stat } from "node:fs/promises";
 import { canonical, safeId, type JsonObject, type ResultReference } from "@eval/contracts";
-import { appendJsonl, atomicWrite, exists, readJson, readJsonl, readJsonlText, runLock } from "./files.js";
+import { appendJsonl, atomicWrite, exists, readJsonl, readJsonlText, runLock } from "./files.js";
 import { fileSourceReader, waitForRunLock } from "./sources.js";
 
 /** Input coordinates and persistent answer identity; never a copy of the input body. */
@@ -109,68 +109,6 @@ export async function readBusinessResultRow(record: BusinessResult): Promise<Jso
     if (id !== undefined ? id === record.origin.reference.id : line === record.origin.reference.line) return row;
   }
   throw new Error("正式结果来源行缺失：" + file);
-}
-/** Existing run ledgers are read only, including explicitly chosen older run deliveries. */
-export async function businessRunDirectories(root: string): Promise<string[]> {
-  const runs: string[] = [];
-  for (const directory of [root, path.join(root, ".runs")]) {
-    for (const entry of await readdir(directory, { withFileTypes: true }).catch(error => {
-      if (error.code !== "ENOENT") throw error;
-      return [];
-    })) if (entry.isDirectory() && !entry.name.startsWith(".")) {
-      const run = path.join(directory, entry.name);
-      if (await exists(path.join(run, "state.json"))) runs.push(run);
-    }
-  }
-  return [...new Set(runs)].sort();
-}
-export async function sourcePredatesAcceptance(file: string, acceptedAt: number): Promise<boolean> {
-  return (await stat(file)).mtimeMs <= acceptedAt;
-}
-export async function runCheckpointPrefix(run: string): Promise<string> {
-  const handle = await open(path.join(run, "state.json"), "r");
-  try { const bytes = Buffer.alloc(4096), result = await handle.read(bytes, 0, bytes.length, 0); return bytes.subarray(0, result.bytesRead).toString("utf8"); }
-  finally { await handle.close(); }
-}
-/** Existing organization manifests map source result lines, never evaluation times or input identities. */
-export async function organizedResultLines(run: string) {
-  const file = path.join(run, "organization.json"), result = new Map<string, Map<string, number>>();
-  if (!await exists(file)) return result;
-  const value = await readJson<{ files?: { artifact: string; relative: string; rows: number; source_lines: number[] }[] }>(file);
-  if (!Array.isArray(value.files)) throw new Error("整理清单缺少 files");
-  for (const entry of value.files) {
-    safeId(entry.artifact);
-    for (const part of entry.relative.split("/")) safeId(part);
-    if (!Array.isArray(entry.source_lines) || entry.rows !== entry.source_lines.length ||
-        entry.source_lines.some(line => !Number.isSafeInteger(line) || line < 1) || new Set(entry.source_lines).size !== entry.rows)
-      throw new Error("整理清单来源行无效");
-    entry.source_lines.forEach((line, index) => {
-      const key = canonical([entry.artifact, line]), destinations = result.get(key) ?? new Map<string, number>();
-      if (destinations.has(entry.relative)) throw new Error("整理清单重复来源行");
-      destinations.set(entry.relative, index + 1); result.set(key, destinations);
-    });
-  }
-  return result;
-}
-/** Enumerate only formal attribution files, excluding giant journals and private run material. */
-export async function formalAttributionFiles(root: string, models: readonly string[]) {
-  const files: string[] = [];
-  for (const model of models) safeId(model);
-  const visit = async (directory: string, depth: number) => {
-    for (const entry of await readdir(directory, { withFileTypes: true }).catch(error => {
-      if (error.code !== "ENOENT") throw error;
-      return [];
-    })) {
-      if (entry.name.startsWith(".") || entry.name === "_internal") continue;
-      const file = path.join(directory, entry.name);
-      if (entry.isDirectory() && depth < 3) await visit(file, depth + 1);
-      else if (entry.isFile() && (entry.name === "attribution.jsonl" && path.basename(directory) === "results" ||
-        models.some(model => path.basename(directory) === model && entry.name.startsWith(model + "_attribution-") &&
-          /^\d{4}-\d{2}-\d{2}\.jsonl$/.test(entry.name.slice(model.length + "_attribution-".length))))) files.push(file);
-    }
-  };
-  await visit(root, 0);
-  return files.sort();
 }
 export async function claimBusinessPartitions(root: string, partitions: { date: string; model: string }[]) {
   const unlocks: (() => Promise<void>)[] = [], blocked = new Set<string>();

@@ -30,26 +30,6 @@ const EXECUTION_DEFAULTS = {
   initialContextChars: 16000,
   failureGuard: DEFAULT_FAILURE_GUARD,
 };
-/**
- * A source under `eval_input/<partition>/<version>/` publishes to `eval_output/<partition>`;
- * the input folder's `_input` suffix belongs to the input side. Sources laid out directly
- * under `eval_input/` (no partition level) declare no partition directory.
- */
-function inputPartition(inputs: EvaluationConfig["inputs"] | undefined): string | undefined {
-  if (!Array.isArray(inputs?.versions)) return undefined;
-  const partitions = new Set<string>();
-  for (const version of inputs.versions) {
-    if (!Array.isArray(version.sources) || !version.sources.length) return undefined;
-    for (const source of version.sources) {
-      const segments = path.resolve(source.path).split(path.sep), root = segments.indexOf("eval_input");
-      // A file source's last segment is the file itself; a directory keeps its own name.
-      const below = root < 0 ? [] : segments.slice(root + 1, source.kind === "directory" ? undefined : -1);
-      if (below.length < 2) return undefined;
-      partitions.add(below[0]!);
-    }
-  }
-  return partitions.size === 1 ? [...partitions][0] : undefined;
-}
 const CLUSTERING_DEFAULTS: EvalConfig["clustering"] = {
   enabled: false,
   maxClassesPerModel: 40,
@@ -127,11 +107,6 @@ async function readLocated(file: string): Promise<ConfigObject> {
         if (!source.output[key].trim()) throw new Error(`Invalid output.${key}`);
         source.output[key] = path.resolve(directory, source.output[key]);
       }
-  if (isObject(source.output) && Array.isArray(source.output.receiptSources))
-    source.output.receiptSources = source.output.receiptSources.map(value => {
-      if (typeof value !== "string" || !value.trim()) throw new Error("Invalid output.receiptSources");
-      return path.resolve(directory, value);
-    });
   if (isObject(source.problemLibrary) && typeof source.problemLibrary.path === "string")
     source.problemLibrary = {
       ...source.problemLibrary,
@@ -226,17 +201,9 @@ function buildEvaluationBase(source: ConfigObject): EvaluationConfig {
   if (output.layout !== undefined && output.layout !== "business" && output.layout !== "run")
     throw new Error("Invalid output.layout");
   output.layout ??= "business";
-  if (output.reuseCompleted !== undefined && typeof output.reuseCompleted !== "boolean") throw new Error("Invalid output.reuseCompleted");
-  output.reuseCompleted ??= true;
   if (output.business !== undefined) {
     if (output.business !== "daily" && output.business !== "lost") throw new Error("Invalid output.business");
-    const partition = inputPartition(config.inputs), expected = partition?.replace(/_input$/u, "");
-    if (output.layout === "business" && expected && path.basename(path.resolve(output.path)) !== expected)
-      throw new Error("output.business=" + output.business + " 与输入分区 " + partition + " 不对应；output.path 最后一级应为 " + expected);
   }
-  if (output.receiptSources !== undefined && (!Array.isArray(output.receiptSources) ||
-    output.receiptSources.some(value => typeof value !== "string" || !path.isAbsolute(value)) ||
-    new Set(output.receiptSources).size !== output.receiptSources.length)) throw new Error("Invalid output.receiptSources");
   return config;
 }
 

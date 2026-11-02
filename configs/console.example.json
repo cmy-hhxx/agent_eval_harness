@@ -1,0 +1,26 @@
+{
+  "hostname": "127.0.0.1",
+  "port": 5010,
+  "stateDirectory": "/absolute/runtime/state/console",
+  "logDirectory": "/absolute/runtime/log",
+  "passwordFile": "/absolute/runtime/secrets/console-password",
+  "channels": ["evaluation-gateway", "evaluation-gateway-2"],
+  "presets": [
+    {
+      "id": "wencai",
+      "source": "wencai",
+      "name": "问财对比",
+      "configs": ["host.json", "/absolute/runtime/config/models.json", "/absolute/runtime/config/wencai.json"],
+      "inputRoots": ["/absolute/wencai/input"],
+      "concurrency": 2
+    },
+    {
+      "id": "aime-daily",
+      "source": "aime",
+      "name": "AIME 日常归因",
+      "configs": ["host.json", "attribution.json", "/absolute/runtime/config/models.json", "/absolute/runtime/config/aime-daily.json"],
+      "inputRoots": ["/absolute/aime/input"],
+      "concurrency": 2
+    }
+  ]
+}

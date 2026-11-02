@@ -186,12 +186,8 @@ export interface OutputTarget {
   path: string;
   /** Public business partitions, or an explicitly requested isolated run delivery. */
   layout?: "business" | "run";
-  /** Declared business category; its partition directory follows the configured input partition. */
+  /** Declared business category, independent of the user-selected output path. */
   business?: "daily" | "lost";
-  /** Explicit original run ledgers needed to verify previously organized formal rows. */
-  receiptSources?: string[];
-  /** False only when the caller explicitly requests a new evaluation. */
-  reuseCompleted?: boolean;
   /** Explicit root for test runs; never inferred from production directory names. */
   testPath?: string;
 }

@@ -7,6 +7,27 @@ const context = (channel: string, callId: string, runId = "one") => ({
   callId, runId, taskId: "task", stage: "attribution-compact", model: { provider: channel },
 }) as ModelRequestContext;
 
+test("capacity grows beyond its initial ceiling and shrinks without revoking active calls", async () => {
+  const gate = createChannelRequests({ first: 1, second: 1 }, undefined, undefined, undefined, 1);
+  const signal = new AbortController().signal;
+  const first = await gate.acquire(context("first", "one"), signal);
+  let admitted = false;
+  const waiting = gate.acquire(context("second", "two"), signal).then(permit => { admitted = true; return permit; });
+  await Promise.resolve(); assert.equal(admitted, false);
+  gate.setCapacity({ first: 2, second: 2 }, 3);
+  const second = await waiting;
+  const third = await gate.acquire(context("first", "three"), signal);
+  assert.equal(gate.snapshot().active, 3);
+  gate.setCapacity({ first: 1, second: 1 }, 1);
+  assert.equal(gate.snapshot().active, 3);
+  let nextAdmitted = false;
+  const next = gate.acquire(context("second", "four"), signal).then(permit => { nextAdmitted = true; return permit; });
+  first.release(); second.release(); await Promise.resolve(); assert.equal(nextAdmitted, false);
+  third.release(); (await next).release();
+  assert.throws(() => gate.setCapacity({ unknown: 1 }, 1), /existing channels/);
+  assert.equal(gate.snapshot().active, 0);
+});
+
 test("two channels enforce 200 live requests each across runs and release exactly once", async () => {
   const control = createChannelRequests({ first: 200, second: 200 }), signal = new AbortController().signal;
   const first = await Promise.all(Array.from({ length: 200 }, (_, i) => control.acquire(context("first", String(i)), signal)));

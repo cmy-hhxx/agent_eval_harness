@@ -1,4 +1,6 @@
 export * from "./files.js";
+export * from "./console-files.js";
+export * from "./completed-cases.js";
 export * from "./material-pool.js";
 export * from "./run-layout.js";
 export * from "./run-overview.js";

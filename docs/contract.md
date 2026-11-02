@@ -23,11 +23,11 @@
 
 Attribution 每条输入记录导出一行，包含 `session_meta`、`turns[]`、`session_summary`、`session_problem`；按 trace 抓取时允许多条记录共享会话身份，记录身份及去重规则见 [Session 归因](attribution.md)。每个 turn 使用 `meta/summary/problem/is_correct/correct_reason`，turn 与 session 的 Problem 同形：`component/label/definition/problem_phenomena/reason/severity/severity_reason/evidence/calculations`。严重程度与理由均为必填，语义见[正式契约](attribution.md#正式契约)。`is_correct` 为 1、0 或 null；不再使用 `has_standard_answer`。`evidence.position` 同时包含原始 trace_index、轮内 message_index、path 和完整 evidence_id；`quote` 最多 400 字且必须精确连续。
 
-Compact、Trace、Session、Criteria、Comparison 共用原始来源 UUID 和顺序展平的消息空间；source_positions 只映射轮次和轮内位置，不重写原文。完整坐标继续使用现有 evidence_id，字段路径及半开 UTF-16 字符范围可直接解析。消息池先按源引用展开，再统一定位。复用完成结果时，只有原始输入和来源收据核实相同后，新任务才使用已持久化的来源 UUID；已接受任务及正式行不改写。
+Compact、Trace、Session、Criteria、Comparison 共用原始来源 UUID 和顺序展平的消息空间；source_positions 只映射轮次和轮内位置，不重写原文。完整坐标继续使用现有 evidence_id，字段路径及半开 UTF-16 字符范围可直接解析。消息池先按源引用展开，再统一定位。输出目录已有最终 case 结果时跳过对应评测，不导入旧收据或重建来源 UUID；已接受任务及正式行不改写。
 
 Compact 使用固定浅层字段；模型用 evidence 整数数组选择原文，程序回填固定的 {evidence_id, quote}，所有 idx、meta 与完整最终回复均由程序填写。调用统计来自实际调用记录，归因按同一来源坐标复用原文并对缺口定点读取。Schema 拒绝任意字段和嵌套对象。隐私投影后的父对象不可冒充原文；Comparison 直接解析 Attribution 原始引用，不把拼接 QA 当原始消息。完整字段见 [Compact 契约](attribution.md#任务结构)。
 
-收据保存接受时的评测器标识和实际判官模型 `judge`；正式行存在 `evaluator_version` 时必须与收据一致。归因纯判词行的版本、模型和原始回答坐标通过正式溯源索引关联原收据，不伪造顶层字段。改写另存 `rewritten.evaluator_version`，统计汇总 `evaluator_versions` 与 `judge_models`。同 run 及跨 run 复用均可混合评测器版本：已接受判词保留原版本，未完成任务使用当前配置；完整成功与最新覆盖规则见[目录约定](usage.md#目录约定)。
+收据保存接受时的评测器标识和实际判官模型 `judge`；正式行存在 `evaluator_version` 时必须与收据一致。归因纯判词行的版本、模型和原始回答坐标通过正式溯源索引关联原收据，不伪造顶层字段。改写另存 `rewritten.evaluator_version`，统计汇总 `evaluator_versions` 与 `judge_models`。同 run 及跨 run 复用均可混合评测器版本：已接受判词保留原版本，未完成任务使用当前配置；按最终 case 结果跳过的规则见[目录约定](usage.md#目录约定)。
 
 ## 输入与输出的分层
 

@@ -1287,6 +1287,7 @@ export async function runEvaluation(options: RunOptions): Promise<Record<string,
     return { ...(options.report ? await options.report(run) : { run_id: manifest.runId, status: manifest.status }),
       execution_task_statuses: executionTaskStatuses, paused_stages: manifest.pausedStages,
       ...inputDiagnostics(manifest.preflight),
+      skipped_cases: manifest.preflight.skipped_cases ?? 0,
       outcome: manifest.outcome,
       ...(resourcePause ? { resource_pause: resourcePause } : {}),
       ...(manifest.executionStopReason ? { execution_stop_reason: manifest.executionStopReason } : {}) };

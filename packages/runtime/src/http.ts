@@ -46,6 +46,7 @@ export async function request<T>(
 export async function listen(
   handler: (req: IncomingMessage, res: ServerResponse, url: URL) => Promise<void>,
   port = 0,
+  hostname = "127.0.0.1",
 ): Promise<{ server: Server; url: string; close(): Promise<void> }> {
   const server = createServer((req, res) => {
     void (async () => {
@@ -68,7 +69,7 @@ export async function listen(
   });
   await new Promise<void>((resolve, reject) => {
     server.once("error", reject);
-    server.listen(port, "127.0.0.1", resolve);
+    server.listen(port, hostname, resolve);
   });
   const address = server.address();
   if (!address || typeof address === "string") throw new Error("No HTTP address");

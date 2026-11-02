@@ -9,7 +9,7 @@ import { initializeServices } from "@eval/host-app/composition";
 import { preflightHost } from "../../../apps/host/src/preflight.js";
 import { ROOT } from "../../fixtures/services.js";
 
-test("an attribution run declares its business category and mirrors the input partition", async t => {
+test("an attribution run declares its category independently of user-selected output directory names", async t => {
   const directory = await mkdtemp(path.join(os.tmpdir(), "business-partition-"));
   t.after(() => rm(directory, { recursive: true, force: true }));
   const settings = parseSettings("[channel.evaluation-gateway]\nbase_url=http://127.0.0.1:1/v1\napi_key=\nmodel=fixture\nmodels=fixture\n");
@@ -25,8 +25,7 @@ test("an attribution run declares its business category and mirrors the input pa
   // The input folder's `_input` suffix stays on the input side.
   const daily = await loadConfig(await layered({ ...lost, business: "daily", path: path.join(directory, "0_daily_eval") }, "0_daily_eval_input"), settings);
   assert.equal(daily.evaluation.output.business, "daily");
-  await assert.rejects(loadConfig(await layered({ ...lost, path: path.join(directory, "0_daily_eval") }), settings),
-    /与输入分区 1_lost_user_eval 不对应/);
+  assert.equal((await loadConfig(await layered({ ...lost, path: path.join(directory, "custom-output") }), settings)).evaluation.output.business, "lost");
   const { business: _business, ...undeclared } = lost;
   const issues = await preflightHost(await loadConfig(await layered(undeclared), settings), "undeclared");
   assert(issues.some(issue => issue.check === "output.business"), "the category is never inferred from the path");
