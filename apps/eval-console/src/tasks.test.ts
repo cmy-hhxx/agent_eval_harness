@@ -5,7 +5,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import path from "node:path";
 import { realpath, rm } from "node:fs/promises";
-import { fileSourceReader, readJson, runLayout, writeJson, writeJsonl } from "@eval/data";
+import { exists, fileSourceReader, readJson, runLayout, writeJson, writeJsonl } from "@eval/data";
 import { ConsoleTasks, type ConsoleConfig } from "./tasks.js";
 import { serveConsole } from "./server.js";
 import { initializeServices } from "@eval/host-app/composition";
@@ -75,6 +75,7 @@ test("console API previews frozen defaults, starts idempotently, drains, resumes
   await Promise.all([request("/api/tasks", { previewId: id }), request("/api/tasks", { previewId: id })]);
   for (let n = 0; n < 100 && starts === 0; n++) await new Promise(resolve => setTimeout(resolve, 10));
   assert.equal(starts, 1);
+  assert.equal((await request(`/api/tasks/${id}/delete`, {})).status, 409);
   assert.equal((await request(`/api/tasks/${id}/check`, {})).status, 409);
   assert.deepEqual(manager.get(id).progress, { completed: 1, total: 4, failed: 0 });
   await request(`/api/tasks/${id}/concurrency`, { concurrency: 5 });
@@ -83,6 +84,7 @@ test("console API previews frozen defaults, starts idempotently, drains, resumes
   assert.equal(execution!.gate.concurrency(), 1);
   const paused = await request(`/api/tasks/${id}/pause`, {});
   assert.equal(paused.data.status, "pausing"); assert.equal(execution!.pause.aborted, true);
+  assert.equal((await request(`/api/tasks/${id}/delete`, {})).status, 409);
   release!();
   for (let n = 0; n < 100 && manager.get(id).status === "pausing"; n++) await new Promise(resolve => setTimeout(resolve, 10));
   assert.equal(manager.get(id).status, "paused");
@@ -117,6 +119,36 @@ test("console API previews frozen defaults, starts idempotently, drains, resumes
   const errors = await consoleLog(path.join(config.logDirectory, "runtime.log"), "console-invalid-input", true);
   assert(errors.rows.some(row => String(row.message).includes(f.config.inputs.versions[0].sources[0].path + ":1 ") &&
     String(row.detail).includes("[cause]")), "invalid input keeps its file, line and diagnostic details in the log");
+
+  const resultFile = path.join(f.config.output.path, "keep-result.json"), runState = path.join(f.config.output.path, ".runs", id, "state.json");
+  await writeJson(resultFile, { result: "preserved" }); await writeJson(runState, { progress: "preserved" });
+  assert.equal((await request(`/api/tasks/${id}/delete`, {}, false)).status, 403);
+  assert.equal((await request(`/api/tasks/${id}/delete`, {})).status, 200);
+  assert.equal((await request(`/api/tasks/${id}`)).status, 404);
+  assert.equal(await exists(path.join(config.stateDirectory, id)), false);
+  assert.equal(await exists(f.config.inputs.versions[0].sources[0].path), true);
+  assert.deepEqual(await readJson(resultFile), { result: "preserved" });
+  assert.deepEqual(await readJson(runState), { progress: "preserved" });
+  assert.equal(await exists(path.join(config.logDirectory, "runtime.log")), true);
+
+  // Delete while a check is still reading: its completion must never recreate the task.
+  let releaseCheck!: () => void;
+  const allowCheck = new Promise<void>(resolve => { releaseCheck = resolve; });
+  t.after(() => releaseCheck());
+  const files = fileSourceReader.files;
+  t.mock.method(fileSourceReader, "files", async (...args: Parameters<typeof files>) => { await allowCheck; return files(...args); });
+  const checking = await request("/api/previews", { preset: "wencai", concurrency: 2, output: f.config.output.path, inputDirectory });
+  assert.equal(checking.status, 201);
+  const checkingId = String(checking.data.id);
+  assert.equal(manager.get(checkingId).dataCheck?.status, "checking");
+  assert.equal((await request(`/api/tasks/${checkingId}/delete`, {})).status, 200);
+  releaseCheck(); await manager.close();
+  const afterDeletion = new ConsoleTasks(config); await afterDeletion.initialize();
+  for (const deleted of [id, checkingId]) {
+    assert.equal(afterDeletion.tasks.has(deleted), false);
+    assert.equal(await exists(path.join(config.stateDirectory, deleted)), false);
+    assert.equal((await request(`/api/tasks/${deleted}/delete`, {})).status, 404);
+  }
 });
 
 test("console resume retries unfinished failures and clears stage pauses within the remaining budget", async t => {

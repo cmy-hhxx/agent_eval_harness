@@ -37,7 +37,7 @@ export class ConsoleTasks {
   private serial: Promise<unknown> = Promise.resolve();
   private closing = false;
   private checking?: Promise<void>;
-  private readonly checkStop = new AbortController();
+  private checkingTask?: { id: string; stop: AbortController };
   constructor(readonly config: ConsoleConfig, private readonly dependencies = {
     execute: executeConsoleTask, preflight: preflightHost,
   }) {}
@@ -177,14 +177,19 @@ export class ConsoleTasks {
     }
   }
   private launchCheck(task: ConsoleTask, host: HostConfig) {
-    const id = task.id;
-    this.checking = checkData(host, task.dataCheck!, this.checkStop.signal, async issue => {
+    const id = task.id, stop = new AbortController();
+    this.checkingTask = { id, stop };
+    this.checking = checkData(host, task.dataCheck!, stop.signal, async issue => {
       await logger.error(new Error(issue.file + ":" + (issue.line ?? "") + " " + issue.reason),
         { component: "console", event: "console_data_check_rejected", run_id: id });
     }, id).catch(async error => {
+      if (!this.tasks.has(id)) return;
       task.dataCheck!.status = "failed"; task.dataCheck!.error = errorText(error);
       await logger.error(error, { component: "console", event: "console_data_check_failed", run_id: id });
-    }).finally(async () => { try { await this.exclusive(() => this.save(this.tasks.get(id)!)); } finally { this.checking = undefined; } });
+    }).finally(async () => {
+      try { await this.exclusive(async () => { const current = this.tasks.get(id); if (current) await this.save(current); }); }
+      finally { this.checking = undefined; this.checkingTask = undefined; }
+    });
     void this.checking.catch(error => logger.error(error, { component: "console", event: "console_state_failed", run_id: id }));
   }
   async recheck(id: string) {
@@ -307,9 +312,21 @@ export class ConsoleTasks {
       { inputs: Object.fromEntries(task.inputs.map(input => [input.id, input.paths])) }),
       output: task.output, concurrency: task.concurrency, logs: this.logPaths() };
   }
+  async remove(id: string) {
+    return this.exclusive(async () => {
+      if (this.closing) throw new HttpError(409, "控制服务正在关闭");
+      const task = this.get(id);
+      if (this.active.has(id) || ["starting", "running", "pausing"].includes(task.status))
+        throw new HttpError(409, "请先暂停任务，等待保存完成后再删除");
+      await localFiles.remove(this.directory(id), { recursive: true, force: true });
+      this.tasks.delete(id);
+      if (this.checkingTask?.id === id) this.checkingTask.stop.abort(new Error("任务已删除"));
+      return { id, deleted: true };
+    });
+  }
   async close() {
     this.closing = true;
-    this.checkStop.abort(new Error("数据检查已中断，请重新 Check data"));
+    this.checkingTask?.stop.abort(new Error("数据检查已中断，请重新 Check data"));
     await this.checking?.catch(() => {});
     await Promise.all([...this.active.keys()].map(id => this.pause(id)));
     await Promise.allSettled([...this.active.values()].map(live => live.done));

@@ -11,3 +11,5 @@ th:nth-child(5){padding-left:16px}
 @media(prefers-reduced-motion:reduce){*{scroll-behavior:auto!important}}
 
 #input-directory{font-size:13px;line-height:1.7;resize:vertical;overflow-wrap:anywhere;white-space:pre-wrap}.check-counts{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px;margin-bottom:12px}.check-counts span,.check-counts small{display:block;color:var(--muted);font-size:12px;font-weight:400}.check-counts strong{display:block;font-size:24px;font-weight:600;font-variant-numeric:tabular-nums;margin:8px 0 4px}.check-meta{color:var(--muted);font-size:12px;line-height:1.6;margin:12px 0 20px}.check-issues{font-size:13px;color:var(--danger);margin-bottom:20px}.check-issues summary{cursor:pointer}@media(max-width:440px){.check-counts{grid-template-columns:repeat(2,minmax(0,1fr));gap:18px}.check-counts strong{font-size:24px}.check-counts small{display:inline}}
+
+.row-actions{flex-wrap:wrap}.row-actions .delete-task{color:var(--danger)}.row-actions .delete-task:disabled{cursor:not-allowed}

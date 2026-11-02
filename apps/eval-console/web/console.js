@@ -125,7 +125,20 @@ function renderTasks() {
       actions.append(button('预览', () => previewTask(task)));
       if (!task.dataCheck || task.dataCheck.status === 'failed') { const retry = button(task.dataCheck ? '重新检查' : 'Check data', () => busy(retry, 'task-error', async () => { await api('/api/tasks/' + task.id + '/check', {}); await refresh(); })); actions.append(retry); }
     }
-    actions.append(button('日志', () => openDetail(task.id, 'logs')), button('配置', () => openDetail(task.id, 'config'))); operations.append(actions);
+    actions.append(button('日志', () => openDetail(task.id, 'logs')), button('配置', () => openDetail(task.id, 'config')));
+    const remove = button('删除', () => {
+      if (!confirm(`删除“${task.name} · ${task.id.slice(8, 16)}”？\n仅删除工作台任务记录和配置，保留原始输入、评测结果与日志。`)) return;
+      void busy(remove, 'task-error', async () => {
+        await api('/api/tasks/' + task.id + '/delete', {});
+        if (state.selected === task.id) { state.selected = null; $('detail').close(); }
+        if (state.preview?.id === task.id) $('create').close();
+        await refresh();
+      });
+    }, 'text-button delete-task');
+    remove.disabled = ['starting', 'running', 'pausing'].includes(task.status);
+    remove.title = remove.disabled ? '先暂停任务，等待保存完成后再删除' : '删除任务，保留输入、评测结果与日志';
+    remove.setAttribute('aria-label', task.name + ' ' + task.id.slice(8, 16) + ' 删除任务');
+    actions.append(remove); operations.append(actions);
     row.append(title, status, progress, capacity, date, operations); $('task-list').append(row);
   }
 }

@@ -35,6 +35,17 @@ async function nextCase(source: ReturnType<typeof comparisonCaseShards>, state: 
   throw new Error("Case scanner did not yield");
 }
 
+test("console comparison accepts same-tier pairs and rejects fast versus expert", async t => {
+  const f = await fixtureConfig([[], [], [], []]);
+  t.after(() => rm(f.directory, { recursive: true, force: true }));
+  f.config.comparisons = [["a_fast", "b_fast"], ["a_expert", "b_expert"]];
+  assert.equal((await workflow.plan(f.config)).summary.sharded, true);
+  f.config.comparisons = [["a_fast", "b_expert"]];
+  await assert.rejects(workflow.plan(f.config), /不同模型规模/);
+  f.config.comparisons = [["a_expert", "b_fast"]];
+  await assert.rejects(workflow.plan(f.config), /不同模型规模/);
+});
+
 test("case streaming aligns reordered models before EOF, bounds active cases, and resumes byte cursors", async t => {
   const a = [raw("one"), raw("two"), raw("three")], b = [raw("two"), raw("one"), raw("three")];
   const f = await fixtureConfig([a, [], b, []]);
