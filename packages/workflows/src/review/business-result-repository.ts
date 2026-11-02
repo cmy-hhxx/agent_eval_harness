@@ -191,6 +191,7 @@ export function businessResultRepository(repository: RunRepository, adapters: {
               const originalInputs = sourceInputs.get(record.origin.run)!;
               const bodies = matchedBodies.get(record.origin.run)!;
               if (!bodies.has(candidate.input_id)) bodies.set(candidate.input_id,
+                originalInputs === inputs && original.input_id === candidate.input_id ||
                 isDeepStrictEqual(originalInputs[original.input_id], inputs[candidate.input_id]));
               if (!bodies.get(candidate.input_id)) continue;
               matching.push(record);

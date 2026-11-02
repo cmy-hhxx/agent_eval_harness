@@ -114,12 +114,24 @@ test("resuming a partially published run verifies its own receipts without block
   await businessAttributionRepository.createResultWriter(current.run, current.plan.inputs)(current.state);
   await attributionRepository.writeRun(current.run, current.state);
   const resumed = await businessAttributionRepository.readRun(current.run);
-  const close = await businessAttributionRepository.prepareRun!(current.run, resumed, current.plan.inputs);
+  let inputReads = 0;
+  const inputs = new Proxy(current.plan.inputs, { get(target, key, receiver) {
+    if (typeof key === "string" && Object.hasOwn(target, key)) inputReads++;
+    return Reflect.get(target, key, receiver);
+  } });
+  const close = await businessAttributionRepository.prepareRun!(current.run, resumed, inputs);
   try {
     assert(resumed.manifest.tasks.some(task => !resumed.receipts[task.id]));
     assert(resumed.manifest.tasks.every(task => !resumed.manifest.states[task.id].admissionBlock));
     assert.equal(Object.keys(resumed.receipts).length, 1);
+    assert.equal(inputReads, 0, "verified same-run sources never parse an input just to compare it with itself");
   } finally { await close(); }
+  await writeJsonl(config.inputs.versions[0].sources[0].path, [input("2+2=5")]);
+  const closeChanged = await businessAttributionRepository.prepareRun!(current.run, resumed, inputs);
+  try {
+    assert(resumed.manifest.tasks.filter(task => !resumed.receipts[task.id])
+      .every(task => resumed.manifest.states[task.id].admissionBlock), "same-run source changes must still block admission");
+  } finally { await closeChanged(); }
 });
 
 test("organized historical verdicts retain missing newer fields and are reused from an explicitly located ledger", async t => {
