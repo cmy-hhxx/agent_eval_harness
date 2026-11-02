@@ -65,6 +65,33 @@ test("a journaled result whose row write was interrupted is rebuilt before the n
   assert(provenance.some(entry => entry.id === "next" && entry.published));
 });
 
+test("an unresolved comparison refresh preserves its old artifact and appends once to unified delivery", async t => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "comparison-delivery-"));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const record: Omit<BusinessResult, "line" | "published"> = {
+    id: "unresolved", date: "2026-10-26", file: "review/pair.jsonl", stage: "comparison", scope: {}, answers: [],
+    acceptedAt: 1, evaluatorVersion: "fixture", judge: "judge", submissionId: "accepted", complete: false,
+    origin: { run: path.join(root, "run"), taskId: "comparison", reference: { id: "comparison", file: "comparison-review.jsonl", line: 1 } },
+  };
+  const original = { reason: "缺少决定性信息" }, rewritten = { reason: "无法判定：两个模型都缺少用于核实结论的数据。" };
+  const publish = createBusinessPublisher(root);
+  await publish(record, original);
+  const unified = { ...record, file: "comparison/pair.jsonl",
+    origin: { ...record.origin, reference: { id: "comparison", file: "comparison.jsonl", line: 1 } } };
+  await publish({ ...unified, id: "other", submissionId: "other", complete: true }, { reason: "已有另一对局" });
+  await assert.rejects(publish({ ...unified, submissionId: "different" }, rewritten, true), /不同交付文件/);
+  await publish(unified, rewritten, true);
+  await createBusinessPublisher(root)(unified, rewritten, true);
+  const rows = []; for await (const row of readJsonl(path.join(root, unified.file))) rows.push(row);
+  assert.deepEqual(rows, [{ reason: "已有另一对局" }, rewritten]);
+  const old = []; for await (const row of readJsonl(path.join(root, record.file))) old.push(row);
+  assert.deepEqual(old, [original]);
+  const provenance = (await readBusinessResults(root)).filter(entry => entry.id === record.id);
+  assert.equal(provenance.at(-1)?.line, 2);
+  assert(provenance.every(entry => entry.submissionId === record.submissionId && entry.acceptedAt === record.acceptedAt));
+  await assert.rejects(publish({ ...unified, id: "other", submissionId: "other", complete: true, file: "elsewhere.jsonl" }, rewritten, true), /不同交付文件/);
+});
+
 test("a publication batch appends every accepted row and replaces a verdict in place", async t => {
   const root = await mkdtemp(path.join(os.tmpdir(), "business-batch-"));
   t.after(() => rm(root, { recursive: true, force: true }));

@@ -267,6 +267,15 @@ export function createBusinessPublisher(root: string) {
       if (previous?.submissionId === record.submissionId && previous.published && !entry.refresh &&
         await exists(path.join(previous.origin.run, "results", previous.origin.reference.file!)) &&
         await exists(destination(root, previous))) continue;
+      const relocated = previous && previous.file !== record.file;
+      // An unresolved comparison can acquire its unified delivery after presentation
+      // completes. Preserve its original file and accepted identity in the journal.
+      if (relocated && !(entry.refresh && previous.stage === "comparison" && record.stage === "comparison" &&
+        !previous.complete && !record.complete && previous.submissionId === record.submissionId &&
+        previous.acceptedAt === record.acceptedAt && previous.evaluatorVersion === record.evaluatorVersion &&
+        previous.origin.run === record.origin.run && previous.origin.taskId === record.origin.taskId &&
+        canonical(previous.answers) === canonical(record.answers) && canonical(previous.scope) === canonical(record.scope)))
+        throw new Error("同一结果身份对应不同交付文件");
       const file = destination(root, record), items = indexed.get(record.file) ?? [];
       let state = files.get(file);
       if (!state) {
@@ -297,19 +306,18 @@ export function createBusinessPublisher(root: string) {
           throw new Error("整理清单目标行已归属其他业务回答");
         adopted = true;
       }
-      if (!previous && current && !adopted && items.length + state.fresh !== state.lines)
+      if ((!previous || relocated) && current && !adopted && items.length + state.fresh !== state.lines)
         throw new Error("已有交付文件缺少可核实的整理映射，暂不追加或覆盖");
-      const line = previous?.line ?? (adopted ? entry.existingLine! : 1 + state.lines);
+      const line = previous && !relocated ? previous.line : adopted ? entry.existingLine! : 1 + state.lines;
       const next = { ...record, line, published: false };
       validate(next);
-      if (previous && previous.file !== next.file) throw new Error("同一结果身份对应不同交付文件");
       if (previous && previous.acceptedAt === next.acceptedAt && !sameOrigin && previous.submissionId !== next.submissionId)
         throw new Error("同一回答的正式结果接受时间相同，无法选定最新判词");
       // Journal first: a crash before publishing is repaired from the original accepted row.
       if (!sameOrigin || canonical(previous) !== canonical(next)) pending.push(next);
       state.claimed.add(line);
       if (!adopted) {
-        if (!previous) state.fresh++;
+        if (!previous || relocated) state.fresh++;
         if (!state.current || previous || state.rewrite) (state.rewrite ??= new Map()).set(line, row);
         else state.appends.push({ line, row });
         state.lines = Math.max(state.lines, line);

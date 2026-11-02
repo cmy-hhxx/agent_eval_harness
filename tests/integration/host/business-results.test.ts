@@ -3,7 +3,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import path from "node:path";
 import { rename, rm } from "node:fs/promises";
-import { emptyUsage, type RunState, type TaskAnalysis, type TaskPlan } from "@eval/contracts";
+import { emptyUsage, type PlannedTask, type RunState, type TaskAnalysis, type TaskPlan } from "@eval/contracts";
 import { localFiles, readJsonl, runLayout, writeJson, writeJsonl } from "@eval/data";
 import { attributionRepository, type AttributionConfig } from "@eval/workflows/attribution";
 import { stagedAttributionPlan as planAttribution } from "../../fixtures/shards.js";
@@ -50,6 +50,25 @@ async function completed(config: AttributionConfig, runId: string, version: stri
   await attributionRepository.writeRun(f.run, f.state);
   return f;
 }
+
+test("business admission resolves a large rewrite fan-out without repeated manifest scans", async t => {
+  const f = await fixtureConfig([[input()], [], [input()], []], true);
+  t.after(() => rm(f.directory, { recursive: true, force: true }));
+  const config = { ...f.config, output: { ...f.config.output, layout: "business" as const, reuseCompleted: true },
+    inputs: { ...f.config.inputs, batches: ["2026-10-26"] } };
+  const plan = await buildPlan(config), rewrite = plan.tasks.find(task => task.stage === "rewrite")!;
+  assert(rewrite);
+  plan.tasks.unshift(...Array.from({ length: 1000 }, (_, i) => ({ ...structuredClone(rewrite), id: `rewrite-${i}` })));
+  let visited = 0;
+  Object.defineProperty(plan.tasks, "find", { value: (predicate: (task: PlannedTask, index: number) => unknown) =>
+    Array.prototype.find.call(plan.tasks, (task: PlannedTask, index: number) => { visited++; return predicate(task, index); }) });
+  const state = stateFor(config, plan, "indexed-load"), run = runLayout(config.output, "indexed-load").directory;
+  const close = await businessComparisonRepository.prepareRun!(run, state, plan.inputs);
+  try {
+    assert(visited <= plan.tasks.length * 4, `visited ${visited} tasks for ${plan.tasks.length} planned tasks`);
+    assert(state.manifest.tasks.every(task => !state.manifest.states[task.id].admissionBlock));
+  } finally { await close(); }
+});
 
 test("new runs reuse the latest complete business answer across evaluator versions and keep models separate", async t => {
   const f = await fixtureConfig([[input()], [], [input()], []]);
@@ -172,6 +191,32 @@ test("Comparison and shared Criteria reuse their original receipts and finish wi
   const formal = []; for await (const row of readJsonl(path.join(config.output.path, "comparison/a_fast_vs_b_fast/a_fast_vs_b_fast-2026-10-26.jsonl"))) formal.push(row);
   assert.equal(formal.length, 1);
   assert.equal((formal[0] as { evaluator_version: string }).evaluator_version, "original-evaluator");
+  const comparison = restored.manifest.tasks.find(task => task.stage === "comparison")!;
+  const data = comparison.data as TaskData, rewriteId = "rewrite-comparison-reason";
+  const reason = "双方都好：两个模型都给出了正确的 2+2=4，结果清楚可用。";
+  const target = runLayout(config.output, "comparison-reused").directory;
+  const write = businessComparisonRepository.createResultWriter(target, next.inputs);
+  await write(restored);
+  restored.manifest.tasks.push({ id: rewriteId, stage: "rewrite", inputIds: {}, dependencies: { source: comparison.id },
+    data: { stage: "rewrite", candidates: {}, reference: null, case: { batch_id: "2026-10-26", case_id: "same-case", question: data.candidates.A.question },
+      rewriteOf: { stage: "comparison", taskId: comparison.id, resultId: data.comparisonId! },
+      rewriteNames: Object.fromEntries(Object.entries(data.candidates).map(([label, candidate]) => [label, candidate.name])) } satisfies TaskData });
+  restored.manifest.states[rewriteId] = { status: "succeeded", attempts: 1 };
+  restored.receipts[rewriteId] = { ...restored.receipts[comparison.id], taskId: rewriteId, submissionId: rewriteId,
+    acceptedAt: at + 1, evaluation: { rewrites: [{ id: "verdict.A__vs__B.reason", text: reason }] } };
+  delete restored.receipts[rewriteId].exported;
+  await write(restored);
+  await businessComparisonRepository.writeRun(target, restored);
+  const readReason = async () => {
+    const rows: any[] = []; for await (const row of readJsonl(path.join(config.output.path,
+      "comparison/a_fast_vs_b_fast/a_fast_vs_b_fast-2026-10-26.jsonl"))) rows.push(row);
+    assert.equal(rows.length, 1);
+    assert.equal(Object.values(rows[0].verdicts as Record<string, { reason: string }>)[0].reason, reason);
+  };
+  await readReason();
+  const replay = await businessComparisonRepository.readRun(target);
+  await businessComparisonRepository.createResultWriter(target, {})(replay);
+  await readReason();
 });
 
 test("an in-place answer change cannot inherit an older completed verdict", async t => {

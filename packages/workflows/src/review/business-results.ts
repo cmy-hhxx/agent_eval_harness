@@ -3,11 +3,11 @@ import { businessDate, type BusinessAnswer } from "@eval/data";
 import type { Candidate } from "../inputs/types.js";
 import { isDeepStrictEqual } from "node:util";
 
-export function businessCandidates(task: PlannedTask, state: RunState): Candidate[] {
+export function businessCandidates(task: PlannedTask, state: RunState, tasks?: ReadonlyMap<string, PlannedTask>): Candidate[] {
   const data = task.data as { candidate?: Candidate; candidates?: Record<string, Candidate>; rewriteOf?: { taskId: string } };
   if (data.rewriteOf) {
-    const source = state.manifest.tasks.find(item => item.id === data.rewriteOf!.taskId);
-    return source ? businessCandidates(source, state) : [];
+    const source = tasks ? tasks.get(data.rewriteOf.taskId) : state.manifest.tasks.find(item => item.id === data.rewriteOf!.taskId);
+    return source ? businessCandidates(source, state, tasks) : [];
   }
   return data.candidate ? [data.candidate] : Object.values(data.candidates ?? {});
 }
@@ -40,8 +40,9 @@ export function sameBusinessMaterial(first: PlannedTask, second: PlannedTask): b
 export function businessResultKey(stage: string, answers: BusinessAnswer[], scope: unknown) {
   return canonical([stage, answers.map(answer => [answer.model, answer.id]).sort(), scope]);
 }
-export function completeBusinessResult(task: PlannedTask, state: RunState) {
-  const seen = new Set<string>(), tasks = new Map(state.manifest.tasks.map(item => [item.id, item]));
+export function completeBusinessResult(task: PlannedTask, state: RunState,
+  tasks: ReadonlyMap<string, PlannedTask> = new Map(state.manifest.tasks.map(item => [item.id, item]))) {
+  const seen = new Set<string>();
   const visit = (id: string): boolean => {
     if (seen.has(id)) return true;
     seen.add(id);
@@ -52,8 +53,8 @@ export function completeBusinessResult(task: PlannedTask, state: RunState) {
   return visit(task.id) && !(task.stage === "comparison" &&
     (state.receipts[task.id]?.evaluation as { status?: string } | undefined)?.status === "needs_review");
 }
-export function businessDestination(task: PlannedTask, state: RunState, file: string) {
-  const candidates = businessCandidates(task, state), data = task.data as Record<string, unknown>;
+export function businessDestination(task: PlannedTask, state: RunState, file: string, tasks?: ReadonlyMap<string, PlannedTask>) {
+  const candidates = businessCandidates(task, state, tasks), data = task.data as Record<string, unknown>;
   const scope = data.scope as { batch_id: string; version: string } | undefined;
   const date = businessDate(candidates[0]?.batch_id ?? scope?.batch_id ?? "");
   if (candidates.some(candidate => candidate.batch_id !== date)) throw new Error("同一正式结果混入不同业务日期");

@@ -23,17 +23,17 @@ export function businessResultRepository(repository: RunRepository, adapters: {
   evaluation(task: PlannedTask, row: JsonObject): unknown;
 }): RunRepository {
   const origins = new Map<string, BusinessResult>();
-  async function describe(run: string, state: RunState, task: PlannedTask): Promise<Omit<BusinessResult, "line" | "published"> | undefined> {
+  async function describe(run: string, state: RunState, task: PlannedTask, tasks: ReadonlyMap<string, PlannedTask>): Promise<Omit<BusinessResult, "line" | "published"> | undefined> {
     const receipt = state.receipts[task.id], reference = receipt?.exported;
     if (!reference || task.stage === "rewrite") return;
     const original = origins.get(task.id);
-    const candidates = businessCandidates(task, state), answers = candidates.map(businessAnswer);
-    const target = businessDestination(task, state, reference.file!);
+    const candidates = businessCandidates(task, state, tasks), answers = candidates.map(businessAnswer);
+    const target = businessDestination(task, state, reference.file!, tasks);
     const scope = businessScope(task);
     return { ...target, id: businessResultKey(task.stage, answers, scope), stage: task.stage, scope, answers,
       acceptedAt: receipt.acceptedAt, evaluatorVersion: receipt.evaluatorVersion, judge: receipt.judge,
       submissionId: receipt.submissionId,
-      complete: completeBusinessResult(task, state), origin: original?.origin ?? {
+      complete: completeBusinessResult(task, state, tasks), origin: original?.origin ?? {
         run, taskId: task.id, reference: { id: reference.id, file: reference.file,
           line: reference.line ?? await formalResultLine(run, reference, reference.row) },
       } };
@@ -67,9 +67,10 @@ export function businessResultRepository(repository: RunRepository, adapters: {
           sourceStates.set(sourceRun, saved);
           organization.set(sourceRun, await organizedResultLines(sourceRun));
           checkedSources.add(path.join(sourceRun, "results", "attribution.jsonl"));
+          const tasks = new Map(saved.manifest.tasks.map(task => [task.id, task]));
           for (const task of saved.manifest.tasks) {
             if (!saved.receipts[task.id]?.exported) continue;
-            const record = await describe(sourceRun, saved, task);
+            const record = await describe(sourceRun, saved, task, tasks);
             if (record) records.push({ ...record, line: 1, published: false });
           }
         } catch (error) {
@@ -81,6 +82,8 @@ export function businessResultRepository(repository: RunRepository, adapters: {
     async function add(catalog: Candidate[], tasks: PlannedTask[], inputs: Record<string, unknown>, selectedTaskIds?: string[]) {
       sourceInputs.set(run, inputs);
       await ready();
+      const currentTasks = new Map(state.manifest.tasks.map(task => [task.id, task]));
+      for (const task of tasks) currentTasks.set(task.id, task);
       const blocks = new Map<string, string>();
       for (const candidate of catalog) {
         try { businessDate(candidate.batch_id); }
@@ -157,23 +160,39 @@ export function businessResultRepository(repository: RunRepository, adapters: {
           rows.push(record); byAnswer.set(key, rows);
         }
         const matches = new Map<string, BusinessResult[]>();
+        const sourceCatalogs = new Map<string, Map<string, Candidate>>();
+        const sourceTasksByRun = new Map<string, Map<string, PlannedTask>>();
+        const matchedBodies = new Map<string, Map<string, boolean>>();
+        for (const [sourceRun, source] of sourceStates) {
+          sourceTasksByRun.set(sourceRun, new Map(source.manifest.tasks.map(task => [task.id, task])));
+          matchedBodies.set(sourceRun, new Map());
+          const index = new Map<string, Candidate>();
+          for (const candidate of source.manifest.inputCatalog as Candidate[]) {
+            const key = answerBusinessKey(businessAnswer(candidate));
+            if (!index.has(key)) index.set(key, candidate);
+          }
+          sourceCatalogs.set(sourceRun, index);
+        }
         for (const candidate of catalog) {
           if (blocks.has(candidate.input_id)) continue;
-          const possible = byAnswer.get(answerBusinessKey(businessAnswer(candidate))) ?? [];
+          const candidateKey = answerBusinessKey(businessAnswer(candidate));
+          const possible = byAnswer.get(candidateKey) ?? [];
           const matching: BusinessResult[] = [];
           for (const record of possible) {
-            const answer = record.answers.find(value => answerBusinessKey(value) === answerBusinessKey(businessAnswer(candidate)))!;
+            const answer = record.answers.find(value => answerBusinessKey(value) === candidateKey)!;
             try {
               const source = sourceStates.get(record.origin.run);
               if (!source || !sourceInputs.has(record.origin.run)) throw new Error("来源收据或原始输入不可读取");
-              const original = (source.manifest.inputCatalog as Candidate[]).find(value =>
-                answerBusinessKey(businessAnswer(value)) === answerBusinessKey(answer));
+              const original = sourceCatalogs.get(record.origin.run)?.get(candidateKey);
               if (!original) throw new Error("来源收据缺少对应的被评回答");
               if (answer.revision ? await fileSourceReader.revision(answer.source) !== answer.revision
                 : !await sourcePredatesAcceptance(answer.source, record.acceptedAt))
                 throw new Error("来源输入在接受结果后发生变化，无法确认原回答");
               const originalInputs = sourceInputs.get(record.origin.run)!;
-              if (!isDeepStrictEqual(originalInputs[original.input_id], inputs[candidate.input_id])) continue;
+              const bodies = matchedBodies.get(record.origin.run)!;
+              if (!bodies.has(candidate.input_id)) bodies.set(candidate.input_id,
+                isDeepStrictEqual(originalInputs[original.input_id], inputs[candidate.input_id]));
+              if (!bodies.get(candidate.input_id)) continue;
               matching.push(record);
             } catch (error) {
               blocks.set(candidate.input_id, "正式结果来源无法核实：" + errorText(error));
@@ -181,15 +200,17 @@ export function businessResultRepository(repository: RunRepository, adapters: {
           }
           if (matching.length) {
             matching.sort((a, b) => Number(b.published) - Number(a.published) || a.acceptedAt - b.acceptedAt || a.id.localeCompare(b.id));
-            candidate.answer_id = matching[0].answers.find(answer => answerBusinessKey(answer) === answerBusinessKey(businessAnswer(candidate)))!.id;
+            candidate.answer_id = matching[0].answers.find(answer => answerBusinessKey(answer) === candidateKey)!.id;
             blocks.delete(candidate.input_id); matches.set(candidate.input_id, matching);
           }
         }
         // Exact original bodies and receipts have matched. Fresh work uses that persistent
         // source UUID so reused compact references and new trace/comparison references agree.
         // Never change a source namespace after this run has already accepted work in it.
+        const acceptedInputs = new Set([...currentTasks.values()].filter(task => state.receipts[task.id])
+          .flatMap(task => Object.values(task.inputIds)));
         const identities = new Map(catalog.flatMap(candidate => candidate.answer_id && candidate.answer_id !== candidate.input_id &&
-          ![...state.manifest.tasks, ...tasks].some(task => state.receipts[task.id] && Object.values(task.inputIds).includes(candidate.input_id))
+          !acceptedInputs.has(candidate.input_id)
           ? [[candidate.input_id, candidate.answer_id] as const] : []));
         for (const [previous, retained] of identities) {
           if (Object.hasOwn(inputs, retained)) throw new Error("已核实原始来源 UUID 冲突");
@@ -209,7 +230,7 @@ export function businessResultRepository(repository: RunRepository, adapters: {
         catalog.forEach(retain);
         for (const task of tasks) {
           task.inputIds = Object.fromEntries(Object.entries(task.inputIds).map(([label, id]) => [label, identities.get(id) ?? id]));
-          businessCandidates(task, state).forEach(retain);
+          businessCandidates(task, state, currentTasks).forEach(retain);
         }
         // Different run UUIDs converge only after the original input bodies have matched.
         const verified: BusinessResult[] = [];
@@ -259,18 +280,19 @@ export function businessResultRepository(repository: RunRepository, adapters: {
           const status = (state.manifest.states[task.id] ??= { status: "pending", attempts: 0 });
           delete status.admissionBlock;
           if (config.output.reuseCompleted === false || state.receipts[task.id] || !reusable.has(task.stage)) continue;
-          const candidates = businessCandidates(task, state);
+          const candidates = businessCandidates(task, state, currentTasks);
           if (!candidates.length || candidates.some(candidate => blocks.has(candidate.input_id))) continue;
           const scope = businessScope(task), key = businessResultKey(task.stage, candidates.map(businessAnswer), scope);
           const record = latest.get(key);
           if (!record?.complete || !record.published) continue;
           const source = sourceStates.get(record.origin.run) ?? await adapters.readSource(record.origin.run, [record.origin.taskId]);
-          const originalTask = source.manifest.tasks.find(item => item.id === record.origin.taskId)!;
+          const originalTask = sourceTasksByRun.get(record.origin.run)?.get(record.origin.taskId)
+            ?? source.manifest.tasks.find(item => item.id === record.origin.taskId)!;
           if (!sameBusinessMaterial(task, originalTask)) continue;
           const original = source.receipts[originalTask.id];
           if (!original?.exported || original.incompleteDependencies?.length) continue;
           const id = originalTask.id;
-          if ([...state.manifest.tasks, ...tasks].some(item => item.id === id && item !== task)) throw new Error("复用任务身份冲突");
+          if (currentTasks.has(id) && currentTasks.get(id) !== task) throw new Error("复用任务身份冲突");
           replacements.set(task.id, id);
           const evaluation = structuredClone(task.stage === "attribution-session" ? original.exported.row
             : adapters.evaluation(task, original.exported.row));
@@ -289,21 +311,22 @@ export function businessResultRepository(repository: RunRepository, adapters: {
           state.receipts[id] = receipt;
           state.manifest.states[id] = { ...status, status: "succeeded", attempts: 0 };
           if (id !== task.id) delete state.manifest.states[task.id];
-          task.id = id; reused.add(id); origins.set(id, record);
+          currentTasks.delete(task.id);
+          task.id = id; currentTasks.set(id, task); reused.add(id); origins.set(id, record);
         }
         // A reused comparison must retain the actual Criteria/Attribution receipts that
         // established its finding indices, even when a newer attribution is delivered.
         const originRecords = new Map([...unique.values()].map(record => [canonical([record.origin.run, record.origin.taskId]), record]));
-        const tasksById = new Map([...state.manifest.tasks, ...tasks].map(task => [task.id, task]));
+        const tasksById = currentTasks;
         const additional: PlannedTask[] = [];
         for (const comparison of tasks.filter(task => task.stage === "comparison" && reused.has(task.id))) {
           const origin = origins.get(comparison.id)!, source = sourceStates.get(origin.origin.run)!;
-          const original = source.manifest.tasks.find(task => task.id === origin.origin.taskId)!;
-          const sourceTasks = new Map(source.manifest.tasks.map(task => [task.id, task]));
+          const sourceTasks = sourceTasksByRun.get(origin.origin.run)!;
+          const original = sourceTasks.get(origin.origin.taskId)!;
           const ensure = (id: string): string => {
             if (state.receipts[id] && tasksById.has(id)) return id;
             const task = sourceTasks.get(id), receipt = source.receipts[id];
-            if (!task || !receipt?.exported || !reusable.has(task.stage) || !completeBusinessResult(task, source))
+            if (!task || !receipt?.exported || !reusable.has(task.stage) || !completeBusinessResult(task, source, sourceTasks))
               throw new Error("已复用对局缺少完整的原始依赖收据：" + id);
             const candidates = businessCandidates(task, source);
             const mapped = new Map(candidates.map(candidate => {
@@ -350,21 +373,22 @@ export function businessResultRepository(repository: RunRepository, adapters: {
         }
         tasks.push(...additional);
         const removed = new Set<string>();
-        const reusedAttributions = [...state.manifest.tasks, ...tasks].filter(task => task.stage === "attribution-session" && reused.has(task.id));
         for (const task of tasks) {
           task.dependencies = Object.fromEntries(Object.entries(task.dependencies).map(([label, id]) => [label, replacements.get(id) ?? id]));
           const data = task.data as BusinessTaskData;
           if (data.attributionIdentity) data.attributionIdentity = replacements.get(data.attributionIdentity) ?? data.attributionIdentity;
           if (data.rewriteOf) data.rewriteOf.taskId = replacements.get(data.rewriteOf.taskId) ?? data.rewriteOf.taskId;
         }
+        const reusedAttributions = new Set([...currentTasks.values()].filter(task => task.stage === "attribution-session" && reused.has(task.id))
+          .map(task => canonical([businessCandidates(task, state, currentTasks)[0]?.input_id,
+            (task.data as BusinessTaskData).attributionIdentity])));
         for (const task of tasks) {
           const data = task.data as BusinessTaskData;
           const compactId = (task.data as Record<string, unknown>).compactTaskId;
           if (task.stage === "attribution-compact-field" && typeof compactId === "string" &&
             reused.has(replacements.get(compactId) ?? compactId)) removed.add(task.id);
-          if (["attribution-component", "attribution-trace"].includes(task.stage) && reusedAttributions.some(source =>
-            businessCandidates(source, state)[0]?.input_id === businessCandidates(task, state)[0]?.input_id &&
-            (source.data as Record<string, unknown>).attributionIdentity === data.attributionIdentity)) removed.add(task.id);
+          if (["attribution-component", "attribution-trace"].includes(task.stage) && reusedAttributions.has(
+            canonical([businessCandidates(task, state, currentTasks)[0]?.input_id, data.attributionIdentity]))) removed.add(task.id);
           if (task.stage === "rewrite" && data.rewriteOf && reused.has(data.rewriteOf.taskId)) removed.add(task.id);
         }
         if (removed.size) {
@@ -373,13 +397,13 @@ export function businessResultRepository(repository: RunRepository, adapters: {
           tasks.push(...kept);
           state.manifest.tasks = state.manifest.tasks.filter(task => !removed.has(task.id));
         }
+        for (const id of removed) { currentTasks.delete(id); delete state.manifest.states[id]; delete state.receipts[id]; }
         for (const task of tasks) {
           task.dependencies = Object.fromEntries(Object.entries(task.dependencies).filter(([, id]) => !removed.has(id)));
-          const reasons = businessCandidates(task, state).flatMap(candidate => blocks.get(candidate.input_id) ?? []);
+          const reasons = businessCandidates(task, state, currentTasks).flatMap(candidate => blocks.get(candidate.input_id) ?? []);
           if (reasons.length && !state.receipts[task.id])
             (state.manifest.states[task.id] ??= { status: "pending", attempts: 0 }).admissionBlock = reasons.join("；");
         }
-        for (const id of removed) { delete state.manifest.states[id]; delete state.receipts[id]; }
         if (selectedTaskIds) {
           const retained = new Set([...state.manifest.tasks, ...tasks].map(task => task.id));
           const remap = (ids: string[]) => ids.map(id => replacements.get(id) ?? id).filter(id => retained.has(id));
@@ -419,23 +443,32 @@ export function businessResultRepository(repository: RunRepository, adapters: {
         const config = state.manifest.config as EvaluationConfig;
         if (config.output.layout !== "business") return;
         publisher ??= createBusinessPublisher(config.output.path);
-        // A fresh process sees every committed receipt again. The provenance journal
-        // already records which accepted submissions reached a delivery file, so only
-        // unseen or newer verdicts need the serialized delivery lock.
+        // The journal tracks accepted verdicts; a later rewrite can still update their
+        // presentation without changing the accepted verdict or its source identity.
         delivered ??= new Set((await readBusinessResults(config.output.path))
           .filter(record => record.published).map(record => record.submissionId));
         // Accepted receipts are far fewer than planned tasks; rescanning a six-figure
         // manifest on every flush would starve dispatch on the largest runs.
         if (!planned || planned.size !== state.manifest.tasks.length)
           planned = new Map(state.manifest.tasks.map(task => [task.id, task]));
+        const presentations = new Map<string, { row: JsonObject; acceptedAt: number }>();
+        for (const receipt of Object.values(state.receipts)) {
+          const task = planned.get(receipt.taskId), row = receipt.exported?.row;
+          if (task?.stage !== "rewrite" || row?.evaluation_type !== "group_model_comparison") continue;
+          const source = (task.data as BusinessTaskData).rewriteOf?.taskId;
+          if (source && (!presentations.has(source) || presentations.get(source)!.acceptedAt < receipt.acceptedAt))
+            presentations.set(source, { row, acceptedAt: receipt.acceptedAt });
+        }
         const entries: BusinessPublication[] = [], accepted: [string, JsonObject][] = [];
         for (const [taskId, receipt] of Object.entries(state.receipts)) {
-          const row = receipt.exported?.row, task = planned.get(taskId);
+          const row = presentations.get(taskId)?.row ?? receipt.exported?.row, task = planned.get(taskId);
           if (!row || !task || seen.get(task.id) === row || task.stage === "rewrite") continue;
-          if (delivered.has(receipt.submissionId)) { seen.set(task.id, row); continue; }
-          const record = await describe(run, state, task);
+          if (delivered.has(receipt.submissionId) && !(task.stage === "comparison" && row.rewritten)) {
+            seen.set(task.id, row); continue;
+          }
+          const record = await describe(run, state, task, planned);
           if (record) {
-            entries.push({ record, row, refresh: seen.has(task.id) });
+            entries.push({ record, row, refresh: seen.has(task.id) || delivered.has(receipt.submissionId) });
             accepted.push([task.id, row]);
           } else seen.set(task.id, row);
         }
