@@ -4,6 +4,7 @@
   "stateDirectory": "/absolute/runtime/state/console",
   "logDirectory": "/absolute/runtime/log",
   "passwordFile": "/absolute/runtime/secrets/console-password",
+  "inputStatsFile": "/absolute/runtime/console/eval_input_stats.json",
   "channels": ["evaluation-gateway", "evaluation-gateway-2"],
   "presets": [
     {
@@ -12,6 +13,7 @@
       "name": "问财对比",
       "configs": ["host.json", "/absolute/runtime/config/models.json", "/absolute/runtime/config/wencai.json"],
       "inputRoots": ["/absolute/wencai/input"],
+      "outputRoots": ["/absolute/wencai/output"],
       "concurrency": 2
     },
     {
@@ -20,6 +22,7 @@
       "name": "AIME 日常归因",
       "configs": ["host.json", "attribution.json", "/absolute/runtime/config/models.json", "/absolute/runtime/config/aime-daily.json"],
       "inputRoots": ["/absolute/aime/input"],
+      "outputRoots": ["/absolute/aime/output"],
       "concurrency": 2
     }
   ]

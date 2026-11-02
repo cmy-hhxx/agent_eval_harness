@@ -8,6 +8,7 @@
 <div id="app" class="sheet" hidden>
   <div class="title-row"><h1>评测任务</h1><button id="new-task" class="primary"><span aria-hidden="true">＋</span> 新建评测</button></div>
   <div class="toolbar"><nav class="tabs" aria-label="评测来源"><button data-source="wencai" aria-pressed="true">问财<span data-count="wencai">0</span></button><button data-source="aime" aria-pressed="false">AIME<span data-count="aime">0</span></button></nav><div class="refresh-group"><span id="freshness"></span><button id="refresh" class="text-button">刷新</button></div></div>
+  <div class="bulk-actions"><label class="check"><input id="select-all" type="checkbox">全选可删除任务</label><span id="selection-count" aria-live="polite">已选 0 项</span><button id="delete-selected" class="text-button delete-task" disabled>批量删除</button></div>
   <p id="task-error" role="alert"></p>
   <div class="table-wrap"><table><thead><tr><th>任务</th><th>状态</th><th>进度</th><th class="num">并发</th><th>创建时间</th><th class="actions-heading">操作</th></tr></thead><tbody id="task-list"></tbody></table></div>
   <div id="empty" class="empty-state" hidden><svg aria-hidden="true" width="40" height="40" viewBox="0 0 40 40" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="8" y="5" width="24" height="30" rx="3"/><path d="M14 13h12M14 20h7M14 27h12"/></svg><span>暂无评测任务</span><button id="empty-create" class="text-button">创建第一个任务</button></div>
@@ -18,8 +19,8 @@
   <div class="drawer-body"><form id="configuration">
     <div class="form-row"><div><label for="preset">评测类型</label><select id="preset"></select></div><div class="concurrency-field"><label for="concurrency">并发</label><input id="concurrency" type="number" min="1" step="1" required></div></div>
     <label for="batch-id">缺省批次</label><input id="batch-id" type="text" placeholder="每次新建任务时填写" required aria-describedby="batch-hint"><p id="batch-hint" class="check-meta">原始输入缺少 batch_id 时使用；已有批次保持原值。</p>
-    <label class="field-label" for="input-directory">评测输入父目录</label><textarea id="input-directory" rows="3" spellcheck="false" required></textarea>
-    <div class="field-label">评测输出</div><div id="output-field"></div>
+    <div class="field-label-row"><label for="input-directory">评测输入父目录</label><button id="choose-input" type="button" class="text-button">选择目录</button></div><textarea id="input-directory" rows="3" spellcheck="false" required></textarea><p id="input-folder-stats" class="check-meta" aria-live="polite"></p>
+    <div class="field-label-row"><span>评测输出</span><button id="choose-output" type="button" class="text-button">选择目录</button></div><div id="output-field"></div>
   </form><div id="preview-summary" hidden></div><p id="config-error" role="alert"></p></div>
   <div class="drawer-footer"><a id="download-preview" hidden>下载配置</a><button id="back" hidden>返回修改</button><button id="preview-button" form="configuration" class="primary">Check data</button><button id="start" class="primary" hidden>启动评测</button></div>
 </div></dialog>
@@ -30,4 +31,5 @@
   <div class="drawer-footer"><a id="download-task">下载配置</a><button id="close-detail-bottom">关闭</button></div>
 </div></dialog>
 <dialog id="capacity" class="capacity-dialog" aria-labelledby="capacity-title"><form id="capacity-form"><div class="drawer-header"><span id="capacity-title">调整并发</span><button type="button" id="close-capacity" class="icon-button" aria-label="关闭调整并发">×</button></div><div class="capacity-body"><label for="capacity-value">并发数</label><input id="capacity-value" type="number" min="1" step="1" required><p id="capacity-error" role="alert"></p></div><div class="drawer-footer"><button class="primary" id="apply-capacity">应用</button></div></form></dialog>
+<dialog id="folder-picker" class="drawer" aria-labelledby="folder-title"><div class="drawer-frame"><div class="drawer-header"><span id="folder-title">选择目录</span><button id="close-folder-picker" class="icon-button" aria-label="关闭目录选择">×</button></div><div class="drawer-body"><div class="folder-navigation"><button id="folder-roots" class="text-button">目录范围</button><button id="folder-parent" class="text-button" disabled>上一级</button></div><code id="folder-current" class="folder-current"></code><p id="folder-status" class="check-meta" aria-live="polite"></p><label for="folder-search">筛选当前目录</label><input id="folder-search" type="search" placeholder="输入目录名"><div id="folder-list" class="folder-list"></div><p id="folder-error" role="alert"></p></div><div class="drawer-footer"><button id="use-folder" class="primary" disabled>使用当前目录</button></div></div></dialog>
 </body></html>

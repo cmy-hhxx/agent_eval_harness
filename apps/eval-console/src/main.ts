@@ -1,6 +1,6 @@
 import { parseArgs } from "node:util";
 import path from "node:path";
-import { localFiles, runLock } from "@eval/data";
+import { InputDirectoryStats, localFiles, runLock } from "@eval/data";
 import { readConsoleConfig, serveConsole } from "./server.js";
 import { ConsoleTasks } from "./tasks.js";
 import { applySettings, readSettings } from "@eval/host-app/settings";
@@ -15,10 +15,13 @@ process.env.EVAL_LOG_LOCK_DIR = path.join(config.stateDirectory, "log-writer");
 await initializeServices();
 const unlock = await runLock(config.stateDirectory);
 const tasks = new ConsoleTasks(config);
+const directories = new InputDirectoryStats(config.inputStatsFile, config.presets.flatMap(preset => preset.inputRoots));
 try {
   await tasks.initialize();
+  await directories.initialize();
+  directories.start(error => logger.error(error, { component: "console", event: "console_input_stats_failed" }));
   const password = (await localFiles.read(config.passwordFile, "utf8")).trim();
-  const http = await serveConsole(tasks, password);
+  const http = await serveConsole(tasks, password, directories);
   await logger.event("console_ready", { component: "console", port: config.port });
   console.log("Evaluation console ready on port " + http.url.split(":").at(-1));
   await new Promise<void>(resolve => {
@@ -26,4 +29,4 @@ try {
   });
   await tasks.close();
   await http.close();
-} finally { await unlock(); }
+} finally { await directories.close(); await unlock(); }

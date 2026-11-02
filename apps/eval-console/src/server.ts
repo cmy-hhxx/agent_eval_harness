@@ -1,7 +1,7 @@
 import path from "node:path";
 import { randomBytes, timingSafeEqual } from "node:crypto";
 import { errorText, HttpError, redact } from "@eval/contracts";
-import { localFiles, readJson } from "@eval/data";
+import { InputDirectoryStats, localFiles, readJson } from "@eval/data";
 import { body, json, listen } from "@eval/runtime/http";
 import { ConsoleTasks, type ConsoleConfig } from "./tasks.js";
 import { configurationSecrets } from "@eval/host-app/settings";
@@ -20,14 +20,14 @@ export async function readConsoleConfig(file: string): Promise<ConsoleConfig> {
     if (typeof source !== "string" || !source.trim()) throw new Error("Console paths must be nonempty");
     return path.resolve(root, source);
   };
-  for (const key of ["stateDirectory", "logDirectory", "passwordFile"] as const) value[key] = locate(value[key]);
+  for (const key of ["stateDirectory", "logDirectory", "passwordFile", "inputStatsFile"] as const) value[key] = locate(value[key]);
   const ids = new Set<string>();
   for (const preset of value.presets) {
     if (!preset || typeof preset.id !== "string" || !/^[a-z0-9-]+$/.test(preset.id) || ids.has(preset.id) ||
         !["wencai", "aime"].includes(preset.source) || typeof preset.name !== "string" || !preset.name.trim() ||
         !Number.isSafeInteger(preset.concurrency) || preset.concurrency < 1) throw new Error("Invalid console preset");
     ids.add(preset.id);
-    for (const key of ["configs", "inputRoots"] as const) {
+    for (const key of ["configs", "inputRoots", "outputRoots"] as const) {
       if (!Array.isArray(preset[key]) || !preset[key].length) throw new Error("Missing preset " + key);
       preset[key] = preset[key].map(locate);
     }
@@ -35,7 +35,7 @@ export async function readConsoleConfig(file: string): Promise<ConsoleConfig> {
   return value;
 }
 
-export async function serveConsole(tasks: ConsoleTasks, password: string) {
+export async function serveConsole(tasks: ConsoleTasks, password: string, directories: InputDirectoryStats) {
   if (password.length < 16) throw new Error("管理员密码至少 16 位");
   const sessions = new Map<string, number>(), attempts = new Map<string, { count: number; reset: number }>();
   const matches = (value: string) => {
@@ -87,6 +87,13 @@ export async function serveConsole(tasks: ConsoleTasks, password: string) {
         return send({ authenticated: false });
       }
       if (url.pathname === "/api/presets" && req.method === "GET") return send(await tasks.presets());
+      if (url.pathname === "/api/directories" && req.method === "GET") {
+        const preset = tasks.config.presets.find(item => item.id === url.searchParams.get("preset"));
+        const kind = url.searchParams.get("kind");
+        if (!preset || !["input", "output"].includes(kind ?? "")) throw new HttpError(400, "未知目录预设或类型");
+        return send(await directories.browse(kind === "input" ? preset.inputRoots : preset.outputRoots,
+          url.searchParams.get("path") ?? undefined, kind === "input"));
+      }
       if (url.pathname === "/api/previews" && req.method === "POST") return send(await tasks.preview(await body(req, 64 * 1024)), 201);
       if (url.pathname === "/api/tasks" && req.method === "GET")
         return send([...tasks.tasks.values()].sort((a, b) => b.createdAt.localeCompare(a.createdAt)).map(task => tasks.get(task.id)));

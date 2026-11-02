@@ -7,19 +7,20 @@ import type { HostConfig } from "@eval/host-app/config";
 import { fixtureConfig, raw, sessionRaw } from "../../../tests/fixtures/comparison.js";
 import { checkData, commonInputDirectory, emptyDataCheck, parentInputs } from "./data-check.js";
 
-test("parent directory resolves models across dates and excludes archives, unknown models and symlinks", async t => {
+test("parent directory includes .archive while excluding other hidden directories, unknown models and symlinks", async t => {
   const f = await fixtureConfig(); t.after(() => rm(f.directory, { recursive: true, force: true }));
   const root = path.join(f.directory, "parent");
   for (const v of f.config.inputs.versions) {
     await writeJsonl(path.join(root, "daily", v.id, "2026-11-01.jsonl"), [raw()]);
     await writeJsonl(path.join(root, "daily", v.id, "2026-11-02.jsonl"), [raw()]);
     await writeJsonl(path.join(root, ".archive", v.id, "old.jsonl"), [raw()]);
+    await writeJsonl(path.join(root, ".hidden", v.id, "private.jsonl"), [raw()]);
   }
   await writeJsonl(path.join(root, "unknown.jsonl"), [raw()]);
   await symlink(f.directory, path.join(root, "loop"));
   const result = await parentInputs(root, f.config.inputs.versions, [f.directory]);
   assert.equal(result.ignored, 1);
-  assert(Object.values(result.inputs).every(files => files.length === 2));
+  assert(Object.values(result.inputs).every(files => files.length === 3));
   assert.equal(commonInputDirectory(f.config.inputs.versions), path.dirname(f.config.inputs.versions[0].sources[0].path));
   await assert.rejects(parentInputs(root, f.config.inputs.versions, [path.join(f.directory, "other")]), /不在/);
   await assert.rejects(parentInputs(path.join(root, "unknown.jsonl"), f.config.inputs.versions, [root]), /父目录/);

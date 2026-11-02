@@ -16,10 +16,12 @@ import { checkData, commonInputDirectory, emptyDataCheck, parentInputs, type Dat
 export interface ConsolePreset {
   id: string; source: "wencai" | "aime"; name: string; configs: string[];
   inputRoots: string[]; concurrency: number;
+  outputRoots: string[];
 }
 export interface ConsoleConfig {
   hostname: string; port: number; stateDirectory: string; logDirectory: string; passwordFile: string;
   channels: string[]; presets: ConsolePreset[];
+  inputStatsFile: string;
 }
 export interface ConsoleProgress { completed: number; total: number; failed: number; }
 export interface ConsoleTask {

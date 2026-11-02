@@ -1,10 +1,9 @@
 const $ = id => document.getElementById(id);
-const state = { presets: [], source: 'wencai', selected: null, preview: null, cursor: null, tasks: [], polling: false, capacity: null };
+const state = { presets: [], source: 'wencai', selected: null, preview: null, cursor: null, tasks: [], polling: false, capacity: null, checked: new Set(), deleting: false, folderKind: null, folderData: null, folderRequest: 0 };
 const names = { draft: '待启动', starting: '启动中', running: '运行中', pausing: '暂停中', paused: '已暂停', finished: '已完成', partial: '部分完成', failed: '失败' };
 function node(tag, text, className) { const el = document.createElement(tag); if (text !== undefined) el.textContent = text; if (className) el.className = className; return el; }
 function button(text, action, className = 'text-button') { const el = node('button', text, className); el.type = 'button'; el.onclick = action; return el; }
 const basename = file => file.replace(/\/$/, '').split('/').at(-1);
-const shortPath = file => '…/' + file.replace(/\/$/, '').split('/').slice(-2).join('/');
 async function api(url, value) {
   const response = await fetch(url, value === undefined ? {} : { method: 'POST', headers: { 'content-type': 'application/json', 'x-console-request': '1' }, body: JSON.stringify(value) });
   const result = await response.json();
@@ -20,21 +19,23 @@ async function busy(el, target, action) {
 function outputEditor(file) {
   const details = node('details', undefined, 'path-editor output-editor');
   const summary = node('summary'), label = node('span', undefined, 'path-label');
-  const title = node('span', shortPath(file), 'path-name');
+  const title = node('span', file, 'path-name');
   label.append(title); summary.append(label); summary.title = file;
   const field = node('textarea'); field.id = 'output'; field.value = file; field.rows = 3; field.required = true; field.spellcheck = false;
   field.setAttribute('aria-label', '评测输出路径');
-  field.oninput = () => { summary.title = field.value; title.textContent = field.value.trim() ? shortPath(field.value.trim()) : '填写输出路径'; };
+  field.oninput = () => { summary.title = field.value; title.textContent = field.value.trim() || '填写输出路径'; };
   details.append(summary, field); return details;
 }
 function fillPreset() {
   const preset = state.presets.find(p => p.id === $('preset').value); if (!preset) return;
   $('input-directory').value = preset.inputDirectory;
+  $('input-folder-stats').textContent = '';
   $('batch-id').value = '';
   $('output-field').replaceChildren(outputEditor(preset.output));
   $('concurrency').value = preset.concurrency; $('config-error').textContent = '';
 }
 function setSource(value) {
+  if (state.source !== value) state.checked.clear();
   state.source = value;
   document.querySelectorAll('[data-source]').forEach(el => el.setAttribute('aria-pressed', String(el.dataset.source === value)));
   renderTasks();
@@ -52,6 +53,72 @@ function readPath(file, label = basename(file)) {
   const details = node('details', undefined, 'path-read'), summary = node('summary', label);
   summary.title = file; details.append(summary, node('div', file, 'full-path')); return details;
 }
+function pathRoot(label, file) {
+  const root = node('div', undefined, 'path-root');
+  root.append(node('span', label, 'path-caption'), node('code', file)); return root;
+}
+function fileGroup(label, files, root) {
+  const group = node('details', undefined, 'file-group'), heading = node('summary');
+  group.open = files.length <= 3;
+  heading.append(node('span', label), node('small', files.length + ' 项'));
+  const list = node('ul', undefined, 'file-list');
+  for (const file of files) {
+    const item = node('li'), relative = root && file.startsWith(root.replace(/\/$/, '') + '/') ? file.slice(root.replace(/\/$/, '').length + 1) : file;
+    const name = node('code', relative); name.title = file; item.append(name); list.append(item);
+  }
+  group.append(heading, list); return group;
+}
+function folderStats(stats) {
+  if (!stats) return '尚未统计';
+  return stats.files.toLocaleString() + ' 个文件 · 已统计 ' + stats.records.toLocaleString() + ' 条输入' +
+    (stats.pendingFiles ? ' · ' + stats.pendingFiles + ' 项待统计或重试' : '') +
+    ' · ' + new Date(stats.checkedAt).toLocaleString('zh-CN', { hour12: false });
+}
+function useFolder(file, stats) {
+  if (state.folderKind === 'input') {
+    $('input-directory').value = file;
+    $('input-folder-stats').textContent = folderStats(stats) + '。原始记录数，尚未校验有效性。';
+  } else {
+    $('output').value = file; $('output').oninput();
+  }
+  $('folder-picker').close();
+}
+function renderFolders() {
+  const data = state.folderData; if (!data) return;
+  $('folder-list').replaceChildren();
+  const query = $('folder-search').value.trim().toLowerCase();
+  const items = data.directories.filter(item => item.name.toLowerCase().includes(query) || item.path.toLowerCase().includes(query));
+  for (const item of items) {
+    const row = node('div', undefined, 'folder-option'), name = button(item.name, () => loadFolders(item.path), 'folder-name text-button');
+    const body = node('div'); body.append(name, node('code', item.path, 'folder-option-path'));
+    if (state.folderKind === 'input') body.append(node('small', folderStats(item.stats), 'folder-option-stats'));
+    row.append(body, button('选用', () => useFolder(item.path, item.stats))); $('folder-list').append(row);
+  }
+  if (!items.length) $('folder-list').append(node('p', query ? '没有匹配目录' : '没有子目录，可使用当前目录。', 'check-meta'));
+}
+async function loadFolders(directory) {
+  const request = ++state.folderRequest, kind = state.folderKind;
+  $('folder-error').textContent = ''; $('use-folder').disabled = true;
+  $('folder-list').replaceChildren(node('p', '读取目录…', 'check-meta'));
+  try {
+    const data = await api('/api/directories?preset=' + encodeURIComponent($('preset').value) + '&kind=' + kind +
+      (directory ? '&path=' + encodeURIComponent(directory) : ''));
+    if (request !== state.folderRequest) return;
+    state.folderData = data;
+    $('folder-current').textContent = data.path || '选择一个已配置的目录范围';
+    $('folder-parent').disabled = !data.parent; $('use-folder').disabled = !data.path;
+    $('folder-status').textContent = kind === 'input' ?
+      (data.path ? folderStats(data.stats) + '。' : '') +
+      (data.refreshing ? '后台正在更新统计；已完成的目录会陆续显示数量。' : '每小时增量更新，记录数尚未校验有效性。') : '输出目录可在此选择，也可返回手动填写新路径。';
+    $('folder-error').textContent = [data.error, ...(data.unavailable || []).map(item => item.path + '：' + item.reason)].filter(Boolean).join('；');
+    renderFolders();
+  } catch (error) { if (request === state.folderRequest) { $('folder-error').textContent = error.message; $('folder-list').replaceChildren(); } }
+}
+function openFolders(kind) {
+  state.folderKind = kind; state.folderData = null; $('folder-search').value = '';
+  $('folder-title').textContent = kind === 'input' ? '选择评测输入目录' : '选择评测输出目录';
+  $('folder-picker').showModal(); void loadFolders();
+}
 function summary(task, target) {
   target.replaceChildren();
   const check = task.dataCheck;
@@ -68,13 +135,23 @@ function summary(task, target) {
       target.append(detail);
     }
   }
-  const inputs = node('div');
-  if (task.inputDirectory) inputs.append(readPath(task.inputDirectory, shortPath(task.inputDirectory)));
-  for (const input of task.inputs) inputs.append(readPath(input.paths.join('\n'),
-    input.paths.length > 1 ? input.name + ' · ' + input.paths.length + ' 个文件' : basename(input.paths[0])));
+  const inputs = node('div', undefined, 'path-section');
+  if (task.inputDirectory) inputs.append(pathRoot('输入父目录', task.inputDirectory));
+  for (const input of task.inputs) inputs.append(fileGroup(input.name, input.paths, task.inputDirectory));
   const logs = node('div'); for (const file of task.logs) logs.append(readPath(file));
-  const output = node('div'); output.append(readPath(task.output, shortPath(task.output)));
-  if (check?.destinations.length) output.append(readPath(check.destinations.join('\n'), '主要结果文件 · ' + check.destinations.length));
+  const output = node('div', undefined, 'path-section'); output.append(pathRoot('输出根目录', task.output));
+  const folders = new Map();
+  for (const file of check?.destinations || []) {
+    const parent = file.slice(0, file.lastIndexOf('/')), files = folders.get(parent) || [];
+    files.push(file); folders.set(parent, files);
+  }
+  for (const [folder, files] of folders) {
+    const root = task.output.replace(/\/$/, '');
+    const relative = folder === root ? '' : folder.startsWith(root + '/') ? folder.slice(root.length + 1) : folder;
+    const label = relative === 'criteria' ? '共同标准 · criteria' : relative.startsWith('comparison/') ? '对比结果 · ' + relative.slice(11) : relative || '结果文件';
+    const group = fileGroup(label, files, folder);
+    group.insertBefore(node('code', relative || '.', 'folder-path'), group.lastChild); output.append(group);
+  }
   for (const [label, content] of [['输入', inputs], ['输出', output], ['并发', node('span', String(task.concurrency))], ['日志', logs]]) {
     const row = node('div', undefined, 'summary-row'), value = node('div', undefined, 'summary-value'); value.append(content); row.append(node('span', label), value); target.append(row);
   }
@@ -103,12 +180,33 @@ function previewTask(task) {
   if (!$('create').open) $('create').showModal();
 }
 function openCapacity(task) { state.capacity = task.id; $('capacity-value').value = task.concurrency; $('capacity-error').textContent = ''; $('capacity').showModal(); $('capacity-value').select(); }
+const canDelete = task => !['starting', 'running', 'pausing'].includes(task.status);
+function updateSelection() {
+  const available = state.tasks.filter(task => task.source === state.source && canDelete(task));
+  const all = $('select-all');
+  all.checked = available.length > 0 && available.every(task => state.checked.has(task.id));
+  all.indeterminate = state.checked.size > 0 && !all.checked;
+  all.disabled = state.deleting || !available.length;
+  $('selection-count').textContent = '已选 ' + state.checked.size + ' 项';
+  $('delete-selected').disabled = state.deleting || !state.checked.size;
+}
+function closeDeleted(id) {
+  state.checked.delete(id);
+  if (state.selected === id) { state.selected = null; $('detail').close(); }
+  if (state.preview?.id === id) $('create').close();
+}
 function renderTasks() {
   for (const channel of ['wencai', 'aime']) document.querySelector('[data-count="' + channel + '"]').textContent = state.tasks.filter(t => t.source === channel).length;
   const tasks = state.tasks.filter(t => t.source === state.source); $('task-list').replaceChildren(); $('empty').hidden = tasks.length > 0;
+  for (const id of state.checked) if (!tasks.some(task => task.id === id && canDelete(task))) state.checked.delete(id);
   for (const task of tasks) {
     const row = node('tr'), title = node('td');
-    title.append(button(task.name, () => openDetail(task.id, 'config'), 'task-title'), node('span', task.id.slice(8, 16), 'task-id'));
+    const choice = node('input', undefined, 'task-select'); choice.type = 'checkbox'; choice.checked = state.checked.has(task.id);
+    choice.disabled = state.deleting || !canDelete(task); choice.setAttribute('aria-label', '选择 ' + task.name + ' ' + task.id.slice(8, 16));
+    choice.title = canDelete(task) ? '选择任务' : '先暂停任务，等待保存完成后再删除';
+    choice.onchange = () => { if (choice.checked) state.checked.add(task.id); else state.checked.delete(task.id); updateSelection(); };
+    const titleText = node('div'); titleText.append(button(task.name, () => openDetail(task.id, 'config'), 'task-title'), node('span', task.id.slice(8, 16), 'task-id'));
+    const heading = node('div', undefined, 'task-heading'); heading.append(choice, titleText); title.append(heading);
     const status = node('td'); status.append(node('span', task.status === 'draft' ? ({checking: '检查中', ready: '待启动', failed: '检查失败'}[task.dataCheck?.status] || '待检查') : task.status === 'running' && !task.progress && !task.requests?.active ? '加载输入' : names[task.status], 'status ' + task.status));
     if (task.error || task.dataCheck?.error) { const error = node('span', task.error || task.dataCheck.error, 'task-error-mark'); error.title = error.textContent; status.append(error); }
     const progress = node('td'), p = task.progress, finished = task.status === 'finished';
@@ -132,17 +230,17 @@ function renderTasks() {
       if (!confirm(`删除“${task.name} · ${task.id.slice(8, 16)}”？\n仅删除工作台任务记录和配置，保留原始输入、评测结果与日志。`)) return;
       void busy(remove, 'task-error', async () => {
         await api('/api/tasks/' + task.id + '/delete', {});
-        if (state.selected === task.id) { state.selected = null; $('detail').close(); }
-        if (state.preview?.id === task.id) $('create').close();
+        closeDeleted(task.id);
         await refresh();
       });
     }, 'text-button delete-task');
-    remove.disabled = ['starting', 'running', 'pausing'].includes(task.status);
+    remove.disabled = state.deleting || !canDelete(task);
     remove.title = remove.disabled ? '先暂停任务，等待保存完成后再删除' : '删除任务，保留输入、评测结果与日志';
     remove.setAttribute('aria-label', task.name + ' ' + task.id.slice(8, 16) + ' 删除任务');
     actions.append(remove); operations.append(actions);
     row.append(title, status, progress, capacity, date, operations); $('task-list').append(row);
   }
+  updateSelection();
 }
 async function openDetail(id, tab) {
   const draft = state.tasks.find(t => t.id === id && t.status === 'draft');
@@ -180,6 +278,13 @@ $('logout').onclick = () => busy($('logout'), 'task-error', async () => { await 
 document.querySelectorAll('[data-source]').forEach(el => el.onclick = () => setSource(el.dataset.source));
 document.querySelectorAll('[data-detail]').forEach(el => el.onclick = () => setDetail(el.dataset.detail));
 $('new-task').onclick = openCreate; $('empty-create').onclick = openCreate; $('preset').onchange = fillPreset; $('back').onclick = editMode;
+$('choose-input').onclick = () => openFolders('input'); $('choose-output').onclick = () => openFolders('output');
+$('input-directory').oninput = () => { $('input-folder-stats').textContent = ''; };
+$('close-folder-picker').onclick = () => { state.folderRequest++; $('folder-picker').close(); };
+$('folder-roots').onclick = () => { $('folder-search').value = ''; void loadFolders(); };
+$('folder-parent').onclick = () => { if (state.folderData?.parent) { $('folder-search').value = ''; void loadFolders(state.folderData.parent); } };
+$('folder-search').oninput = renderFolders;
+$('use-folder').onclick = () => { if (state.folderData?.path) useFolder(state.folderData.path, state.folderData.stats); };
 $('close-create').onclick = () => $('create').close(); $('create').onclose = () => { state.preview = null; };
 $('close-detail').onclick = $('close-detail-bottom').onclick = () => $('detail').close(); $('close-capacity').onclick = () => $('capacity').close();
 $('configuration').addEventListener('invalid', event => { const details = event.target.closest('details'); if (details) details.open = true; }, true);
@@ -192,6 +297,27 @@ $('configuration').onsubmit = event => {
 $('start').onclick = () => busy($('start'), 'config-error', async () => { const task = await api('/api/tasks', { previewId: state.preview.id }); state.selected = task.id; $('create').close(); await refresh(); });
 $('capacity-form').onsubmit = event => { event.preventDefault(); void busy($('apply-capacity'), 'capacity-error', async () => { await api('/api/tasks/' + state.capacity + '/concurrency', { concurrency: Number($('capacity-value').value) }); $('capacity').close(); await refresh(); }); };
 $('refresh').onclick = () => busy($('refresh'), 'task-error', refresh); $('refresh-logs').onclick = () => loadLogs();
+$('select-all').onchange = () => {
+  state.checked.clear();
+  if ($('select-all').checked) for (const task of state.tasks) if (task.source === state.source && canDelete(task)) state.checked.add(task.id);
+  renderTasks();
+};
+$('delete-selected').onclick = async () => {
+  const selected = state.tasks.filter(task => state.checked.has(task.id) && task.source === state.source && canDelete(task));
+  if (!selected.length || state.deleting || !confirm(`删除选中的 ${selected.length} 个任务？\n仅删除工作台任务记录和配置，保留原始输入、评测结果与日志。`)) return;
+  state.deleting = true; $('task-error').textContent = ''; renderTasks();
+  try {
+    const results = await Promise.allSettled(selected.map(task => api('/api/tasks/' + task.id + '/delete', {})));
+    const failures = [];
+    results.forEach((result, index) => {
+      if (result.status === 'fulfilled') closeDeleted(selected[index].id);
+      else failures.push(selected[index].name + ' · ' + selected[index].id.slice(8, 16) + '：' + result.reason.message);
+    });
+    await refresh();
+    if (failures.length) $('task-error').textContent = '已删除 ' + (selected.length - failures.length) + ' 项，' + failures.length + ' 项未删除。' + failures.join('；');
+  } catch (error) { $('task-error').textContent = error.message; }
+  finally { state.deleting = false; renderTasks(); }
+};
 $('log-kind').onchange = () => { $('errors-only').disabled = $('log-kind').value === 'evaluation'; if ($('errors-only').disabled) $('errors-only').checked = false; void loadLogs(); };
 $('errors-only').onchange = () => loadLogs(); $('older').onclick = () => loadLogs(true);
 setInterval(async () => { if ($('app').hidden || document.hidden || state.polling) return; state.polling = true; try { await refresh(); } catch (error) { $('task-error').textContent = '刷新失败：' + error.message; } finally { state.polling = false; } }, 4000);

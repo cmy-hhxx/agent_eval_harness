@@ -35,7 +35,7 @@ export async function parentInputs(directory: unknown, versions: VersionConfig[]
   let ignored = 0;
   const walk = async (dir: string): Promise<void> => {
     for (const entry of await readdir(dir, { withFileTypes: true })) {
-      if (entry.name.startsWith(".") || /^(?:\d+[_-])?(?:archive|7z_data|eval_output)$/.test(entry.name)) continue;
+      if (entry.name.startsWith(".") && entry.name !== ".archive" || /^(?:\d+[_-])?(?:archive|7z_data|eval_output)$/.test(entry.name)) continue;
       const file = path.join(dir, entry.name);
       if (entry.isDirectory()) { await walk(file); continue; }
       if (!entry.isFile() || !entry.name.endsWith(".jsonl")) continue;
