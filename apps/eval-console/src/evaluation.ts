@@ -15,6 +15,11 @@ interface Execution {
   progress(message: string): void;
 }
 
+async function logInputIssues(id: string, issues: Record<string, unknown>[]) {
+  for (const issue of issues) await logger.error(new Error("输入异常：" + (issue.source ? issue.source + ":" + (issue.line ?? "") + " " : "") +
+    String(issue.reason ?? "记录无效"), { cause: issue }), { component: "console", event: "console_input_rejected", run_id: id });
+}
+
 export async function executeConsoleTask({ host, id, gate, pause, channels, progress }: Execution) {
   const workflow = host.workflow === "attribution" ? attributionWorkflow : comparisonWorkflow;
   const repository = host.workflow === "attribution" ? businessAttributionRepository : businessComparisonRepository;
@@ -22,7 +27,10 @@ export async function executeConsoleTask({ host, id, gate, pause, channels, prog
   for (const stage of Object.keys(host.models.bindings)) routing.modelRoutesForTask({ stage });
   const saved = await exists(runLayout(host.evaluation.output, id).stateFile);
   const plan = saved ? { tasks: [], inputs: {}, summary: {} } : await workflow.plan(host.evaluation);
-  if (!saved && !plan.tasks.length && !plan.summary.sharded) throw new Error("输入中没有可评测记录");
+  if (!saved && !plan.tasks.length && !plan.summary.sharded) {
+    await logInputIssues(id, plan.summary.issues as Record<string, unknown>[] ?? []);
+    throw new Error("输入中没有可评测记录，请查看输入异常日志");
+  }
   const result = await runEvaluation({ ...services, ...routing, report: undefined, taskSource: workflow, repository,
     runtime: { ...services.runtime, workerSlots: host.evaluation.execution.workerSlots ?? 4 },
     runId: id, output: host.evaluation.output, engine: "pi", evaluatorVersion: host.evaluatorVersion,
@@ -32,9 +40,7 @@ export async function executeConsoleTask({ host, id, gate, pause, channels, prog
     failureGuard: host.evaluation.execution.failureGuard, skipFailed: true, pauseSignal: pause, onProgress: progress });
   if (result.input_issue_count) {
     const state = await repository.readRun(runLayout(host.evaluation.output, id).directory);
-    for (const issue of state.manifest.preflight.issues as Record<string, unknown>[] ?? [])
-      await logger.error(new Error(String(issue.reason ?? "输入记录异常")), { component: "console", event: "console_input_rejected",
-        run_id: id, detail: JSON.stringify(issue) });
+    await logInputIssues(id, state.manifest.preflight.issues as Record<string, unknown>[] ?? []);
   }
   return result;
 }

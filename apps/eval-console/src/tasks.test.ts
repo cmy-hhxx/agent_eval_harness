@@ -1,13 +1,15 @@
-import type { executeConsoleTask } from "./evaluation.js";
+import { createChannelRequests } from "@eval/host";
+import { consoleLog } from "./files.js";
+import { executeConsoleTask } from "./evaluation.js";
 import test from "node:test";
 import assert from "node:assert/strict";
 import path from "node:path";
 import { rm } from "node:fs/promises";
-import { readJson, writeJson } from "@eval/data";
+import { readJson, writeJson, writeJsonl } from "@eval/data";
 import { ConsoleTasks, type ConsoleConfig } from "./tasks.js";
 import { serveConsole } from "./server.js";
 import { initializeServices } from "@eval/host-app/composition";
-import { fixtureConfig } from "../../../tests/fixtures/comparison.js";
+import { fixtureConfig, raw } from "../../../tests/fixtures/comparison.js";
 
 test("console API previews frozen defaults, starts idempotently, drains, resumes and restores interrupted state", { timeout: 15000 }, async t => {
   const f = await fixtureConfig();
@@ -72,4 +74,11 @@ test("console API previews frozen defaults, starts idempotently, drains, resumes
   release!();
   for (let n = 0; n < 100 && manager.get(id).status === "running"; n++) await new Promise(resolve => setTimeout(resolve, 10));
   assert.equal(manager.get(id).status, "finished");
+  for (const version of f.config.inputs.versions) await writeJsonl(version.sources[0].path, [{ ...raw("invalid"), messages: [] }]);
+  await assert.rejects(executeConsoleTask({ host: { workflow: "comparison", evaluation: f.config, models: f.models, evaluatorVersion: "fixture" },
+    id: "console-invalid-input", gate: createChannelRequests({ "evaluation-gateway": 1 }), pause: AbortSignal.abort(),
+    channels: ["evaluation-gateway"], progress() {} }), /没有可评测记录/);
+  const errors = await consoleLog(path.join(config.logDirectory, "runtime.log"), "console-invalid-input", true);
+  assert(errors.rows.some(row => String(row.message).includes(f.config.inputs.versions[0].sources[0].path + ":1 ") &&
+    String(row.detail).includes("[cause]")), "invalid input keeps its file, line and diagnostic details in the log");
 });

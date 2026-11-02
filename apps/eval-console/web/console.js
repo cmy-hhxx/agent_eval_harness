@@ -61,7 +61,7 @@ function renderTasks() {
     if (progress?.total > 0 || task.status === 'finished') {
       const line = node('div', undefined, 'progress-line');
       const finished = task.status === 'finished';
-      line.append(node('span', finished ? '已完成' : (task.source === 'aime' ? '当前批次 ' : '步骤 ') + progress.completed + ' / ' + progress.total));
+      line.append(node('span', finished ? '已完成' : (task.source === 'aime' ? '本批步骤 ' : '步骤 ') + progress.completed + ' / ' + progress.total));
       if (progress?.failed) line.append(node('span', progress.failed + ' 项失败', 'error'));
       const bar = node('progress'); bar.max = finished ? 1 : progress.total; bar.value = finished ? 1 : progress.completed;
       bar.setAttribute('aria-label', '评测进度'); row.append(line, bar);

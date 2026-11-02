@@ -119,7 +119,7 @@ export async function serveConsole(tasks: ConsoleTasks, password: string) {
       throw new HttpError(405, "Method not allowed");
     } catch (error) {
       if (!(error instanceof HttpError) || error.status >= 500)
-        await logger.error(error, { component: "console", event: "console_request_failed", detail: url.pathname,
+        await logger.error(new Error(url.pathname + ": " + errorText(error), { cause: error }), { component: "console", event: "console_request_failed",
           run_id: /^\/api\/tasks\/(console-[0-9a-f-]{36})/.exec(url.pathname)?.[1] });
       send({ error: errorText(error) }, error instanceof HttpError ? error.status : 500);
     }
