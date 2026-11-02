@@ -48,17 +48,10 @@ function taskUnit(task: PlannedTask, comparison: boolean): EvaluationUnit | unde
   return candidate && { batch_id: candidate.batch_id, case_id: candidate.case_id, models: candidates.map(c => c.version).sort() };
 }
 
-/** Admit the selected final units plus their shared dependencies and polish work. */
-export function roundAdmission(manifest: RunManifest, comparison: boolean): ReadonlySet<string> {
-  const round = roundState(manifest);
-  if (round.finished || manifest.executionScope) return new Set(manifest.tasks.map(t => t.id));
+/** Include each selected unit's shared dependencies and polish work. */
+function unitWork(manifest: RunManifest, comparison: boolean, selected: readonly string[]) {
   const tasks = new Map(manifest.tasks.map(t => [t.id, t]));
-  const roots = new Map<string, string[]>(), dates = new Map<string, Set<string>>();
-  for (const key of round.active) {
-    const [batch] = JSON.parse(key) as [string];
-    if (!dates.has(batch)) dates.set(batch, new Set());
-    dates.get(batch)!.add(key);
-  }
+  const roots = new Map<string, string[]>();
   const followups = new Map<string, string[]>();
   for (const task of manifest.tasks) {
     const unit = taskUnit(task, comparison);
@@ -66,25 +59,27 @@ export function roundAdmission(manifest: RunManifest, comparison: boolean): Read
     const parent = (task.data as TaskData).rewriteOf?.taskId;
     if (parent) followups.set(parent, [...(followups.get(parent) ?? []), task.id]);
   }
-  const allowed = new Set<string>();
-  const visit = (id: string) => {
+  const visit = (id: string, allowed: Set<string>) => {
     if (allowed.has(id)) return;
     const task = tasks.get(id); if (!task) return;
     allowed.add(id);
-    Object.values(task.dependencies).forEach(visit);
-    followups.get(id)?.forEach(visit);
+    Object.values(task.dependencies).forEach(id => visit(id, allowed));
+    followups.get(id)?.forEach(id => visit(id, allowed));
   };
-  for (const selected of dates.values()) {
-    allowed.clear();
-    for (const key of selected) if (round.ready.includes(key)) roots.get(key)?.forEach(visit);
-    // Finish this date's model groups before moving to the next date in the round.
-    if (round.pending.some(key => selected.has(key)) ||
-        [...allowed].some(id => ["pending", "running"].includes(manifest.states[id]?.status))) return allowed;
-  }
-  return new Set();
+  return new Map(selected.map(key => {
+    const allowed = new Set<string>();
+    roots.get(key)?.forEach(id => visit(id, allowed));
+    return [key, allowed];
+  }));
 }
 
-/** One unfinished unit per date/model-pair (or date/model), with a barrier between rounds. */
+export function roundAdmission(manifest: RunManifest, comparison: boolean): ReadonlySet<string> {
+  const round = roundState(manifest);
+  if (round.finished || manifest.executionScope) return new Set(manifest.tasks.map(t => t.id));
+  return new Set([...unitWork(manifest, comparison, round.ready).values()].flatMap(ids => [...ids]));
+}
+
+/** Round-robin date/model groups feed a bounded window of overlapping rounds. */
 export function createRoundWorkflow(host: HostConfig, schedule: InputSchedule): WorkflowDefinition {
   const comparison = host.workflow === "comparison", base = comparison ? comparisonWorkflow : attributionWorkflow;
   return {
@@ -145,7 +140,6 @@ export function createRoundWorkflow(host: HostConfig, schedule: InputSchedule): 
         round.ready = round.ready.filter(key => !finished.has(key));
         queues = [...groups.values()].sort((a, b) => b.batch.localeCompare(a.batch) || a.order - b.order);
       };
-      const active = () => [...roundAdmission(manifest, comparison)].some(id => ["pending", "running"].includes(manifest.states[id]?.status));
       return {
         done: () => !!round.finished,
         async next() {
@@ -154,12 +148,20 @@ export function createRoundWorkflow(host: HostConfig, schedule: InputSchedule): 
           if (round.acknowledging) {
             round.ready.push(round.pending.shift()!); delete round.acknowledging;
           }
+          const work = unitWork(manifest, comparison, round.ready);
+          const settled = new Set(round.ready.filter(key => ![...work.get(key)!]
+            .some(id => ["pending", "running"].includes(manifest.states[id]?.status))));
+          round.active = round.active.filter(key => !settled.has(key));
+          round.ready = round.ready.filter(key => !settled.has(key));
+          if (round.ready.length >= config.execution.sessionWindow) return undefined;
           if (!round.pending.length) {
-            if (active()) return undefined;
             loadedCases.clear();
-            round.active = queues!.flatMap(q => q.units.length ? [q.units.shift()!] : []);
-            round.pending = [...round.active]; round.ready = [];
-            if (!round.active.length) { round.finished = true; return undefined; }
+            const next = queues!.flatMap(q => q.units.length ? [q.units.shift()!] : []);
+            if (!next.length) {
+              if (!round.active.length) round.finished = true;
+              return undefined;
+            }
+            round.active.push(...next); round.pending = next;
             round.number++;
           }
           const key = round.pending[0], unit = units.get(key);
