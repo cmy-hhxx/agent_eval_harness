@@ -94,6 +94,7 @@ test("an existing comparison pair finishes a new run without starting a Worker",
   const config = { ...f.config, output: { ...f.config.output, layout: "business" as const } };
   await writeJsonl(path.join(config.output.path, "comparison/a_fast_vs_b_fast/a_fast_vs_b_fast-2026-10-26.jsonl"),
     [{ case: { batch_id: "2026-10-26", case_id: "same-case" }, evaluator_version: "old" }]);
+  await writeJsonl(path.join(config.output.path, ".delivery/provenance/2026-10-26.jsonl"), [{ unused: true }]);
   const plan = await buildPlan(config);
   const result = await runEvaluation({ ...services, report: undefined, repository: businessComparisonRepository,
     identity: fakeIdentity, engine: "pi", evaluatorVersion: "new", runtime: { ...services.runtime, workerEntry: "must-not-start" },

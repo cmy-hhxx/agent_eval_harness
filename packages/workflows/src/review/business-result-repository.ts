@@ -107,7 +107,7 @@ export function businessResultRepository(repository: RunRepository): RunReposito
       return async state => {
         await write(state);
         const config = state.manifest.config as EvaluationConfig;
-        if (config.output.layout !== "business") return;
+        if (config.output.layout !== "business" || !Object.keys(state.receipts).length) return;
         const pairs = ((config as EvaluationConfig & { comparisons?: string[][] }).comparisons ?? [])
           .flatMap(group => group.flatMap((a, i) => group.slice(i + 1).map(b => [a, b])));
         existingFinal ??= await readCompletedCases(config.output.path, config.inputs.versions.map(version => version.id), pairs);

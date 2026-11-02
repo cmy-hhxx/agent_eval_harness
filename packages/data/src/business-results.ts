@@ -196,7 +196,7 @@ export function createBusinessPublisher(root: string) {
       const list = indexed.get(item.file) ?? [];
       list.push(item); indexed.set(item.file, list);
     }
-    interface FileState { relative: string; current: FileView | undefined; lines: number; fresh: number;
+    interface FileState { relative: string; current: FileView | undefined; lines: number;
       rewrite?: Map<number, JsonObject>; appends: { line: number; row: JsonObject }[]; claimed: Set<number> }
     const files = new Map<string, FileState>(), pending: BusinessResult[] = [], released: BusinessResult[] = [];
     for (const entry of entries) {
@@ -223,7 +223,7 @@ export function createBusinessPublisher(root: string) {
       if (!state) {
         const current = await view(file);
         const lastLine = items.reduce((last, item) => Math.max(last, item.line), 0);
-        state = { relative: record.file, current, lines: current?.spans.size ?? lastLine, fresh: 0, appends: [], claimed: new Set() };
+        state = { relative: record.file, current, lines: current?.spans.size ?? lastLine, appends: [], claimed: new Set() };
         files.set(file, state);
       }
       const current = state.current;
@@ -233,7 +233,7 @@ export function createBusinessPublisher(root: string) {
         // before the next result claims the next line.
         const missing = items.filter(item => item.line > current.spans.size);
         const lines = new Set(items.map(item => item.line));
-        if (missing.some(item => item.published) || lines.size !== items.length || lines.size !== Math.max(...lines))
+        if (missing.some(item => item.published) || lines.size !== items.length)
           throw new Error("交付结果索引缺行，不能补造或删除未索引结果");
         state.lines = Math.max(state.lines, ...lines);
         state.rewrite ??= new Map();
@@ -248,8 +248,6 @@ export function createBusinessPublisher(root: string) {
           throw new Error("整理清单目标行已归属其他业务回答");
         adopted = true;
       }
-      if ((!previous || relocated) && current && !adopted && items.length + state.fresh !== state.lines)
-        throw new Error("已有交付文件缺少可核实的整理映射，暂不追加或覆盖");
       const line = previous && !relocated ? previous.line : adopted ? entry.existingLine! : 1 + state.lines;
       const next = { ...record, line, published: false };
       validate(next);
@@ -259,7 +257,6 @@ export function createBusinessPublisher(root: string) {
       if (!sameOrigin || canonical(previous) !== canonical(next)) pending.push(next);
       state.claimed.add(line);
       if (!adopted) {
-        if (!previous || relocated) state.fresh++;
         if (!state.current || previous || state.rewrite) (state.rewrite ??= new Map()).set(line, row);
         else state.appends.push({ line, row });
         state.lines = Math.max(state.lines, line);

@@ -137,7 +137,7 @@ test("a publication batch appends every accepted row and replaces a verdict in p
     [["a", 1], ["b", 2], ["c", 3], ["d", 4]]);
 });
 
-test("a publication batch rebuilds a journaled row the delivery file never received", async t => {
+test("new cases append after unindexed output and recover a missing tail without changing old rows", async t => {
   const root = await mkdtemp(path.join(os.tmpdir(), "business-batch-recovery-"));
   t.after(() => rm(root, { recursive: true, force: true }));
   const record = (id: string, acceptedAt: number): Omit<BusinessResult, "line" | "published"> => ({
@@ -151,6 +151,8 @@ test("a publication batch rebuilds a journaled row the delivery file never recei
   const journal = path.join(root, ".delivery/provenance/2026-10-26.jsonl");
   for (const id of ["a", "b", "c"]) await writeJsonl(path.join(root, `run-${id}`, "results", "attribution.jsonl"),
     [{ session_summary: id.toUpperCase() }]);
+  const unindexed = { session_summary: "旧 case 只有最终结果，没有索引" };
+  await writeJsonl(file, [unindexed]);
   const publish = createBusinessPublisher(root);
   await publish.many([{ record: record("a", 1), row: { session_summary: "A" } }]);
   await publish(record("b", 2), { session_summary: "B" });
@@ -158,10 +160,10 @@ test("a publication batch rebuilds a journaled row the delivery file never recei
   const saved = []; for await (const entry of readJsonl(journal)) saved.push(entry);
   await writeJsonl(journal, saved.filter(entry => !((entry as { id: string; published: boolean }).id === "b" &&
     (entry as { published: boolean }).published)));
-  await writeJsonl(file, [{ session_summary: "A" }]);
+  await writeJsonl(file, [unindexed, { session_summary: "A" }]);
   await publish.many([{ record: record("c", 3), row: { session_summary: "C" } }]);
   const rows = []; for await (const row of readJsonl(file)) rows.push(row);
-  assert.deepEqual(rows, [{ session_summary: "A" }, { session_summary: "B" }, { session_summary: "C" }]);
+  assert.deepEqual(rows, [unindexed, { session_summary: "A" }, { session_summary: "B" }, { session_summary: "C" }]);
   const published = (await readBusinessResults(root)).filter(entry => entry.published).map(entry => entry.id).sort();
   assert.deepEqual(published, ["a", "b", "c"]);
 });
@@ -178,7 +180,7 @@ test("concurrent publishers on one root queue and release after a failed publica
   });
   const first = createBusinessPublisher(root), second = createBusinessPublisher(root);
   await writeJsonl(path.join(root, "aime_fast/aime_fast_attribution-2026-10-01.jsonl"), [{ existing: true }]);
-  await assert.rejects(first(record("bad", "2026-10-01"), { existing: true }), /缺少可核实的整理映射/);
+  await assert.rejects(first({ ...record("bad", "2026-10-01"), acceptedAt: 0 }, { existing: true }), /正式结果溯源索引无效/);
   await Promise.all(Array.from({ length: 20 }, (_, index) => {
     const date = `2026-10-${String(index + 2).padStart(2, "0")}`;
     return (index % 2 ? second : first)(record(`answer-${index}`, date), { value: index });
@@ -203,7 +205,6 @@ test("organized existing rows are indexed in place and unrelated unindexed rows 
     acceptedAt: 1, evaluatorVersion: "old", judge: "judge", submissionId: "first", complete: true,
     origin: { run, taskId: "task", reference: { id: "task", file: "attribution.jsonl", line: 1 } } };
   const publish = createBusinessPublisher(root);
-  await assert.rejects(publish(record, original), /缺少可核实的整理映射/);
   await publish(record, original, false, 1);
   const nextRun = path.join(root, "next-run"), latest = { session_summary: "最新判词" };
   await writeJsonl(path.join(nextRun, "results/attribution.jsonl"), [latest]);
