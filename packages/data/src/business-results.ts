@@ -18,6 +18,7 @@ export interface BusinessAnswer {
 }
 export interface BusinessResult {
   id: string;
+  /** Business partition: a calendar date or an explicitly named task batch. */
   date: string;
   file: string;
   line: number;
@@ -33,10 +34,11 @@ export interface BusinessResult {
   origin: { run: string; taskId: string; reference: ResultReference & { line: number } };
 }
 
-/** A business batch is already a calendar date. No timestamp parsing or timezone conversion. */
-export function businessDate(batch: string): string {
+/** Preserve explicit batch IDs; validate calendar dates without interpreting timestamps. */
+export function businessBatch(batch: string): string {
+  safeId(batch);
   const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(batch);
-  if (!match) throw new Error("业务批次缺少明确的 YYYY-MM-DD 日期：" + batch);
+  if (!match) return batch;
   const year = Number(match[1]), month = Number(match[2]), day = Number(match[3]);
   const leap = year % 4 === 0 && (year % 100 !== 0 || year % 400 === 0);
   const days = [31, leap ? 29 : 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
@@ -44,7 +46,7 @@ export function businessDate(batch: string): string {
   return batch;
 }
 function destination(root: string, value: Pick<BusinessResult, "date" | "file">) {
-  businessDate(value.date);
+  businessBatch(value.date);
   const parts = value.file.split("/");
   for (const part of parts) safeId(part);
   if (!value.file.endsWith(".jsonl")) throw new Error("正式交付必须是 JSONL");
@@ -70,13 +72,14 @@ export async function readBusinessResults(root: string): Promise<BusinessResult[
     if (error.code !== "ENOENT") throw error;
     return [];
   })) {
-    if (!entry.isFile() || !/^\d{4}-\d{2}-\d{2}\.jsonl$/.test(entry.name)) continue;
+    if (!entry.isFile() || !entry.name.endsWith(".jsonl")) continue;
+    businessBatch(entry.name.slice(0, -6));
     const file = path.join(directory, entry.name);
     if (!await exists(file)) continue;
     for await (const value of readJsonl(file)) {
       const record = value as BusinessResult;
       validate(record);
-      if (record.date + ".jsonl" !== entry.name) throw new Error("结果索引业务日期与目录不一致");
+      if (record.date + ".jsonl" !== entry.name) throw new Error("结果索引业务批次与目录不一致");
       records.push(record);
     }
   }
@@ -113,7 +116,7 @@ export async function readBusinessResultRow(record: BusinessResult): Promise<Jso
 export async function claimBusinessPartitions(root: string, partitions: { date: string; model: string }[]) {
   const unlocks: (() => Promise<void>)[] = [], blocked = new Set<string>();
   try {
-    const keys = [...new Set(partitions.map(value => canonical([businessDate(value.date), safeId(value.model)])))].sort();
+    const keys = [...new Set(partitions.map(value => canonical([businessBatch(value.date), safeId(value.model)])))].sort();
     for (const key of keys) {
       const [date, model] = JSON.parse(key) as string[];
       try { unlocks.push(await runLock(path.join(root, ".delivery", "claims", date, model))); }

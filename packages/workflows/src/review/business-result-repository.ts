@@ -1,5 +1,5 @@
 import { canonical, type JsonObject, type PlannedTask, type RunRepository, type RunState } from "@eval/contracts";
-import { businessDate, claimBusinessPartitions, completedCaseKey, createBusinessPublisher, formalResultLine,
+import { businessBatch, claimBusinessPartitions, completedCaseKey, createBusinessPublisher, formalResultLine,
   readBusinessResults, readCompletedCases, type BusinessPublication, type BusinessResult } from "@eval/data";
 import { businessAnswer, businessCandidates, businessDestination, businessResultKey, businessScope, completeBusinessResult } from "./business-results.js";
 import type { Candidate, EvaluationConfig } from "../inputs/types.js";
@@ -72,7 +72,7 @@ export function businessResultRepository(repository: RunRepository): RunReposito
       for (const candidate of catalog) if (!needed.has(candidate.input_id)) candidate.released = true;
       state.manifest.preflight.skipped_cases = skipped.size;
       // Locks prevent simultaneous writers; they are unrelated to completed-case matching.
-      const partitions = catalog.filter(candidate => needed.has(candidate.input_id)).map(candidate => ({ date: businessDate(candidate.batch_id), model: candidate.version }))
+      const partitions = catalog.filter(candidate => needed.has(candidate.input_id)).map(candidate => ({ date: businessBatch(candidate.batch_id), model: candidate.version }))
         .filter(value => !claimed.has(canonical([value.date, value.model])));
       if (partitions.length) {
         const held = await claimBusinessPartitions(config.output.path, partitions); unlocks.push(held.close);
@@ -83,7 +83,7 @@ export function businessResultRepository(repository: RunRepository): RunReposito
         const previous = state.manifest.states[task.id];
         if (businessCandidates(task, state, all).some(candidate => blocked.has(canonical([candidate.batch_id, candidate.version]))))
           state.manifest.states[task.id] = { ...previous, status: "blocked", attempts: previous?.attempts ?? 0,
-            admissionBlock: "该业务日期与模型正在被另一任务写入，请暂停后继续" };
+            admissionBlock: "该业务批次与模型正在被另一任务写入，请暂停后继续" };
         else if (previous?.admissionBlock) {
           if (previous.reason === previous.admissionBlock) delete previous.reason;
           delete previous.admissionBlock;

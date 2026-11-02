@@ -1,7 +1,7 @@
 import path from "node:path";
 import { randomUUID } from "node:crypto";
 import { HttpError, errorText } from "@eval/contracts";
-import { localFiles, readJson, writeJson } from "@eval/data";
+import { businessBatch, localFiles, readJson, writeJson } from "@eval/data";
 import { createChannelRequests } from "@eval/host";
 import { createBalancedModels } from "@eval/host-app/config";
 import { loadConfig, readConfigSources, type HostConfig } from "@eval/host-app/config";
@@ -30,6 +30,7 @@ export interface ConsoleTask {
   error?: string; result?: Record<string, unknown>; progress?: ConsoleProgress;
   warnings?: string[];
   inputDirectory?: string; dataCheck?: DataCheck;
+  batchId?: string;
 }
 export class ConsoleTasks {
   readonly tasks = new Map<string, ConsoleTask>();
@@ -95,6 +96,7 @@ export class ConsoleTasks {
       return { id: preset.id, source: preset.source, name: preset.name,
         inputDirectory: commonInputDirectory(host.evaluation.inputs.versions),
         concurrency: preset.concurrency, output: host.evaluation.output.path, logs: this.logPaths(),
+        batchId: host.evaluation.inputs.default_batch_id ?? "",
         inputs: host.evaluation.inputs.versions.map(version => ({ id: version.id, name: version.display_name || version.name,
           paths: version.sources.map(source => source.path) })) };
     }));
@@ -113,10 +115,12 @@ export class ConsoleTasks {
   }
   private async preparePreview(value: unknown) {
     if (!value || typeof value !== "object") throw new HttpError(400, "配置不能为空");
-    const { preset: presetId, inputs, inputDirectory, output, concurrency } = value as Record<string, unknown>;
+    const { preset: presetId, inputs, inputDirectory, output, concurrency, batchId } = value as Record<string, unknown>;
     const preset = this.config.presets.find(item => item.id === presetId);
     if (!preset) throw new HttpError(400, "未知评测预设");
     this.checkConcurrency(concurrency);
+    if (batchId !== undefined && typeof batchId !== "string") throw new HttpError(400, "批次须为文本");
+    if (typeof batchId === "string" && batchId.trim()) businessBatch(batchId.trim());
     const host = await this.load(preset.configs);
     this.assertWorkflow(preset, host);
     if (inputDirectory !== undefined && inputs !== undefined) throw new HttpError(400, "父目录与模型路径只能选择一种输入方式");
@@ -145,6 +149,10 @@ export class ConsoleTasks {
     if (discovered?.ignored) warnings.push("另有 " + discovered.ignored + " 个 JSONL 文件未匹配预设模型，不会读入。");
     const raw = await readConfigSources(preset.configs);
     raw.inputs = { ...host.evaluation.inputs, versions };
+    if (typeof batchId === "string") {
+      if (batchId.trim()) (raw.inputs as Record<string, unknown>).default_batch_id = batchId.trim();
+      else delete (raw.inputs as Record<string, unknown>).default_batch_id;
+    }
     const inputsChanged = versions.some((version, index) => JSON.stringify(version.sources.map(source => source.path)) !==
       JSON.stringify(host.evaluation.inputs.versions[index]!.sources.map(source => source.path)));
     // A finite record selection belongs to its original files. New paths must not evaluate old coordinates.
@@ -166,6 +174,7 @@ export class ConsoleTasks {
       const task: ConsoleTask = { id, preset: preset.id, source: preset.source, name: preset.name, status: "draft",
         createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(), concurrency: concurrency as number,
         output: destination.path, warnings, inputDirectory: discovered?.directory, dataCheck: emptyDataCheck(host.workflow),
+        batchId: prepared.evaluation.inputs.default_batch_id,
         inputs: versions.map(version => ({ id: version.id, name: version.display_name || version.name,
           paths: version.sources.map(source => source.path) })) };
       await this.save(task);
@@ -310,7 +319,7 @@ export class ConsoleTasks {
     const task = this.get(id);
     return { preset: task.preset, ...(task.inputDirectory ? { inputDirectory: task.inputDirectory } :
       { inputs: Object.fromEntries(task.inputs.map(input => [input.id, input.paths])) }),
-      output: task.output, concurrency: task.concurrency, logs: this.logPaths() };
+      output: task.output, concurrency: task.concurrency, batchId: task.batchId, logs: this.logPaths() };
   }
   async remove(id: string) {
     return this.exclusive(async () => {

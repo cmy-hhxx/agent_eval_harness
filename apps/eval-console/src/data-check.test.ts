@@ -62,6 +62,21 @@ test("comparison check counts pairs, completed output and missing/conflicting an
   assert.equal(result.pending, 1); assert.equal(result.unavailable, 2); assert.equal(result.unit, "场对比");
 });
 
+test("named default batches preserve explicit input batches and find completed comparisons", async t => {
+  const named = { ...raw("named"), batch_id: undefined }, dated = { ...raw("dated"), batch_id: "2026-11-02" };
+  const f = await fixtureConfig([[named, dated], [], [named, dated], []]);
+  t.after(() => rm(f.directory, { recursive: true, force: true }));
+  f.config.inputs.versions = [f.config.inputs.versions[0], f.config.inputs.versions[2]];
+  f.config.inputs.default_batch_id = "search_eval";
+  f.config.comparisons = [["a_fast", "b_fast"]]; f.config.output.layout = "business";
+  await writeJsonl(path.join(f.config.output.path, "comparison/a_fast_vs_b_fast/a_fast_vs_b_fast-search_eval.jsonl"), [{ case: { case_id: "named" } }]);
+  const result = emptyDataCheck("comparison");
+  await checkData({ workflow: "comparison", evaluation: f.config, models: f.models, evaluatorVersion: "fixture" }, result, new AbortController().signal, async () => {});
+  assert.equal(result.invalidRecords, 0); assert.equal(result.total, 2); assert.equal(result.skipped, 1); assert.equal(result.pending, 1);
+  assert(result.destinations.some(file => file.endsWith("-search_eval.jsonl")));
+  assert(result.destinations.some(file => file.endsWith("-2026-11-02.jsonl")));
+});
+
 test("malformed JSON and incomplete answers are counted, while record selection and session aliases match execution", async t => {
   const session = { ...sessionRaw("one"), batch_id: "2026-11-02" };
   const f = await fixtureConfig([[], [], [], []]);

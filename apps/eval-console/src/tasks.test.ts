@@ -51,7 +51,7 @@ test("console API previews frozen defaults, starts idempotently, drains, resumes
   assert.equal((await request("/api/tasks", undefined, false)).status, 401);
   assert.equal((await request("/api/tasks", {}, false)).status, 403);
   const preview = await request("/api/previews", { preset: "wencai", concurrency: 2, output: f.config.output.path,
-    inputDirectory });
+    inputDirectory, batchId: "search_eval" });
   assert.equal(preview.status, 201, JSON.stringify(preview.data));
   assert.equal(starts, 0);
   const id = String(preview.data.id);
@@ -62,7 +62,9 @@ test("console API previews frozen defaults, starts idempotently, drains, resumes
   const frozen = await readJson<{ models: unknown; bindings: unknown; inputs: Record<string, unknown> }>(path.join(config.stateDirectory, id, "config.json"));
   assert.deepEqual(frozen.models, models); assert.deepEqual(frozen.bindings, JSON.parse(JSON.stringify(f.models.bindings)));
   assert.equal(frozen.inputs.limit, undefined); assert.equal(frozen.inputs.case_ids, undefined);
-  assert.deepEqual(Object.keys((await request(`/api/tasks/${id}/configuration`)).data).sort(), ["concurrency", "inputDirectory", "logs", "output", "preset"]);
+  assert.equal(frozen.inputs.default_batch_id, "search_eval");
+  assert.equal(manager.get(id).batchId, "search_eval");
+  assert.deepEqual(Object.keys((await request(`/api/tasks/${id}/configuration`)).data).sort(), ["batchId", "concurrency", "inputDirectory", "logs", "output", "preset"]);
   assert.equal(manager.get(id).inputDirectory, await realpath(inputDirectory));
   assert.equal(manager.get(id).dataCheck?.total, 1);
   // A fresh manager restores the checked draft; no browser-local state is required.

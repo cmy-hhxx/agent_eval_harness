@@ -4,13 +4,13 @@ import { mkdtemp, rm } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { writeJsonl, readJsonl } from "./files.js";
-import { businessDate, createBusinessPublisher, readBusinessResultRow, readBusinessResults, type BusinessResult } from "./business-results.js";
+import { businessBatch, createBusinessPublisher, readBusinessResultRow, readBusinessResults, type BusinessResult } from "./business-results.js";
 
-test("business dates use complete batch dates without interpreting request timestamps", () => {
-  assert.equal(businessDate("2026-10-26"), "2026-10-26");
-  assert.equal(businessDate("2024-02-29"), "2024-02-29");
-  for (const value of ["2026-02-29", "2026-10-26T00:00:00Z", "20261026", "daily-production-20261029", "2026-13-01"])
-    assert.throws(() => businessDate(value));
+test("business batches preserve explicit names and validate dates without interpreting timestamps", () => {
+  for (const batch of ["2026-10-26", "2024-02-29", "search_eval"])
+    assert.equal(businessBatch(batch), batch);
+  for (const value of ["2026-02-29", "2026-10-26T00:00:00Z", "2026-13-01", "", "../search_eval", "search/eval", "search..eval"])
+    assert.throws(() => businessBatch(value));
 });
 
 test("business recovery follows a formal task identity when its recorded line is stale", async t => {

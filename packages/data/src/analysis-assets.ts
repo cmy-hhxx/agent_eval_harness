@@ -4,13 +4,17 @@ import path from "node:path";
 import { createGunzip } from "node:zlib";
 import type { AnalysisAssetQuery, AnalysisAssetReference, AnalysisAssetSource, EvaluationCollection } from "@eval/contracts";
 import { evaluationCollectionPath, resolveEvaluationCollections } from "./evaluation-collections.js";
+import { businessBatch } from "./business-results.js";
 
 const reports = new Set(["report.md", "task_summaries.md"]);
 const summaries = new Set(["stats.json", "publication-statistics.json", "attribution-tree.json", "sample-summaries.json", "problem-publication.json"]);
 function publicAsset(name: string, parent: string, grandparent = "") {
-  const dated = /^(.+)-\d{4}-\d{2}-\d{2}\.jsonl$/.exec(name);
+  const partitioned = (prefix: string) => {
+    if (!prefix || !name.startsWith(prefix + "-") || !name.endsWith(".jsonl")) return false;
+    try { businessBatch(name.slice(prefix.length + 1, -6)); return true; } catch { return false; }
+  };
   return reports.has(name) || summaries.has(name) ||
-    dated?.[1] === parent || dated?.[1] === grandparent && ["clustering", "rewrite", "instruction-review", "model-behavior"].includes(parent) ||
+    partitioned(parent) || partitioned(grandparent) && ["clustering", "rewrite", "instruction-review", "model-behavior"].includes(parent) ||
     /^(?:model-behavior|cluster_tree)\.jsonl(?:\.gz)?$/.test(name) ||
     parent === "results" && /^[\w.-]+\.jsonl(?:\.gz)?$/.test(name) ||
     parent === "problems" && /^[\w.-]+\.json$/.test(name);

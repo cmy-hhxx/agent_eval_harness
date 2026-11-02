@@ -4,7 +4,7 @@ import assert from "node:assert/strict";
 import path from "node:path";
 import { rm } from "node:fs/promises";
 import { emptyUsage, type RunState, type TaskPlan } from "@eval/contracts";
-import { claimBusinessPartitions, readJsonl, runLayout, writeJsonl } from "@eval/data";
+import { claimBusinessPartitions, readBusinessResults, readJsonl, runLayout, writeJsonl } from "@eval/data";
 import { attributionRepository, type AttributionConfig } from "@eval/workflows/attribution";
 import { stagedAttributionPlan as planAttribution } from "../../fixtures/shards.js";
 import { buildPlan } from "@eval/workflows/comparison";
@@ -86,6 +86,26 @@ test("compact output and a different business date do not mark a case finished",
   const close = await businessAttributionRepository.prepareRun!(next.run, next.state, next.plan.inputs);
   try { assert.equal(next.state.manifest.tasks.length, count); assert.equal(next.state.manifest.preflight.skipped_cases, 0); }
   finally { await close(); }
+});
+
+test("named task batches publish formal results and skip completed cases on resume", async t => {
+  const value = { ...input(), batch_id: "search_eval" };
+  const f = await fixtureConfig([[value], [], [], []]);
+  t.after(() => rm(f.directory, { recursive: true, force: true }));
+  const config = { ...f.config, workflow: "attribution", output: { ...f.config.output, layout: "business" },
+    inputs: { ...f.config.inputs, versions: f.config.inputs.versions.slice(0, 1) } } as AttributionConfig;
+  const accepted = await completed(config, "named-batch", "current", "保留任务批次", 1);
+  const close = await businessAttributionRepository.prepareRun!(accepted.run, accepted.state, accepted.plan.inputs);
+  try { await businessAttributionRepository.createResultWriter(accepted.run, accepted.plan.inputs)(accepted.state); }
+  finally { await close(); }
+  const model = config.inputs.versions[0].id;
+  const rows = []; for await (const row of readJsonl(path.join(config.output.path, model, model + "_attribution-search_eval.jsonl"))) rows.push(row);
+  assert.equal(rows.length, 1);
+  assert((await readBusinessResults(config.output.path)).some(record => record.date === "search_eval" && record.published));
+  const resumed = await prepare(config, "named-batch-resume");
+  const release = await businessAttributionRepository.prepareRun!(resumed.run, resumed.state, resumed.plan.inputs);
+  try { assert.equal(resumed.state.manifest.tasks.length, 0); assert.equal(resumed.state.manifest.preflight.skipped_cases, 1); }
+  finally { await release(); }
 });
 
 test("partition conflicts block later shards and clear when a resumed run acquires the lock", async t => {

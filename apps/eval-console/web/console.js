@@ -30,6 +30,7 @@ function outputEditor(file) {
 function fillPreset() {
   const preset = state.presets.find(p => p.id === $('preset').value); if (!preset) return;
   $('input-directory').value = preset.inputDirectory;
+  $('batch-id').value = preset.batchId || '';
   $('output-field').replaceChildren(outputEditor(preset.output));
   $('concurrency').value = preset.concurrency; $('config-error').textContent = '';
 }
@@ -77,6 +78,7 @@ function summary(task, target) {
   for (const [label, content] of [['输入', inputs], ['输出', output], ['并发', node('span', String(task.concurrency))], ['日志', logs]]) {
     const row = node('div', undefined, 'summary-row'), value = node('div', undefined, 'summary-value'); value.append(content); row.append(node('span', label), value); target.append(row);
   }
+  if (task.batchId) target.append(node('p', '缺省批次：' + task.batchId + '（原始输入已有批次时使用原值）', 'check-meta'));
   for (const warning of task.warnings || []) target.append(node('p', warning, 'path-warning'));
   if (check?.status === 'ready') target.append(node('p', '数量以本次检查为准，启动时按最新结果跳过。', 'check-meta'));
 }
@@ -183,7 +185,7 @@ $('close-detail').onclick = $('close-detail-bottom').onclick = () => $('detail')
 $('configuration').addEventListener('invalid', event => { const details = event.target.closest('details'); if (details) details.open = true; }, true);
 $('configuration').onsubmit = event => {
   event.preventDefault(); void busy($('preview-button'), 'config-error', async () => {
-    await api('/api/previews', { preset: $('preset').value, inputDirectory: $('input-directory').value.trim(), output: $('output').value.trim(), concurrency: Number($('concurrency').value) });
+    await api('/api/previews', { preset: $('preset').value, inputDirectory: $('input-directory').value.trim(), output: $('output').value.trim(), concurrency: Number($('concurrency').value), batchId: $('batch-id').value.trim() });
     $('create').close(); await refresh();
   });
 };

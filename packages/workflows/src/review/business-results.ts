@@ -1,5 +1,5 @@
 import { canonical, safeId, type PlannedTask, type RunState } from "@eval/contracts";
-import { businessDate, type BusinessAnswer } from "@eval/data";
+import { businessBatch, type BusinessAnswer } from "@eval/data";
 import type { Candidate } from "../inputs/types.js";
 
 export function businessCandidates(task: PlannedTask, state: RunState, tasks?: ReadonlyMap<string, PlannedTask>): Candidate[] {
@@ -46,8 +46,8 @@ export function completeBusinessResult(task: PlannedTask, state: RunState,
 export function businessDestination(task: PlannedTask, state: RunState, file: string, tasks?: ReadonlyMap<string, PlannedTask>) {
   const candidates = businessCandidates(task, state, tasks), data = task.data as Record<string, unknown>;
   const scope = data.scope as { batch_id: string; version: string } | undefined;
-  const date = businessDate(candidates[0]?.batch_id ?? scope?.batch_id ?? "");
-  if (candidates.some(candidate => candidate.batch_id !== date)) throw new Error("同一正式结果混入不同业务日期");
+  const date = businessBatch(candidates[0]?.batch_id ?? scope?.batch_id ?? "");
+  if (candidates.some(candidate => candidate.batch_id !== date)) throw new Error("同一正式结果混入不同业务批次");
   safeId(file);
   if (task.stage === "criteria") return { date, file: "criteria/criteria-" + date + ".jsonl" };
   const models = [...new Set(candidates.map(candidate => candidate.version))].sort();

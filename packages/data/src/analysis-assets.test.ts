@@ -6,6 +6,21 @@ import { tmpdir } from "node:os";
 import { gzipSync } from "node:zlib";
 import { EvaluationAssets } from "./analysis-assets.js";
 
+test("asset discovery reads a named task batch without exposing its provenance", async t => {
+  const root = await mkdtemp(path.join(tmpdir(), "named-assets-"));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const pair = "fast_a_vs_fast_b", assetId = `comparison/${pair}/${pair}-search_eval.jsonl`;
+  await mkdir(path.join(root, "comparison", pair), { recursive: true });
+  await writeFile(path.join(root, assetId), '{"case":{"batch_id":"search_eval"}}\n');
+  await mkdir(path.join(root, ".delivery/provenance"), { recursive: true });
+  await writeFile(path.join(root, ".delivery/provenance/search_eval.jsonl"), '{}\n');
+  const assets = new EvaluationAssets([{ id: "search", path: root, test: false }]);
+  const listed = await assets.list({});
+  assert.equal(listed.total, 1);
+  assert.equal(listed.items[0].reference.assetId, assetId);
+  assert.match((await assets.read(listed.items[0].reference)).text, /search_eval/);
+});
+
 test("asset discovery includes archived evaluations and standalone trees without exposing state or debug files", async t => {
   const root = await mkdtemp(path.join(tmpdir(), "analysis-assets-"));
   t.after(() => rm(root, { recursive: true, force: true }));
