@@ -2,7 +2,8 @@ import { exists, runLayout } from "@eval/data";
 import { runEvaluation } from "@eval/host";
 import { createChannelRequests } from "@eval/host";
 import { attributionWorkflow, attributionRepository } from "@eval/workflows/attribution";
-import { comparisonWorkflow, comparisonRepository } from "@eval/workflows/comparison";
+import { comparisonRepository } from "@eval/workflows/comparison";
+import { consoleComparisonWorkflow } from "./comparison.js";
 import { businessResultRepository } from "@eval/workflows/review";
 import { createBalancedModels, type HostConfig } from "@eval/host-app/config";
 import { services, logger } from "@eval/host-app/composition";
@@ -21,7 +22,7 @@ async function logInputIssues(id: string, issues: Record<string, unknown>[]) {
 }
 
 export async function executeConsoleTask({ host, id, gate, pause, channels, progress }: Execution) {
-  const workflow = host.workflow === "attribution" ? attributionWorkflow : comparisonWorkflow;
+  const workflow = host.workflow === "attribution" ? attributionWorkflow : consoleComparisonWorkflow;
   const repository = host.workflow === "attribution" ? businessAttributionRepository : businessComparisonRepository;
   const routing = createBalancedModels(host.models, channels);
   for (const stage of Object.keys(host.models.bindings)) routing.modelRoutesForTask({ stage });

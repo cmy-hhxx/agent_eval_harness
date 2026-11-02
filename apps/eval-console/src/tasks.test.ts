@@ -75,9 +75,11 @@ test("console API previews frozen defaults, starts idempotently, drains, resumes
   for (let n = 0; n < 100 && manager.get(id).status === "running"; n++) await new Promise(resolve => setTimeout(resolve, 10));
   assert.equal(manager.get(id).status, "finished");
   for (const version of f.config.inputs.versions) await writeJsonl(version.sources[0].path, [{ ...raw("invalid"), messages: [] }]);
-  await assert.rejects(executeConsoleTask({ host: { workflow: "comparison", evaluation: f.config, models: f.models, evaluatorVersion: "fixture" },
-    id: "console-invalid-input", gate: createChannelRequests({ "evaluation-gateway": 1 }), pause: AbortSignal.abort(),
-    channels: ["evaluation-gateway"], progress() {} }), /没有可评测记录/);
+  const invalid = await executeConsoleTask({ host: { workflow: "comparison", evaluation: f.config, models: f.models, evaluatorVersion: "fixture" },
+    id: "console-invalid-input", gate: createChannelRequests({ "evaluation-gateway": 1 }), pause: new AbortController().signal,
+    channels: ["evaluation-gateway"], progress() {} });
+  assert.equal(invalid.outcome, "partial");
+  assert.deepEqual(invalid.execution_task_statuses, {});
   const errors = await consoleLog(path.join(config.logDirectory, "runtime.log"), "console-invalid-input", true);
   assert(errors.rows.some(row => String(row.message).includes(f.config.inputs.versions[0].sources[0].path + ":1 ") &&
     String(row.detail).includes("[cause]")), "invalid input keeps its file, line and diagnostic details in the log");

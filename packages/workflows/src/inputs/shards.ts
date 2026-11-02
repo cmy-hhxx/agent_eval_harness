@@ -33,6 +33,8 @@ export interface InputShardScan {
   next(available?: (version: string) => boolean): Promise<InputShard | undefined>;
   /** True once every physical file has been planned. */
   done(): boolean;
+  /** Whether a model has no unread source files; other models may still advance. */
+  versionDone(version: string): boolean;
 }
 
 /**
@@ -74,6 +76,7 @@ export function createInputShardScan(config: EvaluationConfig, options: ShardSca
   };
   return {
     done,
+    versionDone: version => scans.filter(scan => scan.version.id === version).every(scan => drained.has(scan)),
     async next(available) {
       if (done()) return finish();
       for (let offset = 0; offset < scans.length; offset++) {

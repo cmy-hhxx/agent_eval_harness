@@ -51,7 +51,7 @@ function encodeState(state: RunState): Checkpoint {
     ...config,
     inputs: {
       ...config.inputs,
-      batches: config.inputs.batches || Object.keys(metadata.preflight.by_batch || {}),
+      batches: config.inputs.batches || (metadata.preflight.sharded ? undefined : Object.keys(metadata.preflight.by_batch || {})),
     },
   };
   const saved = Object.fromEntries(

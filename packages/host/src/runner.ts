@@ -119,6 +119,7 @@ export async function runEvaluation(options: RunOptions): Promise<Record<string,
   let supervisor: WorkerSupervisor | undefined = options.workerSupervisor;
   let resourcePause: string | undefined, fatalError: { error: unknown } | undefined;
   let runFailure: { error: unknown } | undefined;
+  let pendingShard: Promise<void> | undefined;
   const running = new Map<string, Promise<void>>();
   const controller = new AbortController();
   const abort = () => controller.abort(options.signal?.reason || new Error("Interrupted"));
@@ -258,7 +259,7 @@ export async function runEvaluation(options: RunOptions): Promise<Record<string,
       if (!shardSource || shardsDone || shardPulling) return;
       shardPulling = true;
       const before = shardPulls;
-      void shardSource.next()
+      pendingShard = shardSource.next()
         .then(mergeShard)
         // A source may be blocked by its input window instead of exhausted; only report done then.
         .then(merged => { if (merged) shardPulls++; else shardsDone = shardSource.done?.() ?? true; })
@@ -1255,6 +1256,8 @@ export async function runEvaluation(options: RunOptions): Promise<Record<string,
         break;
       }
     }
+    await pendingShard;
+    if (fatalError) throw fatalError.error;
     await Promise.all(running.values());
     readyDemand = 0;
     taskConcurrency();
@@ -1298,6 +1301,7 @@ export async function runEvaluation(options: RunOptions): Promise<Record<string,
     if (progressTimer) clearInterval(progressTimer);
     if (checkpointTimer) clearInterval(checkpointTimer);
     controller.abort();
+    await pendingShard;
     await Promise.allSettled(running.values());
     options.signal?.removeEventListener("abort", abort);
     options.pauseSignal?.removeEventListener("abort", pause);

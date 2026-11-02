@@ -1,4 +1,5 @@
 import { collectInputs } from "../inputs/scan.js";
+import { createInputBindings } from "../inputs/shards.js";
 import { attributionDimension } from "../review/dimensions.js";
 import { candidateKey } from "../inputs/records.js";
 import { problemLibraryFile, readProblemLibrary } from "@eval/data";
@@ -93,6 +94,8 @@ export function selectComparisonGroups(groups: readonly string[][], versionIds: 
 
 export interface PlanOptions {
   acceptedTaskIds?: ReadonlySet<string>;
+  /** Already aligned case rows supplied by a streaming caller; never rescan their files. */
+  candidates?: Candidate[];
   /** Skip raw input materialization when only task counts or summaries are needed. */
   materializeInputs?: boolean;
 }
@@ -117,7 +120,15 @@ export async function buildPlan(
     }));
   const oldTasks = new Map(previous?.tasks.map((task) => [taskKey(task), task]));
   const previousAttribution = indexAttributionTasks(previous?.tasks ?? []);
-  const collected = await collectInputs(config, previous && { inputs: previous.inputs,
+  const collected = options.candidates ? {
+    catalog: options.candidates,
+    inputs: createInputBindings(config)(options.candidates),
+    cases: [...new Map(options.candidates.map(c => [canonical([c.batch_id, c.case_id]), [c.batch_id, c.case_id] as [string, string]])).values()],
+    issues: [] as { batch_id?: string | null; [key: string]: unknown }[],
+    locations: new Map(options.candidates.map(c => [candidateKey(c), [{ version: c.version, source: c.source, line: c.line }]])),
+    sources: Object.fromEntries(config.inputs.versions.map(v => [v.id, [...new Set(options.candidates!.filter(c => c.version === v.id).map(c => c.source))]])),
+    materialize: async () => {},
+  } : await collectInputs(config, previous && { inputs: previous.inputs,
     catalog: previous.catalog as Candidate[] | undefined ?? previous.tasks.flatMap(task => Object.values((task.data as TaskData).candidates)) }, {
     materializeInputs: options.materializeInputs,
     ...(config.prediction ? {
