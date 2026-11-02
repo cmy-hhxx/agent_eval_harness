@@ -4,13 +4,27 @@ import { mkdtemp, rm } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { writeJsonl, readJsonl } from "./files.js";
-import { businessDate, createBusinessPublisher, readBusinessResults, type BusinessResult } from "./business-results.js";
+import { businessDate, createBusinessPublisher, readBusinessResultRow, readBusinessResults, type BusinessResult } from "./business-results.js";
 
 test("business dates use complete batch dates without interpreting request timestamps", () => {
   assert.equal(businessDate("2026-10-26"), "2026-10-26");
   assert.equal(businessDate("2024-02-29"), "2024-02-29");
   for (const value of ["2026-02-29", "2026-10-26T00:00:00Z", "20261026", "daily-production-20261029", "2026-13-01"])
     assert.throws(() => businessDate(value));
+});
+
+test("business recovery follows a formal task identity when its recorded line is stale", async t => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "business-identity-"));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const record: BusinessResult = { id: "criteria", date: "2026-10-26", file: "criteria/criteria-2026-10-26.jsonl",
+    stage: "criteria", scope: {}, answers: [], acceptedAt: 1, evaluatorVersion: "fixture", judge: "judge",
+    submissionId: "accepted", complete: true, line: 1, published: true,
+    origin: { run: root, taskId: "wanted", reference: { id: "wanted", file: "criteria.jsonl", line: 1 } } };
+  const wanted = { task_id: "wanted", result: "保留原结果" };
+  await writeJsonl(path.join(root, "results/criteria.jsonl"), [{ task_id: "another", result: "其他结果" }, wanted]);
+  assert.deepEqual(await readBusinessResultRow(record), wanted);
+  await writeJsonl(path.join(root, "results/criteria.jsonl"), [{ task_id: "another", result: "其他结果" }]);
+  await assert.rejects(readBusinessResultRow(record), /来源行缺失/);
 });
 
 test("business publication keeps the latest complete verdict and can repair a missing delivery", async t => {

@@ -197,6 +197,20 @@ test("full and selected result reads share file-scoped identities, duplicate che
   await assert.rejects(repository.readTasks(directory, ["one"]), /冲突结果/);
 });
 
+test("self-identifying result rows survive reordered files with stale checkpoint line hints", async t => {
+  const refs = [
+    { file: "criteria.jsonl", id: "one", line: 1 }, { file: "criteria.jsonl", id: "two", line: 2 },
+  ];
+  const { directory, repository } = await fixture(t, refs);
+  await writeFile(path.join(directory, "results/criteria.jsonl"), '{"id":"two","value":2}\n{"id":"one","value":1}\n');
+  assert.deepEqual((await repository.readRun(directory)).manifest.config, [{ id: "one", value: 1 }, { id: "two", value: 2 }]);
+  assert.deepEqual((await repository.readTasks(directory, ["one"])).manifest.config, [{ id: "one", value: 1 }]);
+  refs.push({ file: "criteria.jsonl", id: "one", line: 3 });
+  await repository.writeRun(directory, state);
+  assert.deepEqual((await repository.readTasks(directory, ["one"])).manifest.config,
+    [{ id: "one", value: 1 }, { id: "one", value: 1 }]);
+});
+
 test("selected result reads ignore unrelated missing or conflicting rows but never hide a missing selected result", async (t) => {
   const { directory, repository } = await fixture(t, [
     { file: "scores.jsonl", id: "one" }, { file: "missing.jsonl", id: "two" },

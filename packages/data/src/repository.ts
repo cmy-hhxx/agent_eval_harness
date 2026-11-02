@@ -56,7 +56,7 @@ export function createRunRepository<Checkpoint>(
       if (indexedFiles.has(name) && !options.semanticReferences && (!Number.isSafeInteger(reference.line) || reference.line! < 1))
         throw new Error("结果行引用无效：" + reference.id);
       const previous = references.get(reference.id);
-      if (previous && previous.line !== reference.line) throw new Error("结果 ID 对应冲突行：" + reference.id);
+      if (indexedFiles.has(name) && previous && previous.line !== reference.line) throw new Error("结果 ID 对应冲突行：" + reference.id);
       references.set(reference.id, reference);
     }
     const rows = new Map<string, JsonObject>();
@@ -66,7 +66,7 @@ export function createRunRepository<Checkpoint>(
       if (!(await exists(file))) continue;
       // An interrupted append can leave an incomplete last line. Durable receipts rebuild it.
       const idsByLine = new Map<number, string>();
-      for (const ref of references.values()) if (ref.line !== undefined) {
+      for (const ref of references.values()) if (indexedFiles.has(name) && ref.line !== undefined) {
         if (idsByLine.has(ref.line)) throw new Error("结果行被多个身份引用：" + name + ":" + ref.line);
         idsByLine.set(ref.line, ref.id);
       }
@@ -92,7 +92,8 @@ export function createRunRepository<Checkpoint>(
       if (!row) throw new Error(`结果文件缺失：${reference.id}（${safeId(reference.file!)}）`);
       return row;
     }, taskIds);
-    for (const receipt of Object.values(decoded.receipts)) if (receipt.exported?.file && receipt.exported.line === undefined)
+    for (const receipt of Object.values(decoded.receipts)) if (receipt.exported?.file &&
+      (!indexedFiles.has(receipt.exported.file) || receipt.exported.line === undefined))
       receipt.exported.line = rowLines.get(safeId(receipt.exported.file!) + "\u0000" + receipt.exported.id);
     if (!taskIds)
       for (const event of await readProgressJournal(run, decoded.manifest.journalSequence ?? 0))

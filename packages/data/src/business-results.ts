@@ -103,7 +103,11 @@ export async function readBusinessResultRow(record: BusinessResult): Promise<Jso
   validate(record);
   const file = path.join(record.origin.run, "results", safeId(record.origin.reference.file!));
   let line = 0;
-  for await (const text of readJsonlText(file)) if (++line === record.origin.reference.line) return JSON.parse(text);
+  for await (const text of readJsonlText(file)) {
+    line++;
+    const row = JSON.parse(text), id = row.task_id ?? row.comparison_id;
+    if (id !== undefined ? id === record.origin.reference.id : line === record.origin.reference.line) return row;
+  }
   throw new Error("正式结果来源行缺失：" + file);
 }
 /** Existing run ledgers are read only, including explicitly chosen older run deliveries. */
