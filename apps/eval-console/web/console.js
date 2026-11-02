@@ -123,7 +123,7 @@ function renderTasks() {
     }
     if (task.status === 'draft') {
       actions.append(button('预览', () => previewTask(task)));
-      if (task.dataCheck?.status === 'failed') { const retry = button('重新检查', () => busy(retry, 'task-error', async () => { await api('/api/tasks/' + task.id + '/check', {}); await refresh(); })); actions.append(retry); }
+      if (!task.dataCheck || task.dataCheck.status === 'failed') { const retry = button(task.dataCheck ? '重新检查' : 'Check data', () => busy(retry, 'task-error', async () => { await api('/api/tasks/' + task.id + '/check', {}); await refresh(); })); actions.append(retry); }
     }
     actions.append(button('日志', () => openDetail(task.id, 'logs')), button('配置', () => openDetail(task.id, 'config'))); operations.append(actions);
     row.append(title, status, progress, capacity, date, operations); $('task-list').append(row);
