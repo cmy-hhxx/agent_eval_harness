@@ -27,6 +27,7 @@ export async function executeConsoleTask({ host, id, gate, pause, channels, prog
   const routing = createBalancedModels(host.models, channels);
   for (const stage of Object.keys(host.models.bindings)) routing.modelRoutesForTask({ stage });
   const saved = await exists(runLayout(host.evaluation.output, id).stateFile);
+  const pausedStages = saved ? (await repository.readRun(runLayout(host.evaluation.output, id).directory)).manifest.pausedStages : [];
   const plan = saved ? { tasks: [], inputs: {}, summary: {} } : await workflow.plan(host.evaluation);
   if (!saved && !plan.tasks.length && !plan.summary.sharded) {
     await logInputIssues(id, plan.summary.issues as Record<string, unknown>[] ?? []);
@@ -38,7 +39,7 @@ export async function executeConsoleTask({ host, id, gate, pause, channels, prog
     config: host.evaluation, plan, policy: host.evaluation.execution,
     concurrency: gate.concurrency(), modelRequests: gate,
     retries: host.evaluation.execution.retries, retryDelaySeconds: host.evaluation.execution.retryDelaySeconds,
-    failureGuard: host.evaluation.execution.failureGuard, skipFailed: true, pauseSignal: pause, onProgress: progress });
+    failureGuard: host.evaluation.execution.failureGuard, resumeStages: pausedStages?.map(entry => entry.stage), pauseSignal: pause, onProgress: progress });
   if (result.input_issue_count) {
     const state = await repository.readRun(runLayout(host.evaluation.output, id).directory);
     await logInputIssues(id, state.manifest.preflight.issues as Record<string, unknown>[] ?? []);

@@ -4,7 +4,7 @@ import assert from "node:assert/strict";
 import path from "node:path";
 import { rm } from "node:fs/promises";
 import { emptyUsage, type RunState, type TaskPlan } from "@eval/contracts";
-import { readJsonl, runLayout, writeJsonl } from "@eval/data";
+import { claimBusinessPartitions, readJsonl, runLayout, writeJsonl } from "@eval/data";
 import { attributionRepository, type AttributionConfig } from "@eval/workflows/attribution";
 import { stagedAttributionPlan as planAttribution } from "../../fixtures/shards.js";
 import { buildPlan } from "@eval/workflows/comparison";
@@ -12,11 +12,11 @@ import { runEvaluation } from "@eval/host";
 import { services } from "@eval/host-app/composition";
 import { businessAttributionRepository, businessComparisonRepository } from "../../../apps/host/src/business-results.js";
 import { emptyAudit, fakeIdentity, fixtureConfig, sessionRaw } from "../../fixtures/comparison.js";
-import type { EvaluationConfig, RawInput } from "@eval/workflows/inputs";
+import type { Candidate, EvaluationConfig, RawInput } from "@eval/workflows/inputs";
 
-const input = (answer = "2+2=4") => {
-  const value = { ...sessionRaw("same-case", null, answer), batch_id: "2026-10-26",
-    case_id: "same-case", request_time: "2026-10-25T17:22:06.486Z" };
+const input = (answer = "2+2=4", caseId = "same-case") => {
+  const value = { ...sessionRaw(caseId, null, answer), batch_id: "2026-10-26",
+    case_id: caseId, request_time: "2026-10-25T17:22:06.486Z" };
   return value as typeof value & RawInput;
 };
 function stateFor(config: EvaluationConfig, plan: TaskPlan, runId: string) {
@@ -86,6 +86,43 @@ test("compact output and a different business date do not mark a case finished",
   const close = await businessAttributionRepository.prepareRun!(next.run, next.state, next.plan.inputs);
   try { assert.equal(next.state.manifest.tasks.length, count); assert.equal(next.state.manifest.preflight.skipped_cases, 0); }
   finally { await close(); }
+});
+
+test("partition conflicts block later shards and clear when a resumed run acquires the lock", async t => {
+  const f = await fixtureConfig([[input(), input("2+2=4", "next-case")], [], [], []]);
+  t.after(() => rm(f.directory, { recursive: true, force: true }));
+  const config = { ...f.config, workflow: "attribution", output: { ...f.config.output, layout: "business" },
+    inputs: { ...f.config.inputs, versions: f.config.inputs.versions.slice(0, 1) } } as AttributionConfig;
+  const next = await prepare(config, "partition-conflict"), catalog = next.plan.catalog as Candidate[];
+  const first = catalog.filter(candidate => candidate.case_id === "same-case");
+  const later = catalog.filter(candidate => candidate.case_id === "next-case");
+  const firstIds = new Set(first.map(candidate => candidate.input_id));
+  const firstTasks = next.plan.tasks.filter(task => Object.values(task.inputIds).some(id => firstIds.has(id)));
+  const laterTasks = next.plan.tasks.filter(task => !firstTasks.includes(task));
+  assert(firstTasks.length > 0 && laterTasks.length > 0);
+  next.state.manifest.tasks = firstTasks;
+  next.state.manifest.inputCatalog = first;
+  const other = await claimBusinessPartitions(config.output.path, [{ date: "2026-10-26", model: config.inputs.versions[0].id }]);
+  let otherClosed = false;
+  t.after(async () => { if (!otherClosed) await other.close(); });
+  const close = await businessAttributionRepository.prepareRun!(next.run, next.state, next.plan.inputs);
+  t.after(close);
+  for (const task of firstTasks) assert.equal(next.state.manifest.states[task.id].status, "blocked");
+  await businessAttributionRepository.prepareShard!(next.run, next.state, next.plan.inputs, later, laterTasks);
+  for (const task of laterTasks) {
+    assert.equal(next.state.manifest.states[task.id].status, "blocked");
+    assert(next.state.manifest.states[task.id].admissionBlock);
+  }
+  next.state.manifest.tasks.push(...laterTasks);
+  next.state.manifest.inputCatalog.push(...later);
+  await close(); await other.close(); otherClosed = true;
+  const resumedClose = await businessAttributionRepository.prepareRun!(next.run, next.state, next.plan.inputs);
+  try {
+    for (const task of next.state.manifest.tasks) {
+      assert.equal(next.state.manifest.states[task.id].status, "pending");
+      assert.equal(next.state.manifest.states[task.id].admissionBlock, undefined);
+    }
+  } finally { await resumedClose(); }
 });
 
 test("an existing comparison pair finishes a new run without starting a Worker", async t => {

@@ -24,7 +24,7 @@ export function businessResultRepository(repository: RunRepository): RunReposito
     const comparisons = (config as EvaluationConfig & { comparisons?: string[][] }).comparisons ?? [];
     const pairs = comparisons.flatMap(group => group.flatMap((a, i) => group.slice(i + 1).map(b => [a, b])));
     const completed = readCompletedCases(config.output.path, config.inputs.versions.map(version => version.id), pairs);
-    const claimed = new Set<string>(), unlocks: (() => Promise<void>)[] = [];
+    const claimed = new Set<string>(), blocked = new Set<string>(), unlocks: (() => Promise<void>)[] = [];
     const skipped = new Set<string>();
     async function add(catalog: Candidate[], tasks: PlannedTask[], selected?: string[]) {
       const existing = await completed;
@@ -77,9 +77,18 @@ export function businessResultRepository(repository: RunRepository): RunReposito
       if (partitions.length) {
         const held = await claimBusinessPartitions(config.output.path, partitions); unlocks.push(held.close);
         for (const value of partitions) claimed.add(canonical([value.date, value.model]));
-        for (const task of tasks) if (businessCandidates(task, state, all).some(candidate => held.blocked.has(canonical([candidate.batch_id, candidate.version]))))
-          state.manifest.states[task.id] = { status: "blocked", attempts: state.manifest.states[task.id]?.attempts ?? 0,
+        for (const key of held.blocked) blocked.add(key);
+      }
+      for (const task of tasks) {
+        const previous = state.manifest.states[task.id];
+        if (businessCandidates(task, state, all).some(candidate => blocked.has(canonical([candidate.batch_id, candidate.version]))))
+          state.manifest.states[task.id] = { ...previous, status: "blocked", attempts: previous?.attempts ?? 0,
             admissionBlock: "该业务日期与模型正在被另一任务写入，请暂停后继续" };
+        else if (previous?.admissionBlock) {
+          if (previous.reason === previous.admissionBlock) delete previous.reason;
+          delete previous.admissionBlock;
+          if (previous.status === "blocked") previous.status = "pending";
+        }
       }
     }
     return { add, close: async () => { for (const unlock of unlocks.reverse()) await unlock(); } };

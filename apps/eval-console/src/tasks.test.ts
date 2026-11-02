@@ -5,11 +5,13 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import path from "node:path";
 import { realpath, rm } from "node:fs/promises";
-import { readJson, writeJson, writeJsonl } from "@eval/data";
+import { fileSourceReader, readJson, runLayout, writeJson, writeJsonl } from "@eval/data";
 import { ConsoleTasks, type ConsoleConfig } from "./tasks.js";
 import { serveConsole } from "./server.js";
 import { initializeServices } from "@eval/host-app/composition";
-import { fixtureConfig, raw } from "../../../tests/fixtures/comparison.js";
+import { emptyUsage, type RunState } from "@eval/contracts";
+import { buildPlan, comparisonRepository } from "@eval/workflows/comparison";
+import { fakeIdentity, fixtureConfig, raw } from "../../../tests/fixtures/comparison.js";
 
 test("console API previews frozen defaults, starts idempotently, drains, resumes and restores interrupted state", { timeout: 15000 }, async t => {
   const f = await fixtureConfig();
@@ -115,4 +117,89 @@ test("console API previews frozen defaults, starts idempotently, drains, resumes
   const errors = await consoleLog(path.join(config.logDirectory, "runtime.log"), "console-invalid-input", true);
   assert(errors.rows.some(row => String(row.message).includes(f.config.inputs.versions[0].sources[0].path + ":1 ") &&
     String(row.detail).includes("[cause]")), "invalid input keeps its file, line and diagnostic details in the log");
+});
+
+test("console resume retries unfinished failures and clears stage pauses within the remaining budget", async t => {
+  const f = await fixtureConfig([[raw()], [], [raw()], []]);
+  t.after(() => rm(f.directory, { recursive: true, force: true }));
+  const plan = await buildPlan(f.config), id = "console-resume-failures";
+  const statuses = ["failed", "timed_out", "blocked"] as const;
+  const state: RunState = { manifest: { format: "evaluation-run", debug: false, runId: id, status: "interrupted",
+    engine: fakeIdentity, evaluatorVersion: "fixture", config: f.config, tasks: plan.tasks, inputCatalog: plan.catalog,
+    inputs: {}, states: Object.fromEntries(plan.tasks.map((task, index) => [task.id, { status: statuses[index % statuses.length], attempts: 0 }])),
+    preflight: plan.summary, startedAt: Date.now(), pausedStages: [{ stage: "criteria", category: "interruption",
+      code: "attempt_interrupted", path: "/", taskIds: [], at: Date.now() }] },
+    receipts: {}, usage: emptyUsage(), recordedAttempts: 0 };
+  const run = runLayout(f.config.output, id).directory;
+  await comparisonRepository.writeRun(run, state);
+  // Stop before dispatch so the checkpoint exposes resume admission without starting a Worker.
+  const pause = new AbortController(); pause.abort();
+  await executeConsoleTask({ host: { workflow: "comparison", evaluation: f.config, models: f.models, evaluatorVersion: "fixture" },
+    id, gate: createChannelRequests({ "evaluation-gateway": 1 }), pause: pause.signal,
+    channels: ["evaluation-gateway"], progress() {} });
+  const restored = await comparisonRepository.readRun(run);
+  assert.deepEqual(restored.manifest.pausedStages, []);
+  assert(restored.manifest.tasks.length > 0);
+  for (const task of restored.manifest.tasks) {
+    assert.equal(restored.manifest.states[task.id].status, "pending");
+    assert.equal(restored.manifest.states[task.id].attempts, 0);
+  }
+});
+
+test("a data check completing behind a queued start preserves the running task in memory and on disk", { timeout: 10000 }, async t => {
+  const f = await fixtureConfig([[raw()], [], [raw()], []]);
+  const source = path.join(f.directory, "source.json");
+  await writeJson(source, { ...f.config, evaluatorVersion: "fixture",
+    models: { judge: { channel: "evaluation-gateway", model: "fixture", thinking: "off" } }, bindings: f.models.bindings });
+  const config: ConsoleConfig = { hostname: "127.0.0.1", port: 0, stateDirectory: path.join(f.directory, "console"),
+    logDirectory: path.join(f.directory, "log"), passwordFile: "unused", channels: ["evaluation-gateway"],
+    presets: [{ id: "wencai", source: "wencai", name: "问财对比", concurrency: 1, configs: [source], inputRoots: [f.directory] }] };
+  let enterPreflight!: () => void, releasePreflight!: () => void, releaseCheck!: () => void;
+  const preflightEntered = new Promise<void>(resolve => { enterPreflight = resolve; });
+  const allowPreflight = new Promise<void>(resolve => { releasePreflight = resolve; });
+  const allowCheck = new Promise<void>(resolve => { releaseCheck = resolve; });
+  let heldTask: string | undefined, holdCheck = false;
+  const manager = new ConsoleTasks(config, {
+    preflight: async (_host, runId) => {
+      if (runId === heldTask && heldTask) { enterPreflight(); await allowPreflight; }
+      return [];
+    },
+    execute: async ({ pause }) => {
+      if (!pause.aborted) await new Promise<void>(resolve => pause.addEventListener("abort", () => resolve(), { once: true }));
+      return { execution_task_statuses: { succeeded: 1 }, paused_stages: [] };
+    },
+  });
+  t.after(async () => {
+    releaseCheck(); releasePreflight();
+    try { await manager.close(); } finally { await rm(f.directory, { recursive: true, force: true }); }
+  });
+  const files = fileSourceReader.files;
+  t.mock.method(fileSourceReader, "files", async (...args: Parameters<typeof files>) => {
+    if (holdCheck) await allowCheck;
+    return files(...args);
+  });
+  await manager.initialize();
+  const inputs = Object.fromEntries(f.config.inputs.versions.map(version => [version.id, version.sources.map(item => item.path)]));
+  const first = await manager.preview({ preset: "wencai", concurrency: 1, inputs, output: f.config.output.path });
+  for (let n = 0; n < 100 && manager.get(first.id).dataCheck?.status === "checking"; n++) await new Promise(resolve => setTimeout(resolve, 10));
+  assert.equal(manager.get(first.id).dataCheck?.status, "ready");
+  // Flush the first check's queued save before preparing the next task.
+  await manager.concurrency(first.id, 1);
+  holdCheck = true;
+  const second = await manager.preview({ preset: "wencai", concurrency: 1, inputs, output: path.join(f.directory, "other-output") });
+  assert.equal(manager.get(second.id).dataCheck?.status, "checking");
+  heldTask = first.id;
+  const startingFirst = manager.start(first.id);
+  await preflightEntered;
+  const startingSecond = manager.start(second.id);
+  releaseCheck();
+  for (let n = 0; n < 100 && manager.get(second.id).dataCheck?.status === "checking"; n++) await new Promise(resolve => setTimeout(resolve, 10));
+  assert.equal(manager.get(second.id).dataCheck?.status, "ready");
+  releasePreflight();
+  await Promise.all([startingFirst, startingSecond]);
+  // This serial mutation waits for the check-completion save queued after start.
+  await manager.concurrency(second.id, 2);
+  assert.equal(manager.get(second.id).status, "running");
+  const saved = await readJson<{ status: string; concurrency: number }>(path.join(config.stateDirectory, second.id, "task.json"));
+  assert.equal(saved.status, "running"); assert.equal(saved.concurrency, 2);
 });

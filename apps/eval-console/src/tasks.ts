@@ -184,7 +184,7 @@ export class ConsoleTasks {
     }, id).catch(async error => {
       task.dataCheck!.status = "failed"; task.dataCheck!.error = errorText(error);
       await logger.error(error, { component: "console", event: "console_data_check_failed", run_id: id });
-    }).finally(async () => { try { await this.exclusive(() => this.save(task)); } finally { this.checking = undefined; } });
+    }).finally(async () => { try { await this.exclusive(() => this.save(this.tasks.get(id)!)); } finally { this.checking = undefined; } });
     void this.checking.catch(error => logger.error(error, { component: "console", event: "console_state_failed", run_id: id }));
   }
   async recheck(id: string) {
