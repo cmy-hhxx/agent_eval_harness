@@ -23,12 +23,12 @@ async function view(t: TestContext) {
   t.after(() => dom.window.close());
   const { window } = dom, document = window.document;
   const fixture = { tasks: [task(1), task(2, "finished"), task(3, "running"), task(4, "draft", "aime")],
-    failing: new Set<string>(), deletes: [] as string[], confirm: true, prompts: [] as string[] };
+    failing: new Set<string>(), deletes: [] as string[], confirm: true, prompts: [] as string[], created: [] as { parent: string; name: string }[] };
   window.setInterval = () => 1;
   window.confirm = message => { fixture.prompts.push(String(message)); return fixture.confirm; };
   window.HTMLDialogElement.prototype.showModal = function () { this.setAttribute("open", ""); };
   window.HTMLDialogElement.prototype.close = function () { this.removeAttribute("open"); this.dispatchEvent(new window.Event("close")); };
-  window.fetch = (async (source: string) => {
+  window.fetch = (async (source: string, init?: RequestInit) => {
     const url = new URL(source, "http://console.test"), stats = { files: 2, records: 42, pendingFiles: 0, checkedAt: "2026-11-02T08:00:00Z" };
     if (url.pathname.endsWith("/delete")) {
       const id = url.pathname.split("/")[3]; fixture.deletes.push(id);
@@ -40,11 +40,15 @@ async function view(t: TestContext) {
       id: "wencai", source: "wencai", name: "问财", inputDirectory: "/inputs", output: "/outputs", concurrency: 2,
     }]);
     if (url.pathname === "/api/directories") {
-      const input = url.searchParams.get("kind") === "input", current = url.searchParams.get("path");
-      return Response.json({ path: current, parent: null, refreshing: false, stats,
-        directories: current ? [] : input ? [
-          { name: ".archive", path: "/inputs/.archive", stats }, { name: "search", path: "/inputs/search", stats },
-        ] : [{ name: "existing", path: "/outputs/existing" }] });
+      if (init?.method === "POST") {
+        const value = JSON.parse(String(init.body)); fixture.created.push(value);
+        return Response.json({ path: value.parent + "/" + value.name });
+      }
+      const input = url.searchParams.get("kind") === "input", current = url.searchParams.get("path") || "/";
+      const folder = (name: string, base = current) => ({ name, path: base.replace(/\/$/, "") + "/" + name, kind: "directory", stats: input ? stats : undefined });
+      const entries = current === "/" ? [folder("inputs"), folder("outputs")] : current === "/inputs" ? [folder(".archive"), folder("search"),
+        { name: "raw.jsonl", path: "/inputs/raw.jsonl", kind: "file", bytes: 200, records: 42 }] : current === "/outputs" ? [folder("existing")] : [];
+      return Response.json({ root: "/", path: current, parent: current === "/" ? null : current.slice(0, current.lastIndexOf("/")) || "/", refreshing: false, stats: input ? stats : undefined, entries });
     }
     return Response.json({ error: "Unexpected request " + source }, { status: 404 });
   }) as typeof window.fetch;
@@ -90,13 +94,44 @@ test("path previews group models and output folders; folder selection shows inde
   assert.match(document.querySelector("#preview-summary")!.textContent!, /对比结果 · a_fast_vs_b_fast/);
   click("#close-create"); click("#new-task");
   assert.equal(document.querySelector<HTMLInputElement>("#batch-id")!.value, "");
-  click("#choose-input"); await until(() => document.querySelectorAll(".folder-option").length === 2);
-  assert.match(document.querySelector("#folder-list")!.textContent!, /42 条输入/);
+  click("#choose-input"); await until(() => document.querySelectorAll(".folder-option").length === 3);
+  assert.match(document.querySelector("#folder-list")!.textContent!, /42 条/);
   assert.match(document.querySelector("#folder-list")!.textContent!, /\.archive/);
-  click(".folder-option > button");
+  click('.folder-option[data-path="/inputs/.archive"] .folder-name');
+  assert.equal(document.querySelector<HTMLTextAreaElement>("#input-directory")!.value, "/inputs", "single-click selects without committing the form");
+  click('#use-folder');
   assert.equal(document.querySelector<HTMLTextAreaElement>("#input-directory")!.value, "/inputs/.archive");
   assert.match(document.querySelector("#input-folder-stats")!.textContent!, /42 条输入/);
   click("#choose-output"); await until(() => document.querySelectorAll(".folder-option").length === 1);
-  click(".folder-option > button");
+  click(".folder-option .folder-name"); click("#use-folder");
   assert.equal(document.querySelector<HTMLTextAreaElement>("#output")!.value, "/outputs/existing");
+});
+
+test("filesystem navigation supports double-click, history, breadcrumbs, address jumps and file protection", async t => {
+  const { document, window, click } = await view(t);
+  click('#new-task'); click('#choose-input');
+  await until(() => document.querySelectorAll('.folder-option').length === 3);
+  click('.folder-option[data-path="/inputs/raw.jsonl"] .folder-name');
+  assert.equal(document.querySelector<HTMLButtonElement>('#use-folder')!.disabled, true);
+  document.querySelector('.folder-option[data-path="/inputs/.archive"]')!.dispatchEvent(new window.MouseEvent('dblclick', { bubbles: true }));
+  await until(() => document.querySelector<HTMLInputElement>('#folder-location')!.value === '/inputs/.archive');
+  click('#folder-back'); await until(() => document.querySelector<HTMLInputElement>('#folder-location')!.value === '/inputs');
+  click('#folder-forward'); await until(() => document.querySelector<HTMLInputElement>('#folder-location')!.value === '/inputs/.archive');
+  const crumb = [...document.querySelectorAll<HTMLButtonElement>('#folder-breadcrumbs button')].find(item => item.textContent === 'inputs')!;
+  crumb.click(); await until(() => document.querySelector<HTMLInputElement>('#folder-location')!.value === '/inputs');
+  document.querySelector<HTMLInputElement>('#folder-location')!.value = '/inputs/search';
+  document.querySelector('#folder-location-form')!.dispatchEvent(new window.Event('submit', { bubbles: true, cancelable: true }));
+  await until(() => document.querySelector<HTMLInputElement>('#folder-location')!.value === '/inputs/search' && document.querySelector('#folder-selected')!.textContent === '/inputs/search');
+  click('#use-folder'); assert.equal(document.querySelector<HTMLTextAreaElement>('#input-directory')!.value, '/inputs/search');
+});
+
+test("output folder creation uses the current filesystem location and can be selected immediately", async t => {
+  const { document, window, fixture, click } = await view(t);
+  click('#new-task'); click('#choose-output');
+  await until(() => document.querySelector<HTMLInputElement>('#folder-location')!.value === '/outputs');
+  click('#new-folder'); document.querySelector<HTMLInputElement>('#new-folder-name')!.value = '新结果';
+  document.querySelector('#new-folder-form')!.dispatchEvent(new window.Event('submit', { bubbles: true, cancelable: true }));
+  await until(() => document.querySelector('#folder-selected')!.textContent === '/outputs/新结果');
+  assert.equal(fixture.created[0].parent, '/outputs'); assert.equal(fixture.created[0].name, '新结果');
+  click('#use-folder'); assert.equal(document.querySelector<HTMLTextAreaElement>('#output')!.value, '/outputs/新结果');
 });

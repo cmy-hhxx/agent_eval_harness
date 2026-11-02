@@ -15,7 +15,7 @@ process.env.EVAL_LOG_LOCK_DIR = path.join(config.stateDirectory, "log-writer");
 await initializeServices();
 const unlock = await runLock(config.stateDirectory);
 const tasks = new ConsoleTasks(config);
-const directories = new InputDirectoryStats(config.inputStatsFile, config.presets.flatMap(preset => preset.inputRoots));
+const directories = new InputDirectoryStats(config.inputStatsFile, config.directoryRoot);
 try {
   await tasks.initialize();
   await directories.initialize();

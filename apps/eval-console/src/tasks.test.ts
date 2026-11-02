@@ -24,15 +24,15 @@ test("console API previews frozen defaults, starts idempotently, drains, resumes
   });
   await initializeServices();
   const source = path.join(f.directory, "source.json");
-  const inputDirectory = path.join(f.directory, "input");
+  const inputDirectory = path.join(f.directory, "eval_input");
   for (const version of f.config.inputs.versions) await writeJsonl(path.join(inputDirectory, version.id + ".jsonl"), [raw()]);
   const models = { judge: { channel: "evaluation-gateway", model: "fixture", thinking: "off" } };
   await writeJson(source, { ...f.config, inputs: { ...f.config.inputs, default_batch_id: "preset_batch", limit: 1, case_ids: ["not-in-parent"] },
     evaluatorVersion: "fixture", models, bindings: f.models.bindings });
   const config: ConsoleConfig = { hostname: "127.0.0.1", port: 0, stateDirectory: path.join(f.directory, "console"),
-    inputStatsFile: path.join(f.directory, "eval_input_stats.json"),
+    inputStatsFile: path.join(f.directory, "eval_input_stats.json"), directoryRoot: f.directory,
     logDirectory: process.env.EVAL_LOG_DIR, passwordFile: "unused", channels: ["evaluation-gateway"],
-    presets: [{ id: "wencai", source: "wencai", name: "问财对比", concurrency: 2, configs: [source], inputRoots: [f.directory], outputRoots: [f.config.output.path] }] };
+    presets: [{ id: "wencai", source: "wencai", name: "问财对比", concurrency: 2, configs: [source] }] };
   let starts = 0, release: (() => void) | undefined, execution: Parameters<typeof executeConsoleTask>[0] | undefined;
   const manager = new ConsoleTasks(config, { preflight: async () => [], execute: async value => {
     execution = value; starts++;
@@ -41,7 +41,7 @@ test("console API previews frozen defaults, starts idempotently, drains, resumes
     return { execution_task_statuses: { succeeded: 1 }, paused_stages: [] };
   } });
   await manager.initialize();
-  const directories = new InputDirectoryStats(config.inputStatsFile, [inputDirectory]);
+  const directories = new InputDirectoryStats(config.inputStatsFile, config.directoryRoot);
   await directories.initialize(); await directories.refresh();
   t.after(() => directories.close());
   const password = "test-console-password-1234", server = await serveConsole(manager, password, directories);
@@ -54,10 +54,14 @@ test("console API previews frozen defaults, starts idempotently, drains, resumes
   };
   assert.equal((await request("/api/tasks", undefined, false)).status, 401);
   assert.equal((await request("/api/tasks", {}, false)).status, 403);
-  const folder = await request("/api/directories?preset=wencai&kind=input&path=" + encodeURIComponent(inputDirectory));
+  const folder = await request("/api/directories?kind=input&path=" + encodeURIComponent(inputDirectory));
   assert.equal(folder.status, 200);
   assert.equal((folder.data.stats as { records: number }).records, 4);
-  assert.equal((await request("/api/directories?preset=wencai&kind=input&path=/")).status, 403);
+  assert.equal((await request("/api/directories?kind=input&path=/")).status, 403);
+  const created = await request("/api/directories", { kind: "output", parent: f.directory, name: "评测结果" });
+  assert.equal(created.status, 201);
+  assert.equal((await request("/api/directories?kind=output&path=" + encodeURIComponent(String(created.data.path)))).status, 200);
+  assert.equal((await request("/api/directories", { kind: "output", parent: f.directory, name: "评测结果" })).status, 409);
   for (const batchId of [undefined, "", "   "]) {
     const invalid = await request("/api/previews", { preset: "wencai", concurrency: 2, inputDirectory, output: f.config.output.path, batchId });
     assert.equal(invalid.status, 400); assert.match(String(invalid.data.error), /请填写缺省批次/);
@@ -198,9 +202,9 @@ test("a data check completing behind a queued start preserves the running task i
   await writeJson(source, { ...f.config, evaluatorVersion: "fixture",
     models: { judge: { channel: "evaluation-gateway", model: "fixture", thinking: "off" } }, bindings: f.models.bindings });
   const config: ConsoleConfig = { hostname: "127.0.0.1", port: 0, stateDirectory: path.join(f.directory, "console"),
-    inputStatsFile: path.join(f.directory, "eval_input_stats.json"),
+    inputStatsFile: path.join(f.directory, "eval_input_stats.json"), directoryRoot: f.directory,
     logDirectory: path.join(f.directory, "log"), passwordFile: "unused", channels: ["evaluation-gateway"],
-    presets: [{ id: "wencai", source: "wencai", name: "问财对比", concurrency: 1, configs: [source], inputRoots: [f.directory], outputRoots: [f.config.output.path] }] };
+    presets: [{ id: "wencai", source: "wencai", name: "问财对比", concurrency: 1, configs: [source] }] };
   let enterPreflight!: () => void, releasePreflight!: () => void, releaseCheck!: () => void;
   const preflightEntered = new Promise<void>(resolve => { enterPreflight = resolve; });
   const allowPreflight = new Promise<void>(resolve => { releasePreflight = resolve; });

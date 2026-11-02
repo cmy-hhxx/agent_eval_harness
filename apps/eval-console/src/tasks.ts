@@ -15,13 +15,13 @@ import { checkData, commonInputDirectory, emptyDataCheck, parentInputs, type Dat
 
 export interface ConsolePreset {
   id: string; source: "wencai" | "aime"; name: string; configs: string[];
-  inputRoots: string[]; concurrency: number;
-  outputRoots: string[];
+  concurrency: number;
 }
 export interface ConsoleConfig {
   hostname: string; port: number; stateDirectory: string; logDirectory: string; passwordFile: string;
   channels: string[]; presets: ConsolePreset[];
   inputStatsFile: string;
+  directoryRoot: string;
 }
 export interface ConsoleProgress { completed: number; total: number; failed: number; }
 export interface ConsoleTask {
@@ -125,7 +125,7 @@ export class ConsoleTasks {
     const host = await this.load(preset.configs);
     this.assertWorkflow(preset, host);
     if (inputDirectory !== undefined && inputs !== undefined) throw new HttpError(400, "父目录与模型路径只能选择一种输入方式");
-    const discovered = inputDirectory === undefined ? undefined : await parentInputs(inputDirectory, host.evaluation.inputs.versions, preset.inputRoots);
+    const discovered = inputDirectory === undefined ? undefined : await parentInputs(inputDirectory, host.evaluation.inputs.versions, [this.config.directoryRoot]);
     const entries = discovered?.inputs ?? inputs as Record<string, unknown>;
     if (!entries || typeof entries !== "object" || Array.isArray(entries)) throw new HttpError(400, "请指定输入父目录");
     if (Object.keys(entries).length !== host.evaluation.inputs.versions.length) throw new HttpError(400, "输入模型数量与预设不符");
@@ -133,7 +133,7 @@ export class ConsoleTasks {
       const paths = entries[version.id];
       if (!Array.isArray(paths) || !paths.length) throw new HttpError(400, "缺少输入: " + version.name);
       return { ...version, sources: await Promise.all(paths.map(async (file, index) => {
-        const source = await consolePath(file, preset.inputRoots, true);
+        const source = await consolePath(file, [this.config.directoryRoot], true);
         const original = version.sources[index];
         return source.kind === "directory" && original?.kind === "directory" ? { ...original, ...source } : source;
       })) };

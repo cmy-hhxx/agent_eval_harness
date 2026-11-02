@@ -20,17 +20,15 @@ export async function readConsoleConfig(file: string): Promise<ConsoleConfig> {
     if (typeof source !== "string" || !source.trim()) throw new Error("Console paths must be nonempty");
     return path.resolve(root, source);
   };
-  for (const key of ["stateDirectory", "logDirectory", "passwordFile", "inputStatsFile"] as const) value[key] = locate(value[key]);
+  for (const key of ["stateDirectory", "logDirectory", "passwordFile", "inputStatsFile", "directoryRoot"] as const) value[key] = locate(value[key]);
   const ids = new Set<string>();
   for (const preset of value.presets) {
     if (!preset || typeof preset.id !== "string" || !/^[a-z0-9-]+$/.test(preset.id) || ids.has(preset.id) ||
         !["wencai", "aime"].includes(preset.source) || typeof preset.name !== "string" || !preset.name.trim() ||
         !Number.isSafeInteger(preset.concurrency) || preset.concurrency < 1) throw new Error("Invalid console preset");
     ids.add(preset.id);
-    for (const key of ["configs", "inputRoots", "outputRoots"] as const) {
-      if (!Array.isArray(preset[key]) || !preset[key].length) throw new Error("Missing preset " + key);
-      preset[key] = preset[key].map(locate);
-    }
+    if (!Array.isArray(preset.configs) || !preset.configs.length) throw new Error("Missing preset configs");
+    preset.configs = preset.configs.map(locate);
   }
   return value;
 }
@@ -88,11 +86,15 @@ export async function serveConsole(tasks: ConsoleTasks, password: string, direct
       }
       if (url.pathname === "/api/presets" && req.method === "GET") return send(await tasks.presets());
       if (url.pathname === "/api/directories" && req.method === "GET") {
-        const preset = tasks.config.presets.find(item => item.id === url.searchParams.get("preset"));
         const kind = url.searchParams.get("kind");
-        if (!preset || !["input", "output"].includes(kind ?? "")) throw new HttpError(400, "未知目录预设或类型");
-        return send(await directories.browse(kind === "input" ? preset.inputRoots : preset.outputRoots,
-          url.searchParams.get("path") ?? undefined, kind === "input"));
+        if (!["input", "output"].includes(kind ?? "")) throw new HttpError(400, "未知目录类型");
+        return send(await directories.browse(url.searchParams.get("path") ?? undefined, kind === "input", url.searchParams.get("hidden") === "1"));
+      }
+      if (url.pathname === "/api/directories" && req.method === "POST") {
+        const value = await body(req, 4096) as { parent?: unknown; name?: unknown; kind?: unknown };
+        if (value?.kind !== "output" || typeof value.parent !== "string" || typeof value.name !== "string")
+          throw new HttpError(400, "请提供输出父目录和新文件夹名称");
+        return send(await directories.createDirectory(value.parent, value.name), 201);
       }
       if (url.pathname === "/api/previews" && req.method === "POST") return send(await tasks.preview(await body(req, 64 * 1024)), 201);
       if (url.pathname === "/api/tasks" && req.method === "GET")

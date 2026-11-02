@@ -1,5 +1,5 @@
 const $ = id => document.getElementById(id);
-const state = { presets: [], source: 'wencai', selected: null, preview: null, cursor: null, tasks: [], polling: false, capacity: null, checked: new Set(), deleting: false, folderKind: null, folderData: null, folderRequest: 0 };
+const state = { presets: [], source: 'wencai', selected: null, preview: null, cursor: null, tasks: [], polling: false, capacity: null, checked: new Set(), deleting: false, folderKind: null, folderData: null, folderRequest: 0, folderSelected: null, folderHistory: [], folderIndex: -1 };
 const names = { draft: '待启动', starting: '启动中', running: '运行中', pausing: '暂停中', paused: '已暂停', finished: '已完成', partial: '部分完成', failed: '失败' };
 function node(tag, text, className) { const el = document.createElement(tag); if (text !== undefined) el.textContent = text; if (className) el.className = className; return el; }
 function button(text, action, className = 'text-button') { const el = node('button', text, className); el.type = 'button'; el.onclick = action; return el; }
@@ -87,39 +87,80 @@ function renderFolders() {
   const data = state.folderData; if (!data) return;
   $('folder-list').replaceChildren();
   const query = $('folder-search').value.trim().toLowerCase();
-  const items = data.directories.filter(item => item.name.toLowerCase().includes(query) || item.path.toLowerCase().includes(query));
+  const items = data.entries.filter(item => item.name.toLowerCase().includes(query));
   for (const item of items) {
-    const row = node('div', undefined, 'folder-option'), name = button(item.name, () => loadFolders(item.path), 'folder-name text-button');
-    const body = node('div'); body.append(name, node('code', item.path, 'folder-option-path'));
-    if (state.folderKind === 'input') body.append(node('small', folderStats(item.stats), 'folder-option-stats'));
-    row.append(body, button('选用', () => useFolder(item.path, item.stats))); $('folder-list').append(row);
+    const row = node('tr', undefined, 'folder-option'); row.dataset.path = item.path;
+    const select = () => { if (!item.disabled) { state.folderSelected = item; updateFolderSelection(); } };
+    const enter = () => { if (!item.disabled && item.kind === 'directory') { $('folder-search').value = ''; void loadFolders(item.path); } };
+    const name = button(item.name, select, 'folder-name text-button');
+    name.disabled = item.disabled; name.title = item.reason || item.path;
+    name.onkeydown = event => { if (event.key === 'Enter' && item.kind === 'directory') { event.preventDefault(); enter(); } };
+    const label = node('td'), icon = node('span', item.kind === 'directory' ? '▸' : '·', 'entry-icon'); icon.setAttribute('aria-hidden', 'true');
+    label.append(icon, name);
+    if (item.reason) label.append(node('small', item.reason, 'entry-error'));
+    const counts = node('td', undefined, 'file-count');
+    counts.append(node('span', item.stats ? item.stats.records.toLocaleString() + ' 条' : item.records !== undefined ? item.records.toLocaleString() + ' 条' : '—'));
+    if (item.stats) counts.append(node('small', item.stats.files + ' 个 JSONL' + (item.stats.pendingFiles ? ' · ' + item.stats.pendingFiles + ' 个待统计' : '')));
+    row.append(label, node('td', item.link ? '链接' : item.kind === 'directory' ? '文件夹' : '文件'), counts,
+      node('td', item.kind === 'file' && item.bytes !== undefined ? formatBytes(item.bytes) : item.stats ? formatBytes(item.stats.bytes) : '—'));
+    row.onclick = select; row.ondblclick = enter; $('folder-list').append(row);
   }
-  if (!items.length) $('folder-list').append(node('p', query ? '没有匹配目录' : '没有子目录，可使用当前目录。', 'check-meta'));
+  if (!items.length) { const row = node('tr'), cell = node('td', query ? '没有匹配的文件或文件夹' : '此文件夹为空。'); cell.colSpan = 4; row.append(cell); $('folder-list').append(row); }
+  updateFolderSelection();
 }
-async function loadFolders(directory, quiet = false) {
+function updateFolderSelection() {
+  const selected = state.folderSelected;
+  $('folder-selected').textContent = selected?.path || '';
+  $('folder-selection-stats').textContent = selected?.kind === 'file' ? '请选择文件夹，不能将文件作为目录提交。' : state.folderKind === 'input' ? folderStats(selected?.stats) : '';
+  $('use-folder').disabled = !selected || selected.disabled || selected.kind !== 'directory';
+  $('use-folder').textContent = selected?.path === state.folderData?.path ? '选择当前文件夹' : '选择此文件夹';
+  for (const row of $('folder-list').querySelectorAll('tr[data-path]')) {
+    const checked = row.dataset.path === selected?.path;
+    row.classList.toggle('is-selected', checked); row.setAttribute('aria-selected', String(checked));
+  }
+  $('folder-back').disabled = state.folderIndex <= 0;
+  $('folder-forward').disabled = state.folderIndex >= state.folderHistory.length - 1;
+}
+async function loadFolders(directory, quiet = false, remember = true) {
   const request = ++state.folderRequest, kind = state.folderKind;
   if (!quiet) {
     $('folder-error').textContent = ''; $('use-folder').disabled = true;
-    $('folder-list').replaceChildren(node('p', '读取目录…', 'check-meta'));
+    const row = node('tr'), cell = node('td', '读取目录…'); cell.colSpan = 4; row.append(cell); $('folder-list').replaceChildren(row);
   }
   try {
-    const data = await api('/api/directories?preset=' + encodeURIComponent($('preset').value) + '&kind=' + kind +
+    const data = await api('/api/directories?kind=' + kind + '&hidden=' + Number($('folder-hidden').checked) +
       (directory ? '&path=' + encodeURIComponent(directory) : ''));
     if (request !== state.folderRequest) return;
     state.folderData = data;
-    $('folder-current').textContent = data.path || '选择一个已配置的目录范围';
-    $('folder-parent').disabled = !data.parent; $('use-folder').disabled = !data.path;
+    if (!quiet && remember && state.folderHistory[state.folderIndex] !== data.path) {
+      state.folderHistory = state.folderHistory.slice(0, state.folderIndex + 1); state.folderHistory.push(data.path); state.folderIndex++;
+    }
+    const selected = quiet && data.entries.find(item => item.path === state.folderSelected?.path);
+    state.folderSelected = selected || { path: data.path, kind: 'directory', stats: data.stats };
+    $('folder-location').value = data.path;
+    $('folder-breadcrumbs').replaceChildren();
+    const relative = data.path.slice(data.root.length).split('/').filter(Boolean);
+    let current = data.root;
+    const crumb = file => button(basename(file) || '/', () => { $('folder-search').value = ''; void loadFolders(file); });
+    $('folder-breadcrumbs').append(crumb(current));
+    for (const part of relative) { current = current.replace(/\/$/, '') + '/' + part; $('folder-breadcrumbs').append(node('span', '›'), crumb(current)); }
+    $('folder-parent').disabled = !data.parent; $('new-folder').disabled = kind !== 'output';
+    $('folder-roots').title = data.root;
     $('folder-status').textContent = kind === 'input' ?
-      (data.path ? folderStats(data.stats) + '。' : '') +
-      (data.refreshing ? '后台正在更新统计；已完成的目录会陆续显示数量。' : '每小时增量更新，记录数尚未校验有效性。') : '输出目录可在此选择，也可返回手动填写新路径。';
-    $('folder-error').textContent = [data.error, ...(data.unavailable || []).map(item => item.path + '：' + item.reason)].filter(Boolean).join('；');
+      (data.stats ? folderStats(data.stats) + '。' : '') +
+      (data.refreshing ? '输入统计在后台更新，目录始终实时读取。' : '输入目录统计每小时自动更新；记录数尚未校验。') : '选择现有文件夹，或在当前位置新建结果文件夹。';
+    $('folder-error').textContent = data.error || '';
     renderFolders();
+    return data.path;
   } catch (error) { if (request === state.folderRequest) { $('folder-error').textContent = error.message; if (!quiet) $('folder-list').replaceChildren(); } }
 }
 function openFolders(kind) {
-  state.folderKind = kind; state.folderData = null; $('folder-search').value = '';
+  state.folderKind = kind; state.folderData = null; state.folderSelected = null;
+  state.folderHistory = []; state.folderIndex = -1; $('folder-search').value = ''; $('folder-hidden').checked = false;
+  $('new-folder-form').hidden = true; $('new-folder').hidden = kind !== 'output';
+  $('folder-picker').classList.toggle('output-mode', kind === 'output');
   $('folder-title').textContent = kind === 'input' ? '选择评测输入目录' : '选择评测输出目录';
-  $('folder-picker').showModal(); void loadFolders();
+  $('folder-picker').showModal(); void loadFolders((kind === 'input' ? $('input-directory') : $('output')).value.trim() || undefined);
 }
 function summary(task, target) {
   target.replaceChildren();
@@ -161,7 +202,7 @@ function summary(task, target) {
   for (const warning of task.warnings || []) target.append(node('p', warning, 'path-warning'));
   if (check?.status === 'ready') target.append(node('p', '数量以本次检查为准，启动时按最新结果跳过。', 'check-meta'));
 }
-function formatBytes(value) { return value >= 1024 ** 3 ? (value / 1024 ** 3).toFixed(2) + ' GB' : (value / 1024 ** 2).toFixed(1) + ' MB'; }
+function formatBytes(value) { return value < 1024 ? value + ' B' : value < 1024 ** 2 ? (value / 1024).toFixed(1) + ' KB' : value < 1024 ** 3 ? (value / 1024 ** 2).toFixed(1) + ' MB' : (value / 1024 ** 3).toFixed(2) + ' GB'; }
 function checkText(task) {
   const check = task.dataCheck;
   return check?.status === 'checking' ? '已读取 ' + check.readRecords.toLocaleString() + ' 条 · ' + check.checkedFiles + '/' + check.files + ' 文件' :
@@ -282,11 +323,30 @@ document.querySelectorAll('[data-detail]').forEach(el => el.onclick = () => setD
 $('new-task').onclick = openCreate; $('empty-create').onclick = openCreate; $('preset').onchange = fillPreset; $('back').onclick = editMode;
 $('choose-input').onclick = () => openFolders('input'); $('choose-output').onclick = () => openFolders('output');
 $('input-directory').oninput = () => { $('input-folder-stats').textContent = ''; };
-$('close-folder-picker').onclick = () => { state.folderRequest++; $('folder-picker').close(); };
+const closeFolders = () => { state.folderRequest++; $('folder-picker').close(); };
+$('close-folder-picker').onclick = closeFolders; $('cancel-folder-picker').onclick = closeFolders;
 $('folder-roots').onclick = () => { $('folder-search').value = ''; void loadFolders(); };
+$('folder-reload').onclick = () => loadFolders(state.folderData?.path);
 $('folder-parent').onclick = () => { if (state.folderData?.parent) { $('folder-search').value = ''; void loadFolders(state.folderData.parent); } };
+$('folder-location-form').onsubmit = event => { event.preventDefault(); $('folder-search').value = ''; void loadFolders($('folder-location').value.trim() || undefined); };
+async function folderHistory(step) {
+  const index = state.folderIndex + step, directory = state.folderHistory[index]; if (!directory) return;
+  $('folder-search').value = '';
+  if (await loadFolders(directory, false, false) === directory) { state.folderIndex = index; updateFolderSelection(); }
+}
+$('folder-back').onclick = () => folderHistory(-1); $('folder-forward').onclick = () => folderHistory(1);
+$('folder-hidden').onchange = () => loadFolders(state.folderData?.path);
 $('folder-search').oninput = renderFolders;
-$('use-folder').onclick = () => { if (state.folderData?.path) useFolder(state.folderData.path, state.folderData.stats); };
+$('use-folder').onclick = () => { const selected = state.folderSelected; if (selected && !selected.disabled && selected.kind === 'directory') useFolder(selected.path, selected.stats); };
+$('new-folder').onclick = () => { $('new-folder-form').hidden = false; $('new-folder-name').value = ''; $('new-folder-name').focus(); };
+$('cancel-new-folder').onclick = () => { $('new-folder-form').hidden = true; };
+$('new-folder-form').onsubmit = event => {
+  event.preventDefault(); if (!state.folderData?.path || state.folderKind !== 'output') return;
+  void busy($('create-folder'), 'folder-error', async () => {
+    const result = await api('/api/directories', { kind: 'output', parent: state.folderData.path, name: $('new-folder-name').value });
+    $('new-folder-form').hidden = true; await loadFolders(result.path);
+  });
+};
 $('close-create').onclick = () => $('create').close(); $('create').onclose = () => { state.preview = null; };
 $('close-detail').onclick = $('close-detail-bottom').onclick = () => $('detail').close(); $('close-capacity').onclick = () => $('capacity').close();
 $('configuration').addEventListener('invalid', event => { const details = event.target.closest('details'); if (details) details.open = true; }, true);

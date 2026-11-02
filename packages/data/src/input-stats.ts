@@ -44,7 +44,7 @@ export class InputDirectoryStats {
   private readonly stop = new AbortController();
   private timer?: ReturnType<typeof setInterval>;
   private failure?: string;
-  constructor(private readonly file: string, private readonly roots: string[]) {}
+  constructor(private readonly file: string, private readonly root: string) {}
 
   async initialize() {
     try {
@@ -109,13 +109,18 @@ export class InputDirectoryStats {
       totals.checkedAt = new Date().toISOString(); this.data.directories[directory] = totals;
       return totals;
     };
-    const roots: string[] = [];
-    for (const source of this.roots) {
-      try { roots.push(await realpath(source)); }
-      catch (error) { errors.push({ path: source, reason: errorText(error) }); }
-    }
-    const unique = [...new Set(roots)];
-    for (const root of unique) await visit(root);
+    const discover = async (directory: string): Promise<void> => {
+      this.stop.signal.throwIfAborted();
+      if (/(?:^|_)(?:eval|user)_input$/.test(path.basename(directory))) { await visit(directory); return; }
+      try {
+        for (const entry of await readdir(directory, { withFileTypes: true })) {
+          if (!entry.isDirectory() || !visible(entry.name) ||
+              /^(?:node_modules|\.venv|(?:\d+_)?(?:eval_output|archive|7z_data))$/.test(entry.name)) continue;
+          await discover(path.join(directory, entry.name));
+        }
+      } catch (error) { this.stop.signal.throwIfAborted(); errors.push({ path: directory, reason: errorText(error) }); }
+    };
+    await discover(await realpath(this.root));
     for (const file of Object.keys(this.data.files)) if (!seenFiles.has(file)) delete this.data.files[file];
     for (const directory of Object.keys(this.data.directories)) if (!seenDirectories.has(directory)) delete this.data.directories[directory];
     // Publish the cheap inventory first, so huge first-time scans never present unknown file counts.
@@ -141,26 +146,51 @@ export class InputDirectoryStats {
     await writeJson(this.file, this.data);
   }
 
-  async browse(allowedRoots: string[], requested?: string, input = true) {
-    const roots: string[] = [], unavailable: { path: string; reason: string }[] = [];
-    for (const root of allowedRoots) {
-      try { const actual = await realpath(root); if (!roots.includes(actual)) roots.push(actual); }
-      catch (error) { unavailable.push({ path: root, reason: errorText(error) }); }
-    }
-    const item = (file: string) => ({ name: path.basename(file), path: file,
-      ...(input ? { stats: this.data.directories[file] } : {}) });
-    if (requested === undefined) return { path: null, parent: null, directories: roots.map(item),
-      refreshing: !!this.pending, updatedAt: this.data.updatedAt, error: this.failure, unavailable };
-    if (!path.isAbsolute(requested)) throw new HttpError(400, "目录须为绝对路径");
-    const directory = await realpath(requested);
-    if (!roots.some(root => inside(directory, root))) throw new HttpError(403, "目录不在预设允许的范围内");
-    const directories = (await readdir(directory, { withFileTypes: true }))
-      .filter(entry => entry.isDirectory() && visible(entry.name)).map(entry => item(path.join(directory, entry.name)))
-      .sort((a, b) => a.name.localeCompare(b.name, "zh-CN", { numeric: true }));
+  private async location(requested?: string) {
+    const root = await realpath(this.root);
+    if (requested !== undefined && !path.isAbsolute(requested)) throw new HttpError(400, "目录须为绝对路径");
+    let directory: string;
+    try { directory = requested === undefined ? root : await realpath(requested); }
+    catch (error) { if ((error as NodeJS.ErrnoException).code === "ENOENT") throw new HttpError(404, "目录不存在，请检查路径"); throw error; }
+    if (!inside(directory, root)) throw new HttpError(403, "目录不在允许的文件系统范围内");
+    if (!(await stat(directory)).isDirectory()) throw new HttpError(400, "请选择文件夹，当前路径是文件");
+    return { root, directory };
+  }
+  async browse(requested?: string, input = true, hidden = false) {
+    const { root, directory } = await this.location(requested);
+    const entries = await Promise.all((await readdir(directory, { withFileTypes: true }))
+      .filter(entry => hidden || visible(entry.name)).map(async entry => {
+        const file = path.join(directory, entry.name);
+        const result: { name: string; path: string; kind: "directory" | "file"; link: boolean; disabled: boolean;
+          bytes?: number; modifiedAt?: number; stats?: DirectoryStats; records?: number; reason?: string } = {
+          name: entry.name, path: file, kind: entry.isDirectory() ? "directory" : "file", link: entry.isSymbolicLink(), disabled: false,
+        };
+        try {
+          const actual = entry.isSymbolicLink() ? await realpath(file) : file;
+          if (!inside(actual, root)) { result.disabled = true; result.reason = "链接目标在允许范围之外"; return result; }
+          const info = await stat(file); result.kind = info.isDirectory() ? "directory" : "file";
+          result.bytes = info.size; result.modifiedAt = info.mtimeMs;
+          if (input && result.kind === "directory") result.stats = this.data.directories[actual];
+          if (input && result.kind === "file") {
+            const known = this.data.files[actual];
+            if (known?.mtimeMs === info.mtimeMs && known.bytes === info.size) result.records = known.records;
+          }
+        } catch (error) { result.disabled = true; result.reason = errorText(error); }
+        return result;
+      }));
+    entries.sort((a, b) => Number(b.kind === "directory") - Number(a.kind === "directory") || a.name.localeCompare(b.name, "zh-CN", { numeric: true }));
     const parent = path.dirname(directory);
-    return { path: directory, parent: parent !== directory && roots.some(root => inside(parent, root)) ? parent : null,
-      stats: input ? this.data.directories[directory] : undefined, directories,
-      refreshing: !!this.pending, updatedAt: this.data.updatedAt, error: this.failure, unavailable };
+    return { root, path: directory, parent: directory === root ? null : parent,
+      stats: input ? this.data.directories[directory] : undefined, entries,
+      refreshing: !!this.pending, updatedAt: this.data.updatedAt, error: this.failure };
+  }
+  async createDirectory(parent: string, name: string) {
+    if (!name.trim() || [".", ".."].includes(name.trim()) || /[/\\\0]/.test(name) || Buffer.byteLength(name.trim()) > 255)
+      throw new HttpError(400, "文件夹名称不能为空，也不能包含路径分隔符");
+    const { directory } = await this.location(parent), file = path.join(directory, name.trim());
+    try { await localFiles.mkdir(file); }
+    catch (error) { if ((error as NodeJS.ErrnoException).code === "EEXIST") throw new HttpError(409, "同名文件或文件夹已经存在"); throw error; }
+    return { path: file };
   }
   async close() {
     clearInterval(this.timer); this.stop.abort(new Error("输入统计已停止"));
