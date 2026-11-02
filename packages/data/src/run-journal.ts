@@ -10,7 +10,7 @@ import type {
   TaskState,
   Usage,
 } from "@eval/contracts";
-import { canonical, safeId } from "@eval/contracts";
+import { canonical } from "@eval/contracts";
 import { appendJsonl, atomicWrite } from "./files.js";
 
 export type ManifestJournalPatch = Partial<Omit<RunManifest, "tasks" | "states" | "inputCatalog">> & {
@@ -211,7 +211,8 @@ export function applyRunJournalDelta(state: RunState, event: RunJournalDelta): v
 
 export function runHotFile(root: string, run: string): string {
   const key = Buffer.from(path.resolve(run), "utf8").toString("base64url");
-  return path.join(root, safeId(key) + ".sqlite");
+  // Reversible path encoding needs bounded filesystem components, not an identifier length gate.
+  return path.join(root, ...key.match(/.{1,180}/g)!) + ".sqlite";
 }
 
 export function runJournalIdentity(state: RunState): string {

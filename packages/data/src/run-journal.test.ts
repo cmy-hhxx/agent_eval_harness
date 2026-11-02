@@ -26,6 +26,19 @@ const state = (): RunState => ({
   receipts: {}, usage: emptyUsage(), recordedAttempts: 0,
 });
 
+test("long user-selected output paths retain distinct durable hot journals without hashing", async t => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "eval-hot-long-"));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const run = "/evaluation/" + "source/".repeat(40) + "console-run";
+  const file = runHotFile(root, run);
+  assert.notEqual(file, runHotFile(root, run + "-other"));
+  assert(path.relative(root, file).split(path.sep).every(part => Buffer.byteLength(part) < 255));
+  const hot = new RunHotStore(file, "long-output");
+  hot.append({ at: 1 }); hot.close();
+  const restored = new RunHotStore(file, "long-output");
+  assert.equal(restored.eventsAfter().length, 1); restored.close();
+});
+
 test("progress enrichment permits only a previously absent exported reference", () => {
   const receipt = { taskId: "task", attemptId: "attempt", submissionId: "submission", evaluation: { ok: true },
     usage: emptyUsage(), audit: { calls: 0, requiredReadCalls: 0, traceReads: [], viewedImages: [], calculations: [], artifacts: [] },
