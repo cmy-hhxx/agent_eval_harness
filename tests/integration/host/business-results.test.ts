@@ -134,6 +134,27 @@ test("resuming a partially published run verifies its own receipts without block
   } finally { await closeChanged(); }
 });
 
+test("a failed admission publication batch isolates its bad model and still reuses the independent model", async t => {
+  const f = await fixtureConfig([[input()], [], [input()], []]);
+  t.after(() => rm(f.directory, { recursive: true, force: true }));
+  const config = { ...f.config, workflow: "attribution", output: { ...f.config.output, layout: "business", reuseCompleted: true },
+    inputs: { ...f.config.inputs, batches: ["2026-10-26"], versions: [f.config.inputs.versions[0], f.config.inputs.versions[2]] } } as AttributionConfig;
+  await completed(config, "batch-source", "original", "保留原判词", Date.now() + 10);
+  const bad = config.inputs.versions[0].id, good = config.inputs.versions[1].id;
+  const bare = { session_meta: { session_id: "unrelated" }, turns: [], session_summary: "独立的原始行" };
+  const badFile = path.join(config.output.path, bad, `${bad}_attribution-2026-10-26.jsonl`);
+  await writeJsonl(badFile, [bare]);
+  const next = await prepare(config, "batch-reuse"), close = await businessAttributionRepository.prepareRun!(next.run, next.state, next.plan.inputs);
+  try {
+    const sessions = next.state.manifest.tasks.filter(task => task.stage === "attribution-session");
+    const byModel = (model: string) => sessions.find(task => (task.data as { candidate: { version: string } }).candidate.version === model)!;
+    assert(next.state.manifest.states[byModel(bad).id].admissionBlock);
+    assert.equal(next.state.receipts[byModel(good).id].evaluatorVersion, "original");
+    const preserved = []; for await (const row of readJsonl(badFile)) preserved.push(row);
+    assert.deepEqual(preserved, [bare]);
+  } finally { await close(); }
+});
+
 test("organized historical verdicts retain missing newer fields and are reused from an explicitly located ledger", async t => {
   const f = await fixtureConfig([[input()], [], [], []]);
   t.after(() => rm(f.directory, { recursive: true, force: true }));

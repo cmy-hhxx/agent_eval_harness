@@ -235,6 +235,7 @@ export function businessResultRepository(repository: RunRepository, adapters: {
         }
         // Different run UUIDs converge only after the original input bodies have matched.
         const verified: BusinessResult[] = [];
+        const publications: BusinessPublication[] = [];
         for (const record of unique.values()) {
           if (!record.answers.length || record.answers.some(answer => {
             const candidate = requested.get(answerBusinessKey(answer));
@@ -245,16 +246,24 @@ export function businessResultRepository(repository: RunRepository, adapters: {
           const source = sourceStates.get(record.origin.run)!, receipt = source.receipts[record.origin.taskId];
           if (!receipt?.exported) continue;
           if (!delivery) { verified.push({ ...updated, published: true }); continue; }
-          try {
-            const map = organization.get(record.origin.run);
-            const line = map?.get(canonical([record.origin.reference.file, record.origin.reference.line]))?.get(updated.file);
-            await publish!(updated, receipt.exported.row, false, line);
-            // The delivery is durable; later shards may reuse this verdict in the same run.
-            const published = { ...updated, line: 0, published: true };
-            if (prefer(latest.get(published.id), published)) latest.set(published.id, published);
-          }
-          catch (error) {
-            for (const answer of record.answers) blocks.set(requested.get(answerBusinessKey(answer))!.input_id, errorText(error));
+          const map = organization.get(record.origin.run);
+          const line = map?.get(canonical([record.origin.reference.file, record.origin.reference.line]))?.get(updated.file);
+          publications.push({ record: updated, row: receipt.exported.row, existingLine: line });
+        }
+        const remember = ({ record }: BusinessPublication) => {
+          // The delivery is durable; later shards may reuse this verdict in the same run.
+          const published = { ...record, line: 0, published: true };
+          if (prefer(latest.get(published.id), published)) latest.set(published.id, published);
+        };
+        try { await publish!.many(publications); publications.forEach(remember); }
+        catch {
+          // Isolate an invalid delivery without blocking independent answers. Retrying
+          // already published entries is idempotent, including a partly written batch.
+          for (const entry of publications) try {
+            await publish!.many([entry]); remember(entry);
+          } catch (error) {
+            for (const answer of entry.record.answers)
+              blocks.set(requested.get(answerBusinessKey(answer))!.input_id, errorText(error));
           }
         }
         for (const record of verified) if (prefer(latest.get(record.id), record)) latest.set(record.id, record);
