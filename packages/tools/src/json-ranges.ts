@@ -3,8 +3,11 @@ export function jsonRanges(text: string) {
   const ranges = new Map<string, { start: number; end: number; valueStart: number }>();
   // Validate before indexing; the scanner then only has to preserve original UTF-16 offsets.
   JSON.parse(text);
-  let cursor = 0;
-  const space = () => { while (/\s/u.test(text[cursor] ?? "") && cursor < text.length) cursor++; };
+  let cursor = 0, lineStart = 0;
+  const space = () => { while (/\s/u.test(text[cursor] ?? "") && cursor < text.length) {
+    if (text[cursor] === "\n") lineStart = cursor + 1;
+    cursor++;
+  } };
   const string = () => {
     const start = cursor++;
     while (cursor < text.length) {
@@ -24,8 +27,7 @@ export function jsonRanges(text: string) {
         const whitespace = cursor;
         space();
         if (text[cursor] === close) break;
-        const keyStart = text.lastIndexOf("\n", cursor - 1) + 1;
-        const entryStart = Math.max(whitespace, keyStart);
+        const entryStart = Math.max(whitespace, lineStart);
         const key = object ? string() : String(index++);
         if (object) { space(); cursor++; }
         value(path + "/" + key.replaceAll("~", "~0").replaceAll("/", "~1"), entryStart);

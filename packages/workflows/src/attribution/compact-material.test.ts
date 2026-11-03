@@ -28,6 +28,18 @@ test("large tool receipts do not block material assembly with repeated source sc
   assert(elapsed < 3000, `source matching blocked material assembly for ${Math.round(elapsed)}ms`);
 });
 
+test("large JSON receipts split without repeated image-placeholder scans", () => {
+  const text = JSON.stringify({ datas: Array.from({ length: 40_000 }, (_, index) => ({ ticker: `ROW-${index}`, value: index })) });
+  const started = performance.now();
+  const ranges = compactTextRanges(text);
+  const elapsed = performance.now() - started;
+  const selected = ranges.map(range => text.slice(range.start, range.end)).join("");
+  assert(ranges.every(range => range.end - range.start <= 400));
+  assert(selected.includes(JSON.stringify({ ticker: "ROW-0", value: 0 })));
+  assert(selected.includes(JSON.stringify({ ticker: "ROW-39999", value: 39999 })));
+  assert(elapsed < 3000, `JSON material splitting blocked for ${Math.round(elapsed)}ms`);
+});
+
 test("text evidence never includes or bridges image placeholders", () => {
   const text = JSON.stringify({ before: "原始返回。".repeat(35), image: imagePlaceholder, after: "后续事实。".repeat(60) });
   const ranges = compactTextRanges(text);
