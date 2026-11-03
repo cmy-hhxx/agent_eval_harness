@@ -4,6 +4,30 @@ import { compactFinalMaterial, compactProcessExcerpts, compactTextRanges } from 
 import { imagePlaceholder, overlapsImagePlaceholder } from "@eval/contracts";
 
 const id = "11111111-1111-4111-8111-111111111111";
+test("source matching requires unchanged text at the same original path", () => {
+  const original = { messages: [
+    { type: "llm_turn", reasoning: "可移位的原文。", thinking: "保留的原文。", analysis: "原始分析。" },
+    { type: "final_answer", content: "完成。" },
+  ] };
+  const raw = structuredClone(original);
+  raw.messages[0]!.reasoning = "被改写的文字。";
+  raw.messages[0]!.analysis = "可移位的原文。";
+  const excerpts = compactProcessExcerpts("reasoning_chain", raw, original, id, [{ trace_index: 0 }, { trace_index: 0 }], 0, 1);
+  assert.deepEqual(excerpts.map(row => row.quote), ["保留的原文。"]);
+});
+
+test("large tool receipts do not block material assembly with repeated source scans", () => {
+  const raw = { messages: [
+    { type: "tool_result", output: { datas: Array.from({ length: 30_000 }, (_, index) => ({ label: `row-${index}`, value: `value-${index}` })) } },
+    { type: "final_answer", content: "完成。" },
+  ] };
+  const started = performance.now();
+  const excerpts = compactProcessExcerpts("plans", raw, raw, id, [{ trace_index: 0 }, { trace_index: 0 }], 0, 1);
+  const elapsed = performance.now() - started;
+  assert.deepEqual(excerpts, []);
+  assert(elapsed < 3000, `source matching blocked material assembly for ${Math.round(elapsed)}ms`);
+});
+
 test("text evidence never includes or bridges image placeholders", () => {
   const text = JSON.stringify({ before: "原始返回。".repeat(35), image: imagePlaceholder, after: "后续事实。".repeat(60) });
   const ranges = compactTextRanges(text);

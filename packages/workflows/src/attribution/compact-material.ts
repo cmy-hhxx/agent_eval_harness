@@ -68,9 +68,10 @@ function sources(raw: RawInput, original: RawInput, positions: { trace_index: nu
   }
   const entries = raw.messages.flatMap((message, message_index) => {
     const publicSources = evidenceSources(message), originalSources = evidenceSources(original.messages[message_index]);
+    const originalText = new Map(originalSources.filter(source => source.kind === "text").map(source => [source.path, source.text]));
     const result: Entry[] = publicSources.filter(source => source.kind === "text" && source.quotable !== false && source.text.trim() &&
       /^\/(?:content|input|output|result|arguments|parameters|reasoning_content|reasoning|thinking|analysis|error)(?:\/|$)/u.test(source.path) &&
-      originalSources.some(other => other.kind === source.kind && other.path === source.path && other.text === source.text))
+      originalText.get(source.path) === source.text)
       .map(source => ({ message_index, source, start: 0, end: source.text.length, path: source.path }));
     // Tool observations in model inputs remain execution evidence, without treating the snapshot as a fresh invocation.
     const seen = observations.get(positions[message_index]!.trace_index) ?? new Set<string>();
@@ -82,7 +83,7 @@ function sources(raw: RawInput, original: RawInput, positions: { trace_index: nu
     result.push(...publicSources.filter(source => source.kind === "text" && source.quotable !== false && source.text.trim() &&
       /^\/input_messages\/(?:messages\/)?\d+\/content(?:\/|$)/u.test(source.path) && evidenceOrigin(message, source.path).enclosing_role === "tool" &&
       anchor >= 0 && Number(/^\/input_messages\/(?:messages\/)?(\d+)/u.exec(source.path)![1]) > anchor &&
-      !seen.has(source.text) && originalSources.some(other => other.kind === source.kind && other.path === source.path && other.text === source.text) &&
+      !seen.has(source.text) && originalText.get(source.path) === source.text &&
       (seen.add(source.text), true))
       .map(source => ({ message_index, source, start: 0, end: source.text.length, path: source.path })));
     if (publicSources.find(source => source.kind === "json")?.text === originalSources.find(source => source.kind === "json")?.text) {
