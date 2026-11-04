@@ -34,6 +34,10 @@
     "./compact": {
       "types": "./compact.d.ts",
       "import": "./compact.js"
+    },
+    "./rubric": {
+      "types": "./rubric.d.ts",
+      "import": "./rubric.js"
     }
   }
 }

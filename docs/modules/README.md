@@ -25,6 +25,7 @@
 | 归因维度 | 维度登记、独立材料绑定与结果封装 | [dimensions.ts](../../packages/workflows/src/review/dimensions.ts) |
 | Comparison Workflow | 输入、盲测、阶段绑定、改写回填、责任摘要、稳定性实验与报告 | [index.ts](../../packages/workflows/src/comparison/index.ts) |
 | Attribution Workflow | 独立 session 归因的任务规划、提交、恢复与正式导出 | [index.ts](../../packages/workflows/src/attribution/index.ts) |
+| Rubric | 通用/专项材料隔离、固定 checklist、分批合并与独立结果交付 | [Workflow](../../packages/workflows/src/rubric/index.ts) · [Agent](../../packages/agents/src/rubric/index.ts) · [用法](../rubric.md) |
 | Data | 文件、锁、日志、存储与 IO | [index.ts](../../packages/data/src/index.ts) |
 | Runtime | Worker、HTTP/SSE、会话及双 SDK | [客户端](../../packages/runtime/src/client-entry.ts)、[Worker](../../packages/runtime/src/server.ts)、[助手](../../packages/runtime/src/assistant.ts) |
 | Tools | 证据、分页、图片、计算、代码与搜索 | [index.ts](../../packages/tools/src/index.ts) |

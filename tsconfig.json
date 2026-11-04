@@ -101,6 +101,12 @@
       ],
       "@eval/host-app/preflight": [
         "./apps/host/src/preflight.ts"
+      ],
+      "@eval/agents/rubric": [
+        "./packages/agents/src/rubric/index.ts"
+      ],
+      "@eval/workflows/rubric": [
+        "./packages/workflows/src/rubric/index.ts"
       ]
     }
   },

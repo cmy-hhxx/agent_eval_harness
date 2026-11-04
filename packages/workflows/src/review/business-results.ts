@@ -25,7 +25,7 @@ export function businessScope(task: PlannedTask) {
     criteriaScope: data.criteriaScope ?? null,
     prediction: data.prediction !== undefined, verification: data.verificationAudit === true,
     standardAnswerReview: data.standardAnswerReview === true,
-    ...(!["criteria", "attribution-session", "comparison"].includes(task.stage) ? { instance: task.id, scope: data.scope ?? null } : {}) };
+    ...(!["criteria", "attribution-session", "comparison", "rubric-case"].includes(task.stage) ? { instance: task.id, scope: data.scope ?? null } : {}) };
 }
 export function businessResultKey(stage: string, answers: BusinessAnswer[], scope: unknown) {
   return canonical([stage, answers.map(answer => [answer.model, answer.id]).sort(), scope]);
@@ -49,6 +49,7 @@ export function businessDestination(task: PlannedTask, state: RunState, file: st
   const date = businessBatch(candidates[0]?.batch_id ?? scope?.batch_id ?? "");
   if (candidates.some(candidate => candidate.batch_id !== date)) throw new Error("同一正式结果混入不同业务批次");
   safeId(file);
+  if (task.stage === "rubric-case") return {date, file: "rubric.jsonl"};
   if (task.stage === "criteria") return { date, file: "criteria/criteria-" + date + ".jsonl" };
   const models = [...new Set(candidates.map(candidate => candidate.version))].sort();
   if (!models.length && scope?.version) models.push(scope.version);

@@ -23,7 +23,8 @@ export function businessResultRepository(repository: RunRepository): RunReposito
     const config = state.manifest.config as EvaluationConfig;
     const comparisons = (config as EvaluationConfig & { comparisons?: string[][] }).comparisons ?? [];
     const pairs = comparisons.flatMap(group => group.flatMap((a, i) => group.slice(i + 1).map(b => [a, b])));
-    const completed = readCompletedCases(config.output.path, config.inputs.versions.map(version => version.id), pairs);
+    const completed = readCompletedCases(config.output.path, config.inputs.versions.map(version => version.id), pairs,
+      (config as EvaluationConfig & {workflow?: string}).workflow === "rubric");
     const claimed = new Set<string>(), blocked = new Set<string>(), unlocks: (() => Promise<void>)[] = [];
     const skipped = new Set<string>();
     async function add(catalog: Candidate[], tasks: PlannedTask[], selected?: string[]) {
@@ -45,15 +46,15 @@ export function businessResultRepository(repository: RunRepository): RunReposito
         const task = all.get(id);
         if (task) Object.values(task.dependencies).forEach(visit);
       };
-      const terminalStages = new Set(["comparison", "attribution-session"]);
+      const terminalStages = new Set(["comparison", "attribution-session", "rubric-case"]);
       for (const task of tasks) {
-        if (task.stage === "comparison" || task.stage === "attribution-session" &&
+        if (task.stage === "comparison" || task.stage === "rubric-case" || task.stage === "attribution-session" &&
             !businessCandidates(task, state, all).some(candidate => compared.has(candidate.input_id))) {
           if (!done(task)) visit(task.id);
           else skipped.add(completedCaseKey(task.stage, businessCandidates(task, state, all).map(value => value.version),
             businessCandidates(task, state, all)[0]!.batch_id, businessCandidates(task, state, all)[0]!.case_id));
         } else if (!terminalStages.has(task.stage) && !task.stage.startsWith("attribution-") &&
-            !["criteria", "rewrite", "instruction-review"].includes(task.stage)) visit(task.id);
+            !["criteria", "rewrite", "instruction-review", "rubric-batch"].includes(task.stage)) visit(task.id);
       }
       // Explicit maintenance scopes and accepted in-run receipts retain their work and provenance.
       for (const id of selected ?? []) visit(id);
@@ -119,7 +120,8 @@ export function businessResultRepository(repository: RunRepository): RunReposito
         if (config.output.layout !== "business" || !Object.keys(state.receipts).length) return;
         const pairs = ((config as EvaluationConfig & { comparisons?: string[][] }).comparisons ?? [])
           .flatMap(group => group.flatMap((a, i) => group.slice(i + 1).map(b => [a, b])));
-        existingFinal ??= await readCompletedCases(config.output.path, config.inputs.versions.map(version => version.id), pairs);
+        existingFinal ??= await readCompletedCases(config.output.path, config.inputs.versions.map(version => version.id), pairs,
+          (config as EvaluationConfig & {workflow?: string}).workflow === "rubric");
         publisher ??= createBusinessPublisher(config.output.path);
         // The journal tracks accepted verdicts; a later rewrite can still update their
         // presentation without changing the accepted verdict or its source identity.

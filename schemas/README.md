@@ -8,6 +8,7 @@
 |---|---|
 | [score/](score/) | 原skill单题0–10总分、12项0–4及24诊断输出 |
 | [criteria/](criteria/) | 共同验收基准 |
+| [rubric/](rubric/) | 固定 checklist 逐条判定、L1/L2 和按 case 合并结果 |
 | [compact/](compact/) | 会话过程摘要；固定浅层字段、程序编号及可解析原文 |
 | [attribution/](attribution/) | 独立组件调查、Trace 摘要、跨轮审查与 Session 正式结果 |
 | [instruction-review/](instruction-review/) | 后置独立指令遵循归因、证据与核验账本 |

@@ -15,6 +15,7 @@ import { validateRun, validateClusteringJob, reportClusteringJob } from "@eval/w
 import { runClusteringCommand } from "./clustering-command.js";
 import { runAttributionCommand } from "./attribution-command.js";
 import { readAttributionWorkflowCommand, runAttributionWorkflowCommand } from "./attribution-workflow-command.js";
+import { runRubricWorkflowCommand } from "./rubric-command.js";
 import { runStabilityCommand } from "./stability-command.js";
 import { runModelProbe } from "./model-probe.js";
 import { evaluationRouting } from "./evaluation-routing.js";
@@ -385,6 +386,14 @@ progress: --run PATH`,
   if (["preflight", "run"].includes(command)) {
     const startup = await preflightHost({ ...host, evaluation: config } as typeof host, values["run-id"]);
     if (startup.length) throw new Error("Startup preflight failed: " + JSON.stringify(startup));
+  }
+  if ("workflow" in config && config.workflow === "rubric") {
+    process.exitCode = await runRubricWorkflowCommand({...host, workflow: "rubric", evaluation: config}, {
+      command, runId: values["run-id"], debug: values.debug, workers: values.worker,
+      limitCases: values["limit-cases"] ? Number(values["limit-cases"]) : undefined,
+      resumeStages: values["resume-stage"], balanceChannels: values["balance-channels"],
+    });
+    return;
   }
   if ("workflow" in config && config.workflow === "attribution") {
     process.exitCode = await runAttributionWorkflowCommand({ ...host, workflow: "attribution", evaluation: config }, {

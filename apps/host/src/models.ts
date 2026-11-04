@@ -59,10 +59,11 @@ export function boundProfiles(catalog: ModelCatalog): ModelProfile[] {
   return Object.values(catalog.bindings).map(binding => routedProfile(catalog, binding));
 }
 
-/** Attribution stages share a default; an exact stage binding can override its model settings. */
+/** Attribution and rubric stages share a default; an exact stage binding can override its model settings. */
 export function modelBindingStage(stage: string): string {
   if (stage === "attribution-compact-field") return "attribution-compact";
-  return stage.startsWith("attribution-") ? "attribution" : stage;
+  if (stage.startsWith("attribution-")) return "attribution";
+  return stage.startsWith("rubric-") ? "rubric" : stage;
 }
 
 export function createModelResolver(catalog: ModelCatalog): (stage: string) => ModelConfig {

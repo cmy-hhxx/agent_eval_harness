@@ -18,6 +18,10 @@
     "./review": {
       "types": "./review.d.ts",
       "import": "./review.js"
+    },
+    "./rubric": {
+      "types": "./rubric.d.ts",
+      "import": "./rubric.js"
     }
   }
 }

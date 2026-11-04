@@ -1,0 +1,14 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "required": [
+    "case_id",
+    "trace_index",
+    "category",
+    "task_question",
+    "answer",
+    "checklist",
+    "availability"
+  ],
+  "additionalProperties": true
+}

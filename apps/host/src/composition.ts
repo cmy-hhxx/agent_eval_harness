@@ -1,4 +1,5 @@
 import { compactAgent, compactProfile, compactFieldProfiles } from "@eval/agents/compact";
+import { rubricAgent } from "@eval/agents/rubric";
 import { scoreAgent } from "@eval/agents/score";
 import { attributionDimensions } from "@eval/workflows/review";
 import { configurationSecrets } from "./settings.js";
@@ -25,7 +26,7 @@ export async function initializeServices() {
   if (!await logger.initialize()) throw new Error("Runtime/evaluation log initialization failed");
 }
 export const agents = new AgentRegistry([compactAgent, scoreAgent, ...Object.values(attributionDimensions).map(dimension => dimension.agent),
-  criteriaAgent, comparisonAgent, attributionAgent, rewriteAgent, clusteringAgent]);
+  criteriaAgent, comparisonAgent, attributionAgent, rewriteAgent, clusteringAgent, rubricAgent]);
 export const services = {
   logger,
   agents,

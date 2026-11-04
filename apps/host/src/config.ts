@@ -1,5 +1,6 @@
 import type { EvaluationConfig } from "@eval/workflows/inputs";
 import type { AttributionConfig } from "@eval/workflows/attribution";
+import type { RubricConfig, RubricLabelSource } from "@eval/workflows/rubric";
 import path from "node:path";
 import { DEFAULT_POLICY, type OutputTarget, type ProblemLibraryTarget } from "@eval/contracts";
 import { readJson } from "@eval/data";
@@ -51,9 +52,11 @@ interface HostConfiguration {
 export type HostConfig = HostConfiguration & (
   | { workflow: "comparison"; evaluation: EvalConfig }
   | { workflow: "attribution"; evaluation: AttributionConfig }
+  | { workflow: "rubric"; evaluation: RubricConfig }
 );
 export type ComparisonHostConfig = Extract<HostConfig, { workflow: "comparison" }>;
 export type AttributionHostConfig = Extract<HostConfig, { workflow: "attribution" }>;
+export type RubricHostConfig = Extract<HostConfig, { workflow: "rubric" }>;
 
 function isObject(value: unknown): value is ConfigObject {
   return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -101,6 +104,12 @@ function readEvaluatorVersion(source: ConfigObject): string {
 async function readLocated(file: string): Promise<ConfigObject> {
   const source = await readJson<ConfigObject>(file);
   const directory = path.dirname(file);
+  if (isObject(source.rubric)) {
+    for (const key of ["standard", "attribution"] as const)
+      if (typeof source.rubric[key] === "string" && source.rubric[key].trim()) source.rubric[key] = path.resolve(directory, source.rubric[key]);
+    if (isObject(source.rubric.labels) && typeof source.rubric.labels.path === "string" && source.rubric.labels.path.trim())
+      source.rubric.labels.path = path.resolve(directory, source.rubric.labels.path);
+  }
   if (isObject(source.output))
     for (const key of ["path", "testPath"] as const)
       if (typeof source.output[key] === "string") {
@@ -143,7 +152,7 @@ function buildEvaluationBase(source: ConfigObject): EvaluationConfig {
     output: source.output as OutputTarget,
   };
   const versions = config.inputs?.versions;
-  const minimumVersions = source.workflow === "attribution" || config.inputs?.records ? 1 : 2;
+  const minimumVersions = ["attribution", "rubric"].includes(String(source.workflow)) || config.inputs?.records ? 1 : 2;
   if (!Array.isArray(versions) || versions.length < minimumVersions)
     throw new Error(minimumVersions === 1 ? "至少配置一个输入版本" : "至少配置两个输入版本");
   for (const item of versions) {
@@ -207,15 +216,36 @@ function buildEvaluationBase(source: ConfigObject): EvaluationConfig {
   return config;
 }
 
-type WorkflowEvaluation = EvalConfig | AttributionConfig;
+type WorkflowEvaluation = EvalConfig | AttributionConfig | RubricConfig;
+
+/** Rubric wording comes from the one standard file; labels come from outside the stage. */
+function buildRubric(source: unknown): RubricConfig["rubric"] {
+  if (!isObject(source)) throw new Error("Invalid rubric");
+  if (typeof source.standard !== "string" || !source.standard.trim()) throw new Error("Invalid rubric.standard");
+  const labels = source.labels;
+  let parsed: RubricLabelSource;
+  if (isObject(labels) && labels.mode === "file") {
+    if (typeof labels.path !== "string" || !labels.path.trim()) throw new Error("Invalid rubric.labels.path");
+    parsed = {mode: "file", path: labels.path};
+  } else if (isObject(labels) && labels.mode === "inline") {
+    if (!Array.isArray(labels.paths) || !labels.paths.length || labels.paths.some(path => typeof path !== "string" || !path.trim()))
+      throw new Error("Invalid rubric.labels.paths");
+    parsed = {mode: "inline", paths: labels.paths as string[]};
+  } else throw new Error("Invalid rubric.labels");
+  const batchSize = optionalPositiveInteger(source.batchSize, "rubric.batchSize") ?? 10;
+  if (typeof source.attribution !== "string" || !source.attribution.trim())
+    throw new Error("Invalid rubric.attribution");
+  return {standard: source.standard, labels: parsed, batchSize, attribution: source.attribution};
+}
 function isAttributionEvaluation(config: WorkflowEvaluation): config is AttributionConfig {
   return "workflow" in config && config.workflow === "attribution";
 }
 
 function buildEvaluation(source: ConfigObject): WorkflowEvaluation {
-  if (source.workflow !== undefined && !["comparison", "attribution"].includes(String(source.workflow))) throw new Error("Invalid workflow");
+  if (source.workflow !== undefined && !["comparison", "attribution", "rubric"].includes(String(source.workflow))) throw new Error("Invalid workflow");
   const base = buildEvaluationBase(source);
   if (source.workflow === "attribution") return { ...base, workflow: "attribution" };
+  if (source.workflow === "rubric") return { ...base, workflow: "rubric", rubric: buildRubric(source.rubric) };
   const config: EvalConfig = {
     ...base,
     problemLibrary: source.problemLibrary as ProblemLibraryTarget,
@@ -372,6 +402,7 @@ export async function loadConfig(
   const evaluation = buildEvaluation(source), models = buildModels(source, configuration);
   const common = { evaluatorVersion, models };
   if (isAttributionEvaluation(evaluation)) return { ...common, workflow: "attribution", evaluation };
+  if ("workflow" in evaluation && evaluation.workflow === "rubric") return { ...common, workflow: "rubric", evaluation };
   if ([evaluation.rewrite.comparison, evaluation.rewrite.attribution, evaluation.rewrite.clustering].some(Boolean) && !models.bindings.rewrite)
     throw new Error("rewrite 已启用但缺少 bindings.rewrite");
   if (evaluation.clustering.enabled && !models.bindings.clustering)

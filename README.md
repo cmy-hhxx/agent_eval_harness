@@ -61,6 +61,7 @@ bash agent/run.sh --config /absolute/path/eris.json
 | 模块、生命周期与扩展 | [架构](docs/architecture.md) · [模块地图](docs/modules/README.md) |
 | 修改、测试与文档维护 | [开发指南](docs/development.md) |
 | 单回答评分与归因 | [独立回答评测](docs/answer-review.md) |
+| 固定 checklist 与 L1/L2 专项评测 | [Rubric](docs/rubric.md) |
 | Session 归因与正式结果 | [Attribution](docs/attribution.md) |
 | AIME 显式输入评测 | [AIME 评测](docs/aime-incremental.md) |
 | 人工复核与稳定性验证 | [评测质量](docs/quality.md) |

@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import { canonical, submissionToolNames, type FailureContext, type JsonObject, type Policy } from "@eval/contracts";
 
-export type PromptStage = "compact" | "criteria" | "attribution" | "comparison" | "rewrite" | "clustering" | "score" | "instruction-review";
+export type PromptStage = "compact" | "criteria" | "attribution" | "comparison" | "rewrite" | "clustering" | "score" | "instruction-review" | "rubric";
 
 const builtinToolNames = [
   "read_trace", "search_trace", "view_image", "calculate", "calculate_pair", "execute_code",

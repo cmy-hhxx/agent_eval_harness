@@ -12,6 +12,7 @@
 | `resources/attribution/problem-output.md` | 组件调查、Session 共用的问题表达、字段分工与严重程度口径 |
 | `resources/attribution/component-choice.md` | 具体动作定责、工具契约边界及相邻组件的选择规则 |
 | `resources/instruction-review/default/` | 后置独立内部指令核验 |
+| `resources/rubric/default/` | 通用归因优先、专项仅问答的固定 checklist 判定 |
 | `resources/compact/` | 独立字段任务、value 类型示例、局部选号及代码回填引用约定 |
 | `resources/compact/submit_evaluation.md` | 字段专用提交说明，明确空值也调用工具，不混入候选项规则 |
 | `resources/<stage>/default/` | Criteria、Comparison、Rewrite、Clustering 默认规则 |
