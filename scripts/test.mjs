@@ -67,6 +67,7 @@ const fastFiles = [
   "dist/packages/workflows/src/comparison/standalone-resumption.test.js",
   "dist/packages/workflows/src/review/public-trace.test.js",
   "dist/tests/architecture/dependencies.test.js",
+  "scripts/aime-slim.test.mjs",
   "scripts/attribution-review-view.test.mjs",
   "scripts/compact-progress.test.mjs",
 ];
@@ -93,6 +94,7 @@ const hostFiles = full ? (await testFiles(["dist/tests/integration/host"]))
 const concurrency = Math.min(2, availableParallelism());
 const hostConcurrency = Math.min(4, Math.max(1, Math.floor(availableParallelism() / 2)));
 const repositoryTests = [
+  "scripts/aime-slim.test.mjs",
   "scripts/attribution-review-view.test.mjs",
   "scripts/compact-progress.test.mjs",
   "scripts/publish.test.mjs",
