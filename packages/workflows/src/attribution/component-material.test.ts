@@ -116,3 +116,26 @@ test("each earlier request stays paired with its own receipt instead of only sho
     assert(JSON.stringify(invocations[0]!.return_evidence).includes(value), `the mismatching receipt must preserve ${value}`);
   assert.deepEqual(binding.modelInput!.tool_errors, []);
 });
+
+test("a wide call list stays inside its material budget and keeps error sites first", () => {
+  const raw = { batch_id: "batch", case_id: "wide-calls", messages: [
+    { type: "user_question", content: "汇总O CGN全部指标。" },
+    ...Array.from({ length: 20 }, (_, i) => [
+      { type: "tool_call", name: "finquery", call_id: `q${i}`, input: { query: `OCGN metric ${i} ` + "说明".repeat(400) } },
+      { type: "tool_result", name: "finquery", call_id: `q${i}`, output: i === 7
+        ? { status_code: -1, error: "报告期参数无效，查询被拒绝。" }
+        : { datas: [{ ticker: "OCGN", period: "2026Q1", metric: `m${i}`, value: i }] } },
+    ]).flat(),
+    { type: "final_answer", content: "OCGN 指标汇总完成。" },
+  ] };
+  const candidate = adapt(raw, { id: "answer", name: "Answer", adapter: "b", sources: [] }, "fixture", 1);
+  const inputs = { [candidate.input_id]: raw }, compact = sourceCompactReceipt(candidate, raw), task = componentTask(candidate, compact, inputs, "finquery");
+  const binding = bindAttribution(task, inputs, { compact });
+  const invocations = binding.modelInput!.invocations as { request_message_index: number; request_evidence: { quote: string }[]; return_evidence: { quote: string }[] }[];
+  assert.equal(invocations.length, 20, "every invocation keeps its directory entry");
+  const error = invocations.find(invocation => invocation.request_message_index === 15)!;
+  assert(JSON.stringify(error.return_evidence).includes("报告期参数无效"), "the error receipt is never the one trimmed away");
+  const chars = (list: typeof invocations) => list.reduce((sum, invocation) =>
+    sum + [...invocation.request_evidence, ...invocation.return_evidence].reduce((inner, item) => inner + item.quote.length, 0), 0);
+  assert(chars(invocations) <= 20000, `the list exceeded its budget: ${chars(invocations)}`);
+});

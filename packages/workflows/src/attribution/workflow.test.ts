@@ -262,5 +262,5 @@ test("performance identity carries only record coordinates, never input bodies",
       candidate: { input_id: "input-1", version: "aime_fast", batch_id: "2026-11-05", case_id: "case-1", session_id: "session-1" } } };
   const identity = attributionWorkflow.performanceIdentity!(task as unknown as Parameters<NonNullable<typeof attributionWorkflow.performanceIdentity>>[0]);
   assert.deepEqual(identity, { version: "aime_fast", batch_id: "2026-11-05", case_id: "case-1",
-    session_id: "session-1", trace_index: 1, attribution_identity: "identity-1" });
+    session_id: "session-1", trace_index: 1, compact_field: null, component_group: null, attribution_identity: "identity-1" });
 });

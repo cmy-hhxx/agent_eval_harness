@@ -23,12 +23,12 @@ export interface ModelRequestControl {
 export function createModelRequests(control: ModelRequestControl | undefined) {
   const admission = new AbortController();
   const attempts = new Map<string, {
-    spec: AttemptSpec; task: PlannedTask; routes?: ModelConfig[]; trafficGroup?: string; controller: AbortController; waited: number;
+    spec: AttemptSpec; task: PlannedTask; routes?: ModelConfig[]; trafficGroup?: string; controller: AbortController; waited: number; requests: number;
     waiting: Map<string, number>; active: Map<string, () => void>;
   }>();
   return {
     register(spec: AttemptSpec, task: PlannedTask, routes?: ModelConfig[], trafficGroup?: string) {
-      if (control) attempts.set(spec.attemptId, { spec, task, routes, trafficGroup, controller: new AbortController(), waited: 0, waiting: new Map(), active: new Map() });
+      if (control) attempts.set(spec.attemptId, { spec, task, routes, trafficGroup, controller: new AbortController(), waited: 0, requests: 0, waiting: new Map(), active: new Map() });
     },
     async acquire(attemptId: string, callId: string, signal: AbortSignal) {
       const attempt = attempts.get(attemptId);
@@ -38,6 +38,7 @@ export function createModelRequests(control: ModelRequestControl | undefined) {
       combined.throwIfAborted();
       const started = Date.now();
       attempt.waiting.set(callId, started);
+      attempt.requests++;
       try {
         const permit = await control.acquire({ callId, runId: attempt.spec.runId, taskId: attempt.task.id,
           stage: attempt.task.stage, model: attempt.spec.model, routes: attempt.routes, trafficGroup: attempt.trafficGroup }, combined);
@@ -55,6 +56,11 @@ export function createModelRequests(control: ModelRequestControl | undefined) {
       attempt?.active.delete(callId);
     },
     stopAdmission(reason: unknown) { admission.abort(reason); },
+    /** Gateway admission time and request count actually spent by one attempt, for performance rows. */
+    observed(attemptId: string) {
+      const attempt = attempts.get(attemptId);
+      return { modelWaitMs: attempt?.waited ?? 0, modelRequests: attempt?.requests ?? 0 };
+    },
     deadline(spec: AttemptSpec) {
       const attempt = attempts.get(spec.attemptId);
       return spec.deadline + (attempt?.waited ?? 0) +

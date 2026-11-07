@@ -432,7 +432,11 @@ export interface AttemptRecord {
   status?: AttemptStatus;
   metrics?: { usage: Usage; audit: ToolAudit; reasoningTokens?: number; modelUsage: ModelUsage[]; timings?: {
     inputIoMs: number; modelMs: number; toolMs: number; submissionMs: number; requiredReadMs: number;
-  } };
+  };
+  /** Validation codes charged by rejected content submissions, so rework is attributable per rule. */
+  submissionCodes?: Record<string, number>;
+  /** True when the first content submission was accepted; absent when no submission was made. */
+  firstSubmissionAccepted?: boolean };
   pendingSubmission?: Submission;
   error?: string;
   artifactError?: string;
@@ -479,6 +483,9 @@ export interface TaskPerformance {
   calls: number;
   requiredReadCalls: number;
   contentSubmissions: number;
+  /** Rejected-submission counts per validation code; empty for a first-pass acceptance. */
+  submissionCodes: Record<string, number>;
+  firstSubmissionAccepted: boolean | null;
   timings: Record<string, number>;
   startedAt: string;
   finishedAt: string;

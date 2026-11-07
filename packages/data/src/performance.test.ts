@@ -11,7 +11,8 @@ const row = (taskId: string) => ({
   modelUsage: [{ channel: "gateway", model: "judge", usage: { input: 10, output: 100, cacheRead: 300, cacheWrite: 690, totalTokens: 1100 }, reasoningTokens: 60 }],
   inputIds: { answer: "input-1" }, identity: { version: "aime_fast", case_id: "c1" },
   usage: { input: 10, output: 100, cacheRead: 300, cacheWrite: 690, totalTokens: 1100 },
-  reasoningTokens: 60, calls: 2, requiredReadCalls: 1, contentSubmissions: 1,
+  reasoningTokens: 60, calls: 2, requiredReadCalls: 1, contentSubmissions: 2,
+  submissionCodes: { tool_error_severity: 1 }, firstSubmissionAccepted: false,
   timings: { modelMs: 5000, queuedMs: 1200 },
   startedAt: "2026-11-06T00:00:00.000Z", finishedAt: "2026-11-06T00:00:06.000Z", wallMs: 6000,
 });

@@ -30,6 +30,8 @@ function project(row: TaskPerformance) {
     calls: row.calls,
     required_read_calls: row.requiredReadCalls,
     content_submissions: row.contentSubmissions,
+    submission_codes: row.submissionCodes,
+    first_submission_accepted: row.firstSubmissionAccepted,
     timings: row.timings,
     started_at: row.startedAt,
     finished_at: row.finishedAt,

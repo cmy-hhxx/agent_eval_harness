@@ -123,6 +123,8 @@ export async function runEvaluation(options: RunOptions): Promise<Record<string,
   let runFailure: { error: unknown } | undefined;
   let pendingShard: Promise<void> | undefined;
   const running = new Map<string, Promise<void>>();
+  /** First moment each task waited only for a slot, not for dependencies or admission. */
+  const readySince = new Map<string, number>();
   const controller = new AbortController();
   const abort = () => controller.abort(options.signal?.reason || new Error("Interrupted"));
   options.signal?.addEventListener("abort", abort, { once: true });
@@ -969,7 +971,9 @@ export async function runEvaluation(options: RunOptions): Promise<Record<string,
         usage: record.metrics?.usage ?? emptyUsage(), reasoningTokens: record.metrics?.reasoningTokens ?? 0,
         calls: record.metrics?.audit.calls ?? 0, requiredReadCalls: record.metrics?.audit.requiredReadCalls ?? 0,
         contentSubmissions: receipt?.submissionStats?.contentSubmissions ?? state.failure?.contentSubmissions ?? 0,
-        timings: { ...record.metrics?.timings, ...timing },
+        submissionCodes: record.metrics?.submissionCodes ?? {},
+        firstSubmissionAccepted: record.metrics?.firstSubmissionAccepted ?? null,
+        timings: { ...record.metrics?.timings, ...timing, ...modelRequests.observed(spec.attemptId) },
         startedAt: new Date(state.startedAt ?? Date.now()).toISOString(), finishedAt: new Date().toISOString(),
         wallMs: Math.max(0, Date.now() - (state.startedAt ?? Date.now())),
       } satisfies TaskPerformance).catch(error => options.logger?.error(error, {
@@ -1120,6 +1124,11 @@ export async function runEvaluation(options: RunOptions): Promise<Record<string,
         if (dependencies.some(([label]) => !dependencyReady(task, label, manifest.states, running))) continue;
         if (!admitted(task)) continue;
         if (options.taskSource.canStart?.(task, manifest) === false) continue;
+        // Dependencies, admission and source gates are all satisfied: from here the task only
+        // waits for a free worker slot or concurrency permit. Keep the first such moment so
+        // dependency wait and real dispatch queueing are reported separately.
+        const readyAt = readySince.get(task.id) ?? Date.now();
+        readySince.set(task.id, readyAt);
         if (!options.taskSource.isComputedTask?.(task)) {
           if (running.size >= taskConcurrency()) break;
           if (eligible.every((worker) => busy.has(worker) || worker.reserved || unavailable.has(worker))) break;
@@ -1163,9 +1172,13 @@ export async function runEvaluation(options: RunOptions): Promise<Record<string,
             continue;
           }
           const cpu = process.cpuUsage(cpuStarted);
-          timing = { queuedMs: Math.max(0, Date.now() - (manifest.states[task.id].nextRetryAt ?? manifest.startedAt)),
+          const dispatchedAt = Date.now();
+          timing = { queuedMs: Math.max(0, dispatchedAt - (manifest.states[task.id].nextRetryAt ?? manifest.startedAt)),
+            dependencyWaitMs: Math.max(0, readyAt - (manifest.states[task.id].nextRetryAt ?? manifest.startedAt)),
+            dispatchWaitMs: Math.max(0, dispatchedAt - readyAt),
             bindingMs, profileMs: performance.now() - preparationStarted - bindingMs,
             preparationCpuMs: (cpu.user + cpu.system) / 1000, ...binding.preparationTimings };
+          readySince.delete(task.id);
           capable = eligible.filter(w => prepared.evaluation.toolNames.every(name => w.health.tools.includes(name)));
           if (!capable.length) throw new Error("Required tools not available");
         } catch (error) {

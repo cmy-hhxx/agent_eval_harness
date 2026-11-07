@@ -199,8 +199,14 @@ export function releaseAttribution(state: RunState, inputs: Record<string, unkno
     }
   manifest.inputCatalog = retained;
 }
-const sourceCache = new WeakMap<object, Map<string, ReturnType<typeof attributionSessionSource> & { session: RawInput; compactMaterial?: JsonObject; traceMaterial?: Map<number, AgentBinding> }>>();
-function sourceFor(inputs: Record<string, unknown>, candidate: Candidate) {
+type TurnInvestigation = { finalIndex: number; actors: JsonObject[]; facts: JsonObject;
+  groups: ReturnType<typeof investigationGroups> };
+interface AttributionSource extends ReturnType<typeof attributionSessionSource> {
+  session: RawInput; compactMaterial?: JsonObject; traceMaterial?: Map<number, AgentBinding>;
+  investigations?: Map<number, { turn: JsonObject; components: unknown; result: TurnInvestigation }>;
+}
+const sourceCache = new WeakMap<object, Map<string, AttributionSource>>();
+function sourceFor(inputs: Record<string, unknown>, candidate: Candidate): AttributionSource {
   // The input reader owns window eviction and revision checks. Cache by its immutable
   // record object, so preparing fields neither reparses a session nor retains the whole run.
   const value = inputs[candidate.input_id] as object;
@@ -214,8 +220,18 @@ function sourceFor(inputs: Record<string, unknown>, candidate: Candidate) {
   }
   return source;
 }
-/** Groups are recomputed from the accepted Compact directory and recorded invocations; the model never forms them. */
-function turnInvestigation(source: ReturnType<typeof sourceFor>, candidate: Candidate, traceIndex: number, turn: JsonObject) {
+/** Groups come from the accepted Compact directory and recorded invocations; the model never forms them. */
+function turnInvestigation(source: AttributionSource, candidate: Candidate, traceIndex: number, turn: JsonObject): TurnInvestigation {
+  // One session plans a group task per component group and one trace task; all of them read the
+  // same turn directory. Reuse that derivation until the accepted components change.
+  const cache = source.investigations ??= new Map();
+  const previous = cache.get(traceIndex);
+  if (previous && previous.turn === turn && previous.components === turn.components) return previous.result;
+  const result = deriveTurnInvestigation(source, candidate, traceIndex, turn);
+  cache.set(traceIndex, { turn, components: turn.components, result });
+  return result;
+}
+function deriveTurnInvestigation(source: AttributionSource, candidate: Candidate, traceIndex: number, turn: JsonObject): TurnInvestigation {
   const { raw, original, positions } = source, trace = turns(candidate)[traceIndex]!;
   const finalIndex = positions.findIndex(point => point.trace_index === traceIndex && point.message_index === (trace.final_index ?? candidate.final_index));
   const actors = processComponents(raw, original, candidate.input_id, positions, turn.components as JsonObject[]);
@@ -235,6 +251,17 @@ export function compactFieldResult(compact: JsonObject, field: string, traceInde
     return { value: [overview[0], overview[2]] };
   }
   return { value: (compact.turns as JsonObject[])[traceIndex!]![field] };
+}
+/** Only a provable absence short-circuits a Compact field; "found nothing" stays a model judgment. */
+function structurallyEmpty(field: string, raw: RawInput, positions: { trace_index: number }[], material: JsonObject, traceIndex: number): boolean {
+  if (!["execution_chain", "tool_errors"].includes(field)) return false;
+  const facts = (material.turns as JsonObject[])[traceIndex]?.execution_facts as JsonObject | undefined;
+  if (!facts) return false;
+  // Both the recorded invocation index and the raw transcript must agree: a schema variant this
+  // code does not recognize keeps the field live rather than claiming the turn made no call.
+  if ((facts.tool_calls as JsonObject[] | undefined)?.length || (facts.execution_links as JsonObject[] | undefined)?.length) return false;
+  return !positions.some((point, index) => point.trace_index === traceIndex && (raw.messages[index]!.role === "tool" ||
+    ["tool_call", "function_call", "tool_result", "function_call_output"].includes(String(raw.messages[index]!.type))));
 }
 export function bindAttribution(task: PlannedTask, inputs: Record<string, unknown>, dependencies: Record<string, SubmissionReceipt | undefined>,
   options: { reference?: unknown } = {}): AgentBinding {
@@ -283,7 +310,9 @@ export function bindAttribution(task: PlannedTask, inputs: Record<string, unknow
         const process = processMaterial(raw, original, candidate.input_id, "answer", 0, positions, trace.trace_index);
         const finalIndex = positions.findIndex(point => point.trace_index === trace.trace_index &&
           point.message_index === (trace.final_index ?? candidate.final_index));
-        const delivery = compactFinalMaterial(finalIndex, raw, candidate.input_id);
+        // The final answer is the single most load-bearing material for every turn field, so it
+        // gets room for a full structured reply; partial stays flagged when even that is exceeded.
+        const delivery = compactFinalMaterial(finalIndex, raw, candidate.input_id, 6000);
         return { turn_index: trace.trace_index, final_message_index: finalIndex, question: trace.question,
           source_directory: process.source_directory, execution_facts: process.execution_facts[0],
           final_evidence: delivery.final_evidence, final_context: delivery.final_context,
@@ -291,6 +320,11 @@ export function bindAttribution(task: PlannedTask, inputs: Record<string, unknow
     }
     const selected = data.traceIndex === undefined ? traceList : [traceList[data.traceIndex]!];
     const material = source.compactMaterial;
+    // A turn with no tool call has no execution chain and no tool error by construction. Only
+    // that structural emptiness short-circuits; a field the model found nothing for stays live.
+    if (data.traceIndex !== undefined && structurallyEmpty(field, raw, positions, material, data.traceIndex))
+      return { agent: "compact", profile: field, computedResult: { value: [] },
+        request: { sources: { answer: { id: candidate.input_id, value: raw } }, input: { source_positions: positions, trace_index: data.traceIndex } } };
     const brief = field === "session_overview";
     const processOnly = ["plans", "reasoning_chain", "execution_chain", "reflections", "tool_errors"].includes(field);
     const recorded: JsonObject[] = (material.recorded_components as JsonObject[]).filter(actor => (actor.positions as JsonObject[]).some(point => point.trace_index === data.traceIndex))
@@ -441,7 +475,10 @@ export const attributionScheduling: WorkflowScheduling = {
       return Number(value);
     }, completed: task => task.stage === "attribution-session",
     group: task => (task.data as AttributionTaskData).candidate.version },
-  stagePriority: stage => stage === "attribution-compact" ? -1 : stage === "attribution-compact-field" ? 1 : 0,
+  // Compact gates every downstream stage, and a trace or session is always closer to finishing
+  // its candidate than the component groups that feed it, so both outrank component work.
+  stagePriority: stage => stage === "attribution-compact" ? -2 : ["attribution-trace", "attribution-session"].includes(stage) ? -1
+    : stage === "attribution-compact-field" ? 1 : 0,
 };
 export const attributionWorkflow: WorkflowDefinition = {
   id: "attribution", plan: config => planAttribution(config as AttributionConfig),
@@ -453,6 +490,7 @@ export const attributionWorkflow: WorkflowDefinition = {
     const data = task.data as AttributionTaskData;
     return { version: data.candidate.version, batch_id: data.candidate.batch_id, case_id: data.candidate.case_id,
       session_id: data.candidate.session_id ?? null, trace_index: data.traceIndex ?? null,
+      compact_field: data.compactField ?? null, component_group: data.componentGroup ?? null,
       attribution_identity: (task.data as JsonObject).attributionIdentity ?? null };
   },
   scheduling: attributionScheduling,

@@ -168,7 +168,9 @@ export function compactProcessExcerpts(field: string, raw: RawInput, original: R
         const returned = message.role === "tool" || ["tool_result", "function_call_output"].includes(String(message.type));
         const parent = returned && !Array.isArray(value) ? new RegExp(`^/${payload}/[^/]+$`, "u").test(entry.path) : entry.path === `/${payload}`;
         return entry.source.kind === "json" && parent ||
-          entry.source.kind === "text" && entry.path.startsWith(`/${payload}/`) && entry.source.text.length > 400;
+          entry.source.kind === "text" && entry.path.startsWith(`/${payload}/`) &&
+            (entry.source.text.length > 400 || /\/(?:stderr|error|exit_code|returncode|status_code)$/u.test(entry.path) ||
+              /"(?:error|stderr|exit_code|returncode|status_code)"\s*:/u.test(entry.source.text.slice(entry.start, entry.end)));
       }
       return entry.source.kind === "text" ? !/^\/(?:output|result)\/(?:action_id|call_id|id|type|status_msg)$/u.test(entry.path)
         : /\/(?:stderr|error|exit_code|returncode|status_code)$/u.test(entry.path);
@@ -218,5 +220,6 @@ export function compactFinalMaterial(finalIndex: number, raw: RawInput, inputId:
     return [displayEvidence(cite(inputId, finalIndex, source, range.start, range.end))];
     });
   });
-  return { final_message_index: finalIndex, final_evidence, final_context: { partial: omitted } };
+  return { final_message_index: finalIndex, final_evidence, final_context: { partial: omitted,
+    total_chars: content.reduce((sum, source) => sum + source.text.length, 0) } };
 }

@@ -89,22 +89,57 @@ export function componentMaterial(raw: RawInput, original: RawInput, inputId: st
     return scripts.length ? { executed_components: scripts, entry_components: names.filter(name => !scripts.includes(name)) }
       : { executed_components: names };
   };
-  const paired = (selected: JsonObject[], budget: number) => selected.map(link => {
-    const request = Number(link.request_message_index), returns = link.return_message_indices as number[];
-    const share = Math.min(9000, Math.max(1200, Math.floor(budget / Math.max(1, selected.length))));
-    return { request_message_index: request, return_message_indices: returns,
-      request_components: requesters(link), ...executors(request),
-      request_evidence: excerpts(new Set([request]), Math.floor(share / 3)),
-      return_evidence: excerpts(new Set(returns), Math.floor(share * 2 / 3)),
-      read_requests: [request, ...returns].map(navigation),
-      implementation_read_requests: returns.flatMap(message_index => {
-        const message = raw.messages[message_index]!, output = (message.output ?? message.result) as JsonObject | undefined;
-        const placeholders = (output?.prompt as JsonObject | undefined)?.placeHolder;
-        if (!Array.isArray(placeholders)) return [];
-        return (placeholders as JsonObject[]).flatMap((item, index) => ["db_info", "syntax_rule", "instruction"].includes(String(item.key)) && item.value
-          ? [{ candidate: "answer", message_index, path: `/${Object.hasOwn(message, "output") ? "output" : "result"}/prompt/placeHolder/${index}/value`, offset: 0, max_chars: 16000 }] : []);
-      }) };
-  });
+  // One budget per list, allocated in priority order: an error site, a delivery receipt and a
+  // row the final answer cites keep their material; the rest shrink but still carry their whole
+  // directory entry and read coordinates, so nothing disappears and nothing is read unprompted.
+  const errorIndices = new Set(ownErrors.flatMap(error => (error.evidence as JsonObject[] ?? []).flatMap(item => {
+    const point = parseEvidenceCoordinates(String(item.evidence_id));
+    return point ? [point.message_index] : [];
+  })));
+  // Compact may miss a failure the receipt itself states; the raw result decides too.
+  const failedReceipt = (index: number) => {
+    const message = raw.messages[index]!, value = (message.output ?? message.result) as JsonObject | undefined;
+    if (!value || typeof value !== "object") return false;
+    return [value.exit_code, value.returncode].some(code => typeof code === "number" && code !== 0) ||
+      typeof value.status_code === "number" && value.status_code < 0 || value.is_error === true || value.isError === true ||
+      value.success === false || typeof value.error === "string" && !!value.error.trim();
+  };
+  const shares = (selected: JsonObject[], budget: number) => {
+    const rank = (link: JsonObject) => {
+      const indices = [Number(link.request_message_index), ...link.return_message_indices as number[]];
+      if (indices.some(index => errorIndices.has(index)) || (link.return_message_indices as number[]).some(failedReceipt)) return 0;
+      if (group.delivery || (link.return_message_indices as number[]).some(index => cited.has(index))) return 1;
+      return 2;
+    };
+    const weight = (link: JsonObject) => rank(link) < 2 ? 2 : 1;
+    const ordered = [...selected].sort((a, b) => rank(a) - rank(b));
+    const share = new Map<JsonObject, number>();
+    let remaining = budget, weightLeft = ordered.reduce((sum, link) => sum + weight(link), 0);
+    for (const link of ordered) {
+      const own = weight(link), value = Math.min(9000, Math.floor(remaining * own / Math.max(1, weightLeft)));
+      share.set(link, value); remaining -= value; weightLeft -= own;
+    }
+    return share;
+  };
+  const paired = (selected: JsonObject[], budget: number) => {
+    const allocated = shares(selected, budget);
+    return selected.map(link => {
+      const request = Number(link.request_message_index), returns = link.return_message_indices as number[];
+      const share = allocated.get(link)!;
+      return { request_message_index: request, return_message_indices: returns,
+        request_components: requesters(link), ...executors(request),
+        request_evidence: excerpts(new Set([request]), Math.floor(share / 3)),
+        return_evidence: excerpts(new Set(returns), Math.floor(share * 2 / 3)),
+        read_requests: [request, ...returns].map(navigation),
+        implementation_read_requests: returns.flatMap(message_index => {
+          const message = raw.messages[message_index]!, output = (message.output ?? message.result) as JsonObject | undefined;
+          const placeholders = (output?.prompt as JsonObject | undefined)?.placeHolder;
+          if (!Array.isArray(placeholders)) return [];
+          return (placeholders as JsonObject[]).flatMap((item, index) => ["db_info", "syntax_rule", "instruction"].includes(String(item.key)) && item.value
+            ? [{ candidate: "answer", message_index, path: `/${Object.hasOwn(message, "output") ? "output" : "result"}/prompt/placeHolder/${index}/value`, offset: 0, max_chars: 16000 }] : []);
+        }) };
+    });
+  };
   const modelIndices = new Set([...roots, ...links.map(link => Number(link.invoking_model_message_index))]
     .filter(index => raw.messages[index]?.type === "llm_turn"));
   const skills = components.filter(component => component.kind === "skill");

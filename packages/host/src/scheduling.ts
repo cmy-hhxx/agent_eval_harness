@@ -47,18 +47,19 @@ export function sessionAdmissionSnapshot(
   manifest?: Pick<RunManifest, "config">,
 ): SessionAdmissionSnapshot {
   const window = sessionAdmissionWindow(policy, manifest);
-  const sessions = new Map<string, { started: boolean; completed: boolean; failed: boolean; blocked: boolean }>();
+  const sessions = new Map<string, { started: boolean; completed: boolean; failed: boolean; blocked: boolean; remaining: number }>();
   const groups = new Map<string, string>();
   for (const task of tasks) {
     const id = policy.id(task);
     if (!id) continue;
     if (!groups.has(id)) groups.set(id, policy.group?.(task) ?? "");
     const state = states[task.id], status = state?.status ?? "pending",
-      session = sessions.get(id) ?? { started: false, completed: false, failed: false, blocked: false };
+      session = sessions.get(id) ?? { started: false, completed: false, failed: false, blocked: false, remaining: 0 };
     session.started ||= status !== "pending" || (state?.attempts ?? 0) > 0;
     session.completed ||= status === "succeeded" && policy.completed(task);
     session.failed ||= status === "failed" || status === "timed_out" || status === "cancelled";
     session.blocked ||= status === "blocked";
+    if (status !== "succeeded" && status !== "cancelled") session.remaining++;
     sessions.set(id, session);
   }
   const admitted = new Set<string>();
@@ -75,7 +76,10 @@ export function sessionAdmissionSnapshot(
   const queued: typeof open = [], lists = [...buckets.values()];
   for (let index = 0; lists.some(list => index < list.length); index++)
     for (const list of lists) if (index < list.length) queued.push(list[index]!);
-  const selected = [...open.filter(([, session]) => session.started), ...queued].slice(0, window);
+  // Inside the window, the session nearest to completion goes first: it frees its slot fastest
+  // and shortens the tail where a handful of nearly finished sessions hold every worker.
+  const selected = [...open.filter(([, session]) => session.started).sort((a, b) => a[1].remaining - b[1].remaining),
+    ...queued].slice(0, window);
   for (const [id] of selected) admitted.add(id);
   const completed = [...sessions.values()].filter((session) => session.completed).length;
   const failed = [...sessions.values()].filter((session) => !session.completed && session.failed).length;

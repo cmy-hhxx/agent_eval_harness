@@ -87,6 +87,9 @@ async function runAttempt(attempt: AttemptExecution, deps: AttemptExecutionDeps,
       jsonRepairs = 0,
       modelError: string | undefined,
       malformedCompletedResponse = false;
+    // Rework accounting: which validation rules cost the second and later submissions.
+    const submissionCodes: Record<string, number> = {};
+    let firstSubmissionRejected = false;
     let deadlineAt = spec.deadline, deadline: NodeJS.Timeout | undefined;
     const armDeadline = () => {
       clearTimeout(deadline);
@@ -234,6 +237,11 @@ async function runAttempt(attempt: AttemptExecution, deps: AttemptExecutionDeps,
             const { append_evidence_ids: _append, ...visible } = expected as Record<string, unknown>;
             return { ...issue, expected: visible };
           });
+        }
+        if (content) {
+          // A first-pass rejection is the signal that the material lacked what the rule needs.
+          if (submissions <= 1) firstSubmissionRejected = true;
+          for (const issue of errors) submissionCodes[issue.code] = (submissionCodes[issue.code] ?? 0) + 1;
         }
         const repeatedErrors = !compareDraft ? 0 :
           content && errorSet(errors) === errorSet(failure.errors) && canonical(draft) === canonical(failure.draft)
@@ -854,7 +862,8 @@ async function runAttempt(attempt: AttemptExecution, deps: AttemptExecutionDeps,
         attempt.status.failure = record.failure;
       }
       record.evidenceBank = [...audit.evidenceBank!];
-      record.metrics = { usage, audit, reasoningTokens, modelUsage, timings };
+      record.metrics = { usage, audit, reasoningTokens, modelUsage, timings, submissionCodes,
+        firstSubmissionAccepted: submissions > 0 ? !firstSubmissionRejected : undefined };
       record.status = attempt.status;
       // A failed persistence leaves the workspace intact for recovery.
       await saveRecord();
@@ -875,7 +884,8 @@ async function runAttempt(attempt: AttemptExecution, deps: AttemptExecutionDeps,
       attempt.events.append("finished", attempt.status);
       await attempt.events.flush();
       record.evidenceBank = [...audit.evidenceBank!];
-      record.metrics = { usage, audit, reasoningTokens, modelUsage, timings };
+      record.metrics = { usage, audit, reasoningTokens, modelUsage, timings, submissionCodes,
+        firstSubmissionAccepted: submissions > 0 ? !firstSubmissionRejected : undefined };
       record.status = attempt.status;
       await saveRecord();
       await attempt.events.end();
