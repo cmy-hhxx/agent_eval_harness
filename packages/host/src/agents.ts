@@ -168,7 +168,8 @@ export class AgentRegistry {
       throw new Error(`Missing submission nudge: ${binding.agent}/${binding.profile}`);
     if (profile.fileSubmission && profile.jsonStringSubmission)
       throw new Error("A submission has exactly one transport encoding");
-    if (profile.evidenceSelections && !binding.projectModelInput)
+    // computedResult 表示 workflow 已直接给出结果（如结构上必空的字段），不经模型，因此不需要材料投影。
+    if (profile.evidenceSelections && !binding.projectModelInput && binding.computedResult === undefined)
       throw new Error(`Evidence selections require an owned material projection: ${binding.agent}/${binding.profile}`);
     const evidenceBank: EvidenceBank = [];
     const shown = (input: JsonObject) => this.presentSources(binding,

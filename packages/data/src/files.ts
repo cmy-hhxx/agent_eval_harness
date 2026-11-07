@@ -277,8 +277,12 @@ export async function runLock(directory: string, options: { createDirectory?: bo
         // Opening the public file before writing would expose transient invalid JSON.
         await link(pending, file);
         return async () => {
-          const value = await readJson<{ token: string }>(file);
-          if (value.token === token) await rm(file);
+          // 锁文件可能已被别的容器回收：释放是幂等的，缺失即视为已释放。
+          const value = await readJson<{ token: string }>(file).catch((error: NodeJS.ErrnoException) => {
+            if (error.code === "ENOENT") return undefined;
+            throw error;
+          });
+          if (value?.token === token) await rm(file);
         };
       } catch (error) {
         if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;

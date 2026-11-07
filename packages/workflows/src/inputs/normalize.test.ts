@@ -141,7 +141,8 @@ test("trace captures preserve the original session count and evaluate only the c
   assert.equal(adapt(source, version, "fixture", 1, "batch").turns!.length, 1);
   assert.strictEqual(material.turns![0]!.messages, source.traces[0]!.messages);
   assert.deepEqual(source, before);
-  assert.throws(() => normalizeInput({ ...source, meta: { ...source.meta, n_messages: 1 } }), /n_messages/);
+  const mismatched = normalizeInput({ ...source, meta: { ...source.meta, n_messages: 1 } });
+  assert.equal(mismatched.session_meta!.n_messages, 1, "自报条数不一致不再拒绝，材料以 traces 消息为准");
   assert.throws(() => normalizeInput({ ...source, traces: [{ ...source.traces[0],
     meta: { ...source.traces[0]!.meta, n_messages: 3 } }] }), /n_messages/);
 });

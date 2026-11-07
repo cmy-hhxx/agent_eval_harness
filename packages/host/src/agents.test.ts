@@ -290,3 +290,13 @@ test("program material navigation crosses preparation without entering prompts o
   assert.deepEqual(wired,before);
   assert(!Object.hasOwn(baseline.evaluation,"materialNavigation"));
 });
+
+test("workflow-computed results need no owned material projection while live evidence selections still do", () => {
+  const { registry, profile } = fixture();
+  profile.evidenceSelections = true;
+  assert.throws(() => registry.prepare(binding),
+    /Evidence selections require an owned material projection: partial\/default/);
+  const computed = registry.prepare({ ...binding, computedResult: { value: [] } });
+  assert.deepEqual(computed.evaluation.outputSchema, profile.submissionSchema, "computed results keep the profile submission shape");
+  assert.equal(registry.prepare({ ...binding, projectModelInput: input => input }).evaluation.id, "partial");
+});

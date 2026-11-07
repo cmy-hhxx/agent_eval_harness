@@ -51,11 +51,9 @@ export function normalizeInput(value: unknown): RawInput {
   });
   if (session.n_traces !== undefined && (!Number.isSafeInteger(session.n_traces) || Number(session.n_traces) < turns.length))
     throw new Error("meta.n_traces 必须是不小于当前记录 trace 数量的整数");
-  const totalMessages = turns.reduce((total, turn) => total + turn.messages.length, 0);
-  const partialSession = Number(session.n_traces) > turns.length;
-  if (session.n_messages !== undefined && (!Number.isSafeInteger(session.n_messages) ||
-      (partialSession ? Number(session.n_messages) < totalMessages : session.n_messages !== totalMessages)))
-    throw new Error("meta.n_messages 与会话消息总数不一致");
+  // n_messages 是来源自报的计数，材料以 traces 里的消息为准；两者不一致不影响归因，只校验类型。
+  if (session.n_messages !== undefined && !Number.isSafeInteger(session.n_messages))
+    throw new Error("meta.n_messages 必须是整数");
   const { traces: _traces, ...record } = source;
   return { ...record, meta: session, session_meta: session, messages: turns[0]!.messages, turns } as RawInput;
 }

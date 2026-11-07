@@ -29,7 +29,8 @@ export function assertSourceRevision(source: string, expected: string): void {
 
 /** Short source-promotion contention is retryable; unrelated filesystem failures are not. */
 export async function waitForRunLock(directory: string, signal: AbortSignal) {
-  const deadline = Date.now() + 10_000;
+  // 三容器共享一个交付发布锁，成批发布可能持锁数十秒：争用必须等得起，否则整轮交付失败。
+  const deadline = Date.now() + 180_000;
   for (;;) {
     signal.throwIfAborted();
     try { return await runLock(directory); }

@@ -325,7 +325,7 @@ export function createBusinessPublisher(root: string) {
     const release = await queuePublication(root);
     let unlock: (() => Promise<void>) | undefined;
     try {
-      unlock = await waitForRunLock(path.join(root, ".delivery", "publication"), AbortSignal.timeout(10_000));
+      unlock = await waitForRunLock(path.join(root, ".delivery", "publication"), AbortSignal.timeout(180_000));
       const byDate = new Map<string, BusinessPublication[]>();
       for (const entry of entries) {
         const list = byDate.get(entry.record.date) ?? [];
