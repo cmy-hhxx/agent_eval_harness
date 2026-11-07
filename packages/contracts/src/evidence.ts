@@ -74,14 +74,21 @@ function isImageText(value: unknown, parent?: unknown, key?: string): boolean {
   return node.type === "image" && [node.mimeType, node.mime_type].some((mime) =>
     typeof mime === "string" && /^image\/\S+/iu.test(mime));
 }
+// Input messages are immutable during a run; each bind, bank check and tool read may
+// render the same message again, so the walk and the serialized form are kept once.
+const renderedMessages = new WeakMap<object, string>();
 function renderMessage(value: unknown): string {
-  return JSON.stringify(
+  const cached = value && typeof value === "object" ? renderedMessages.get(value) : undefined;
+  if (cached !== undefined) return cached;
+  const rendered = JSON.stringify(
     value,
     function (this: unknown, key, child: unknown) {
       return isImageText(child, this, key) ? imagePlaceholder : child;
     },
     2,
   );
+  if (value && typeof value === "object") renderedMessages.set(value, rendered);
+  return rendered;
 }
 function textLeaves(value: unknown, prefix = ""): [string, string][] {
   if (typeof value === "string") return isImageText(value) ? [] : [[prefix, value]];
@@ -92,17 +99,26 @@ function textLeaves(value: unknown, prefix = ""): [string, string][] {
   );
 }
 const privateMarkers = ["private_instruction_omitted", "[此处内容未提供，不能据此判断原始内容为空或执行失败。]"];
+const messageLeaves = new WeakMap<object, { kind: "text"; path: string; text: string; quotable?: false }[]>();
+function textSources(message: unknown): { kind: "text"; path: string; text: string; quotable?: false }[] {
+  const cached = message && typeof message === "object" ? messageLeaves.get(message) : undefined;
+  if (cached) return cached;
+  const leaves = textLeaves(message).map(([path, text]) => ({
+    kind: "text" as const,
+    path,
+    text,
+    ...(privateMarkers.some(marker => text.includes(marker)) ? { quotable: false as const } : {}),
+  }));
+  if (message && typeof message === "object") messageLeaves.set(message, leaves);
+  return leaves;
+}
 export function evidenceSources(message: unknown): { kind: "text" | "json"; path: string; text: string; quotable?: false }[] {
   // Sources are immutable during a request. Leaf reads need no serialized copy of the whole message.
   let json: string | undefined;
   const rendered = () => json ??= renderMessage(message);
+  // Callers own their array and entries; the cached walk is shared read-only.
   return [
-    ...textLeaves(message).map(([path, text]) => ({
-      kind: "text" as const,
-      path,
-      text,
-      ...(privateMarkers.some(marker => text.includes(marker)) ? { quotable: false as const } : {}),
-    })),
+    ...textSources(message).map(source => ({ ...source })),
     { kind: "json", path: "", get text() { return rendered(); },
       get quotable() { return privateMarkers.some(marker => rendered().includes(marker)) ? false as const : undefined; } },
   ];

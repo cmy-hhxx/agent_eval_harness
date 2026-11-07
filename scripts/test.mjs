@@ -38,6 +38,7 @@ const fastFiles = [
   "dist/packages/host/src/model-requests.test.js",
   "dist/packages/host/src/progress.test.js",
   "dist/packages/data/src/files.test.js",
+  "dist/packages/data/src/performance.test.js",
   "dist/packages/agents/src/attribution/responsibility.test.js",
   "dist/packages/agents/src/comparison/current-contract.test.js",
   "dist/packages/agents/src/clustering/profile.test.js",

@@ -430,13 +430,20 @@ export interface AttemptRecord {
   evidenceBank?: import("./evidence-selection.js").EvidenceBank;
   spec: AttemptSpec;
   status?: AttemptStatus;
-  metrics?: { usage: Usage; audit: ToolAudit; timings?: {
+  metrics?: { usage: Usage; audit: ToolAudit; reasoningTokens?: number; modelUsage: ModelUsage[]; timings?: {
     inputIoMs: number; modelMs: number; toolMs: number; submissionMs: number; requiredReadMs: number;
   } };
   pendingSubmission?: Submission;
   error?: string;
   artifactError?: string;
   failure?: FailureContext;
+}
+/** Usage grouped by the model route actually granted for each response. */
+export interface ModelUsage {
+  channel: string;
+  model: string;
+  usage: Usage;
+  reasoningTokens: number;
 }
 export interface PlannedTask {
   id: string;
@@ -452,6 +459,30 @@ export interface TaskPlan {
   inputs: Record<string, unknown>;
   summary: JsonObject;
   catalog?: unknown[];
+}
+/** Measured cost of one attempt, written beside the run for throughput analysis. */
+export interface TaskPerformance {
+  runId: string;
+  taskId: string;
+  stage: string;
+  attemptId: string;
+  attempt: number;
+  status: string;
+  confirmed: boolean;
+  channel: string | null;
+  model: string | null;
+  modelUsage: ModelUsage[];
+  inputIds: Record<string, string>;
+  identity?: JsonObject;
+  usage: Usage;
+  reasoningTokens: number;
+  calls: number;
+  requiredReadCalls: number;
+  contentSubmissions: number;
+  timings: Record<string, number>;
+  startedAt: string;
+  finishedAt: string;
+  wallMs: number;
 }
 /** A bounded portion of one physical input file, with planned tasks and lazy readers. */
 export interface WorkflowShard {
@@ -586,6 +617,8 @@ export interface WorkflowDefinition {
   canStart?(task: PlannedTask, manifest: RunManifest): boolean;
   /** Independent optional checks must not pause the primary task stage. */
   observesFailures?(task: PlannedTask): boolean;
+  /** Business identity written beside performance rows; never input bodies or judgments. */
+  performanceIdentity?(task: PlannedTask): JsonObject;
   /** Optional workflow-owned ordering and finite session admission. */
   scheduling?: WorkflowScheduling;
 }

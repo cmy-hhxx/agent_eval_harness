@@ -1,5 +1,5 @@
 import { Ajv2020 } from "ajv/dist/2020.js";
-import { ValidationError, attributionEvidencePosition, resolveEvidenceSelection, schemaIssues, selectEvidence, type AgentProfile, type AgentRequest, type JsonObject, type ToolAudit, type ValidationIssue } from "@eval/contracts";
+import { ValidationError, attributionEvidencePosition, resolveEvidenceSelection, schemaIssues, selectEvidence, type AgentProfile, type AgentRequest, type JsonObject, type JsonSchema, type ToolAudit, type ValidationIssue } from "@eval/contracts";
 import { agentPrompt, attributionNoStandardReason } from "@eval/prompts";
 import { cite, evidenceSources, parseEvidenceCoordinates } from "@eval/tools";
 import problemSchema from "../../../../schemas/attribution/problem.schema.json" with { type: "json" };
@@ -203,13 +203,16 @@ export const componentAttributionProfile: AgentProfile = {
 };
 
 /** This call only summarizes code-merged component results; it cannot change the problems. */
+const traceWithoutStandardSchema = ((): JsonSchema => {
+  const { is_correct: _correct, correct_reason: _reason, ...properties } = traceSubmission.properties;
+  return { ...traceSubmission, properties };
+})();
 export const traceAttributionProfile: AgentProfile = {
   id: "trace", requestSchema: { type: "object", required: ["trace_meta", "ground_truth", "problem", "failed_components"] },
   submissionSchema: traceSubmission, resultSchema: traceResult, ...tracePrompt, toolNames: [], maxToolCalls: 0,
+  // Both variants are fixed; returning one object per variant keeps schema validation compiled once.
   modelSubmissionSchema(request) {
-    if (traceHasStandard(request)) return traceWithStandardSchema;
-    const { is_correct: _correct, correct_reason: _reason, ...properties } = traceSubmission.properties;
-    return { ...traceSubmission, properties };
+    return traceHasStandard(request) ? traceWithStandardSchema : traceWithoutStandardSchema;
   },
   validateSubmission(request, draft) {
     return traceHasStandard(request) && !validateTraceWithStandard(draft) ? schemaIssues(validateTraceWithStandard.errors, draft) : [];

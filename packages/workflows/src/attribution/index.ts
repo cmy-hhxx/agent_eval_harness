@@ -449,6 +449,12 @@ export const attributionWorkflow: WorkflowDefinition = {
   release: (state, inputs) => releaseAttribution(state, inputs),
   isComputedTask: task => task.stage === "attribution-compact" || task.stage === "attribution-session" && (task.data as AttributionTaskData).traceCount === 1,
   bind: (task, inputs, dependencies) => bindAttribution(task, inputs, dependencies), observesFailures: task => task.stage !== "attribution-component",
+  performanceIdentity(task) {
+    const data = task.data as AttributionTaskData;
+    return { version: data.candidate.version, batch_id: data.candidate.batch_id, case_id: data.candidate.case_id,
+      session_id: data.candidate.session_id ?? null, trace_index: data.traceIndex ?? null,
+      attribution_identity: (task.data as JsonObject).attributionIdentity ?? null };
+  },
   scheduling: attributionScheduling,
   advance(task, receipt, _state, inputs) {
     if (task.stage === "attribution-compact-field") {

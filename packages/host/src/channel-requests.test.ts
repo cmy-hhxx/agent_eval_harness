@@ -93,11 +93,11 @@ test("a queued equivalent request borrows the other gateway without moving an ac
   borrowed.release(); first.release();
 });
 
-test("equivalent requests round-robin both gateways under one total limit", async () => {
+test("independent tasks round-robin both gateways under one total limit", async () => {
   const control = createChannelRequests({ first: 4, second: 4 }, undefined, undefined, undefined, 4);
   const signal = new AbortController().signal, order: string[] = [];
   const call = async (id: string) => {
-    const request = context("first", id); request.routes = [request.model, context("second", "").model];
+    const request: ModelRequestContext = { ...context("first", id), taskId: id }; request.routes = [request.model, context("second", "").model];
     const permit = await control.acquire(request, signal); order.push(permit.model.provider); return permit;
   };
   const permits = [];
@@ -163,4 +163,36 @@ test("manual per-run model limits apply independently of the session and global 
   assert.equal(control.snapshot().runs.one.active, 2, "lowering limits does not revoke in-flight streams");
   active.release(); second.release(); independent.release();
   control.setRunLimit("one", undefined);
+});
+
+test("a task keeps its gateway after the first request so later calls reuse its prompt cache", async () => {
+  const gate = createChannelRequests({ first: 8, second: 8 }), signal = new AbortController().signal;
+  const task = (id: string, callId: string) => ({ ...context("first", callId), taskId: id,
+    routes: [context("first", "").model, context("second", "").model] });
+  const first = await gate.acquire(task("task-a", "a1"), signal);
+  assert.equal(first.model.provider, "first");
+  first.release();
+  // Rotation alone would hand the next call to the other gateway.
+  const second = await gate.acquire(task("task-a", "a2"), signal);
+  assert.equal(second.model.provider, "first");
+  // Another task is still admitted on a free gateway.
+  const other = await gate.acquire(task("task-b", "b1"), signal);
+  assert.equal(other.model.provider, "second");
+  for (const permit of [first, second, other]) permit.release();
+});
+
+for (const unavailable of ["busy", "disabled", "removed"])
+test(`task affinity borrows a gateway when the previous route is ${unavailable}`, async () => {
+  const gate = createChannelRequests({ first: 1, second: 1 }), signal = new AbortController().signal;
+  const routes = [context("first", "").model, context("second", "").model];
+  const first = await gate.acquire({ ...context("first", "one"), routes }, signal);
+  assert.equal(first.model.provider, "first");
+  if (unavailable !== "busy") first.release();
+  if (unavailable === "disabled") gate.disable("first", "fixture unavailable");
+  const next = await gate.acquire({ ...context("first", "two"), routes: unavailable === "removed" ? routes.slice(1) : routes }, signal);
+  assert.equal(next.model.provider, "second");
+  first.release(); next.release();
+  const later = await gate.acquire({ ...context("first", "three"), routes }, signal);
+  assert.equal(later.model.provider, "second", "later calls keep the borrowed route");
+  later.release();
 });

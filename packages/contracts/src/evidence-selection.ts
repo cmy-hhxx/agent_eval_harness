@@ -98,6 +98,9 @@ export function evidenceSelectionSchema(schema: JsonSchema): JsonSchema {
 
 /** The Host checks all new entries against this task's registered immutable sources. */
 export function validateEvidenceBankSources(bank: readonly string[], sources: ReadonlyMap<string, unknown>, start = 0): void {
+  // A bank can hold many ranges of the same message; index its leaves once instead of
+  // rescanning them for every entry.
+  const leavesByMessage = new Map<unknown, Map<string, ReturnType<typeof evidenceSources>[number]>>();
   for (let index = start; index < bank.length; index++) {
     const id = bank[index]!, coordinate = parseEvidenceCoordinates(id);
     if (!coordinate || !sources.has(coordinate.input_id))
@@ -110,7 +113,14 @@ export function validateEvidenceBankSources(bank: readonly string[], sources: Re
       if (!evidenceImageAvailable(message)) fail(`/evidenceBank/${index}`, "evidence_bank_source_invalid", id, "证据目录的图片坐标没有真实图片。");
       continue;
     }
-    const leaf = evidenceSources(message).find(leaf => leaf.kind === coordinate.kind && leaf.path === coordinate.path);
+    let leaves = leavesByMessage.get(message);
+    if (!leaves) {
+      leaves = new Map();
+      for (const leaf of evidenceSources(message))
+        if (!leaves.has(leaf.kind + "\u0000" + leaf.path)) leaves.set(leaf.kind + "\u0000" + leaf.path, leaf);
+      leavesByMessage.set(message, leaves);
+    }
+    const leaf = leaves.get(coordinate.kind + "\u0000" + coordinate.path);
     if (!leaf || coordinate.end <= coordinate.start || coordinate.end > leaf.text.length ||
       overlapsImagePlaceholder(leaf.text, coordinate.start, coordinate.end))
       fail(`/evidenceBank/${index}`, "evidence_bank_range_invalid", id, "证据目录的文本坐标不在真实可引用原文范围内。");

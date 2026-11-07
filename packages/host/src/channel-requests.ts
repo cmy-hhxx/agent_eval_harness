@@ -14,20 +14,29 @@ export function createChannelRequests(limits: Record<string, number>, weights: R
   const usage = new Map<string, { active: number; granted: number }>();
   const disabled = new Map<string, string>();
   const runLimits = new Map<string, number>(), runActive = new Map<string, number>();
-  const waiting: { runId: string; channels: string[]; group: string; priority: number; grant(channel: string): void; deny(): void }[] = [];
+  const waiting: { key: string; runId: string; channels: string[]; group: string; priority: number; grant(channel: string): void; deny(): void }[] = [];
+  // One task's model calls share a gateway so later calls hit its prompt cache.
+  const affinity = new Map<string, string>();
   const admissible = (item: typeof waiting[number]) => (runActive.get(item.runId) ?? 0) < (runLimits.get(item.runId) ?? Infinity);
   const channels = Object.keys(limits);
+  const available = (channel: string) => !disabled.has(channel) && (active.get(channel) ?? 0) < limits[channel];
+  const eligible = (item: typeof waiting[number], channel: string) => {
+    if (!item.channels.includes(channel) || !admissible(item)) return false;
+    const preferred = affinity.get(item.key);
+    // Borrow another route only when the previous one cannot admit this call.
+    return !preferred || preferred === channel || !item.channels.includes(preferred) || !available(preferred);
+  };
   let nextChannel = 0;
   function pump() {
     while ([...active.values()].reduce((sum, value) => sum + value, 0) < totalLimit) {
       let granted = false;
       for (let offset = 0; offset < channels.length; offset++) {
         const channelIndex = (nextChannel + offset) % channels.length, channel = channels[channelIndex];
-        if (disabled.has(channel) || (active.get(channel) ?? 0) >= limits[channel]) continue;
+        if (!available(channel)) continue;
         const credit = credits.get(channel) ?? new Map<string, number>();
         credits.set(channel, credit);
         let selected: string | undefined, total = 0;
-        const groups = Object.keys(weights).filter(group => waiting.some(item => item.channels.includes(channel) && item.group === group && admissible(item)));
+        const groups = Object.keys(weights).filter(group => waiting.some(item => item.group === group && eligible(item, channel)));
         const bestPriority = Math.min(...groups.map(group => groupPriority[group] ?? 0));
         for (const group of groups) {
           const weight = weights[group];
@@ -38,13 +47,17 @@ export function createChannelRequests(limits: Record<string, number>, weights: R
         }
         if (!selected) continue;
         credit.set(selected, credit.get(selected)! - total);
-        let index = -1;
+        let index = -1, bestAffinity = false;
         for (let candidate = 0; candidate < waiting.length; candidate++) {
           const item = waiting[candidate];
-          if (item.channels.includes(channel) && item.group === selected && admissible(item) &&
-              (index < 0 || item.priority < waiting[index].priority)) index = candidate;
+          if (item.group !== selected || !eligible(item, channel)) continue;
+          const pinned = item.key ? affinity.get(item.key) === channel : false;
+          if (index < 0 || item.priority < waiting[index].priority ||
+            item.priority === waiting[index].priority && pinned && !bestAffinity) { index = candidate; bestAffinity = pinned; }
         }
-        waiting.splice(index, 1)[0].grant(channel);
+        const chosen = waiting.splice(index, 1)[0];
+        chosen.grant(channel);
+        if (chosen.key) affinity.set(chosen.key, channel);
         nextChannel = (channelIndex + 1) % channels.length;
         granted = true;
         break;
@@ -103,7 +116,7 @@ export function createChannelRequests(limits: Record<string, number>, weights: R
           reject(signal.reason);
           pump();
         };
-        const item = { runId: context.runId, channels, group, priority: priority(context), deny() {
+        const item = { key: JSON.stringify([context.runId, context.taskId]), runId: context.runId, channels, group, priority: priority(context), deny() {
           signal.removeEventListener("abort", abort);
           const index = waiting.indexOf(item); if (index >= 0) waiting.splice(index, 1);
           calls.delete(key); reject(new Error("Model capacity unavailable: configured gateways are disabled"));

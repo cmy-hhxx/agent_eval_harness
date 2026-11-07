@@ -99,6 +99,55 @@ const repository = createRunRepository(codec, (task, state) => ({
   row: { id: task.id, result: state.receipts[task.id].evaluation },
 }));
 
+for (const routing of ["uncontrolled", "borrowed", "switched"])
+test(`attempt performance attributes usage to actual model routes (${routing})`, async t => {
+  const directory = await mkdtemp(path.join(tmpdir(), "eval-route-metrics-"));
+  const borrowed = { ...model, provider: "borrowed", model: "borrowed-judge" };
+  const routes = routing === "uncontrolled" ? [model, model] : routing === "borrowed" ? [borrowed, borrowed] : [borrowed, model];
+  let admissions = 0;
+  const worker = await startWorker({ identity, async createSession(options) { return {
+    async run() {
+      for (const tokens of [10, 20]) {
+        const permit = await options.modelRequest?.();
+        options.onEvent({ type: "message_start", message: { role: "assistant" } });
+        options.onEvent({ type: "message_end", message: { role: "assistant", usage: {
+          ...emptyUsage(), input: tokens, output: tokens, cacheRead: tokens * 2, totalTokens: tokens * 4, reasoning: tokens / 2,
+        } } });
+        await permit?.release();
+      }
+      await options.execute("submit_evaluation", { score: 11 });
+    }, async abort() {}, async dispose() {},
+  }; } }, path.join(directory, "worker"));
+  t.after(async () => { await worker.close(); await rm(directory, { recursive: true, force: true }); });
+  const events: Record<string, unknown>[] = [];
+  await runEvaluation({ agents: new AgentRegistry([agent]), taskSource: workflow, repository,
+    runtime: { root: directory, workerEntry: "unused" }, runId: "metrics", output: { kind: "directory", path: directory },
+    engine: "pi", identity, evaluatorVersion: "test", config: {}, plan: { ...plan, tasks: plan.tasks.slice(0, 1) },
+    policy: { ...DEFAULT_POLICY, timeoutSeconds: 10 }, modelForStage: () => model,
+    ...(routing === "uncontrolled" ? {} : { modelRequests: { concurrency: () => 1,
+      async acquire() { return { model: routes[admissions++], release() {} }; } } }),
+    logger: { async error() {}, async evaluation() { return true; },
+      async event(event, context) { if (event === "attempt_metrics") events.push(context); return true; } },
+    concurrency: 1, retries: 0, retryDelaySeconds: 0, workerUrls: [worker.url], signal: AbortSignal.timeout(10_000) });
+  const rows = (await readFile(path.join(directory, "metrics/performance.jsonl"), "utf8")).trim().split("\n").map(line => JSON.parse(line));
+  assert.equal(rows.length, 1);
+  const row = rows[0];
+  assert.equal(row.channel, routing === "switched" ? null : routes[0].provider);
+  assert.equal(row.model, routing === "switched" ? null : routes[0].model);
+  assert.equal(row.usage.totalTokens, 120);
+  assert.equal(row.reasoning_tokens, 15);
+  assert.equal(row.cache_hit_ratio, 2 / 3);
+  assert.deepEqual(row.model_usage, (routing === "switched" ? routes : routes.slice(0, 1)).map((route, index) => {
+    const tokens = routing === "switched" ? (index + 1) * 10 : 30;
+    return { channel: route.provider, model: route.model, usage: {
+      ...emptyUsage(), input: tokens, output: tokens, cacheRead: tokens * 2, totalTokens: tokens * 4,
+    }, reasoningTokens: tokens / 2 };
+  }));
+  assert.equal(events.length, 1);
+  assert.equal(events[0].channel, row.channel);
+  assert.deepEqual(events[0].model_usage, row.model_usage);
+});
+
 test("one failed review does not block aggregation and its incomplete coverage survives downstream and resume", async t => {
   const directory = await mkdtemp(path.join(tmpdir(), "eval-settled-dependency-"));
   const tasks: PlannedTask[] = [...plan.tasks,

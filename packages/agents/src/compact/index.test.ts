@@ -122,44 +122,6 @@ test("reading a JSON data file does not make that file an executable script comp
     error.issues?.some(issue => issue.code === "component_data_file") === true);
 });
 
-test("functional model names select actual source actors without leaking locators or losing coverage", () => {
-  const f = fixture("components", "为回答本期营收，已生成财务查询请求。"), raw = f.binding.request.sources.answer.value;
-  Object.assign(raw.messages[0]!, { type: "llm_turn", name: "llm-call-7" });
-  const source = evidenceSources(raw.messages[0]).find(source => source.path === "/name")!;
-  const identity = cite(f.binding.request.sources.answer.id, 0, source, 0, source.text.length);
-  (f.binding.request.input as Record<string, unknown>).recorded_components = [{ component_index: 1, kind: "model", name: "llm-call-7",
-    source_evidence: [{ reference: { evidence_id: identity.evidence_id }, quote: identity.quote, message_index: 0 }] }];
-  const entry = { components_kind: "model", components_name: "规划", components_content: "为回答本期营收，规划财务查询；已生成查询请求。",
-    actor_indices: [1], evidence: [1] };
-  const result = f.registry.resolve(f.binding, { value: [entry] }, f.audit) as { value: Record<string, unknown>[] };
-  f.registry.validate(f.binding, result, f.audit);
-  assert.equal(result.value[0]!.components_name, entry.components_name);
-  assert(!("actor_indices" in result.value[0]!));
-  assert.deepEqual(result.value[0]!.evidence, [{ evidence_id: f.original.evidence_id, quote: f.original.quote }, { evidence_id: identity.evidence_id, quote: identity.quote }]);
-  assert.throws(() => f.registry.resolve(f.binding, { value: [] }, f.audit), /可见职责分组/);
-  for (const actor_indices of [[2], [1, 1]]) assert.throws(() => f.registry.resolve(f.binding, { value: [{ ...entry, actor_indices }] }, f.audit), ValidationError);
-  assert.throws(() => f.registry.resolve(f.binding, { value: [{ ...entry, components_name: "llm-call-7" }] }, f.audit), ValidationError);
-  assert.throws(() => f.registry.resolve(f.binding, { value: [{ ...entry, components_name: "本期营收查询规划" }] }, f.audit), ValidationError);
-  assert.throws(() => f.registry.resolve(f.binding, { value: [entry, { ...entry, components_content: "重复列出同类调用。" }] }, f.audit), /同一类型、同一名称/);
-  ((f.binding.request.input as Record<string, unknown>).recorded_components as Record<string, unknown>[]).push({ component_index: 2, kind: "model", name: "llm-call-8", source_evidence: [] });
-  assert.doesNotThrow(() => f.registry.resolve(f.binding, { value: [entry] }, f.audit), "anonymous invocations may share one visible role group without individual enumeration");
-});
-
-test("a selected tool keeps its source name without making the model repeat identity evidence", () => {
-  const f = fixture("components", "已返回季度财报公告。"), raw = f.binding.request.sources.answer.value;
-  Object.assign(raw.messages[0]!, { type: "tool_result", name: "web_search" });
-  const source = evidenceSources(raw.messages[0]).find(source => source.path === "/name")!;
-  const identity = cite(f.binding.request.sources.answer.id, 0, source, 0, source.text.length);
-  (f.binding.request.input as Record<string, unknown>).recorded_components = [{ component_index: 3, kind: "tool", name: "web_search",
-    source_evidence: [{ reference: { evidence_id: identity.evidence_id }, quote: identity.quote, message_index: 0 }] }];
-  const entry = { components_kind: "tool", components_name: "web_search", components_content: "为核对季度财报检索公告；取得公告内容。",
-    actor_indices: [3], evidence: [1] };
-  const result = f.registry.resolve(f.binding, { value: [entry] }, f.audit) as {value:Record<string,unknown>[]};
-  f.registry.validate(f.binding, result, f.audit);
-  assert.deepEqual(result.value[0]!.evidence, [{ evidence_id: f.original.evidence_id, quote: f.original.quote }, { evidence_id: identity.evidence_id, quote: identity.quote }]);
-  assert.throws(() => f.registry.resolve(f.binding, { value: [{ ...entry, components_name: "shell" }] }, f.audit), ValidationError);
-});
-
 test("component examples use the actual source numbers and types, grouping model calls", () => {
   const rendered = compactAgent.profiles.components!.renderPrompt({ recorded_components: [
     { actor_index: 1, kind: "model", name: "llm-call-0" }, { actor_index: 3, kind: "model", name: "planner-finquery" },

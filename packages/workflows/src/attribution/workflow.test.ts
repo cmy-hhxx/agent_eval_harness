@@ -255,3 +255,12 @@ test("compact is a mandatory dependency and produces its own recoverable formal 
   assert.equal((compact.data as AttributionTaskData).candidate.version, candidate.version);
   assert.throws(() => registry.resolve(compactBinding, { ...draft, turns: (draft.turns as JsonObject[]).slice(0, 1) }, emptyAudit()));
 });
+
+test("performance identity carries only record coordinates, never input bodies", () => {
+  const task = { id: "t", stage: "attribution-component", dependencies: {}, inputIds: { answer: "input-1" },
+    data: { stage: "attribution-component", traceIndex: 1, attributionIdentity: "identity-1",
+      candidate: { input_id: "input-1", version: "aime_fast", batch_id: "2026-11-05", case_id: "case-1", session_id: "session-1" } } };
+  const identity = attributionWorkflow.performanceIdentity!(task as unknown as Parameters<NonNullable<typeof attributionWorkflow.performanceIdentity>>[0]);
+  assert.deepEqual(identity, { version: "aime_fast", batch_id: "2026-11-05", case_id: "case-1",
+    session_id: "session-1", trace_index: 1, attribution_identity: "identity-1" });
+});

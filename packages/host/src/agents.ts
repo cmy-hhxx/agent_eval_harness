@@ -21,9 +21,24 @@ import {
   type ValidationIssue,
 } from "@eval/contracts";
 
+type SubmissionSchema = Parameters<typeof evidenceSelectionSchema>[0];
+// Profiles own stable submission schemas; project and compile each one once instead of
+// rebuilding a validator for every attempt and submission.
+const selectionSchemas = new WeakMap<object, SubmissionSchema>();
+function selectionSchema(schema: SubmissionSchema): SubmissionSchema {
+  let projected = selectionSchemas.get(schema);
+  if (!projected) selectionSchemas.set(schema, projected = evidenceSelectionSchema(schema));
+  return projected;
+}
+const submissionValidators = new WeakMap<object, ReturnType<Ajv2020["compile"]>>();
+function submissionValidator(schema: SubmissionSchema): ReturnType<Ajv2020["compile"]> {
+  let validate = submissionValidators.get(schema);
+  if (!validate) submissionValidators.set(schema, validate = new Ajv2020({ allErrors: true, strict: false }).compile(schema));
+  return validate;
+}
+
 /** Repair unambiguous model formatting without inventing missing values or changing the submitted payload. */
-function normalizeModelValue(value: unknown, validate: ReturnType<Ajv2020["compile"]>): unknown {
-  if (validate(value)) return value;
+function normalizeModelValue(value: unknown, validate: ReturnType<Ajv2020["compile"]>): unknown {  if (validate(value)) return value;
   const errors = validate.errors ?? [];
   // Union/required/semantic errors need an actual correction, not a guessed branch.
   if (errors.some(error => !["additionalProperties", "type"].includes(error.keyword))) return value;
@@ -166,7 +181,7 @@ export class AgentRegistry {
         id: binding.agent,
         profile: binding.profile,
         systemPrompt: profile.systemPrompt,
-        outputSchema: profile.evidenceSelections ? evidenceSelectionSchema(outputSchema) : outputSchema,
+        outputSchema: profile.evidenceSelections ? selectionSchema(outputSchema) : outputSchema,
         ...(profile.inspection ? { inspectionSchema: profile.inspection.modelSchema ?? profile.inspection.schema } : {}),
         toolNames: profile.toolNames,
         fileSubmission: profile.fileSubmission,
@@ -252,8 +267,8 @@ export class AgentRegistry {
       this.inspectCanonical(binding, audit.inspection.value, { ...audit, ...audit.inspection.proof });
     }
     if (profile.evidenceSelections) {
-      const rawSchema = evidenceSelectionSchema(profile.modelSubmissionSchema?.(binding.request) ?? profile.submissionSchema);
-      const modelValidator = new Ajv2020({ allErrors: true, strict: false }).compile(rawSchema);
+      const rawSchema = selectionSchema(profile.modelSubmissionSchema?.(binding.request) ?? profile.submissionSchema);
+      const modelValidator = submissionValidator(rawSchema);
       draft = normalizeModelValue(draft, modelValidator);
       const valid = modelValidator(draft), issues = valid ? [] : schemaIssues(modelValidator.errors, draft);
       const selected = resolveEvidenceSelectionDraft(draft, audit.evidenceBank ?? []);

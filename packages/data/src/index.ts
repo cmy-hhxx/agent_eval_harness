@@ -4,6 +4,7 @@ export * from "./completed-cases.js";
 export * from "./material-pool.js";
 export * from "./run-layout.js";
 export * from "./run-overview.js";
+export * from "./performance.js";
 export * from "./problem-library-store.js";
 export * from "./repository.js";
 export * from "./sources.js";

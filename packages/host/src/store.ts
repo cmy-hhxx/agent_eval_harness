@@ -113,7 +113,7 @@ function validTableChecks(value: unknown, inputs: AttemptSpec["inputs"]): boolea
 export interface EvaluationServices {
   logger?: LogSink;
   repository: RunRepository;
-  taskSource: Pick<WorkflowDefinition, "id" | "bind" | "reconcile" | "advance" | "blockedReason" | "canStart" | "observesFailures" | "scheduling" | "isComputedTask" | "shards" | "release">;
+  taskSource: Pick<WorkflowDefinition, "id" | "bind" | "reconcile" | "advance" | "blockedReason" | "canStart" | "observesFailures" | "scheduling" | "isComputedTask" | "shards" | "release" | "performanceIdentity">;
   agents: AgentRegistry;
 }
 
@@ -221,6 +221,7 @@ export class RunStore {
   async flushOutbox(force = false): Promise<void> {
     if ((!this.outboxStarted && !force) || this.outboxFlush) return this.outboxFlush;
     this.outboxFlush = (async () => {
+      const startedAt = Date.now();
       try {
         while (true) {
           // Publication costs one durable append per touched delivery file, not per row;
@@ -267,6 +268,14 @@ export class RunStore {
             detail: JSON.stringify({ ...this.outboxStats(), admission_paused: this.admissionBlocked }),
           });
       }
+      // The projection normally settles in well under a second; minutes here mean a
+      // stalled shared mount, which silently grows the queue until admission pauses.
+      const elapsedMs = Date.now() - startedAt;
+      if (elapsedMs > 30_000)
+        await this.services.logger?.error("Outbox projection stalled", {
+          component: "host", event: "outbox_projection_slow", run_id: this.manifest.runId,
+          detail: JSON.stringify({ elapsed_ms: elapsedMs, ...this.outboxStats(), admission_paused: this.admissionBlocked }),
+        });
     })().finally(() => { this.outboxFlush = undefined; });
     return this.outboxFlush;
   }

@@ -28,6 +28,7 @@ import {
   type Policy,
   type RunState,
   type Submission,
+  type TaskPerformance,
   type TaskPlan,
   type WorkerStatus,
   type FailureGuardPolicy,
@@ -36,7 +37,7 @@ import {
 } from "@eval/contracts";
 import { HttpError, ValidationError, canonical, errorText, redact, safeId, validateEvidenceBank, validateEvidenceBankSources } from "@eval/contracts";
 import { body, json, listen, request } from "@eval/runtime/http";
-import { compressFile, exists, internalPath, runLayout, runLock, readJson, writeJson } from "@eval/data";
+import { compressFile, createPerformanceLog, exists, internalPath, runLayout, runLock, readJson, writeJson } from "@eval/data";
 import { loadIdentity } from "@eval/runtime/client";
 import type { FailureContext } from "@eval/contracts";
 import { progressSnapshot, inputDiagnostics } from "./progress.js";
@@ -115,6 +116,7 @@ export async function runEvaluation(options: RunOptions): Promise<Record<string,
   const layout = runLayout(options.output, options.runId),
     run = layout.directory,
     unlock = await runLock(run);
+  const performanceLog = createPerformanceLog(run);
   const materialIds = new WeakMap<object, string>();
   let supervisor: WorkerSupervisor | undefined = options.workerSupervisor;
   let resourcePause: string | undefined, fatalError: { error: unknown } | undefined;
@@ -340,6 +342,7 @@ export async function runEvaluation(options: RunOptions): Promise<Record<string,
     const taskConcurrency = () => Math.min(options.taskConcurrency ?? Math.max(1, desiredConcurrency()),
       options.taskLimit?.({ running: running.size, ready: current.admissionPaused() || fatalError || options.pauseSignal?.aborted ? 0 : readyDemand }) ?? Infinity);
     const snapshot = () => ({ ...progressSnapshot(saved, Date.now(), preparing, options.taskSource.scheduling?.sessionAdmission), run_id: manifest.runId, in_flight_tasks: busy.size,
+      running_tasks: running.size,
       host: { pid: process.pid, live: true }, task_concurrency: taskConcurrency(),
       admission_paused: current.admissionPaused(), workers: supervisor?.snapshot(), model_requests: options.modelRequests?.snapshot?.(),
       checkpoint: { ...current.checkpointMetrics }, outbox: current.outboxStatus() });
@@ -940,10 +943,17 @@ export async function runEvaluation(options: RunOptions): Promise<Record<string,
       }
       if (manifest.debug) await writeJson(path.join(attemptDir, "attempt.json"), record);
       state.durationMs = (state.durationMs || 0) + Date.now() - state.startedAt!;
+      const modelUsage = record.metrics?.modelUsage ?? [];
+      const measuredChannels = [...new Set(modelUsage.map(row => row.channel))];
+      const measuredModels = [...new Set(modelUsage.map(row => row.model))];
+      const measuredChannel = measuredChannels.length === 1 ? measuredChannels[0] : null;
+      const measuredModel = measuredModels.length === 1 ? measuredModels[0] : null;
       if (record.metrics) {
         await options.logger?.event?.("attempt_metrics", { component: "host", run_id: options.runId,
-          task_id: task.id, attempt_id: spec.attemptId, channel: model.provider,
+          task_id: task.id, attempt_id: spec.attemptId, stage: task.stage, channel: measuredChannel,
+          model: measuredModel, model_usage: modelUsage,
           timings: record.metrics.timings ?? {}, usage: record.metrics.usage,
+          reasoning: record.metrics.reasoningTokens ?? 0,
           calls: record.metrics.audit.calls, requiredReadCalls: record.metrics.audit.requiredReadCalls,
           contentSubmissions: receipt?.submissionStats?.contentSubmissions ?? state.failure?.contentSubmissions ?? 0,
           confirmed: Boolean(receipt), status: state.status });
@@ -951,6 +961,19 @@ export async function runEvaluation(options: RunOptions): Promise<Record<string,
           saved.usage[key] += record.metrics.usage[key] || 0;
         saved.recordedAttempts++;
       }
+      await performanceLog.record({
+        runId: options.runId, taskId: task.id, stage: task.stage, attemptId: spec.attemptId,
+        attempt: state.attempts, status: state.status, confirmed: Boolean(receipt),
+        channel: measuredChannel, model: measuredModel, modelUsage, inputIds: task.inputIds,
+        identity: options.taskSource.performanceIdentity?.(task),
+        usage: record.metrics?.usage ?? emptyUsage(), reasoningTokens: record.metrics?.reasoningTokens ?? 0,
+        calls: record.metrics?.audit.calls ?? 0, requiredReadCalls: record.metrics?.audit.requiredReadCalls ?? 0,
+        contentSubmissions: receipt?.submissionStats?.contentSubmissions ?? state.failure?.contentSubmissions ?? 0,
+        timings: { ...record.metrics?.timings, ...timing },
+        startedAt: new Date(state.startedAt ?? Date.now()).toISOString(), finishedAt: new Date().toISOString(),
+        wallMs: Math.max(0, Date.now() - (state.startedAt ?? Date.now())),
+      } satisfies TaskPerformance).catch(error => options.logger?.error(error, {
+        component: "host", event: "performance_record_failed", run_id: options.runId, task_id: task.id }));
       await current.save(task.id, { usage: true });
       if (
         (!manifest.debug || (copied && eventsSaved && record.metrics)) &&
@@ -1321,6 +1344,7 @@ export async function runEvaluation(options: RunOptions): Promise<Record<string,
       await finish(() => store!.persistCheckpoint());
     }
     await finish(() => store ? store.close() : hot?.close());
+    await finish(() => performanceLog.close());
     await finish(() => http?.close());
     await finish(() => workspace?.close());
     if (releaseBusiness) await finish(releaseBusiness);

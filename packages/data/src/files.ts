@@ -151,12 +151,19 @@ export async function writeJsonl(file: string, rows: Iterable<unknown> | AsyncIt
 
 /** Append complete JSONL rows and make their bytes durable without rewriting existing rows. */
 export async function appendJsonl(file: string, rows: Iterable<unknown>): Promise<void> {
+  await appendLines(file, (function* () {
+    for (const row of rows) yield (JSON.stringify(row) ?? "null") + "\n";
+  })());
+}
+
+/** Append already-serialized JSONL lines in one durable write. */
+export async function appendLines(file: string, lines: Iterable<string>): Promise<void> {
   await mkdir(path.dirname(file), { recursive: true });
   // Appending never changes the directory entry, so only a newly created file needs its directory synced.
   const created = !await exists(file);
   const handle = await open(file, "a");
   try {
-    for (const row of rows) await handle.writeFile((JSON.stringify(row) ?? "null") + "\n");
+    for (const line of lines) await handle.writeFile(line);
     await syncFile(handle);
   } finally {
     await handle.close();

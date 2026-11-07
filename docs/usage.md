@@ -402,6 +402,7 @@ npm run eval -- rewrite-comparisons --run /mnt/fin_bench/eval_data/0_wencai/3_ev
 | report.md、task_summaries.md | 总览与逐题呈现，优先用已接受改写 |
 | stats.json | 数量、覆盖、冲突、版本、用量及产物清单 |
 | model-behavior.jsonl | 由当前有效归因派生的责任分类与 finding 来源，不提供底座排名 |
+| performance.jsonl | 每个 run 的尝试成本统计：阶段、业务身份、输入/输出/推理 token、缓存读写与命中率、模型/工具/提交/排队时延、调用次数与墙钟时间；`model_usage` 按实际渠道和模型归集用量，跨渠道或跨模型时对应顶层 `channel` / `model` 为 null；只写坐标与数值，不复制材料或判词 |
 
 正式 JSONL 是判词的权威存储，state 不重复保存已接受正文。运行中的提交先在本地 SQLite WAL 热日志中原子确认，再由 outbox 投影到正式 JSONL 和 progress.jsonl；进程崩溃重放本地事件，整机故障允许最多 5 秒未投影进度。崩溃恢复可处理相同重复行与中断尾行，冲突或缺失正式结果明确报错，不自动重评。写入顺序见[生命周期](architecture.md#生命周期)。
 

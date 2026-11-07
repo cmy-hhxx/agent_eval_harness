@@ -74,6 +74,9 @@ async function runAttempt(attempt: AttemptExecution, deps: AttemptExecutionDeps,
         artifacts: [],
       },
       usage = emptyUsage();
+    let reasoningTokens = 0;
+    let requestModel = spec.controlModelRequests ? undefined : spec.model;
+    const modelUsage: NonNullable<AttemptRecord["metrics"]>["modelUsage"] = [];
     const record: AttemptRecord = { spec, evidenceBank: [...audit.evidenceBank!] };
     const timings = { inputIoMs: 0, modelMs: 0, toolMs: 0, submissionMs: 0, requiredReadMs: 0 };
     let modelStarted: number | undefined;
@@ -576,6 +579,7 @@ async function runAttempt(attempt: AttemptExecution, deps: AttemptExecutionDeps,
         ...(spec.controlModelRequests ? { modelRequest: async (signal?: AbortSignal) => {
           const combined = signal ? AbortSignal.any([signal, controller.signal]) : controller.signal;
           const callId = randomUUID(), waitingAt = Date.now();
+          requestModel = undefined;
           phase("queued"); clearTimeout(deadline);
           let grantedModel: AttemptSpec["model"];
           try {
@@ -591,6 +595,7 @@ async function runAttempt(attempt: AttemptExecution, deps: AttemptExecutionDeps,
           }
           let released = false;
           attempt.status.modelChannel = grantedModel.provider;
+          requestModel = grantedModel;
           return { model: grantedModel, release: async () => {
             if (released) return;
             released = true;
@@ -664,7 +669,7 @@ async function runAttempt(attempt: AttemptExecution, deps: AttemptExecutionDeps,
             type?: string;
             message?: {
               role?: string;
-              usage?: Partial<Usage>;
+              usage?: Partial<Usage> & { reasoning?: number };
               stopReason?: string;
               rawStopReason?: string;
               stopReasonRaw?: string;
@@ -676,6 +681,17 @@ async function runAttempt(attempt: AttemptExecution, deps: AttemptExecutionDeps,
             if (modelStarted !== undefined) { timings.modelMs += performance.now() - modelStarted; modelStarted = undefined; }
             for (const key of Object.keys(usage) as (keyof Usage)[])
               usage[key] += event.message.usage?.[key] || 0;
+            reasoningTokens += event.message.usage?.reasoning || 0;
+            if (requestModel) {
+              let measured = modelUsage.find(row => row.channel === requestModel!.provider && row.model === requestModel!.model);
+              if (!measured) {
+                measured = { channel: requestModel.provider, model: requestModel.model, usage: emptyUsage(), reasoningTokens: 0 };
+                modelUsage.push(measured);
+              }
+              for (const key of Object.keys(usage) as (keyof Usage)[])
+                measured.usage[key] += event.message.usage?.[key] || 0;
+              measured.reasoningTokens += event.message.usage?.reasoning || 0;
+            }
             attempt.events.append("usage", usage);
             if (event.message.stopReason === "error") {
               modelError = event.message.errorMessage || "Model request failed";
@@ -838,7 +854,7 @@ async function runAttempt(attempt: AttemptExecution, deps: AttemptExecutionDeps,
         attempt.status.failure = record.failure;
       }
       record.evidenceBank = [...audit.evidenceBank!];
-      record.metrics = { usage, audit, timings };
+      record.metrics = { usage, audit, reasoningTokens, modelUsage, timings };
       record.status = attempt.status;
       // A failed persistence leaves the workspace intact for recovery.
       await saveRecord();
@@ -859,7 +875,7 @@ async function runAttempt(attempt: AttemptExecution, deps: AttemptExecutionDeps,
       attempt.events.append("finished", attempt.status);
       await attempt.events.flush();
       record.evidenceBank = [...audit.evidenceBank!];
-      record.metrics = { usage, audit, timings };
+      record.metrics = { usage, audit, reasoningTokens, modelUsage, timings };
       record.status = attempt.status;
       await saveRecord();
       await attempt.events.end();

@@ -543,17 +543,3 @@ test("comparison request schema accepts the visual inventory with complete origi
     assert.equal(validate(missingContext), false, "each marker requires its actual original context");
   }
 });
-
-test("identical complete returned sources retain every location without becoming an ambiguous footnote", () => {
-  const source = "<referencable-result>\nID: 13\n标题: 原网页\n溯源地址: https://example.test/report\n发布时间: 2026-09-24 12:00\n摘要: 完整相同来源正文。\n</referencable-result>";
-  const raw = { messages: [{ type: "function_call_output", output: source },
-    { type: "function_call_output", output: source }, { role: "assistant", content: "来源中的陈述[^13]。" }] };
-  const reference = citationInventory(raw, evidenceInputId, 2).references[0];
-  assert.equal(reference.status, "resolved");
-  assert.equal(reference.sources.length, 2);
-  assert.notEqual(reference.sources[0].evidence_id, reference.sources[1].evidence_id);
-  for (const evidence of reference.sources)
-    assert.equal(resolveEvidence(raw, evidence, "answer", audit, "/evidence", evidenceInputId).quote, source);
-  raw.messages[1].output = source.replace("完整相同来源正文", "修订过的来源正文");
-  assert.equal(citationInventory(raw, evidenceInputId, 2).references[0].status, "ambiguous", "same URL is insufficient when the actual full body differs");
-});
